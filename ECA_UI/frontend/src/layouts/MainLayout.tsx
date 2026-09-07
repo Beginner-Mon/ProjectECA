@@ -1,6 +1,7 @@
 import { Link, Outlet } from 'react-router-dom'
 import { useTranslation } from 'react-i18next'
 import { Music2 } from 'lucide-react'
+import EcaLogo from '../components/EcaLogo'
 import FloatingNavBar from '../components/FloatingNavBar'
 import ChatPanel from '../components/ChatPanel'
 import { MotionProvider } from '../contexts/MotionContext'
@@ -42,7 +43,7 @@ export default function MainLayout() {
         <main className="relative h-screen w-screen overflow-hidden bg-background">
         <div className="fixed top-5 left-5 z-[9990] flex items-center opacity-80 transition-opacity hover:opacity-100">
           <Link to="/" aria-label={t('nav.go_home')} className="flex items-center">
-            <img src="/eca-logo.svg" alt="" className="w-14 h-14" />
+            <EcaLogo className="w-14 h-14 text-foreground" />
             <h1 className="text-2xl font-semibold tracking-[0.18em] text-foreground">ECA</h1>
           </Link>
           <AudioToggle />

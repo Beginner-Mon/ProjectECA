@@ -84,8 +84,9 @@ export default function ChatSessionsPanel({ onSessionSelected }: { onSessionSele
 
       <ScrollArea className="flex-1 min-h-0">
         {loading ? (
-          <div className="flex items-center justify-center py-16">
+          <div className="flex flex-col items-center justify-center py-16 gap-2">
             <Loader2 className="w-5 h-5 animate-spin text-muted-foreground" />
+            <p className="text-xs text-muted-foreground">{t('common.wait')}</p>
           </div>
         ) : sessionList.length === 0 ? (
           <div className="flex flex-col items-center justify-center px-6 py-8 text-center h-full min-h-[300px]">

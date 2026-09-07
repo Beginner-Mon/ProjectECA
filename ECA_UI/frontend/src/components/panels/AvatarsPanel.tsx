@@ -1,5 +1,6 @@
 import { useEffect, useState, type CSSProperties } from 'react'
 import { useTranslation } from 'react-i18next'
+import { motion } from 'framer-motion'
 import { UserRound, Check, TriangleAlert, Star, RefreshCw } from 'lucide-react'
 import { ScrollArea } from '../ui/scroll-area'
 import { Button } from '../ui/button'
@@ -194,9 +195,12 @@ function AvatarCard({
       )}
 
       {isSelected && !isDefault && !disabled && (
-        <span
+        <motion.span
           role="button"
           tabIndex={0}
+          initial="initial"
+          whileHover="hover"
+          whileTap={{ scale: 0.95 }}
           onClick={(e) => {
             e.stopPropagation()
             onSetDefault()
@@ -208,10 +212,18 @@ function AvatarCard({
               onSetDefault()
             }
           }}
-          className="absolute bottom-2 left-2 right-2 rounded-md bg-primary text-primary-foreground text-[11px] font-medium py-1.5 text-center shadow-md hover:bg-primary/90 transition-colors"
+          className="absolute top-2 left-2 flex items-center gap-1 rounded-full bg-primary text-primary-foreground text-[10px] font-semibold px-2 py-0.5 shadow-sm cursor-pointer overflow-hidden"
         >
-          {t('avatars.set_default')}
-        </span>
+          <span className="relative z-10">{t('avatars.set_default')}</span>
+          <motion.span
+            className="absolute inset-0 bg-gradient-to-r from-transparent via-white/35 to-transparent -skew-x-12"
+            variants={{
+              initial: { x: '-100%' },
+              hover: { x: '100%' },
+            }}
+            transition={{ duration: 0.55, ease: 'easeInOut' }}
+          />
+        </motion.span>
       )}
     </button>
   )

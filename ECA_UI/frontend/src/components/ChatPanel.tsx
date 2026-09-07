@@ -1,6 +1,6 @@
 import { useState, useRef, useEffect, type KeyboardEvent } from 'react'
 import { useTranslation } from 'react-i18next'
-import { ArrowUp, Mic, Sparkles, Square, Plus, Globe, Image, X, Volume2, SquarePen } from 'lucide-react'
+import { ArrowUp, Mic, Sparkles, Square, Plus, Globe, Image, X, Volume2, SquarePen, Loader2 } from 'lucide-react'
 import TextareaAutosize from 'react-textarea-autosize'
 import { ScrollArea } from './ui/scroll-area'
 import ChatMessage from './ChatMessage'
@@ -98,7 +98,8 @@ export default function ChatPanel() {
       <ScrollArea className="flex-1 min-h-0 px-1 md:px-2">
         <div className="py-2 md:py-4 space-y-1 md:space-y-2 max-w-full overflow-x-hidden">
           {isSwitching ? (
-            <div className="flex flex-col items-center justify-center py-16 gap-3 text-muted-foreground">
+            <div className="flex flex-col items-center justify-center py-16 gap-2 text-muted-foreground">
+              <Loader2 className="w-5 h-5 animate-spin" />
               <p className="text-xs animate-pulse">{t('common.wait')}</p>
             </div>
           ) : (

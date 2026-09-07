@@ -109,7 +109,12 @@ export function ChatProvider({ children }: { children: ReactNode }) {
       timestamp: new Date(),
       audioUrl: url,
     }
-    setMessages((prev) => [...prev, msg])
+    // Ephemeral greeting: same as handleSend
+    setMessages((prev) => {
+      const isPristine = prev.length === 1 && prev[0].id === GREETING_ID
+      if (isPristine) return [msg]
+      return [...prev, msg]
+    })
     // clear preview but keep sent message url
     // useAudioRecorder's cancel would revoke previewUrl — do it manually
     // we already created a new url for the message, so revoke preview
@@ -148,33 +153,19 @@ export function ChatProvider({ children }: { children: ReactNode }) {
   const abortControllerRef = useRef<AbortController | null>(null)
   const thinkingRef = useRef(false)
 
-  // Keep the initial greeting immutable after first hydration.
-  // - First real character after mount ('' -> 'anne' after catalog) may adopt
-  //   once if still only the fallback greeting is shown.
-  // - Subsequent switches do NOT mutate nor append — greeting gốc giữ nguyên.
-  //   Dấu hiệu đổi character và việc đổi backend role 'assistant' -> tên model
-  //   sẽ làm ở phase sau (hiện giữ nguyên).
+  // Greeting is ephemeral — only for empty sessions ([greeting]).
+  // Before this, only the first hydration (fallback -> anne) could adopt;
+  // subsequent switches were intentionally no-op, so new chat rỗng đổi
+  // anne->miki không thấy greeting đổi cho tới khi bấm New chat.
+  // Now every switch may update, but withGreeting guards to pristine only
+  // (length===1 && id===GREETING_ID) — session có history không bị đụng.
   const prevVrmRef = useRef<string>('')
-  const hydratedRef = useRef<boolean>(false)
 
   useEffect(() => {
     if (isRestoring) return
     if (!selectedVrmId) return
-
-    if (!hydratedRef.current) {
-      hydratedRef.current = true
-      if (prevVrmRef.current === '') {
-        setMessages((prev) => withGreeting(prev, GREETING_ID, getGreeting(uiRef.current)))
-        prevVrmRef.current = selectedVrmId
-        return
-      }
-    }
-
-    // Subsequent character switches: intentionally no-op — keep original greeting.
-    // Only track for future use (e.g., when we switch to storing model name).
-    if (prevVrmRef.current !== selectedVrmId) {
-      prevVrmRef.current = selectedVrmId
-    }
+    setMessages((prev) => withGreeting(prev, GREETING_ID, getGreeting(uiRef.current)))
+    prevVrmRef.current = selectedVrmId
   }, [selectedVrmId, isRestoring])
 
   /**
@@ -231,12 +222,14 @@ export function ChatProvider({ children }: { children: ReactNode }) {
       try {
         const data = await getSession(sessionId)
         const history = (data?.messages ?? []) as SessionMessage[]
-        if (cancelled || history.length === 0) return
-        setMessages([
-          // The greeting is always the first message — it is not persisted in
-          // the backend, so we prepend it client-side on every restore.
-          ...buildInitialMessages(uiRef.current),
-          ...history.map((m, i) => ({
+        if (cancelled) return
+        // Ephemeral greeting: only for empty sessions. If history exists,
+        // show history alone (no greeting prepend). If empty, keep the
+        // ephemeral placeholder already in state (will be adopted to current
+        // character by the selectedVrmId effect).
+        if (history.length === 0) return
+        setMessages(
+          history.map((m, i) => ({
             id: `restored-${i}`,
             role: m.role,
             content: m.content,
@@ -254,7 +247,7 @@ export function ChatProvider({ children }: { children: ReactNode }) {
             // immediately before the answer.
             motionLabel: m.role === 'assistant' ? history[i - 1]?.content : undefined,
           })),
-        ])
+        )
 
         // Motions the GPU already rendered for this conversation. Two outcomes
         // and no third: still fetchable, or gone.
@@ -370,17 +363,16 @@ export function ChatProvider({ children }: { children: ReactNode }) {
       if (sessionId !== sessionIdRef.current) return
       const history = (data?.messages ?? []) as SessionMessage[]
 
+      // Ephemeral greeting: only empty sessions show it
       if (history.length > 0) {
-        setMessages([
-          // Prepend the greeting — it is not stored in the backend.
-          ...buildInitialMessages(uiRef.current),
-          ...history.map((m, i) => ({
+        setMessages(
+          history.map((m, i) => ({
             id: `switched-${i}`,
             role: m.role,
             content: m.content,
             timestamp: new Date(m.timestamp),
           })),
-        ])
+        )
       } else {
         setMessages(buildInitialMessages(uiRef.current))
       }
@@ -427,7 +419,12 @@ export function ChatProvider({ children }: { children: ReactNode }) {
       timestamp: new Date(),
     }
 
-    setMessages((prev) => [...prev, userMsg])
+    // Ephemeral greeting: pristine [greeting] -> [userMsg], otherwise append
+    setMessages((prev) => {
+      const isPristine = prev.length === 1 && prev[0].id === GREETING_ID
+      if (isPristine) return [userMsg]
+      return [...prev, userMsg]
+    })
     setInput('')
     // Hiển thị stage ngay để tránh 3 chấm đầu, dùng text pulse thay vì dots
     setIsTyping(false)

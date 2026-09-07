@@ -224,14 +224,15 @@ const SKELETON_FALLBACK = 6
 
 /** B2 reverted (07-09-2026): skeleton stays uniform gray, not per-character mesh.
  *  Mesh colors are identity (violet/cyan/rose/emerald per slug) — showing them
- *  in skeleton misleads user into thinking content is loaded. Gray = clearly loading. */
-function AvatarGridSkeleton({ count }: { count: number }) {
+ *  in skeleton misleads user into thinking content is loaded. Gray = clearly loading.
+ *  B5: aria-label/sr-only now via i18n (avatars.loading), not hardcoded English. */
+function AvatarGridSkeleton({ count, label }: { count: number; label: string }) {
   return (
     <div
       className="grid grid-cols-2 gap-3"
       role="status"
       aria-busy="true"
-      aria-label="Loading characters"
+      aria-label={label}
     >
       {Array.from({ length: count }, (_, i) => (
         <div
@@ -239,7 +240,7 @@ function AvatarGridSkeleton({ count }: { count: number }) {
           className="w-full aspect-[5/6] rounded-xl bg-secondary/60 animate-pulse"
         />
       ))}
-      <span className="sr-only">Loading characters...</span>
+      <span className="sr-only">{label}</span>
     </div>
   )
 }
@@ -294,9 +295,10 @@ export default function AvatarsPanel() {
 
       <ScrollArea className="flex-1 min-h-0">
         <div className="p-4">
-          {/* B1: skeletons cover BOTH bootstrap and lazy catalog. Same grid as real cards so nothing jumps.
-              Count is dynamic (SKELETON_FALLBACK until we know total) — adding characters no longer desyncs. */}
-          {isLoading && <AvatarGridSkeleton count={skeletonCount} />}
+          {/* B1+B5: skeletons cover BOTH bootstrap and lazy catalog. Same grid as real cards so nothing jumps.
+              Count is dynamic (SKELETON_FALLBACK until we know total) — adding characters no longer desyncs.
+              B5: label via i18n (avatars.loading) — CharacterViewer already does this for Canvas. */}
+          {isLoading && <AvatarGridSkeleton count={skeletonCount} label={t('avatars.loading')} />}
 
           {/* B4: named error + retry — empty grid and failed fetch look identical otherwise.
               Retry calls ensureCatalogLoaded() again (hasLite is still false, catalogLoading guards double-click). */}

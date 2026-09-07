@@ -43,6 +43,9 @@ function toAssetOptionLite(character: CharacterLite): AssetOption {
 }
 
 export function MotionProvider({ children }: { children: ReactNode }) {
+  // B6: two distinct loading domains — kept separate so AvatarsPanel and CharacterViewer
+  // do not confuse each other. vrmOptions* = bootstrap 1 full character for <Canvas> (on refresh).
+  // catalog* = lazy lite list for AvatarsPanel grid (on panel open). Before B1/B6 they shared one flag.
   const [vrmOptions, setVrmOptions] = useState<AssetOption[]>([])
   const [vrmOptionsLoading, setVrmOptionsLoading] = useState(true)
   const [vrmOptionsError, setVrmOptionsError] = useState<string | null>(null)
@@ -53,6 +56,7 @@ export function MotionProvider({ children }: { children: ReactNode }) {
 
   // Lazy catalog for AvatarsPanel — only when panel opens does it need the lite cards.
   // B1 fix: exposes catalogLoading so AvatarsPanel can show skeleton while GET /characters is in flight.
+  // B6: this is distinct from the bootstrap vrmOptionsLoading above (Canvas vs grid).
   const ensureCatalogLoaded = useCallback(async () => {
     if (hasLite || catalogLoading) return
     setCatalogLoading(true)

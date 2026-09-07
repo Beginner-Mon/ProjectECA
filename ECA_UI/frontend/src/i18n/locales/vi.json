@@ -77,6 +77,7 @@
     "default_badge": "Mặc định",
     "empty": "Không tìm thấy avatar VRM nào",
     "load_failed": "Không tải được danh sách nhân vật.",
+    "loading": "Đang tải danh sách nhân vật...",
     "set_default": "Đặt làm mặc định",
     "subtitle": "Chọn một avatar 3D",
     "title": "Nhân vật"

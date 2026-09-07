@@ -40,10 +40,13 @@ export interface MotionContextType {
   selectedVrmId: string
   setSelectedVrmId: (id: string) => void
   vrmOptions: AssetOption[]
+  // ── B6: two loading domains, deliberately separate ──────────────────
+  // vrmOptions* = bootstrap 1 full character for <Canvas> (refresh). AvatarsPanel must NOT read this for grid.
   /** False while the initial character request is in flight — nothing to render yet. */
   vrmOptionsLoading: boolean
   /** Set when the character could not be fetched; the picker shows it verbatim. */
   vrmOptionsError: string | null
+  // catalog* = lazy lite list for AvatarsPanel grid (panel open). CharacterViewer must NOT read this.
   /** True while the lite catalog (GET /characters) is in flight — AvatarsPanel skeleton. */
   catalogLoading: boolean
   /** Set when the lite catalog failed; AvatarsPanel shows error + retry. */

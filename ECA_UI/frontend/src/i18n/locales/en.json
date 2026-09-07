@@ -77,6 +77,7 @@
     "default_badge": "Default",
     "empty": "No VRM avatars found",
     "load_failed": "Could not load characters.",
+    "loading": "Loading characters...",
     "set_default": "Set as default",
     "subtitle": "Choose a 3D avatar",
     "title": "Characters"

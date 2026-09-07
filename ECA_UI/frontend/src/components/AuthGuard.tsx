@@ -1,4 +1,5 @@
 import { useState, useEffect, useCallback, useRef } from 'react'
+import { useTranslation } from 'react-i18next'
 import { Outlet, Navigate } from 'react-router-dom'
 import { fetchAuthSession, fetchUserAttributes, signOut } from 'aws-amplify/auth'
 import type { AuthSession } from 'aws-amplify/auth'
@@ -35,6 +36,7 @@ function clearLocalAuthStorage() {
 }
 
 function CognitoAuthGuard() {
+  const { t } = useTranslation()
   const [user, setUser] = useState<AuthUser | undefined>(undefined)
   const [attrs, setAttrs] = useState<FetchUserAttributesOutput | undefined>(undefined)
   const [ready, setReady] = useState(false)
@@ -120,7 +122,7 @@ function CognitoAuthGuard() {
   }, [])
 
   if (!ready) {
-    return <LoadingOverlay text="Initializing Workspace..." fullScreen={true} />
+    return <LoadingOverlay text={t('common.initializing_workspace')} fullScreen={true} />
   }
 
   // Auth gate. VITE_AUTH_DISABLED=true (in .env.local) skips it so the login

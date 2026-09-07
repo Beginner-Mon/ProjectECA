@@ -3,6 +3,7 @@ import { Canvas, useFrame, useLoader, useThree } from '@react-three/fiber'
 import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js'
 import { VRMLoaderPlugin, VRMHumanBoneName } from '@pixiv/three-vrm'
 import type { VRM } from '@pixiv/three-vrm'
+import { useTranslation } from 'react-i18next'
 import { useTheme } from '../hooks/useTheme'
 import { OrbitControls, Html } from '@react-three/drei'
 import { useRef, useEffect, useState, Suspense, useMemo } from 'react'
@@ -795,6 +796,7 @@ function scheduleIdle(task: () => void): { cancel: () => void } {
 /* ───────────────────────── Exported Component ────────────────────── */
 
 export default function CharacterViewer() {
+  const { t } = useTranslation()
   const { theme } = useTheme()
   const { selectedVrmId, vrmOptions, vrmOptionsError, avatarRef, setClipInfo, currentState } = useMotion()
 
@@ -903,10 +905,10 @@ export default function CharacterViewer() {
         <LoadingOverlay
           text={
             vrmOptionsError
-              ? `Could not load characters: ${vrmOptionsError}`
+              ? t('character.load_error', { error: vrmOptionsError })
               : vrmUrl
-                ? 'Loading 3D Avatar...'
-                : 'Loading characters...'
+                ? t('character.loading_avatar')
+                : t('character.loading_catalog')
           }
         />
       )}

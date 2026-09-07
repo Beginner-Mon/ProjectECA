@@ -6,6 +6,7 @@
     "copy": "Sao chép",
     "delete": "Xóa",
     "hide_password": "Ẩn mật khẩu",
+    "initializing_workspace": "Đang khởi tạo không gian làm việc...",
     "loading": "Đang tải...",
     "on": "Bật",
     "refresh": "Tải lại",
@@ -192,5 +193,10 @@
     "not_connected": "Chưa kết nối",
     "placeholder_api_key": "Dán khóa API của bạn ở đây...",
     "status": "Trạng thái"
+  },
+  "character": {
+    "load_error": "Không tải được nhân vật: {{error}}",
+    "loading_avatar": "Đang tải avatar 3D...",
+    "loading_catalog": "Đang tải danh sách nhân vật..."
   }
 }

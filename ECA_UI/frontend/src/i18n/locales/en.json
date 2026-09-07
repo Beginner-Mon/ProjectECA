@@ -6,6 +6,7 @@
     "copy": "Copy",
     "delete": "Delete",
     "hide_password": "Hide password",
+    "initializing_workspace": "Initializing Workspace...",
     "loading": "Loading...",
     "on": "On",
     "refresh": "Refresh",
@@ -192,5 +193,10 @@
     "not_connected": "Not connected",
     "placeholder_api_key": "Paste your API key here...",
     "status": "Status"
+  },
+  "character": {
+    "load_error": "Could not load characters: {{error}}",
+    "loading_avatar": "Loading 3D Avatar...",
+    "loading_catalog": "Loading characters..."
   }
 }

@@ -1,4 +1,5 @@
 import { Link, Outlet } from 'react-router-dom'
+import { useTranslation } from 'react-i18next'
 import { Music2 } from 'lucide-react'
 import FloatingNavBar from '../components/FloatingNavBar'
 import ChatPanel from '../components/ChatPanel'
@@ -10,12 +11,13 @@ import { AvatarBgProvider } from '../contexts/AvatarBgContext'
 import { PreferencesProvider } from '../contexts/PreferencesContext'
 
 function AudioToggle() {
+  const { t } = useTranslation()
   const { isMusicPlaying, toggleMusic } = useMotion()
 
   return (
     <button
       onClick={toggleMusic}
-      title={isMusicPlaying ? 'Pause Music' : 'Play Music'}
+      title={isMusicPlaying ? t('media.pause_music') : t('media.play_music')}
       className="relative w-7 h-7 flex items-center justify-center text-muted-foreground transition-all duration-200 shrink-0"
     >
       <Music2 className="w-[14px] h-[14px]" />
@@ -27,6 +29,7 @@ function AudioToggle() {
 }
 
 export default function MainLayout() {
+  const { t } = useTranslation()
   return (
     // Outermost of the four: MotionProvider reads the default character from it,
     // and AvatarBgProvider the background colour. One GET /me/preferences serves
@@ -38,7 +41,7 @@ export default function MainLayout() {
         <AvatarBgProvider>
         <main className="relative h-screen w-screen overflow-hidden bg-background">
         <div className="fixed top-5 left-5 z-[9990] flex items-center opacity-80 transition-opacity hover:opacity-100">
-          <Link to="/" aria-label="Go to home" className="flex items-center">
+          <Link to="/" aria-label={t('nav.go_home')} className="flex items-center">
             <img src="/eca-logo.svg" alt="" className="w-14 h-14" />
             <h1 className="text-2xl font-semibold tracking-[0.18em] text-foreground">ECA</h1>
           </Link>

@@ -1,4 +1,5 @@
 ﻿import { useState, useEffect, useCallback, lazy, Suspense } from 'react'
+import { useTranslation } from 'react-i18next'
 import { X, ChevronLeft } from 'lucide-react'
 
 const ProfileContent = lazy(() => import('./ProfileContent'))
@@ -17,6 +18,7 @@ interface ProfileSettingsModalProps {
 const ROOT_VIEW = 'main' as const
 
 export default function ProfileSettingsModal({ type, onClose, onBack }: ProfileSettingsModalProps) {
+  const { t } = useTranslation()
   const [settingsView, setSettingsView] = useState<'main' | 'providers' | 'provider-detail' | 'graphics' | 'about' | 'language'>(ROOT_VIEW)
   const [selectedProvider, setSelectedProvider] = useState<{ id: string; name: string } | undefined>()
 
@@ -66,24 +68,24 @@ export default function ProfileSettingsModal({ type, onClose, onBack }: ProfileS
 
   const title =
     type === 'profile'
-      ? 'User Profile'
+      ? t('modal.user_profile')
       : type === 'notifications'
-        ? 'Notifications'
+        ? t('modal.notifications')
         : type === 'billing'
-          ? 'Billing Sandbox'
+          ? t('modal.billing_sandbox')
         : type === 'graphics'
-          ? 'Graphic Settings'
+          ? t('modal.graphics')
         : type === 'about'
-            ? 'About Us'
+            ? t('about.title')
             : settingsView === 'language'
-              ? 'Language'
+              ? t('modal.language')
               : settingsView === 'graphics'
-                ? 'Graphic Settings'
+                ? t('modal.graphics')
                 : settingsView === 'about'
-                  ? 'About Us'
+                  ? t('about.title')
                   : settingsView === 'provider-detail'
-                    ? selectedProvider?.name ?? 'Settings'
-                    : 'Settings'
+                    ? selectedProvider?.name ?? t('modal.settings')
+                    : t('modal.settings')
 
   return (
     <div className="fixed inset-0 z-[10000] flex items-end md:items-center justify-center">
@@ -100,7 +102,7 @@ export default function ProfileSettingsModal({ type, onClose, onBack }: ProfileS
             <button
               onClick={handleBack}
               className="p-1.5 -ml-1 rounded-lg text-muted-foreground hover:text-foreground hover:bg-secondary/60 transition-colors"
-              aria-label="Back"
+              aria-label={t('modal.back')}
             >
               <ChevronLeft className="w-5 h-5" />
             </button>
@@ -109,12 +111,13 @@ export default function ProfileSettingsModal({ type, onClose, onBack }: ProfileS
           <button
             onClick={onClose}
             className="p-1.5 rounded-lg text-muted-foreground hover:text-foreground hover:bg-secondary/60 transition-colors"
+            aria-label={t('common.close')}
           >
             <X className="w-5 h-5" />
           </button>
         </div>
 
-        <Suspense fallback={<div className="flex-1 flex items-center justify-center text-sm text-muted-foreground">Loading...</div>}>
+        <Suspense fallback={<div className="flex-1 flex items-center justify-center text-sm text-muted-foreground">{t('modal.loading')}</div>}>
           {type === 'profile' ? (
             <ProfileContent onClose={onClose} />
           ) : type === 'notifications' ? (

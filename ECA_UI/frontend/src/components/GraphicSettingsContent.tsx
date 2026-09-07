@@ -12,33 +12,33 @@ interface Section {
   }[]
 }
 
-const SECTIONS: Section[] = [
-  {
-    title: 'Performance',
-    items: [
-      { key: 'ssao', label: 'SSAO', description: 'Screen-space ambient occlusion for depth' },
-      { key: 'particles', label: 'Floating Particles', description: 'Animated background particles' },
-    ],
-  },
-  {
-    title: 'Visual',
-    items: [
-      { key: 'vignette', label: 'Vignette', description: 'Subtle dark edges around the viewport' },
-      { key: 'mtoon', label: 'MToon Shading', description: 'Anime-style toon shading on materials' },
-    ],
-  },
-  {
-    title: 'Debug',
-    items: [
-      { key: 'showGrid', label: 'Show Grid', description: 'Reference grid on the ground plane' },
-      { key: 'showAxes', label: 'Show Axes', description: 'Colored X/Y/Z axis indicators' },
-    ],
-  },
-]
-
 export default function GraphicSettingsContent() {
   const { t } = useTranslation()
   const { settings, setSetting } = useGraphics()
+
+  const SECTIONS: Section[] = [
+    {
+      title: t('graphics.performance'),
+      items: [
+        { key: 'ssao', label: t('graphics.ssao'), description: t('graphics.ssao_desc') },
+        { key: 'particles', label: t('graphics.particles'), description: t('graphics.particles_desc') },
+      ],
+    },
+    {
+      title: t('graphics.visual'),
+      items: [
+        { key: 'vignette', label: t('graphics.vignette'), description: t('graphics.vignette_desc') },
+        { key: 'mtoon', label: t('graphics.mtoon'), description: t('graphics.mtoon_desc') },
+      ],
+    },
+    {
+      title: t('graphics.debug'),
+      items: [
+        { key: 'showGrid', label: t('graphics.show_grid'), description: t('graphics.show_grid_desc') },
+        { key: 'showAxes', label: t('graphics.show_axes'), description: t('graphics.show_axes_desc') },
+      ],
+    },
+  ]
 
   return (
     <div className="flex-1 overflow-y-auto p-6">

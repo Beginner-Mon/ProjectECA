@@ -74,6 +74,7 @@ function AvatarCard({
   onSetDefault: () => void
   onClick: () => void
 }) {
+  const { t } = useTranslation()
   const [imgFailed, setImgFailed] = useState(false)
   const disabled = disabledReason !== null
 
@@ -187,7 +188,7 @@ function AvatarCard({
 
       {isDefault && (
         <span className="absolute top-2 left-2 flex items-center gap-1 rounded-full bg-amber-500 text-white text-[10px] font-semibold px-2 py-0.5 shadow-sm pointer-events-none">
-          <Star className="w-3 h-3" /> Default
+          <Star className="w-3 h-3" /> {t('avatars.default_badge')}
         </span>
       )}
 
@@ -208,7 +209,7 @@ function AvatarCard({
           }}
           className="absolute bottom-2 left-2 right-2 rounded-md bg-primary text-primary-foreground text-[11px] font-medium py-1.5 text-center shadow-md hover:bg-primary/90 transition-colors"
         >
-          Set as default
+          {t('avatars.set_default')}
         </span>
       )}
     </button>

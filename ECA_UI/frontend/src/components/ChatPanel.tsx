@@ -1,6 +1,6 @@
 import { useState, useRef, useEffect, type KeyboardEvent } from 'react'
 import { useTranslation } from 'react-i18next'
-import { ArrowUp, Mic, Sparkles, Square, Plus, Globe, Image, X, Volume2, SquarePen, Loader2 } from 'lucide-react'
+import { ArrowUp, Mic, Sparkles, Square, Plus, Globe, Image, X, Volume2, SquarePen } from 'lucide-react'
 import TextareaAutosize from 'react-textarea-autosize'
 import { ScrollArea } from './ui/scroll-area'
 import ChatMessage from './ChatMessage'
@@ -99,8 +99,7 @@ export default function ChatPanel() {
         <div className="py-2 md:py-4 space-y-1 md:space-y-2 max-w-full overflow-x-hidden">
           {isSwitching ? (
             <div className="flex flex-col items-center justify-center py-16 gap-3 text-muted-foreground">
-              <Loader2 className="w-6 h-6 animate-spin" />
-              <p className="text-xs">{t('common.wait')}</p>
+              <p className="text-xs animate-pulse">{t('common.wait')}</p>
             </div>
           ) : (
             <>
@@ -111,11 +110,11 @@ export default function ChatPanel() {
                 return <ChatMessage key={msg.id} message={msg} isStreaming={isGenerating && i === messages.length - 1} />
               })}
 
-              {/* typing / stage indicator */}
+              {/* typing / stage indicator — text pulse từ backend, không Loader2 */}
               {(isTyping || stageLabel) && (
                 <div className="px-3 md:px-5 py-2 md:py-3 animate-message-in">
                   {stageLabel ? (
-                    <p className="text-xs text-muted-foreground italic">{stageLabel}</p>
+                    <p className="text-xs text-muted-foreground italic animate-pulse">{stageLabel}</p>
                   ) : (
                     <div className="flex gap-1.5">
                       <span className="w-1.5 h-1.5 rounded-full bg-muted-foreground/50 animate-bounce [animation-delay:-0.3s]" />

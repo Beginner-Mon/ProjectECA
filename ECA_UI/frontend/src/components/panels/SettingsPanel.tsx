@@ -1,3 +1,4 @@
+import { useTranslation } from 'react-i18next'
 import { Settings, IdCard, Bell, CreditCard, LogOut } from 'lucide-react'
 import { useAuth } from '../../contexts/AuthContext'
 
@@ -6,11 +7,12 @@ interface SettingsPanelProps {
 }
 
 export default function SettingsPanel({ onOpenModal }: SettingsPanelProps) {
+  const { t } = useTranslation()
   const { signOut } = useAuth()
 
   const items = [
-    { id: 'profile' as const, icon: IdCard, label: 'Profile' },
-    { id: 'settings' as const, icon: Settings, label: 'Settings' },
+    { id: 'profile' as const, icon: IdCard, label: t('settings.profile') },
+    { id: 'settings' as const, icon: Settings, label: t('settings.title') },
   ]
 
   return (
@@ -34,7 +36,7 @@ export default function SettingsPanel({ onOpenModal }: SettingsPanelProps) {
         className="flex items-center gap-3 w-full px-3 py-2.5 rounded-xl text-sm text-foreground hover:bg-secondary/60 transition-colors"
       >
         <Bell className="w-4 h-4 shrink-0 text-muted-foreground" />
-        <span>Notifications</span>
+        <span>{t('settings.notifications')}</span>
       </button>
 
       <div className="h-px bg-border/40 my-1" />
@@ -43,7 +45,7 @@ export default function SettingsPanel({ onOpenModal }: SettingsPanelProps) {
         className="flex items-center gap-3 w-full px-3 py-2.5 rounded-xl text-sm text-foreground hover:bg-secondary/60 transition-colors"
       >
         <CreditCard className="w-4 h-4 shrink-0" />
-        <span>Billing</span>
+        <span>{t('settings.billing')}</span>
       </button>
 
       <div className="h-px bg-border/40 my-1" />
@@ -53,7 +55,7 @@ export default function SettingsPanel({ onOpenModal }: SettingsPanelProps) {
         className="flex items-center gap-3 w-full px-3 py-2.5 rounded-xl text-sm text-destructive hover:bg-destructive/10 transition-colors font-medium"
       >
         <LogOut className="w-4 h-4 shrink-0" />
-        <span>Sign Out</span>
+        <span>{t('profile.sign_out')}</span>
       </button>
     </div>
   )

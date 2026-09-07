@@ -1,0 +1,42 @@
+<mxfile host="app.diagrams.net" pages="4">
+  <diagram name="01 - Native Signup" id="native">
+    <mxGraphModel dx="1414" dy="897" grid="1" gridSize="10" guides="1" tooltips="1" connect="1" arrows="1" fold="1" page="1" pageScale="1" pageWidth="1700" pageHeight="900" math="0" shadow="0">
+      <root>
+        <mxCell id="note1" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#ebf8ff;strokeColor=#90cdf4;fontSize=10;fontColor=#2b6cb0;" value="Ket luan: 4 ham Auth API (auth-status/set-password/link-google/lookup) KHONG chay truoc Cognito khi signup. lookup la hint, 3 ham kia doi co token." vertex="1">
+          <mxGeometry height="30" width="720" x="40" y="250" as="geometry" />
+        </mxCell>
+        <mxCell id="1" parent="note1" />
+      </root>
+    </mxGraphModel>
+  </diagram>
+  <diagram name="02 - Google Hosted UI" id="google">
+    <mxGraphModel grid="1" page="1" gridSize="10" guides="1" tooltips="1" connect="1" arrows="1" fold="1" pageScale="1" pageWidth="1700" pageHeight="900" math="0" shadow="0">
+      <root>
+        <mxCell id="n2b" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#fff2cc;strokeColor=#d6b656;fontSize=10;" value="Luu y: login_hint KHONG forward toi Google (Cognito docs), chi prompt=SELECT_ACCOUNT duoc forward." vertex="1">
+          <mxGeometry height="20" width="1200" x="40" y="220" as="geometry" />
+        </mxCell>
+        <mxCell id="1" parent="n2b" />
+      </root>
+    </mxGraphModel>
+  </diagram>
+  <diagram name="03 - Link Google Safe" id="link">
+    <mxGraphModel grid="1" page="1" gridSize="10" guides="1" tooltips="1" connect="1" arrows="1" fold="1" pageScale="1" pageWidth="1700" pageHeight="900" math="0" shadow="0">
+      <root>
+        <mxCell id="n3b" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#fed7d7;strokeColor=#e53e3e;fontSize=10;fontColor=#9b2c2c;" value="IAM: link-google CHI co AdminLinkProviderForUser, KHONG co AdminCreateUser -&gt; dam bao bang quyen" vertex="1">
+          <mxGeometry height="20" width="1330" x="40" y="220" as="geometry" />
+        </mxCell>
+        <mxCell id="1" parent="n3b" />
+      </root>
+    </mxGraphModel>
+  </diagram>
+  <diagram name="04 - JWT Verify" id="jwt">
+    <mxGraphModel grid="1" page="1" gridSize="10" guides="1" tooltips="1" connect="1" arrows="1" fold="1" pageScale="1" pageWidth="1700" pageHeight="900" math="0" shadow="0">
+      <root>
+        <mxCell id="h5" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#ebf8ff;strokeColor=#90cdf4;fontSize=10;fontColor=#2b6cb0;" value="Khong co REQUIRE_AUTH, phan biet moi truong bang issuer/audience" vertex="1">
+          <mxGeometry height="20" width="800" x="40" y="200" as="geometry" />
+        </mxCell>
+        <mxCell id="1" parent="h5" />
+      </root>
+    </mxGraphModel>
+  </diagram>
+</mxfile>

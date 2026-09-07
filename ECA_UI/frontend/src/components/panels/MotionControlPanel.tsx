@@ -85,7 +85,7 @@ export default function MotionControlPanel() {
 
   const triggerEmotion = (emotion: CanonicalEmotion) => {
     const controller = avatarRef.current
-    if (!controller) { setLastEmotion('no avatar attached'); return }
+    if (!controller) { setLastEmotion(t('motion.no_avatar')); return }
     controller.setEmotion(emotion, emotionIntensity, emotionDurationMs)
     setLastEmotion(
       `${emotion} @ ${emotionIntensity.toFixed(2)} / ${emotionDurationMs}ms` +
@@ -157,7 +157,7 @@ export default function MotionControlPanel() {
                           ? 'bg-primary text-primary-foreground border-primary shadow-sm'
                           : 'bg-secondary/40 text-muted-foreground border-border/20 hover:bg-secondary/60 hover:text-foreground'
                       }`}
-                      title={locked ? `Lock ${axis} — drag won't change ${axis}` : `Unlock ${axis}`}
+                      title={locked ? t('motion.lock_axis', { axis }) : t('motion.unlock_axis', { axis })}
                     >
                       <Lock className="w-3 h-3" />
                       {axis}
@@ -182,7 +182,7 @@ export default function MotionControlPanel() {
             <div className="flex flex-col gap-1.5 p-3 rounded-xl bg-secondary/20 border border-border/10">
               <span className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground flex items-center gap-1.5">
                 <Activity className="w-3 h-3" />
-                Character state
+                {t('motion.character_state')}
               </span>
               <select
                 value={stateOptions.some((o) => o.id === currentState) ? currentState : ''}
@@ -193,7 +193,7 @@ export default function MotionControlPanel() {
                     manually selectable, so show the live state as a read-only row. */}
                 {!stateOptions.some((o) => o.id === currentState) && (
                   <option value="" className="bg-card text-muted-foreground">
-                    {currentState} (auto)
+                    {currentState} {t('motion.auto')}
                   </option>
                 )}
                 {stateOptions.map((option) => (
@@ -214,7 +214,7 @@ export default function MotionControlPanel() {
           <div className="flex flex-col gap-1.5 p-3 rounded-xl bg-secondary/20 border border-border/10">
               <span className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground flex items-center gap-1.5">
                 <Activity className="w-3 h-3" />
-                Xem lại động tác
+                {t('motion.replay_motion')}
               </span>
               <select
                 // Uncontrolled with a reset: picking the SAME motion twice must
@@ -281,7 +281,7 @@ export default function MotionControlPanel() {
               </div>
 
               <label className="flex items-center justify-between gap-2 text-[11px] text-muted-foreground">
-                intensity
+                {t('motion.intensity')}
                 <input
                   type="range"
                   min={0}
@@ -295,7 +295,7 @@ export default function MotionControlPanel() {
               </label>
 
               <label className="flex items-center justify-between gap-2 text-[11px] text-muted-foreground">
-                duration
+                {t('motion.duration')}
                 <input
                   type="range"
                   min={0}
@@ -309,8 +309,8 @@ export default function MotionControlPanel() {
               </label>
 
               <div className="flex justify-between text-[10px] text-muted-foreground/60">
-                <span>mode: {avatarMode}</span>
-                <span className="text-right max-w-[60%] truncate">last: {lastEmotion}</span>
+                <span>{t('motion.mode')} {avatarMode}</span>
+                <span className="text-right max-w-[60%] truncate">{t('motion.last')} {lastEmotion}</span>
               </div>
             </div>
           )}

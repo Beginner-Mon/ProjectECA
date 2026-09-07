@@ -69,6 +69,7 @@ describe('locale catalogues', () => {
       'about.studio', // company name
       'notifications.version', // product name + version
       'chat.chip_web', // "Web" is the same word in both
+      'graphics.ssao', // acronym
     ])
 
     const untranslated = [...flatVi]

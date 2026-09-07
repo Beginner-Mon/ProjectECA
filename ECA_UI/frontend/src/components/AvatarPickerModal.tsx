@@ -1,4 +1,5 @@
 import { useEffect, useCallback } from 'react'
+import { useTranslation } from 'react-i18next'
 import { X, Check } from 'lucide-react'
 import AvatarWithLogo from './AvatarWithLogo'
 import { AVATAR_BG_OPTIONS, type AvatarBgId } from '@/lib/avatarPalette'
@@ -10,6 +11,7 @@ interface Props {
 }
 
 export default function AvatarPickerModal({ currentColorId, onSelect, onClose }: Props) {
+  const { t } = useTranslation()
   const handleKeyDown = useCallback(
     (e: KeyboardEvent) => {
       if (e.key === 'Escape') onClose()
@@ -32,11 +34,11 @@ export default function AvatarPickerModal({ currentColorId, onSelect, onClose }:
       <div className="relative w-full max-w-sm rounded-2xl bg-card border border-border/50 shadow-[0_16px_64px_rgba(0,0,0,0.4)] flex flex-col overflow-hidden animate-panel-in">
         {/* header */}
         <div className="flex items-center gap-2 px-4 py-3 border-b border-border/40 shrink-0">
-          <h3 className="text-sm font-semibold text-foreground flex-1">Choose avatar background</h3>
+          <h3 className="text-sm font-semibold text-foreground flex-1">{t('avatar.choose_background')}</h3>
           <button
             onClick={onClose}
             className="p-1.5 rounded-lg text-muted-foreground hover:text-foreground hover:bg-secondary/60 transition-colors"
-            aria-label="Close"
+            aria-label={t('common.close')}
           >
             <X className="w-4 h-4" />
           </button>
@@ -45,12 +47,12 @@ export default function AvatarPickerModal({ currentColorId, onSelect, onClose }:
         {/* preview on top */}
         <div className="flex flex-col items-center justify-center py-6 gap-3 border-b border-border/30">
           <AvatarWithLogo size="lg" bgClassName={currentBg.className} logoClassName={currentBg.logoClassName} />
-          <p className="text-xs text-muted-foreground">Preview</p>
+          <p className="text-xs text-muted-foreground">{t('avatar.preview')}</p>
         </div>
 
         {/* options below */}
         <div className="p-4">
-          <p className="text-xs font-medium text-muted-foreground mb-3">Background color</p>
+          <p className="text-xs font-medium text-muted-foreground mb-3">{t('avatar.background_color')}</p>
           <div className="grid grid-cols-4 gap-3">
             {AVATAR_BG_OPTIONS.map((opt) => {
               const isSelected = opt.id === currentColorId

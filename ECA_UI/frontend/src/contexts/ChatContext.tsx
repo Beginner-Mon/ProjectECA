@@ -94,6 +94,7 @@ export function ChatProvider({ children }: { children: ReactNode }) {
   const [sessionsDirty, setSessionsDirty] = useState(true)
   const [isSwitching, setIsSwitching] = useState(false)
   const switchingRef = useRef(false)
+  const stageTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null)
 
   // Audio recording — frontend only (no backend)
   const { isRecording, duration: recordingDuration, audioUrl: previewAudioUrl, audioBlob: previewAudioBlob, error: recordingError, start: startRecord, stop: stopRecord, cancel: cancelRecord } = useAudioRecorder()
@@ -307,6 +308,7 @@ export function ChatProvider({ children }: { children: ReactNode }) {
    * once the Sessions panel is wired up. */
   const startNewSession = useCallback(() => {
     abortControllerRef.current?.abort()
+    if (stageTimeoutRef.current) clearTimeout(stageTimeoutRef.current)
     // Clear the pointer rather than mint a new one. Minting here is what left
     // an id behind for anyone who opened a new chat and never typed in it —
     // and that id 404'd on every load from then on, permanently. The next
@@ -407,6 +409,7 @@ export function ChatProvider({ children }: { children: ReactNode }) {
 
   const handleStop = useCallback(() => {
     abortControllerRef.current?.abort()
+    if (stageTimeoutRef.current) clearTimeout(stageTimeoutRef.current)
     setIsTyping(false)
     setStageLabel(null)
     setIsGenerating(false)
@@ -426,7 +429,15 @@ export function ChatProvider({ children }: { children: ReactNode }) {
 
     setMessages((prev) => [...prev, userMsg])
     setInput('')
-    setIsTyping(true)
+    // Hiển thị stage ngay để tránh 3 chấm đầu, dùng text pulse thay vì dots
+    setIsTyping(false)
+    setStageLabel(uiRef.current.stage_searching)
+    // Fallback: nếu backend không emit retriever (chat thuần hoặc miss event)
+    // thì sau 2.5s tự chuyển sang COMPOSING để không treo ở SEARCHING
+    if (stageTimeoutRef.current) clearTimeout(stageTimeoutRef.current)
+    stageTimeoutRef.current = setTimeout(() => {
+      setStageLabel((prev) => (prev === uiRef.current.stage_searching ? uiRef.current.stage_composing : prev))
+    }, 2500)
     setIsGenerating(true)
     thinkingRef.current = true
     void transitionTo('thinking_intro')
@@ -481,13 +492,17 @@ export function ChatProvider({ children }: { children: ReactNode }) {
               setIsTyping(false)
               setStageLabel(STAGE_SEARCHING)
             } else if (node === 'retriever_agent' && status === 'complete') {
+              if (stageTimeoutRef.current) clearTimeout(stageTimeoutRef.current)
               setStageLabel(STAGE_COMPOSING)
             } else if (node === 'synthesizer' && status === 'started') {
-              setStageLabel(null)
+              // Giữ COMPOSING tới token đầu để che TTFT, không tắt ở đây
+              if (stageTimeoutRef.current) clearTimeout(stageTimeoutRef.current)
+              setStageLabel(STAGE_COMPOSING)
             }
           } else if (type === 'token') {
-            setIsTyping(false)
+            if (stageTimeoutRef.current) clearTimeout(stageTimeoutRef.current)
             setStageLabel(null)
+            setIsTyping(false)
             endThinking()
             const content = (data as { content: string }).content
             setMessages((prev) =>
@@ -562,6 +577,8 @@ export function ChatProvider({ children }: { children: ReactNode }) {
               notice(copy.motion_busy)
             } else if (m.job_id) {
               const jobId = m.job_id
+              if (stageTimeoutRef.current) clearTimeout(stageTimeoutRef.current)
+              setStageLabel(copy.motion_rendering)
               notice(copy.motion_rendering)
               void (async () => {
                 try {
@@ -585,6 +602,7 @@ export function ChatProvider({ children }: { children: ReactNode }) {
               })()
             }
           } else if (type === 'done') {
+            if (stageTimeoutRef.current) clearTimeout(stageTimeoutRef.current)
             if (!isCurrent()) return
             setStageLabel(null)
             setIsGenerating(false)

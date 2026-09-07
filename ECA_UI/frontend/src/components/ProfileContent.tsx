@@ -124,10 +124,10 @@ export default function ProfileContent({ onClose }: Props) {
     }`
 
   const navItems = [
-    { id: 'profile', icon: IdCard, label: 'Profile' },
-    { id: 'display-name', icon: User, label: 'Display Name' },
-    { id: 'security', icon: KeyRound, label: 'Security' },
-    { id: 'account-linked', icon: Link2, label: 'Account Linked' },
+    { id: 'profile', icon: IdCard, label: t('profile.nav_profile') },
+    { id: 'display-name', icon: User, label: t('profile.nav_display_name') },
+    { id: 'security', icon: KeyRound, label: t('profile.nav_security') },
+    { id: 'account-linked', icon: Link2, label: t('profile.nav_account_linked') },
   ]
 
   return (
@@ -154,26 +154,26 @@ export default function ProfileContent({ onClose }: Props) {
           className="flex items-center gap-2.5 w-full px-3 py-2 rounded-lg text-sm text-destructive hover:bg-destructive/10 transition-colors font-medium"
         >
           <LogOut className="w-4 h-4" />
-          Sign Out
+          {t('profile.sign_out')}
         </button>
       </nav>
 
       <div className="flex-1 md:w-3/4 overflow-y-auto p-6">
         <div ref={setRef('profile')} className="scroll-mt-6 pb-5">
-          <h3 className="text-base font-semibold text-foreground mb-5">Profile</h3>
+          <h3 className="text-base font-semibold text-foreground mb-5">{t('profile.nav_profile')}</h3>
           <div className="flex items-center gap-4">
             <div className="relative shrink-0">
               <AvatarWithLogo size="md" bgClassName={bg.className} logoClassName={bg.logoClassName} />
               <button
                 onClick={() => setShowPicker(true)}
-                aria-label="Edit avatar background"
+                aria-label={t('profile.edit_avatar_bg')}
                 className="absolute -right-1 -bottom-1 w-6 h-6 rounded-full bg-card border border-border shadow-md flex items-center justify-center text-muted-foreground hover:text-foreground hover:bg-secondary transition-colors cursor-pointer"
               >
                 <Pen className="w-3 h-3" />
               </button>
             </div>
             <div>
-              <p className="text-xs text-muted-foreground">Signed in as</p>
+              <p className="text-xs text-muted-foreground">{t('profile.signed_in_as')}</p>
               <p className="text-sm font-medium text-foreground">{displayName ?? email.split('@')[0]}</p>
               <p className="text-sm text-muted-foreground">{email}</p>
             </div>
@@ -190,26 +190,26 @@ export default function ProfileContent({ onClose }: Props) {
             <input
               type="text"
               defaultValue={displayName ?? ''}
-              placeholder="Enter your display name"
+              placeholder={t('profile.placeholder_display_name')}
               className="w-full text-sm text-foreground bg-secondary/40 rounded-lg px-3 py-2 border border-border/30 outline-none focus:border-primary/50 transition-colors"
             />
           </div>
           <button className="px-4 py-2 rounded-lg text-sm font-medium bg-primary text-primary-foreground hover:bg-primary/90 transition-colors">
-            Save Changes
+            {t('profile.save_changes')}
           </button>
         </div>
 
         <div className="border-b border-border/40" />
 
         <div ref={setRef('security')} className="scroll-mt-6 py-5 space-y-4">
-          <h3 className="text-base font-semibold text-foreground">Security</h3>
+          <h3 className="text-base font-semibold text-foreground">{t('profile.security')}</h3>
           <p className="text-sm text-muted-foreground">{t('profile.security_desc')}</p>
           <button
             onClick={handleOpenSetPassword}
             disabled={!!emailSub}
             className="px-4 py-2 rounded-lg text-sm font-medium bg-primary text-primary-foreground hover:bg-primary/90 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
           >
-            Set my Password
+            {t('profile.set_password')}
           </button>
         </div>
 
@@ -232,7 +232,7 @@ export default function ProfileContent({ onClose }: Props) {
                 <div>
                   <p className="text-sm font-medium text-foreground">Google</p>
                   <p className="text-xs text-muted-foreground">
-                    {googleLinked || linkState === 'linked' ? 'Connected' : 'Not connected'}
+                    {googleLinked || linkState === 'linked' ? t('profile.connected') : t('profile.not_connected')}
                   </p>
                 </div>
               </div>

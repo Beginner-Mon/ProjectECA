@@ -2,11 +2,15 @@
   "common": {
     "add": "Thêm",
     "cancel": "Hủy",
+    "close": "Đóng",
     "copy": "Sao chép",
     "delete": "Xóa",
+    "hide_password": "Ẩn mật khẩu",
+    "loading": "Đang tải...",
     "on": "Bật",
     "refresh": "Tải lại",
     "send": "Gửi",
+    "show_password": "Hiện mật khẩu",
     "wait": "Chờ tí..."
   },
   "chat": {
@@ -35,13 +39,23 @@
     "title": "Trợ lý ảo"
   },
   "motion": {
+    "auto": "(tự động)",
     "camera_config": "Cấu hình camera",
+    "character_state": "Trạng thái nhân vật",
+    "duration": "thời lượng",
     "empty": "Chưa có động tác nào — hãy hỏi để xem một động tác",
     "enable_pan": "Bật kéo khung hình",
     "expressions_dev": "Biểu cảm (dev)",
     "follow_target": "Bám mục tiêu (lookAt)",
+    "intensity": "cường độ",
+    "last": "vừa rồi:",
     "lock_axes": "Khóa trục (kéo chuột phải)",
+    "lock_axis": "Khóa {{axis}} — kéo không đổi {{axis}}",
+    "mode": "chế độ:",
+    "unlock_axis": "Mở khóa {{axis}}",
+    "no_avatar": "chưa gắn avatar",
     "replay_hint": "Chọn để xem lại —",
+    "replay_motion": "Xem lại động tác",
     "reset": "Đặt lại",
     "subtitle": "Nguồn animation & phát lại",
     "target_head": "Mục tiêu: Đầu",
@@ -59,19 +73,24 @@
     "untitled": "(trống)"
   },
   "avatars": {
+    "default_badge": "Mặc định",
     "empty": "Không tìm thấy avatar VRM nào",
     "load_failed": "Không tải được danh sách nhân vật.",
+    "set_default": "Đặt làm mặc định",
     "subtitle": "Chọn một avatar 3D",
     "title": "Nhân vật"
   },
   "settings": {
     "about": "Về chúng tôi",
     "about_desc": "Tìm hiểu thêm về đội ngũ và sứ mệnh của chúng tôi",
+    "billing": "Thanh toán",
     "graphics": "Cài đặt đồ họa",
     "graphics_desc": "Điều chỉnh chất lượng hình ảnh và hiệu năng",
     "language": "Ngôn ngữ",
     "language_hint": "Ngôn ngữ của trang web. Trợ lý vẫn trả lời theo đúng ngôn ngữ bạn viết.",
+    "notifications": "Thông báo",
     "official": "Chính thức",
+    "profile": "Hồ sơ",
     "providers": "Chọn nhà cung cấp",
     "providers_desc": "Cấu hình nhà cung cấp LLM và khóa API của bạn",
     "terms": "Điều khoản dịch vụ",
@@ -80,9 +99,13 @@
   },
   "about": {
     "by": "bởi Ordinary Studio",
+    "contact": "Liên hệ",
+    "contact_body": "Có câu hỏi hay muốn hợp tác? Liên hệ với chúng tôi tại",
+    "introduction": "Giới thiệu",
     "product": "Project ECA",
     "studio": "Ordinary Studio",
     "summary": "Một trợ lý AI đa phương thức tương tác, kết hợp AI hội thoại, tổng hợp chuyển động 3D và giọng nói. Dành cho những ai say mê hoạt ảnh nhân vật 3D thời gian thực và sinh chuyển động bằng AI — không cần animation thu sẵn.",
+    "title": "Về chúng tôi",
     "who_we_are": "Chúng tôi là ai",
     "who_we_are_body": "— một nhóm sinh viên năm cuối bắt đầu dự án này như một đồ án tốt nghiệp. Chúng tôi cùng chung niềm đam mê với kết xuất 3D thời gian thực, AI và tương tác người–máy, muốn đẩy xa giới hạn của một trợ lý ảo."
   },
@@ -93,12 +116,81 @@
   "profile": {
     "account_linked": "Tài khoản đã liên kết",
     "account_linked_desc": "Liên kết các tài khoản để đăng nhập liền mạch trên mọi nền tảng.",
+    "connected": "Đã kết nối",
     "display_name": "Tên hiển thị",
     "display_name_desc": "Đây là tên hiển thị công khai của bạn. Có thể là tên thật hoặc bút danh.",
     "display_name_label": "Tên hiển thị",
+    "edit_avatar_bg": "Chỉnh nền avatar",
     "linked": "Đã liên kết",
     "linking": "Đang liên kết…",
+    "nav_account_linked": "Tài khoản đã liên kết",
+    "nav_display_name": "Tên hiển thị",
+    "nav_profile": "Hồ sơ",
+    "nav_security": "Bảo mật",
+    "not_connected": "Chưa kết nối",
+    "placeholder_display_name": "Nhập tên hiển thị",
+    "save_changes": "Lưu thay đổi",
     "security": "Bảo mật",
-    "security_desc": "Đặt mật khẩu để đăng nhập bằng email."
+    "security_desc": "Đặt mật khẩu để đăng nhập bằng email.",
+    "set_password": "Đặt mật khẩu",
+    "sign_out": "Đăng xuất",
+    "signed_in_as": "Đã đăng nhập với"
+  },
+  "nav": {
+    "avatars": "Nhân vật",
+    "chat": "Trò chuyện",
+    "drag_to_reposition": "Kéo để di chuyển",
+    "go_home": "Về trang chủ",
+    "motion": "Chuyển động",
+    "profile_settings": "Hồ sơ & Cài đặt",
+    "sessions": "Phiên"
+  },
+  "media": {
+    "pause_music": "Tạm dừng nhạc",
+    "play_music": "Phát nhạc"
+  },
+  "modal": {
+    "back": "Quay lại",
+    "billing_sandbox": "Thanh toán thử nghiệm",
+    "close": "Đóng",
+    "graphics": "Cài đặt đồ họa",
+    "language": "Ngôn ngữ",
+    "loading": "Đang tải...",
+    "notifications": "Thông báo",
+    "settings": "Cài đặt",
+    "user_profile": "Hồ sơ người dùng"
+  },
+  "avatar": {
+    "background_color": "Màu nền",
+    "choose_background": "Chọn nền avatar",
+    "preview": "Xem trước"
+  },
+  "graphics": {
+    "debug": "Gỡ lỗi",
+    "mtoon": "Tô bóng MToon",
+    "mtoon_desc": "Tô bóng hoạt hình kiểu anime cho vật liệu",
+    "particles": "Hạt lơ lửng",
+    "particles_desc": "Hạt nền chuyển động",
+    "performance": "Hiệu năng",
+    "show_axes": "Hiện trục",
+    "show_axes_desc": "Chỉ báo trục X/Y/Z màu",
+    "show_grid": "Hiện lưới",
+    "show_grid_desc": "Lưới tham chiếu trên mặt đất",
+    "ssao": "SSAO",
+    "ssao_desc": "Che bóng không gian màn hình tạo chiều sâu",
+    "vignette": "Viền tối",
+    "vignette_desc": "Viền tối nhẹ quanh khung nhìn",
+    "visual": "Hiển thị"
+  },
+  "providers": {
+    "api_key_hint": "Nhập khóa API {{name}} của bạn để kết nối",
+    "check_connection": "Kiểm tra kết nối",
+    "checking": "Đang kiểm tra...",
+    "connected": "Đã kết nối",
+    "connection_failed": "Kết nối thất bại",
+    "insert_api_key": "Nhập khóa API",
+    "not_connected": "Chưa kết nối",
+    "placeholder_api_key": "Dán khóa API của bạn ở đây...",
+    "status": "Trạng thái"
   }
 }

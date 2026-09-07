@@ -66,11 +66,11 @@ export default function ChatSessionsPanel({ onSessionSelected }: { onSessionSele
     <div className="flex flex-col h-full">
       <div className="px-4 py-3 border-b border-border/40 shrink-0 flex items-center justify-between">
         <div>
-          <h2 className="text-base font-semibold text-foreground tracking-tight flex items-center gap-2">
+          <h2 className="text-sm font-semibold text-foreground tracking-tight flex items-center gap-2">
             <MessageSquare className="w-4 h-4 text-primary" />
             {t('sessions.title')}
           </h2>
-          <p className="text-xs text-muted-foreground mt-0.5">{t('sessions.subtitle')}</p>
+          <p className="text-[11px] text-muted-foreground mt-0.5">{t('sessions.subtitle')}</p>
         </div>
         <button
           onClick={handleRefresh}
@@ -114,7 +114,7 @@ export default function ChatSessionsPanel({ onSessionSelected }: { onSessionSele
                   className={`
                     w-full flex items-center justify-between px-3 py-2 rounded-lg
                     transition-colors duration-150 group
-                    ${isActive ? 'bg-secondary/60' : 'bg-card hover:bg-secondary/60'}
+                    ${isActive ? 'bg-foreground/[0.08] ring-1 ring-border' : 'hover:bg-foreground/[0.06]'}
                   `}
                 >
                   <span

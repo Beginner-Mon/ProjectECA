@@ -1,4 +1,5 @@
 import { useState, useRef, useCallback, useEffect } from 'react'
+import { useTranslation } from 'react-i18next'
 import { Menu, X, Music2 } from 'lucide-react'
 import type { PanelId, NavItem } from './FloatingNavBar'
 import { useAvatarBg } from '../hooks/useAvatarBg'
@@ -22,6 +23,7 @@ export default function MobileNavBar({
   isMusicPlaying,
   toggleMusic,
 }: MobileNavBarProps) {
+  const { t } = useTranslation()
   const { bg } = useAvatarBg()
 
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false)
@@ -232,7 +234,7 @@ export default function MobileNavBar({
             {/* Background Music Toggle */}
             <button
               onClick={toggleMusic}
-              title={isMusicPlaying ? 'Pause Music' : 'Play Music'}
+              title={isMusicPlaying ? t('media.pause_music') : t('media.play_music')}
               className="relative flex items-center justify-center text-muted-foreground transition-all duration-200"
               style={{ width: btnSize - 4, height: btnSize - 4 }}
             >
@@ -249,7 +251,7 @@ export default function MobileNavBar({
                 setMobileMenuOpen(false)
               }}
               className={`rounded-full transition-colors`}
-              title="Profile & Settings"
+              title={t('nav.profile_settings')}
             >
               <AvatarWithLogo size="xs" bgClassName={bg.className} logoClassName={bg.logoClassName} />
             </button>

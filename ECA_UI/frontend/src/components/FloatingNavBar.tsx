@@ -26,6 +26,7 @@ import {
 // (commented out)" behind @ts-expect-error. Nothing references them, and an
 // unused import is not a reservation — git remembers. Reinstate when the
 // feature lands.
+import { useTranslation } from 'react-i18next'
 import { useMediaQuery } from '../lib/use-media-query'
 import { useAvatarBg } from '../hooks/useAvatarBg'
 import { useMotion } from '../hooks/useMotion'
@@ -54,6 +55,14 @@ const NAV_ITEMS: NavItem[] = [
   { id: 'avatars', icon: UserRound, label: 'Avatars' },
   { id: 'motion', icon: Settings2, label: 'Motion' },
 ]
+
+function useTranslatedNavItems(): NavItem[] {
+  const { t } = useTranslation()
+  return NAV_ITEMS.map((item) => ({
+    ...item,
+    label: t(`nav.${String(item.id)}`),
+  }))
+}
 
 /* ─── Panel content map ─── */
 function PanelContent({
@@ -144,7 +153,9 @@ function DraggableBar({
   onIconClick: (id: PanelId) => void
   isDragging: boolean
 }) {
+  const { t } = useTranslation()
   const { bg } = useAvatarBg()
+  const translatedNavItems = useTranslatedNavItems()
 
   const { attributes, listeners, setNodeRef, transform } = useDraggable({
     id: 'floating-nav-bar',
@@ -187,7 +198,7 @@ function DraggableBar({
           text-muted-foreground/40 hover:text-muted-foreground/70 transition-colors
           ${isHorizontal ? 'px-1 py-2' : 'py-1 px-2'}
         `}
-        title="Drag to reposition"
+        title={t('nav.drag_to_reposition')}
       >
         <GripVertical className={`w-4 h-4 ${isHorizontal ? 'rotate-90' : ''}`} />
       </div>
@@ -196,7 +207,7 @@ function DraggableBar({
       <div className={`${isHorizontal ? 'w-px h-6' : 'h-px w-6'} bg-border/40`} />
 
       {/* Nav icons */}
-      {NAV_ITEMS.map((item) => {
+      {translatedNavItems.map((item) => {
         const Icon = item.icon
         const isActive = activePanel === item.id
         return (
@@ -228,7 +239,7 @@ function DraggableBar({
       {/* Avatar circle (replaces settings icon) */}
       <button
         onClick={() => onIconClick('settings')}
-        title="Profile & Settings"
+        title={t('nav.profile_settings')}
         className={`
           shrink-0 ${isHorizontal ? 'ml-2' : 'mt-2'}
           rounded-full cursor-pointer
@@ -247,6 +258,7 @@ function DraggableBar({
 export default function FloatingNavBar() {
   const isMobile = useMediaQuery('(max-width: 767px)')
   const { isMusicPlaying, toggleMusic } = useMotion()
+  const translatedNavItems = useTranslatedNavItems()
 
   const [dockedEdge, setDockedEdge] = useState<DockedEdge>('left')
   const [activePanel, setActivePanel] = useState<PanelId>(null)
@@ -474,7 +486,7 @@ export default function FloatingNavBar() {
             setModalType(type)
             setActivePanel(null)
           }}
-          navItems={NAV_ITEMS}
+          navItems={translatedNavItems}
           isMusicPlaying={isMusicPlaying}
           toggleMusic={toggleMusic}
           panelContent={

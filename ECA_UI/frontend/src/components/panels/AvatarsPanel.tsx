@@ -1,7 +1,8 @@
 import { useEffect, useState, type CSSProperties } from 'react'
 import { useTranslation } from 'react-i18next'
-import { UserRound, Check, TriangleAlert, Star } from 'lucide-react'
+import { UserRound, Check, TriangleAlert, Star, RefreshCw } from 'lucide-react'
 import { ScrollArea } from '../ui/scroll-area'
+import { Button } from '../ui/button'
 import { useMotion } from '../../hooks/useMotion'
 import { incompatibilityReason, type Character } from '../../lib/characters'
 import { usePreferences } from '../../hooks/usePreferences'
@@ -216,6 +217,33 @@ function AvatarCard({
   )
 }
 
+/** Fallback skeleton count until GET /characters returns `total`.
+ *  Hardcoding 4 breaks when characters are added (review 07-09-2026). 6 covers the
+ *  current 4 plus near-term growth; after the first fetch we know the real count. */
+const SKELETON_FALLBACK = 6
+
+/** B2 reverted (07-09-2026): skeleton stays uniform gray, not per-character mesh.
+ *  Mesh colors are identity (violet/cyan/rose/emerald per slug) — showing them
+ *  in skeleton misleads user into thinking content is loaded. Gray = clearly loading. */
+function AvatarGridSkeleton({ count }: { count: number }) {
+  return (
+    <div
+      className="grid grid-cols-2 gap-3"
+      role="status"
+      aria-busy="true"
+      aria-label="Loading characters"
+    >
+      {Array.from({ length: count }, (_, i) => (
+        <div
+          key={i}
+          className="w-full aspect-[5/6] rounded-xl bg-secondary/60 animate-pulse"
+        />
+      ))}
+      <span className="sr-only">Loading characters...</span>
+    </div>
+  )
+}
+
 export default function AvatarsPanel() {
   const { t } = useTranslation()
   const {
@@ -224,13 +252,24 @@ export default function AvatarsPanel() {
     vrmOptions,
     vrmOptionsLoading,
     vrmOptionsError,
+    catalogLoading,
+    catalogError,
     ensureCatalogLoaded,
   } = useMotion()
 
-  // Lazy: only when panel mounts does it need the 4 lite cards (not on initial web load)
+  // Lazy: only when panel mounts does it need the lite cards (not on initial web load)
   useEffect(() => {
     void ensureCatalogLoaded()
   }, [ensureCatalogLoaded])
+
+  // B1: combine bootstrap + catalog loading — either means the grid is not ready.
+  // Before fix only vrmOptionsLoading was checked, so the lazy GET /characters had no skeleton.
+  const isLoading = vrmOptionsLoading || catalogLoading
+  // Show catalog error if present, otherwise bootstrap error (both mean "cannot show grid")
+  const isError = catalogError ?? vrmOptionsError
+  // Skeleton count: if we already have options use its length (covers future growth after first fetch),
+  // otherwise fallback. Math.max ensures we never show fewer skeletons than the current grid would need.
+  const skeletonCount = vrmOptions.length > 1 ? vrmOptions.length : SKELETON_FALLBACK
 
   // The star reads from the same fetch everything else does, and writing to it
   // is one optimistic call — no session check, no version to carry, and nothing
@@ -255,30 +294,38 @@ export default function AvatarsPanel() {
 
       <ScrollArea className="flex-1 min-h-0">
         <div className="p-4">
-          {/* Skeletons in the real grid, so nothing jumps when the catalog lands. */}
-          {vrmOptionsLoading && (
-            <div className="grid grid-cols-2 gap-3">
-              {Array.from({ length: 4 }, (_, i) => (
-                <div key={i} className="w-full aspect-[5/6] rounded-xl bg-secondary/60 animate-pulse" />
-              ))}
+          {/* B1: skeletons cover BOTH bootstrap and lazy catalog. Same grid as real cards so nothing jumps.
+              Count is dynamic (SKELETON_FALLBACK until we know total) — adding characters no longer desyncs. */}
+          {isLoading && <AvatarGridSkeleton count={skeletonCount} />}
+
+          {/* B4: named error + retry — empty grid and failed fetch look identical otherwise.
+              Retry calls ensureCatalogLoaded() again (hasLite is still false, catalogLoading guards double-click). */}
+          {!isLoading && isError && (
+            <div className="flex flex-col items-center justify-center py-8 gap-3 text-center px-4">
+              <div className="w-10 h-10 rounded-full bg-destructive/10 flex items-center justify-center">
+                <TriangleAlert className="w-5 h-5 text-destructive/70" />
+              </div>
+              <div className="space-y-1">
+                <p className="text-xs font-medium text-destructive">{t('avatars.load_failed')}</p>
+                <p className="text-[11px] text-muted-foreground line-clamp-2 break-words">{isError}</p>
+              </div>
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => void ensureCatalogLoaded()}
+                className="mt-1 gap-1.5"
+              >
+                <RefreshCw className="w-3.5 h-3.5" />
+                {t('common.refresh')}
+              </Button>
             </div>
           )}
 
-          {/* Named, not swallowed: an empty grid and a failed fetch look identical
-              otherwise, and the difference decides whether anyone goes looking. */}
-          {vrmOptionsError && (
-            <p className="text-xs text-destructive text-center py-4 px-2">
-              {t('avatars.load_failed')}
-              <br />
-              <span className="text-muted-foreground">{vrmOptionsError}</span>
-            </p>
-          )}
-
-          {!vrmOptionsLoading && !vrmOptionsError && vrmOptions.length === 0 && (
+          {!isLoading && !isError && vrmOptions.length === 0 && (
             <p className="text-xs text-muted-foreground text-center py-4">{t('avatars.empty')}</p>
           )}
 
-          {!vrmOptionsLoading && vrmOptions.length > 0 && (
+          {!isLoading && !isError && vrmOptions.length > 0 && (
             <div className="grid grid-cols-2 gap-3">
               {vrmOptions.map((option) => {
                 const character: Character | undefined = option.character

@@ -44,7 +44,11 @@ export interface MotionContextType {
   vrmOptionsLoading: boolean
   /** Set when the character could not be fetched; the picker shows it verbatim. */
   vrmOptionsError: string | null
-  /** Ensure lite catalog (4-col) for AvatarsPanel — lazy, called when panel opens. */
+  /** True while the lite catalog (GET /characters) is in flight — AvatarsPanel skeleton. */
+  catalogLoading: boolean
+  /** Set when the lite catalog failed; AvatarsPanel shows error + retry. */
+  catalogError: string | null
+  /** Ensure lite catalog (grid) for AvatarsPanel — lazy, called when panel opens. */
   ensureCatalogLoaded: () => Promise<void>
 
   /**

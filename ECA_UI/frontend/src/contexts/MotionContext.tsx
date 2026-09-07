@@ -46,12 +46,17 @@ export function MotionProvider({ children }: { children: ReactNode }) {
   const [vrmOptions, setVrmOptions] = useState<AssetOption[]>([])
   const [vrmOptionsLoading, setVrmOptionsLoading] = useState(true)
   const [vrmOptionsError, setVrmOptionsError] = useState<string | null>(null)
+  const [catalogLoading, setCatalogLoading] = useState(false)
+  const [catalogError, setCatalogError] = useState<string | null>(null)
   const [selectedVrmId, setSelectedVrmId] = useState('')
   const [hasLite, setHasLite] = useState(false)
 
-  // Lazy catalog for AvatarsPanel — only when panel opens does it need the 4 lite cards.
+  // Lazy catalog for AvatarsPanel — only when panel opens does it need the lite cards.
+  // B1 fix: exposes catalogLoading so AvatarsPanel can show skeleton while GET /characters is in flight.
   const ensureCatalogLoaded = useCallback(async () => {
-    if (hasLite) return
+    if (hasLite || catalogLoading) return
+    setCatalogLoading(true)
+    setCatalogError(null)
     try {
       const lites = await fetchCharacters()
       if (lites.length === 0) return
@@ -71,8 +76,11 @@ export function MotionProvider({ children }: { children: ReactNode }) {
       setVrmOptionsError(null)
     } catch (err) {
       console.error('[MotionContext] lite catalog failed', err)
+      setCatalogError(err instanceof Error ? err.message : 'Could not load characters')
+    } finally {
+      setCatalogLoading(false)
     }
-  }, [hasLite])
+  }, [hasLite, catalogLoading])
 
   const { data: prefs, loading: prefsLoading } = usePreferences()
   // Once, and only once. A later change to the default character — someone
@@ -384,6 +392,8 @@ export function MotionProvider({ children }: { children: ReactNode }) {
       vrmOptions,
       vrmOptionsLoading,
       vrmOptionsError,
+      catalogLoading,
+      catalogError,
       ensureCatalogLoaded,
       transitionTo,
       currentState,
@@ -416,6 +426,8 @@ export function MotionProvider({ children }: { children: ReactNode }) {
       vrmOptions,
       vrmOptionsLoading,
       vrmOptionsError,
+      catalogLoading,
+      catalogError,
       ensureCatalogLoaded,
       transitionTo,
       currentState,

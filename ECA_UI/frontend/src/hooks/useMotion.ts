@@ -54,6 +54,15 @@ export interface MotionContextType {
   /** Ensure lite catalog (grid) for AvatarsPanel — lazy, called when panel opens. */
   ensureCatalogLoaded: () => Promise<void>
 
+  // ── B3: character switch — unified loading for card + viewer ───────
+  // Lag is only in Canvas (GLB parse), but card and viewer share one visual language (violet).
+  /** Id of character being switched to (fetch + GLB load). Null when idle. AvatarsPanel reads this for mini overlay. */
+  switchingId: string | null
+  /** True while the new avatar is loading/parse (from click until VRMCharacter revealed). Viewer reads this. */
+  isAvatarSwitching: boolean
+  /** Called by CharacterViewer when revealed (posed && avatarAttached) changes. */
+  setAvatarReady: (ready: boolean) => void
+
   /**
    * FSM — the single entry point for every state change. Returns false when the
    * transition is disallowed or the clip is unavailable (e.g. before the model

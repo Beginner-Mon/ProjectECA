@@ -1,7 +1,7 @@
 import { useEffect, useState, type CSSProperties } from 'react'
 import { useTranslation } from 'react-i18next'
 import { motion } from 'framer-motion'
-import { UserRound, Check, TriangleAlert, Star, RefreshCw } from 'lucide-react'
+import { UserRound, Check, TriangleAlert, Star, RefreshCw, Loader2 } from 'lucide-react'
 import { ScrollArea } from '../ui/scroll-area'
 import { Button } from '../ui/button'
 import { useMotion } from '../../hooks/useMotion'
@@ -64,6 +64,7 @@ function AvatarCard({
   disabledReason,
   isSelected,
   isDefault,
+  isSwitching,
   onSetDefault,
   onClick,
 }: {
@@ -73,12 +74,14 @@ function AvatarCard({
   disabledReason: string | null
   isSelected: boolean
   isDefault: boolean
+  isSwitching?: boolean
   onSetDefault: () => void
   onClick: () => void
 }) {
   const { t } = useTranslation()
   const [imgFailed, setImgFailed] = useState(false)
   const disabled = disabledReason !== null
+  const showSwitching = !!isSwitching
 
   return (
     <button
@@ -194,7 +197,7 @@ function AvatarCard({
         </span>
       )}
 
-      {isSelected && !isDefault && !disabled && (
+      {isSelected && !isDefault && !disabled && !showSwitching && (
         <motion.span
           role="button"
           tabIndex={0}
@@ -224,6 +227,19 @@ function AvatarCard({
             transition={{ duration: 0.55, ease: 'easeInOut' }}
           />
         </motion.span>
+      )}
+
+      {/* B3: unified violet switching — miniature of LoadingOverlay (same violet glow + border).
+          Lag is only in Canvas, but this DOM overlay still spins while Canvas is frozen. */}
+      {showSwitching && (
+        <span className="absolute inset-0 rounded-[inherit] bg-background/60 backdrop-blur-[2px] flex items-center justify-center pointer-events-none">
+          <span className="relative flex items-center justify-center">
+            <span className="absolute inset-0 rounded-full blur-md bg-violet-500/30 animate-pulse" />
+            <span className="relative flex h-10 w-10 items-center justify-center rounded-full border border-violet-500/20 bg-background/40 shadow-[0_0_12px_rgba(139,92,246,0.15)]">
+              <Loader2 className="w-5 h-5 animate-spin text-violet-500" />
+            </span>
+          </span>
+        </span>
       )}
     </button>
   )
@@ -267,6 +283,7 @@ export default function AvatarsPanel() {
     vrmOptionsError,
     catalogLoading,
     catalogError,
+    switchingId,
     ensureCatalogLoaded,
   } = useMotion()
 
@@ -277,6 +294,7 @@ export default function AvatarsPanel() {
 
   // B1: combine bootstrap + catalog loading — either means the grid is not ready.
   // Before fix only vrmOptionsLoading was checked, so the lazy GET /characters had no skeleton.
+  // B3: switching does NOT affect grid loading — grid stays visible with mini overlay on switching card.
   const isLoading = vrmOptionsLoading || catalogLoading
   // Show catalog error if present, otherwise bootstrap error (both mean "cannot show grid")
   const isError = catalogError ?? vrmOptionsError
@@ -343,6 +361,7 @@ export default function AvatarsPanel() {
             <div className="grid grid-cols-2 gap-3">
               {vrmOptions.map((option) => {
                 const character: Character | undefined = option.character
+                const isSwitching = switchingId === option.id
                 return (
                   <AvatarCard
                     key={option.id}
@@ -352,6 +371,7 @@ export default function AvatarsPanel() {
                     disabledReason={character ? incompatibilityReason(character) : null}
                     isSelected={selectedVrmId === option.id}
                     isDefault={defaultSlug === option.id}
+                    isSwitching={isSwitching}
                     onSetDefault={() => handleSetDefault(option.id)}
                     onClick={() => setSelectedVrmId(option.id)}
                   />

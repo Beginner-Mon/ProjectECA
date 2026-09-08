@@ -29,6 +29,7 @@ import SceneLighting from './scene/SceneLighting'
 import SceneEnvironment from './scene/SceneEnvironment'
 import ScenePostProcessing from './scene/ScenePostProcessing'
 import ClickRipple from './scene/ClickRipple'
+import ThinkingBubble from './scene/ThinkingBubble'
 import { GraphicsProvider } from '../contexts/GraphicsContext'
 import { useGraphics } from '../hooks/useGraphics'
 
@@ -626,6 +627,7 @@ return (
         onReady={onReady}
         avatarRef={avatarRef}
       />
+      <ThinkingBubble vrmRef={vrmRef} />
       <FloatingParticles />
 
       {/* ── Debug Overlays ─────────────────────────────────────── */}
@@ -798,7 +800,7 @@ function scheduleIdle(task: () => void): { cancel: () => void } {
 export default function CharacterViewer() {
   const { t } = useTranslation()
   const { theme } = useTheme()
-  const { selectedVrmId, vrmOptions, vrmOptionsError, avatarRef, setClipInfo, currentState } = useMotion()
+  const { selectedVrmId, vrmOptions, vrmOptionsError, avatarRef, setClipInfo, currentState, isAvatarSwitching, setAvatarReady } = useMotion()
 
   const selectedVrm = vrmOptions.find((o) => o.id === selectedVrmId)
   // No local fallback any more: the models live on the CDN, so until the
@@ -818,6 +820,13 @@ export default function CharacterViewer() {
   useEffect(() => {
     setClipInfo(null)
   }, [vrmUrl, setClipInfo])
+
+  // B3: unified switch — when VRMCharacter reports revealed, clear switching flag so
+  // both card mini-overlay and viewer fullscreen overlay turn off together.
+  // Lag is only in Canvas, but this sync keeps the two DOM overlays matching.
+  useEffect(() => {
+    setAvatarReady(viewerReady)
+  }, [viewerReady, setAvatarReady])
 
   // Click ripple state — uses native pointerdown with capture to fire before
   // R3F's internal event system calls stopPropagation on the canvas element.
@@ -897,11 +906,14 @@ export default function CharacterViewer() {
       ))}
 
       {/* Loading overlay: shown while the model has no pose yet (initial load
-          / model switch). Replaces the old T-pose flash with a spinner.
-          A catalog failure is called out by name — without this the screen is
-          an indistinguishable spinner whether the CDN is unreachable or the
-          model is merely still downloading. */}
-      {!viewerReady && (
+           / model switch). Replaces the old T-pose flash with a spinner.
+           A catalog failure is called out by name — without this the screen is
+           an indistinguishable spinner whether the CDN is unreachable or the
+           model is merely still downloading.
+           B3: viewerReady and isAvatarSwitching share lifecycle — both DOM overlays
+           (card mini + viewer fullscreen) use same violet style and turn off together
+           when revealed. Canvas freeze does not affect these DOM overlays. */}
+      {(!viewerReady || isAvatarSwitching) && (
         <LoadingOverlay
           text={
             vrmOptionsError

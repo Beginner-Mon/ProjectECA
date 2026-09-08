@@ -53,6 +53,10 @@ export function MotionProvider({ children }: { children: ReactNode }) {
   const [catalogError, setCatalogError] = useState<string | null>(null)
   const [selectedVrmId, setSelectedVrmId] = useState('')
   const [hasLite, setHasLite] = useState(false)
+  // B3: unified switch — one flag for both card mini-overlay and viewer fullscreen overlay.
+  // Lag is only in Canvas (GLB parse), but both overlays share violet style and same lifecycle.
+  const [switchingId, setSwitchingId] = useState<string | null>(null)
+  const [isAvatarSwitching, setIsAvatarSwitching] = useState(false)
 
   // Lazy catalog for AvatarsPanel — only when panel opens does it need the lite cards.
   // B1 fix: exposes catalogLoading so AvatarsPanel can show skeleton while GET /characters is in flight.
@@ -349,12 +353,31 @@ export function MotionProvider({ children }: { children: ReactNode }) {
     }
   }, [isMusicPlaying])
 
+  // B3: unified switch — single visual language for card + viewer.
+  // Lag is only in Canvas (GLB parse), but both overlays share violet style.
+  // isAvatarSwitching is true from click until VRMCharacter revealed (posed && avatarAttached).
+  const setAvatarReady = useCallback((ready: boolean) => {
+    if (ready) {
+      setIsAvatarSwitching(false)
+      setSwitchingId(null)
+    }
+  }, [])
+
   // Wrapped setter: if the picked id has no vrm_url (lite), fetch full in background
   const setSelectedVrmIdWrapped = useCallback((id: string) => {
-    setSelectedVrmId(id)
-    // If we already have full url, nothing to do; else fetch full character for <Canvas>
+    // Guard: ignore click while already switching (prevents race)
+    if (switchingId) return
+    // If already have full url, switch instantly — no loading needed
     const existing = vrmOptions.find((o) => o.id === id)
-    if (existing && existing.url) return
+    if (existing && existing.url) {
+      setSelectedVrmId(id)
+      return
+    }
+    // Lite → need fetch. Mark switching immediately so card shows violet mini-overlay
+    // and viewer will show fullscreen overlay. Keep true until VRMCharacter calls setAvatarReady(true).
+    setSwitchingId(id)
+    setIsAvatarSwitching(true)
+    setSelectedVrmId(id)
     void (async () => {
       try {
         const c = await fetchCharacter(id)
@@ -363,7 +386,11 @@ export function MotionProvider({ children }: { children: ReactNode }) {
           map.set(c.slug, toAssetOption(c))
           return Array.from(map.values())
         })
+        // Keep isAvatarSwitching true — CharacterViewer will clear it when revealed
       } catch {
+        // Fetch failed → clear switching so UI does not hang
+        setIsAvatarSwitching(false)
+        setSwitchingId(null)
         // Fall back to Anne if the slug no longer resolves. PATCH refuses an
         // unknown or disabled character, but a character switched off after it
         // was stored still 404s here.
@@ -383,7 +410,7 @@ export function MotionProvider({ children }: { children: ReactNode }) {
         }
       }
     })()
-  }, [vrmOptions])
+  }, [vrmOptions, switchingId])
 
   // Memoized: an inline object literal here would be a new value on EVERY
   // provider render, re-rendering every consumer — including CharacterViewer,
@@ -399,6 +426,9 @@ export function MotionProvider({ children }: { children: ReactNode }) {
       catalogLoading,
       catalogError,
       ensureCatalogLoaded,
+      switchingId,
+      isAvatarSwitching,
+      setAvatarReady,
       transitionTo,
       currentState,
       stateOptions: STATE_OPTIONS,
@@ -433,6 +463,9 @@ export function MotionProvider({ children }: { children: ReactNode }) {
       catalogLoading,
       catalogError,
       ensureCatalogLoaded,
+      switchingId,
+      isAvatarSwitching,
+      setAvatarReady,
       transitionTo,
       currentState,
       playMotionFile,

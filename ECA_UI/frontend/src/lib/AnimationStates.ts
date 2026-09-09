@@ -70,10 +70,10 @@ interface StateBase {
   facial: { wander: boolean; hold?: CanonicalEmotion }
   /** Present ⇒ selectable in the debug state dropdown. Absent ⇒ not manual. */
   debugLabel?: string
-  /** Cross-fade seconds when LEAVING this state. Default 0.3. */
-  crossfade?: number
-  /** Per-destination override of `crossfade`, for the rare asymmetric case. */
-  crossfadeTo?: Partial<Record<CharState, number>>
+  /** Blend seconds (inertial decay ceiling) when LEAVING this state. Default 0.3. */
+  blendSec?: number
+  /** Per-destination override of `blendSec`, for the rare asymmetric case. */
+  blendSecTo?: Partial<Record<CharState, number>>
   /** Declarative timer trigger: after this long IN this state, go to `to`. */
   autoAfter?: { to: CharState; minSec: number; maxSec: number }
 }
@@ -110,7 +110,7 @@ export const STATES: Record<CharState, StateDef> = {
     camera: 'head',
     facial: { wander: true },
     debugLabel: 'Action Greeting',
-    crossfade: 0.5,
+    blendSec: 0.5,
   },
   bored: {
     source: { loader: 'fbx', match: /random_bored/i },
@@ -120,7 +120,7 @@ export const STATES: Record<CharState, StateDef> = {
     camera: 'head',
     facial: { wander: true },
     debugLabel: 'Random Bored',
-    crossfade: 0.5,
+    blendSec: 0.5,
   },
   thinking_intro: {
     source: {
@@ -140,7 +140,13 @@ export const STATES: Record<CharState, StateDef> = {
     source: {
       loader: 'fbx',
       match: /thinking/i,
-      subclip: { name: 'outro', start: 75, end: 127, fps: 30 },
+      // Thinking.fbx is 128 frames (0-127) at a native 30 fps and loops: frame
+      // 127 is identical to frame 0, which is what brings the character back to
+      // something close to idle. `AnimationUtils.subclip` treats `end` as
+      // EXCLUSIVE, so 127 asks for 75..126 — the final settle frame is only
+      // included today because `127/30*30` lands on 126.99999999999999 and
+      // slips under the test. 128 asks for it on purpose.
+      subclip: { name: 'outro', start: 75, end: 128, fps: 30 },
     },
     loop: 'once',
     onFinished: 'idle',
@@ -155,7 +161,7 @@ export const STATES: Record<CharState, StateDef> = {
     reach: 'anytime',
     camera: 'hips',
     facial: { wander: false, hold: 'neutral' },
-    crossfade: 0.8,
+    blendSec: 0.8,
   },
   /**
    * Every per-character animation, sharing one state.
@@ -184,7 +190,7 @@ export const STATES: Record<CharState, StateDef> = {
     reach: 'from-idle',
     camera: 'head',
     facial: { wander: false, hold: 'happy' },
-    crossfade: 0.5,
+    blendSec: 0.5,
   },
 }
 
@@ -216,12 +222,12 @@ export function staticSourceOf(state: CharState): StaticSource | null {
   return source === 'dynamic' ? null : source
 }
 
-const DEFAULT_CROSSFADE = 0.3
+const DEFAULT_BLEND_SEC = 0.3
 
-/** Cross-fade seconds for FROM→TO. Replaces the old TransitionConfig module. */
-export function crossfadeFor(from: CharState, to: CharState): number {
+/** Blend seconds (inertial decay ceiling) for FROM→TO. Replaces the old TransitionConfig module. */
+export function blendDurationFor(from: CharState, to: CharState): number {
   const def = STATES[from]
-  return def.crossfadeTo?.[to] ?? def.crossfade ?? DEFAULT_CROSSFADE
+  return def.blendSecTo?.[to] ?? def.blendSec ?? DEFAULT_BLEND_SEC
 }
 
 export const CHAR_STATES = Object.keys(STATES) as CharState[]

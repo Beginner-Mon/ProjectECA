@@ -17,7 +17,15 @@
 import * as THREE from 'three'
 import type { VRM } from '@pixiv/three-vrm'
 import type { AnimationRegistry } from './AnimationRegistry'
-import { canTransition, crossfadeFor, loopModeOf, onFinishedOf, type CharState } from './AnimationStates'
+import {
+  canTransition,
+  blendDurationFor,
+  cameraModeOf,
+  loopModeOf,
+  onFinishedOf,
+  type CharState,
+} from './AnimationStates'
+import { PoseInertializer } from './Inertializer'
 
 export interface ClipInfo {
   state: CharState
@@ -34,10 +42,15 @@ export interface AnimationControllerOptions {
   /**
    * Fires just BEFORE a one-shot auto-transitions to its successor (e.g.
    * exercise → idle). Use this to capture the character's final world position
-   * and begin ramping the root-motion offset over the crossfade duration.
-   * `crossfadeSec` is the fade duration the mixer will use for this transition.
+   * and begin ramping the root-motion offset over the blend duration.
+   * `blendSec` is the blend duration the mixer/inertializer will use for this transition.
    */
-  onBeforeAutoTransition?: (completed: CharState, next: CharState, crossfadeSec: number) => void
+  onBeforeAutoTransition?: (completed: CharState, next: CharState, blendSec: number) => void
+  /**
+   * Blend mode. 'inertial' (default) uses PoseInertializer for C1-continuous
+   * transitions; 'crossfade' keeps the legacy fadeOut/fadeIn path.
+   */
+  blendMode?: 'inertial' | 'crossfade'
 }
 
 type StateListener = (state: CharState) => void
@@ -63,6 +76,8 @@ export class AnimationController {
   private readonly vrm: VRM
   private readonly registry: AnimationRegistry
   private readonly options: AnimationControllerOptions
+  private readonly inertializer: PoseInertializer
+  private lastDelta = 1 / 60
 
   constructor(
     vrm: VRM,
@@ -74,6 +89,33 @@ export class AnimationController {
     this.options = options
     this.mixer = new THREE.AnimationMixer(vrm.scene)
     this.mixer.addEventListener('finished', this.handleFinished)
+    this.inertializer = new PoseInertializer(vrm)
+  }
+
+  get blendMode(): 'inertial' | 'crossfade' {
+    return this.options.blendMode ?? 'inertial'
+  }
+
+  setBlendMode(mode: 'inertial' | 'crossfade'): void {
+    ;(this.options as { blendMode?: 'inertial' | 'crossfade' }).blendMode = mode
+    if (mode === 'crossfade') {
+      this.inertializer.cancel()
+    } else {
+      // Switching to inertial: clear any fading state that crossfade left
+      for (const a of this.fading) {
+        a.stop()
+        this.mixer.uncacheAction(a.getClip())
+      }
+      this.fading = []
+    }
+  }
+
+  get isInertialActive(): boolean {
+    return this.inertializer.isActive
+  }
+
+  setGroupTarget(target: THREE.Object3D | null): void {
+    if (target) this.inertializer.setGroupTarget(target)
   }
 
   /**
@@ -123,26 +165,60 @@ export class AnimationController {
     if (!this.playing) {
       // Debug pause: adopt the state without animating. `setPlaying(true)` will
       // start this action from the top.
-      if (prev && prev !== action) prev.stop()
+      if (prev && prev !== action) {
+        prev.stop()
+        this.mixer.uncacheAction(prev.getClip())
+      }
+      this.inertializer.cancel()
       this.commit(next, action, clip)
       return true
     }
 
-    action.play()
+    const useInertial = this.blendMode === 'inertial'
 
-    if (prev && prev !== action) {
-      const fade = crossfadeFor(from, next)
-      // A finished LoopOnce action sits at weight 0 with clampWhenFinished;
-      // restoring weight first makes the fade-out actually visible.
-      if (!prev.isRunning()) prev.setEffectiveWeight(1)
-      prev.fadeOut(fade)
-      action.fadeIn(fade)
-      this.fading = this.fading.filter((a) => a !== action)
-      this.fading.push(prev)
-    } else if (!prev) {
-      // First action on this model: full weight immediately. Fading in from zero
-      // would expose the bind pose for the whole fade duration.
-      action.setEffectiveWeight(1)
+    if (useInertial) {
+      if (prev && prev !== action) {
+        const maxSec = blendDurationFor(from, next)
+        // Inertial: switch to new clip at weight 1 immediately.
+        // Order is critical: stop old → play new → flush dst → begin inertial (which restores src).
+        prev.stop()
+        this.mixer.uncacheAction(prev.getClip())
+        action.play()
+        action.setEffectiveWeight(1)
+        this.mixer.update(0)
+        // Hand the hips displacement to the model group only when the clip we
+        // are leaving actually travelled. The wide `hips` framing is what marks
+        // a one-shot as having meaningful root translation — the same test
+        // CharacterViewer uses to arm RootMotionAccumulator.
+        const travelled = loopModeOf(from) === 'once' && cameraModeOf(from) === 'hips'
+        this.inertializer.begin(maxSec, this.lastDelta, travelled)
+      } else if (!prev) {
+        // First action on this model: full weight immediately. No inertialization
+        // from bind pose — that would blend from T-pose.
+        action.play()
+        action.setEffectiveWeight(1)
+      } else {
+        // prev === action (should not happen due to earlier loop guard) — fallback
+        action.play()
+        action.setEffectiveWeight(1)
+      }
+    } else {
+      action.play()
+
+      if (prev && prev !== action) {
+        const fade = blendDurationFor(from, next)
+        // A finished LoopOnce action sits at weight 0 with clampWhenFinished;
+        // restoring weight first makes the fade-out actually visible.
+        if (!prev.isRunning()) prev.setEffectiveWeight(1)
+        prev.fadeOut(fade)
+        action.fadeIn(fade)
+        this.fading = this.fading.filter((a) => a !== action)
+        this.fading.push(prev)
+      } else if (!prev) {
+        // First action on this model: full weight immediately. Fading in from zero
+        // would expose the bind pose for the whole fade duration.
+        action.setEffectiveWeight(1)
+      }
     }
 
     this.commit(next, action, clip)
@@ -152,14 +228,28 @@ export class AnimationController {
   /** Per-frame tick. Call from R3F's `useFrame`, before the facial controller. */
   update(delta: number): void {
     if (this.disposed) return
+    this.lastDelta = delta
+    if (this.blendMode === 'inertial') {
+      this.inertializer.restoreRaw()
+    }
     this.mixer.update(delta)
 
-    for (let i = this.fading.length - 1; i >= 0; i--) {
-      const action = this.fading[i]
-      if (action === this.currentAction || action.getEffectiveWeight() > RETIRE_WEIGHT) continue
-      action.stop()
-      this.mixer.uncacheAction(action.getClip())
-      this.fading.splice(i, 1)
+    if (this.blendMode === 'inertial') {
+      this.inertializer.update(delta)
+    }
+
+    // Always keep history fresh so velocity at transition time is accurate.
+    // Must be AFTER mixer+inertializer have written the final pose for this frame.
+    this.inertializer.recordFrame()
+
+    if (this.blendMode === 'crossfade') {
+      for (let i = this.fading.length - 1; i >= 0; i--) {
+        const action = this.fading[i]
+        if (action === this.currentAction || action.getEffectiveWeight() > RETIRE_WEIGHT) continue
+        action.stop()
+        this.mixer.uncacheAction(action.getClip())
+        this.fading.splice(i, 1)
+      }
     }
   }
 
@@ -209,6 +299,7 @@ export class AnimationController {
     this.mixer.removeEventListener('finished', this.handleFinished)
     this.mixer.stopAllAction()
     this.mixer.uncacheRoot(this.vrm.scene)
+    this.inertializer.dispose()
     this.currentAction = null
     this.fading = []
     this.listeners.stateChanged.clear()
@@ -242,7 +333,7 @@ export class AnimationController {
     this.emit('finished', completed)
     const next = onFinishedOf(completed)
     if (next) {
-      const fade = crossfadeFor(completed, next)
+      const fade = blendDurationFor(completed, next)
       this.options.onBeforeAutoTransition?.(completed, next, fade)
       void this.transitionTo(next)
     }

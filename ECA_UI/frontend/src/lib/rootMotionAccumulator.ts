@@ -8,13 +8,15 @@
  * persistent offset on the model group, so the idle clip runs at local
  * origin while the character visually stays put.
  *
- * CRITICAL: the offset is ramped in over the crossfade duration, NOT applied
+ * CRITICAL: the offset is ramped in over the blend duration, NOT applied
  * instantly. During the crossfade, the outgoing action still contributes its
  * hips displacement at a weight that decreases linearly from 1 to 0. If we
  * applied the full group offset at once, the displacement would be DOUBLED
  * (group + clip) and then gradually settle. By ramping group offset from 0
  * to full in sync with the clip weight going from 1 to 0, the two cancel
  * out perfectly and the character stays motionless at its final position.
+ * For inertial blending, this class is not used — PoseInertializer drives
+ * the group via 1 - x(t)/x0 instead.
  *
  * Works with the existing GroundClamp: both write to `target.position`, but
  * on different axes — this class writes XY (horizontal displacement in the
@@ -38,11 +40,11 @@ export class RootMotionAccumulator {
   /** The authored (initial) position of the target group. */
   private readonly basePosition: THREE.Vector3
 
-  /** Offset being ramped in during the current crossfade. */
+  /** Offset being ramped in during the current crossfade (legacy path). */
   private readonly pendingOffset = new THREE.Vector3()
   /** Seconds elapsed since the blend started. */
   private blendElapsed = 0
-  /** Total crossfade duration for the current blend. */
+  /** Total blend duration for the current blend. */
   private blendDuration = 0
   /** Whether a blend-in is in progress. */
   private blending = false
@@ -66,24 +68,22 @@ export class RootMotionAccumulator {
   /**
    * Call when a one-shot animation finishes, BEFORE the transition to the
    * next state. Records the hips displacement and begins ramping it into the
-   * group position over `crossfadeSec` seconds — synchronized with the
+   * group position over `blendSec` seconds — synchronized with the
    * mixer's crossfade so the visual position stays perfectly constant.
    */
-  commitOneShot(vrm: VRM, crossfadeSec: number): void {
+  commitOneShot(vrm: VRM, blendSec: number): void {
     if (!this.startHipsWorld) return
     const hips = vrm.humanoid?.getNormalizedBoneNode(VRMHumanBoneName.Hips)
     if (!hips) { this.startHipsWorld = null; return }
 
     hips.getWorldPosition(this.scratch)
-    // Store the displacement as a PENDING offset — it will be blended in
-    // over the crossfade duration by `update()`.
     this.pendingOffset.set(
       this.scratch.x - this.startHipsWorld.x,
       this.scratch.y - this.startHipsWorld.y,
       0, // Z is NOT accumulated — GroundClamp owns vertical positioning.
     )
     this.blendElapsed = 0
-    this.blendDuration = Math.max(crossfadeSec, 0.001) // avoid div-by-zero
+    this.blendDuration = Math.max(blendSec, 0.001) // avoid div-by-zero
     this.blending = true
     this.startHipsWorld = null
   }

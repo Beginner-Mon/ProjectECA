@@ -131,6 +131,8 @@ export interface MotionContextType {
   setIsPlaying: (playing: boolean) => void
   speed: number
   setSpeed: (speed: number) => void
+  blendMode: 'inertial' | 'crossfade'
+  setBlendMode: (mode: 'inertial' | 'crossfade') => void
   handleReset: () => void
   clipInfo: { tracks: number; duration: number } | null
   setClipInfo: (info: { tracks: number; duration: number } | null) => void

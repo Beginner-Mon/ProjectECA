@@ -262,9 +262,9 @@ describe('AnimationController — one-shot completion', () => {
 })
 
 describe('AnimationController — housekeeping', () => {
-  it('retires faded-out actions instead of accumulating them', async () => {
+  it('retires faded-out actions instead of accumulating them (crossfade mode)', async () => {
     const { registry } = makeRegistry()
-    const controller = new AnimationController(vrm, registry)
+    const controller = new AnimationController(vrm, registry, { blendMode: 'crossfade' })
     await controller.transitionTo('idle')
     await controller.transitionTo('thinking_intro')
 
@@ -275,6 +275,27 @@ describe('AnimationController — housekeeping', () => {
     for (let i = 0; i < 60; i++) controller.update(1 / 60)
 
     expect(fading().length).toBe(0)
+  })
+
+  it('in inertial mode new action is at weight 1 immediately and prev is stopped (no fading)', async () => {
+    const { registry, clipFor } = makeRegistry()
+    const controller = new AnimationController(vrm, registry, { blendMode: 'inertial' })
+    await controller.transitionTo('idle')
+    // Ensure history is warm for velocity
+    controller.update(1 / 60)
+    controller.update(1 / 60)
+
+    await controller.transitionTo('thinking_intro')
+
+    const fading = () => (controller as unknown as { fading: unknown[] }).fading
+    expect(fading().length).toBe(0)
+
+    const mixer = (controller as unknown as { mixer: THREE.AnimationMixer }).mixer
+    // New action should be at full weight immediately (inertial, no fadeIn ramp)
+    expect(mixer.clipAction(clipFor('thinking_intro')!).getEffectiveWeight()).toBe(1)
+    // Prev should be stopped/uncached, not fading
+    // Still hasPose and no bind pose exposure
+    expect(controller.hasPose).toBe(true)
   })
 
   it('notifies state listeners and can unsubscribe', async () => {

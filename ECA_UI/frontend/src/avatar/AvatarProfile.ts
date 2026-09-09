@@ -42,7 +42,9 @@ export type Viseme = 'A' | 'I' | 'U' | 'E' | 'O'
  */
 export interface GestureDef {
   source: { builtIn: string } | { url: string; loader: 'fbx' | 'bvh' }
-  /** Cross-fade seconds when leaving this gesture. Defaults to the state's. */
+  /** Blend seconds when leaving this gesture. Defaults to the state's. */
+  blendSec?: number
+  /** @deprecated use blendSec */
   crossfade?: number
 }
 

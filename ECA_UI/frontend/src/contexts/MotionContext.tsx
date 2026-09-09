@@ -164,6 +164,7 @@ export function MotionProvider({ children }: { children: ReactNode }) {
 
   const [isPlaying, setIsPlaying] = useState(true)
   const [speed, setSpeed] = useState(1.0)
+  const [blendMode, setBlendModeState] = useState<'inertial' | 'crossfade'>('inertial')
   const [sessionMotions, setSessionMotions] = useState<SessionMotion[]>([])
   const [clipInfo, setClipInfo] = useState<{ tracks: number; duration: number } | null>(null)
   const [cameraMode, setCameraModeState] = useState<CameraMode>('head')
@@ -239,6 +240,15 @@ export function MotionProvider({ children }: { children: ReactNode }) {
   useEffect(() => {
     animController?.setSpeed(speed)
   }, [animController, speed])
+
+  useEffect(() => {
+    animController?.setBlendMode(blendMode)
+  }, [animController, blendMode])
+
+  const setBlendMode = useCallback(
+    (mode: 'inertial' | 'crossfade') => setBlendModeState(mode),
+    [],
+  )
 
   // Declarative timer trigger (idle → bored), driven by STATES[state].autoAfter.
   useAutoAfterTrigger(animController, currentState)
@@ -484,6 +494,8 @@ export function MotionProvider({ children }: { children: ReactNode }) {
       setIsPlaying,
       speed,
       setSpeed,
+      blendMode,
+      setBlendMode,
       handleReset,
       clipInfo,
       setClipInfo,
@@ -516,6 +528,8 @@ export function MotionProvider({ children }: { children: ReactNode }) {
       attachControllers,
       isPlaying,
       speed,
+      blendMode,
+      setBlendMode,
       sessionMotions,
       registerSessionMotion,
       handleReset,

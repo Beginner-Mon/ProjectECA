@@ -272,18 +272,23 @@ function VRMCharacter({ vrmUrl, modelId, onReady, vrmRef, avatarRef }: VRMCharac
           }, delayMs)
         }
         // Begin root-motion tracking for one-shots that use a wide camera
-        // (currently only `exercise`). The wide camera signals that the clip
-        // has meaningful root translation.
+        // (currently only `exercise`). For crossfade, rootMotion handles the
+        // group offset; for inertial, PoseInertializer handles it via 1 - x/x0.
         if (loopModeOf(info.state) === 'once' && cameraModeOf(info.state) === 'hips') {
-          rootMotionRef.current?.beginOneShot(vrm)
+          const isInertial = animControllerRef.current?.blendMode !== 'crossfade'
+          if (!isInertial) {
+            rootMotionRef.current?.beginOneShot(vrm)
+          }
         }
       },
-      onBeforeAutoTransition: (_completed, _next, crossfadeSec) => {
+      onBeforeAutoTransition: (_completed, _next, blendSec) => {
         // Commit the hips displacement BEFORE the successor clip (idle) resets
-        // hips to rest position. This offsets the model group so the character
-        // visually stays at its final position. The offset is ramped in over
-        // the crossfade duration to avoid double-displacement.
-        rootMotionRef.current?.commitOneShot(vrm, crossfadeSec)
+        // hips to rest position. For crossfade, ramp group offset over blendSec.
+        // For inertial, skip — PoseInertializer drives group via 1 - x/x0.
+        const isInertial = animControllerRef.current?.blendMode !== 'crossfade'
+        if (!isInertial) {
+          rootMotionRef.current?.commitOneShot(vrm, blendSec)
+        }
       },
     })
 
@@ -311,7 +316,13 @@ function VRMCharacter({ vrmUrl, modelId, onReady, vrmRef, avatarRef }: VRMCharac
   // Order is mandatory (§8 rule 1): the avatar controller calls setValue, and
   // vrm.update applies those weights via expressionManager.update() — so the
   // tick must land BETWEEN the mixer update and vrm.update.
+  // Inertializer must write to normalized bone nodes BEFORE vrm.update(),
+  // and group offset via inertializer before groundClamp.
   useFrame((_state, delta) => {
+    // Provide group target to inertializer once (lazy, after group mounts)
+    if (modelGroupRef.current && animControllerRef.current) {
+      animControllerRef.current.setGroupTarget(modelGroupRef.current)
+    }
     animControllerRef.current?.update(delta)
     avatarControllerRef.current?.tick(delta)
     vrm?.update(delta)

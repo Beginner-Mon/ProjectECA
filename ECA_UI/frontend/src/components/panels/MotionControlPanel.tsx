@@ -8,6 +8,7 @@ import { CANONICAL_EMOTIONS, type CanonicalEmotion } from '../../avatar/AvatarPr
 import { getManifest } from '../../avatar/vrmManifest'
 import { DEFAULT_CAMERA_CONFIG } from '../../lib/CameraConfig'
 import { fetchMotionStatus } from '../../lib/api'
+import { isInertialDebug, setInertialDebug } from '../../lib/Inertializer'
 
 const PRESET_TO_CANONICAL: Record<string, CanonicalEmotion> = {
   neutral: 'neutral',
@@ -33,6 +34,8 @@ export default function MotionControlPanel() {
     vrmOptions,
     cameraConfig,
     setCameraConfig,
+    blendMode,
+    setBlendMode,
   } = useMotion()
 
   // Derive modelId exactly the same way CharacterViewer does.
@@ -63,6 +66,8 @@ export default function MotionControlPanel() {
   const [emotionDurationMs, setEmotionDurationMs] = useState(500)
   const [lastEmotion, setLastEmotion] = useState<string>('—')
   const [avatarMode, setAvatarMode] = useState<string>('—')
+  // Mirrors the Inertializer's module-level debug flag so the button reflects it.
+  const [blendLog, setBlendLog] = useState(isInertialDebug)
 
   // Filter motion files so Character state actions don't leak into the debug picker.
   // The picker used to list bundled sample .bvh files under asset/motions/
@@ -202,6 +207,50 @@ export default function MotionControlPanel() {
                   </option>
                 ))}
               </select>
+            </div>
+          )}
+
+          {/* (1b) Blend mode toggle — A/B compare inertial vs crossfade */}
+          {import.meta.env.DEV && (
+            <div className="flex flex-col gap-1.5 p-3 rounded-xl bg-secondary/20 border border-border/10">
+              <span className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground flex items-center gap-1.5">
+                <Activity className="w-3 h-3" />
+                Blend
+              </span>
+              <div className="flex gap-1">
+                {(['inertial', 'crossfade'] as const).map((mode) => (
+                  <button
+                    key={mode}
+                    onClick={() => setBlendMode(mode)}
+                    className={`flex-1 py-1.5 text-[11px] font-medium rounded-md border transition-colors cursor-pointer capitalize ${
+                      blendMode === mode
+                        ? 'bg-primary text-primary-foreground border-primary shadow-sm'
+                        : 'bg-secondary/40 text-muted-foreground border-border/20 hover:bg-secondary/60 hover:text-foreground'
+                    }`}
+                  >
+                    {mode}
+                  </button>
+                ))}
+              </div>
+              <span className="text-[10px] text-muted-foreground/60">
+                {blendMode === 'inertial' ? 'C1 quintic — single clip' : 'Legacy fadeOut/fadeIn'}
+              </span>
+              {blendMode === 'inertial' && (
+                <button
+                  onClick={() => {
+                    const next = !isInertialDebug()
+                    setInertialDebug(next)
+                    setBlendLog(next)
+                  }}
+                  className={`py-1.5 text-[11px] font-medium rounded-md border transition-colors cursor-pointer ${
+                    blendLog
+                      ? 'bg-primary text-primary-foreground border-primary shadow-sm'
+                      : 'bg-secondary/40 text-muted-foreground border-border/20 hover:bg-secondary/60 hover:text-foreground'
+                  }`}
+                >
+                  {blendLog ? 'Logging θ / duration' : 'Log θ / duration'}
+                </button>
+              )}
             </div>
           )}
 

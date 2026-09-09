@@ -29,7 +29,7 @@ export const defaultProfile: AvatarProfile = {
   // to the built-in FSM states (idle / greeting / bored / thinking / exercise),
   // which are untouched.
   gestures: {
-    kiss: { source: { builtIn: 'kiss' }, crossfade: 0.5 },
+    kiss: { source: { builtIn: 'kiss' }, blendSec: 0.5 },
   },
   reactions: {
     // Animation and emotion together in one binding — the click plays the clip

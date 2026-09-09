@@ -1,4 +1,4 @@
-import { useRef } from 'react'
+import { useEffect, useRef } from 'react'
 import { useFrame, useThree } from '@react-three/fiber'
 import { Html } from '@react-three/drei'
 import { motion, AnimatePresence } from 'framer-motion'
@@ -35,6 +35,10 @@ export default function ThinkingBubble({ vrmRef }: ThinkingBubbleProps) {
   // Scratch vectors to avoid alloc per frame
   const headNdc = useRef(new THREE.Vector3())
   const bubbleNdc = useRef(new THREE.Vector3())
+
+  useEffect(() => {
+    if (!visible) initializedRef.current = false
+  }, [visible])
 
   useFrame(() => {
     const group = groupRef.current
@@ -83,10 +87,6 @@ export default function ThinkingBubble({ vrmRef }: ThinkingBubbleProps) {
       el.style.transform = `translate(-50%, -50%) translate(${x}px, ${y}px)`
     }
   })
-
-  if (!visible) {
-    initializedRef.current = false
-  }
 
   return (
     <group ref={groupRef}>

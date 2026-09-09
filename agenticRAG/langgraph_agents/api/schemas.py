@@ -8,6 +8,9 @@ class ChatRequest(BaseModel):
     query: str
     session_id: str = "default"
     persona_id: str = Field(default="anne", pattern=r"^[A-Za-z0-9_-]{1,64}$")
+    previous_persona_id: Optional[str] = Field(
+        default=None, pattern=r"^[A-Za-z0-9_-]{1,64}$"
+    )
     output_mode: Literal["text", "speech", "both"] = "text"
     token_limit: Optional[int] = None
     web_search: bool = False

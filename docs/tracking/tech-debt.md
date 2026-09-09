@@ -274,6 +274,21 @@ Mức: 🔴 critical (phải làm trước Phase 7 deploy) · 🟠 quan trọng 
 - [ ] **Docker không có restart policy** — tắt máy là mất container, phải `docker compose up -d` tay.
 - [ ] **`/health/detailed` trả `degraded` khi thiếu TTS** — optional dependency kéo cả status tổng.
       Nên tách critical vs optional trước khi có LB/orchestrator thật.
+- [ ] 🟠 **`pytest -m unit` không chạy được một test nào** (ghi 09/09, K). Không phải test đỏ —
+      **collection chết trước khi chạy**: `26 deselected, 12 errors`, exit sớm. Hai nguyên nhân,
+      cả hai đều là ô nhiễm giữa các suite chứ không phải lỗi của test nào:
+      `ValueError: soundfile.__sp...` khi import (6 file `tests/langgraph_agents/`), và va chạm
+      basename `test_api_endpoints.py` giữa `tests/SpeechLLm/` và `tests/text-to-motion/DART/` —
+      đúng thứ `pytest.ini` đã tự ghi chú là "một tên, một slot, ai import trước thắng".
+      Bằng chứng nó là ô nhiễm chứ không phải regression: `test_phase2_5_planner.py` chạy riêng
+      **pass 18/18**, cùng file đó ERROR trong run tổng.
+      Hệ quả: **mọi plan ghi "verify bằng `pytest -m unit`" đều đang verify số 0.** Cách chạy thật
+      hiện nay là chỉ đích danh thư mục: `pytest tests/langgraph_agents/` → 646 passed, 10 skipped
+      (skip vì không có PostgreSQL cổng 5433), 1 failed.
+- [ ] 🟡 **`test_phase3_retriever_with_mcp.py::test_retriever_has_generate_motion_tool` đỏ sẵn**
+      (ghi 09/09, K) — `ModuleNotFoundError: langgraph_agents.mcp.kimodo_server`. Test còn trỏ vào
+      đường dẫn cũ; server đã dời sang `text-to-motion/kimodo/mcp_server.py`. Sửa import hoặc bỏ
+      test nếu `_generate_motion_mock` không còn tồn tại.
 
 ## 🟡 Nên làm
 

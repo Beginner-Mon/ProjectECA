@@ -144,6 +144,9 @@ export interface MotionContextType {
   avatarRef: React.MutableRefObject<AvatarController | null>
   isMusicPlaying: boolean
   toggleMusic: () => void
+
+  /** Avatar switch delta for next chat turn — consumed once per send. */
+  consumePreviousAvatar: () => string | undefined
 }
 
 export const MotionContext = createContext<MotionContextType | null>(null)

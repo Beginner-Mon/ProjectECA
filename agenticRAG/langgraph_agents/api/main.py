@@ -282,6 +282,7 @@ def create_app() -> FastAPI:
             "session_id": req.session_id,
             "query": req.query,
             "persona_id": req.persona_id,
+            "previous_persona_id": req.previous_persona_id,
             "output_mode": req.output_mode,
             "request_id": request_id,
             "token_limit": req.token_limit,

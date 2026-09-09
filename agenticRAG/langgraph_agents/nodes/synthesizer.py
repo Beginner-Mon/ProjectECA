@@ -30,7 +30,12 @@ from langgraph.config import get_stream_writer
 from langgraph_agents.state import AgentState, ErrorSeverity
 from langgraph_agents.llm import get_chat_model, get_fallback_chat_model, extract_cache_tokens
 from langgraph_agents.nodes._persona_loader import (
-    get_persona, build_persona_prompt, build_voice_card, get_ui_string,
+    PersonaError,
+    get_persona,
+    build_persona_prompt,
+    build_voice_card,
+    get_ui_string,
+    persona_name,
 )
 from langgraph_agents.shared.logging import get_logger
 
@@ -256,6 +261,43 @@ def _check_tool_ambiguous(messages: list) -> bool:
     return False
 
 
+def _build_avatar_switch_note(
+    prev_id: str | None,
+    persona_id: str,
+    locale: str,
+) -> str:
+    """One-line context for the turn right after the user switched avatar.
+
+    Reads from config, not from state.messages: synthesizer drops every
+    SystemMessage from history (see `history` below), so ephemeral context
+    must travel via config.
+
+    Resolves the display name rather than passing the slug through. The prompt
+    calls this character "Bronya", never "bronya", and a slug the model has not
+    seen before is a slug it will happily read back to the user verbatim —
+    "hatsune-miku" being the case that makes it obvious.
+
+    Only the PREVIOUS character needs naming: the note says "to you", and who
+    "you" is has already been established by the voice card this text is
+    appended to.
+    """
+    if not prev_id or prev_id == persona_id:
+        return ""
+    try:
+        prev_name = persona_name(get_persona(prev_id, locale))
+    except PersonaError:
+        # Character switched off in the catalog since the client last saw it.
+        # A missing acknowledgement is a non-event; a 500 on the whole turn is
+        # not. Same fallback-don't-raise stance as grader._safety_templates.
+        return ""
+    return (
+        f"\n\n## Avatar switch\n"
+        f"The user just switched from {prev_name} to you. Acknowledge it "
+        f"briefly ONLY if it fits naturally; otherwise ignore it and answer "
+        f"the question."
+    )
+
+
 # ── Mode derivation (D29: emerge from signals, no enum) ─────────────────
 
 def _derive_mode(state: AgentState) -> str:
@@ -377,11 +419,17 @@ async def synthesizer_node(state: AgentState, config: RunnableConfig) -> dict:
     # The voice card goes LAST — after the evidence, after the history, after the
     # question. Whatever sits closest to the generation point is what the model
     # answers in the register of, and until now that was a tag contract.
+    avatar_note = _build_avatar_switch_note(
+        config["configurable"].get("previous_persona_id"),
+        persona_id,
+        locale,
+    )
+    voice_card = build_voice_card(persona, mode) + avatar_note
     msgs = [
         SystemMessage(content=system),
         *history,
         HumanMessage(content=resolved_query),
-        SystemMessage(content=build_voice_card(persona, mode)),
+        SystemMessage(content=voice_card),
     ]
 
     ai_msg = None  # kept for prompt-cache telemetry (fix #1)

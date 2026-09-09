@@ -57,7 +57,7 @@ function buildInitialMessages(ui: UiStrings): Message[] {
 
 
 export function ChatProvider({ children }: { children: ReactNode }) {
-  const { transitionTo, selectedVrmId, vrmOptions, playMotionFile, registerSessionMotion } =
+  const { transitionTo, selectedVrmId, vrmOptions, playMotionFile, registerSessionMotion, consumePreviousAvatar } =
     useMotion()
 
   /** Copy for whoever is on screen, in the language the site is being read in.
@@ -477,6 +477,7 @@ export function ChatProvider({ children }: { children: ReactNode }) {
           // accepts exactly this shape. Picking an avatar changes how the
           // assistant speaks, which until now it did not.
           personaId: selectedVrmId || undefined,
+          previousPersonaId: consumePreviousAvatar(),
           // Same locale that renders this page. It selects the character's voice
           // and any safety warning the backend inserts — both are text a person
           // reads verbatim, so a declared choice beats a detected one.

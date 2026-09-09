@@ -57,6 +57,7 @@ export function MotionProvider({ children }: { children: ReactNode }) {
   // Lag is only in Canvas (GLB parse), but both overlays share violet style and same lifecycle.
   const [switchingId, setSwitchingId] = useState<string | null>(null)
   const [isAvatarSwitching, setIsAvatarSwitching] = useState(false)
+  const prevAvatarRef = useRef<string | null>(null)
 
   // Lazy catalog for AvatarsPanel — only when panel opens does it need the lite cards.
   // B1 fix: exposes catalogLoading so AvatarsPanel can show skeleton while GET /characters is in flight.
@@ -367,6 +368,19 @@ export function MotionProvider({ children }: { children: ReactNode }) {
   const setSelectedVrmIdWrapped = useCallback((id: string) => {
     // Guard: ignore click while already switching (prevents race)
     if (switchingId) return
+    // Record the delta for the next chat turn, but only once per unsent turn:
+    // `??=` keeps the FIRST avatar the user left, so switching a->b->c->b still
+    // reports "was on a" rather than a chain nobody asked about.
+    //
+    // `selectedVrmId &&` is load-bearing, not defensive noise. The initial state
+    // is '' and stays '' whenever the boot effect below resolves no character
+    // (GET /characters succeeds, GET /characters/{slug} does not) — a path that
+    // clears vrmOptionsError, so the panel still renders clickable cards. Without
+    // this guard `??=` would store '' (it only skips null/undefined), and '' fails
+    // the backend's {1,64} pattern, 422-ing the whole chat request.
+    if (id !== selectedVrmId && selectedVrmId) {
+      prevAvatarRef.current ??= selectedVrmId
+    }
     // If already have full url, switch instantly — no loading needed
     const existing = vrmOptions.find((o) => o.id === id)
     if (existing && existing.url) {
@@ -394,6 +408,15 @@ export function MotionProvider({ children }: { children: ReactNode }) {
         // Fall back to Anne if the slug no longer resolves. PATCH refuses an
         // unknown or disabled character, but a character switched off after it
         // was stored still 404s here.
+        // Whichever slug we actually come to rest on, one rule decides the
+        // pending delta: if it is the avatar the user started from, nothing
+        // changed and there is nothing to announce. Both the fallback branch
+        // and the already-on-Anne branch are instances of it, so express it
+        // once — two copies drift the moment the fallback slug stops being
+        // 'anne'.
+        const settleOn = (slug: string) => {
+          if (prevAvatarRef.current === slug) prevAvatarRef.current = null
+        }
         if (id !== 'anne') {
           try {
             const fallback = await fetchCharacter('anne')
@@ -402,15 +425,28 @@ export function MotionProvider({ children }: { children: ReactNode }) {
               map.set(fallback.slug, toAssetOption(fallback))
               return Array.from(map.values())
             })
+            settleOn(fallback.slug)
             setSelectedVrmId(fallback.slug)
           } catch {
             // The fallback failed too — the catalog is unreachable, which the
             // initial load has already reported. Nothing left to try.
           }
+        } else {
+          // id === 'anne' and it 404s: selectedVrmId was already set to 'anne'
+          // optimistically above, so that is where we have settled.
+          settleOn('anne')
         }
       }
     })()
-  }, [vrmOptions, switchingId])
+  }, [vrmOptions, switchingId, selectedVrmId])
+
+  const consumePreviousAvatar = useCallback(() => {
+    const prev = prevAvatarRef.current
+    prevAvatarRef.current = null
+    // `||`, not `??`: '' must degrade to undefined (omit the field) rather than
+    // reach the backend and fail its pattern. Belt to the guard in the setter.
+    return prev || undefined
+  }, [])
 
   // Memoized: an inline object literal here would be a new value on EVERY
   // provider render, re-rendering every consumer — including CharacterViewer,
@@ -420,6 +456,7 @@ export function MotionProvider({ children }: { children: ReactNode }) {
     () => ({
       selectedVrmId,
       setSelectedVrmId: setSelectedVrmIdWrapped,
+      consumePreviousAvatar,
       vrmOptions,
       vrmOptionsLoading,
       vrmOptionsError,
@@ -457,6 +494,7 @@ export function MotionProvider({ children }: { children: ReactNode }) {
     [
       selectedVrmId,
       setSelectedVrmIdWrapped,
+      consumePreviousAvatar,
       vrmOptions,
       vrmOptionsLoading,
       vrmOptionsError,

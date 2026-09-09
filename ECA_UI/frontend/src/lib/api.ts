@@ -162,6 +162,7 @@ export interface StreamChatOptions {
   query: string
   sessionId: string
   personaId?: string
+  previousPersonaId?: string
   outputMode?: 'text' | 'speech' | 'both'
   webSearch?: boolean
   /** The language of the SITE, as the reader chose it — not a guess at the
@@ -190,6 +191,7 @@ export async function streamChat(
     query,
     sessionId,
     personaId = 'anne',
+    previousPersonaId,
     outputMode = 'text',
     webSearch = false,
     locale = 'en',
@@ -210,6 +212,7 @@ export async function streamChat(
       query,
       session_id: sessionId,
       persona_id: personaId,
+      previous_persona_id: previousPersonaId ?? null,
       output_mode: outputMode,
       locale,
       web_search: webSearch,

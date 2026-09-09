@@ -64,4 +64,32 @@ export default defineConfig([
       ],
     },
   },
+
+  /*
+   * Sign-up is email-only.
+   *
+   * The Google button was removed from this page on 09-09-2026: arriving here
+   * means the user already chose to register with Cognito, so a second "or
+   * continue with Google" asks a question that has been answered. Google
+   * sign-in itself is untouched — it lives on LoginPage — and linking Google to
+   * an existing account lives in Profile.
+   *
+   * A test cannot guard this. Every test in the repo is plain .ts and
+   * vitest.config.ts deliberately does not load React, so a .tsx test asserting
+   * the button's absence would never even be collected. eslint is the only
+   * thing that runs over this file, and `npm run lint` is already in the build.
+   */
+  {
+    files: ['src/pages/CreateAccountPage.tsx'],
+    rules: {
+      'no-restricted-imports': ['error', {
+        patterns: [{
+          // A pattern, not a path: catches '@/lib/googleSignIn' as well as the
+          // relative form.
+          group: ['**/googleSignIn'],
+          message: 'Sign-up is email-only — Google sign-in lives on LoginPage.',
+        }],
+      }],
+    },
+  },
 ])

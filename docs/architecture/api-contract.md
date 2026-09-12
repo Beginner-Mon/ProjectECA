@@ -137,21 +137,36 @@ data: {"emotion":"happy","intensity":0.8,"duration":1000}
 
 Client action: `avatarController.setEmotion(emotion, intensity, duration)`.
 
-### `tts.audio` — timing resolution (was open question)
+### Speech / TTS SSE events (current)
 
-The plan's original `tts.audio {audioUrl}` assumed the URL is known during the turn. It is **not**:
-TTS runs as an async Celery task; the `/chat` stream emits `speech_pending` + a `speech_task_id`
-and the client polls for the result **after** the turn stream closes.
+> **Supersedes** the "`tts.audio` — timing resolution" writeup that used to sit here: that
+> Celery task-id poll transport (`speech_pending` / `speech_task_id` in `done` /
+> `GET /tts/{task_id}/result` / a hypothetical `speech_ready {task_id, audioUrl}`) is gone.
+> Audio now streams inline over the same SSE connection as the turn — no polling, no Redis in
+> the path.
 
-**Resolved contract**: lip sync is driven by a separate ready signal, not an in-stream event.
+SpeechLLm exposes `POST /synthesize/stream` (`{text, voice_path?, language?}`) returning
+`application/x-ndjson` lines. The agent forwards each line as an SSE event on the existing
+per-turn `/chat` stream, and also on `POST /tts` (`{text, persona_id}`, which now returns this
+same SSE stream directly — `503` when TTS isn't configured):
 
-- During the turn: `speech_pending` / `speech_task_id` (unchanged, already emitted).
-- When the poll resolves the audio, the client fetches the clip and calls
-  `avatarController.startLipSync(analyser)` (analyser built from the `<audio>` element via
-  `analyserFromElement`). On `ended`, `avatarController.stopLipSync()`.
-- No new backend event is strictly required — the client's existing poll completion is the
-  trigger. If a push is preferred later, add `event: speech_ready {task_id, audioUrl}`; the
-  contract above stays identical on the client.
+| Event | Payload | Notes |
+|-------|---------|-------|
+| `speech_start` | `{voice_version, codec, sample_rate, lang}` | First event of the stream |
+| `speech_chunk` | `{seq, codec, audio}` | `audio` is base64 of a **complete, self-standing** OGG/Opus or WAV file for that chunk — not a raw PCM fragment |
+| `speech_end` | `{chunks}` | Terminal — stream finished successfully |
+| `speech_failed` | `{error}` | Terminal — synthesis failed mid-stream |
+| `speech_disabled` | `{reason}` | `VIENEU_TTS_URL` unset; TTS was never attempted for this turn |
+
+`VIENEU_TTS_URL` is the single on/off switch — unset means every turn gets `speech_disabled`.
+The legacy name `VIENEU_URL` is a fallback used only by the health check, not by the TTS path
+itself. Redis is not involved in any of this; it remains in play only for STM
+(`STM_BACKEND=redis`) and the `/health/detailed` readiness probe.
+
+Client behavior: plays `speech_chunk` audio gaplessly via Web Audio, caches finished clips in
+IndexedDB per Cognito user (TTL 1 day). Lip sync driven off the same decoded chunks — no
+separate poll-then-fetch step, no `analyserFromElement` on a `<audio src>` pulled from another
+service.
 
 Engagement: active lip sync holds the avatar ENGAGED; a `TTS_GRACE` (~1.5s) after audio ends
 before falling back to IDLE.

@@ -22,6 +22,47 @@ def _load_vieneu_config() -> dict:
     return {}
 
 
+async def _client_error_reason(exc: httpx.HTTPStatusError) -> str:
+    """Build a diagnostic message for a 4xx response, carrying SpeechLLm's own
+    `detail` through when the body can be read.
+
+    `httpx.HTTPStatusError.__str__` is a fixed template — status code and URL
+    only (confirmed against httpx 0.28.1's `Response.raise_for_status`, which
+    builds the message with no reference to the body at all) — so used alone
+    it throws away exactly the message `VoiceResolutionError` goes to the
+    trouble of putting an absolute path into (see
+    `SpeechLLm/src/services/vieneu_client.py`). This is what actually carries
+    that message through to `_stream_speech`'s `speech_failed` event and the
+    log, instead of a failure that is equally silent about why.
+
+    Guarded end to end: this runs on a request that is already failing, and
+    must never itself raise a second exception on that path — an empty or
+    unreadable body (a mangled proxy response, a truncated write) still has
+    to produce a sensible message.
+    """
+    base = f"{type(exc).__name__}: {exc}"
+    resp = exc.response
+    try:
+        # A client.stream()-mode response has not read its body yet at this
+        # point; a client.post()-mode one already has, and aread() on an
+        # already-read response just returns the cached content — safe
+        # either way.
+        await resp.aread()
+    except Exception:
+        return base
+    detail = None
+    try:
+        detail = resp.json().get("detail")
+    except Exception:
+        pass
+    if not detail:
+        try:
+            detail = resp.text.strip() or None
+        except Exception:
+            detail = None
+    return f"{base} — {detail}" if detail else base
+
+
 class VieNeuTTSClient:
     """Async HTTP client for VieNeu-TTS speech synthesis REST API."""
 
@@ -81,7 +122,21 @@ class VieNeuTTSClient:
                 data = resp.json()
                 self._breaker.record_success()
                 return data
-        except (httpx.TimeoutException, httpx.ConnectError, httpx.HTTPStatusError) as exc:
+        except httpx.HTTPStatusError as exc:
+            # A 4xx is SpeechLLm rejecting THIS request — e.g. VoiceResolutionError
+            # for a character with no reference recording yet. That is a
+            # service-level outcome, not a transport one: retrying cannot fix
+            # it, and it says nothing about SpeechLLm's own health, so unlike a
+            # 5xx or a real transport failure it must not count towards
+            # tripping the breaker for every other character/request. See the
+            # identical split in synthesize_stream() below.
+            if exc.response.status_code >= 500:
+                self._breaker.record_failure()
+                reason = f"{type(exc).__name__}: {exc}" if str(exc) else type(exc).__name__
+            else:
+                reason = await _client_error_reason(exc)
+            raise ServiceUnavailableError("vieneu_tts", reason) from exc
+        except (httpx.TimeoutException, httpx.ConnectError) as exc:
             self._breaker.record_failure()
             # Some httpx exceptions have empty str repr — include class name for diagnostics.
             reason = f"{type(exc).__name__}: {exc}" if str(exc) else type(exc).__name__
@@ -118,14 +173,22 @@ class VieNeuTTSClient:
         whole request — paired with a short, separate `connect` timeout for
         "SpeechLLm never picked up at all".
 
-        Circuit breaker: a connect/HTTP/stream (transport) failure records a
+        Circuit breaker: a connect/timeout failure, a 5xx response, or the
+        stream dropping/sending unparseable NDJSON mid-flight all record a
         breaker failure, exactly like `synthesize()`. Reaching the terminal
-        `end` line records success. A well-formed `{"type": "error", ...}`
-        line is a SERVICE-level outcome (SpeechLLm itself reporting it could
-        not synthesize this text) rather than a transport one — it is yielded
-        to the caller as-is and touches neither side of the breaker, so one bad
-        request does not start counting towards tripping it for every other
-        request in flight.
+        `end` line records success. Two outcomes are SERVICE-level rather than
+        transport-level and touch neither side of the breaker: a well-formed
+        `{"type": "error", ...}` line (SpeechLLm reporting it could not
+        synthesize this text) and, since 12-09-2026, a 4xx response (SpeechLLm
+        rejecting THIS request before the stream even opened — e.g.
+        VoiceResolutionError for a character with no reference recording yet).
+        A 4xx used to be lumped in with connect/timeout failures here, which
+        meant three chats with a character that simply has no recording
+        tripped the breaker and silenced speech for every character — a
+        condition that never changes with time, so the breaker would open,
+        cool down, and immediately trip again, forever. One bad request — of
+        either shape — must not start counting towards tripping it for every
+        other request in flight.
 
         Two things an earlier version of this method got wrong, both only
         visible when the caller does what api/main.py's _stream_speech
@@ -149,9 +212,11 @@ class VieNeuTTSClient:
            as a stream failure.
 
         Raises:
-            ServiceUnavailableError: breaker open, connect/HTTP failure, the
-                stream dropping/sending unparseable NDJSON mid-flight, or the
-                stream closing without a terminal "end"/"error" line.
+            ServiceUnavailableError: breaker open, connect/timeout failure, a
+                4xx or 5xx response, the stream dropping/sending unparseable
+                NDJSON mid-flight, or the stream closing without a terminal
+                "end"/"error" line. Only a 4xx leaves the breaker untouched;
+                everything else on this list records a failure.
         """
         if not self._breaker.allow():
             raise ServiceUnavailableError("vieneu_tts", "circuit breaker open")
@@ -171,7 +236,24 @@ class VieNeuTTSClient:
         try:
             async with httpx.AsyncClient(timeout=stream_timeout) as client:
                 async with client.stream("POST", url, json=payload) as resp:
-                    resp.raise_for_status()
+                    try:
+                        resp.raise_for_status()
+                    except httpx.HTTPStatusError as exc:
+                        # Same split as synthesize() above, and for the same
+                        # reason: a 4xx is SpeechLLm rejecting THIS request
+                        # (e.g. VoiceResolutionError for a missing reference),
+                        # not a sign the service itself is unhealthy. Handled
+                        # here, still inside the `client.stream()` context, so
+                        # `_client_error_reason` can still read the body — once
+                        # this `async with` exits the connection is closed and
+                        # the body is gone.
+                        if resp.status_code >= 500:
+                            self._breaker.record_failure()
+                            reason = (f"{type(exc).__name__}: {exc}"
+                                      if str(exc) else type(exc).__name__)
+                        else:
+                            reason = await _client_error_reason(exc)
+                        raise ServiceUnavailableError("vieneu_tts", reason) from exc
                     saw_terminal_line = False  # set on "end" or "error"
                     async for line in resp.aiter_lines():
                         if not line.strip():
@@ -206,7 +288,10 @@ class VieNeuTTSClient:
                         )
         except ServiceUnavailableError:
             raise
-        except (httpx.TimeoutException, httpx.ConnectError, httpx.HTTPStatusError) as exc:
+        except (httpx.TimeoutException, httpx.ConnectError) as exc:
+            # httpx.HTTPStatusError is deliberately not caught here any more —
+            # it is fully handled above, inside the client.stream() block,
+            # where the response body is still readable.
             self._breaker.record_failure()
             reason = f"{type(exc).__name__}: {exc}" if str(exc) else type(exc).__name__
             raise ServiceUnavailableError("vieneu_tts", reason) from exc

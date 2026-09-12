@@ -41,9 +41,8 @@ describe('pollMotionJob', () => {
     // GET /motion/{id} answers 404 for a row that never existed or has aged out
     // (DynamoDB TTL is 24h). api.ts maps that 404 to this status.
     //
-    // NOTE THE INVERSION: on /tts/{id}/result a 404 means "not ready, keep
-    // polling". Here it is terminal. Copying the TTS loop shape without
-    // changing this is a loop that never ends.
+    // Terminal, not "not ready yet". Treating it as pending is a loop that
+    // runs to its timeout for a job that will never arrive.
     const fetch = fetcherFor({ status: 'not_found' })
     await expect(pollMotionJob('gone', fetch, FAST)).rejects.toThrow(/not_found|not found/i)
     expect(fetch).toHaveBeenCalledTimes(1)

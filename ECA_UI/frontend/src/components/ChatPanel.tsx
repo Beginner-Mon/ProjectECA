@@ -71,7 +71,7 @@ export default function ChatPanel() {
   }
 
   return (
-    <div className="flex flex-col h-full bg-transparent md:backdrop-blur-xl border-r border-border/40 relative z-10">
+    <div className="flex flex-col h-full bg-transparent md:border-r border-border/40 relative z-10">
       {/* ── Header ── */}
       <header className="hidden md:flex items-center gap-3 px-5 py-4 border-b border-border/40 bg-card/80 backdrop-blur-sm shrink-0">
         <div className="flex-1 min-w-0">
@@ -132,7 +132,7 @@ export default function ChatPanel() {
       </ScrollArea>
 
       {/* ── Input ── */}
-      <div className="p-2 md:p-4 bg-transparent md:bg-card/80 md:backdrop-blur-sm shrink-0">
+      <div className="p-2 md:p-4 bg-transparent shrink-0">
         <div className="flex flex-col gap-3 bg-card border border-border/40 rounded-2xl p-1.5 md:p-2 focus-within:ring-1 focus-within:ring-primary/50 focus-within:border-primary/50 transition-all relative">
           {imageUrls.length > 0 && (
             <div className="flex gap-1.5 overflow-x-auto mx-1 p-2">

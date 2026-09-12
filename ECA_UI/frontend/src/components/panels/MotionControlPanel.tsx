@@ -3,7 +3,7 @@ import { useEffect, useState, useMemo } from 'react'
 import { useTranslation } from 'react-i18next'
 import { ScrollArea } from '../ui/scroll-area'
 import { useMotion } from '../../hooks/useMotion'
-import type { CharState } from '../../lib/AnimationStates'
+import type { CameraMode, CharState } from '../../lib/AnimationStates'
 import { CANONICAL_EMOTIONS, type CanonicalEmotion } from '../../avatar/AvatarProfile'
 import { getManifest } from '../../avatar/vrmManifest'
 import { DEFAULT_CAMERA_CONFIG } from '../../lib/CameraConfig'
@@ -174,11 +174,12 @@ export default function MotionControlPanel() {
 
             <select
               value={cameraMode}
-              onChange={(e) => setCameraMode(e.target.value as 'head' | 'hips')}
+              onChange={(e) => setCameraMode(e.target.value as CameraMode)}
               className="w-full bg-transparent text-xs text-foreground font-medium border-none outline-none cursor-pointer mt-1.5 pt-1.5 border-t border-border/10"
             >
               <option value="head" className="bg-card text-foreground">{t('motion.target_head')}</option>
               <option value="hips" className="bg-card text-foreground">{t('motion.target_hips')}</option>
+              {cameraMode === 'manual' && <option value="manual" disabled className="bg-card text-muted-foreground">Manual (free)</option>}
             </select>
           </div>
 

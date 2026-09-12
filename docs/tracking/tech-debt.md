@@ -1,7 +1,8 @@
 # Tech Debt & Pending Tasks
 
 > Checklist các việc đã biết nhưng CHƯA làm. Cập nhật khi đóng/ mở item.
-> Last update: 2026-08-21 (K — DELETE account hoãn theo quyết định Owner; xem mục "Chờ quyết định").
+> Last update: 2026-09-12 (K — nợ TTS streaming: 2s cuối lượt N chấp nhận, `anne_en.wav` nhỏ tiếng, 422, iOS, int8).
+> Trước đó: 2026-08-21 (K — DELETE account hoãn theo quyết định Owner; xem mục "Chờ quyết định").
 > Trước đó: 2026-08-16 (K — Track 2 Lambda catalog: rate limit, concurrency, latency, migration).
 > Trước đó: 2026-08-05 (K — Neon, 7 lỗi TS, TTS VieNeu, lip sync, auth 1-user, Capacitor).
 >
@@ -291,6 +292,39 @@ Mức: 🔴 critical (phải làm trước Phase 7 deploy) · 🟠 quan trọng 
       test nếu `_generate_motion_mock` không còn tồn tại.
 
 ## 🟡 Nên làm
+
+### TTS streaming — nợ ghi 12/09 (worklog `11-09-2026.md`, branch `feature/tts-streaming`)
+
+- [ ] **~2s im lặng cuối lượt chat — N CHẤP NHẬN 12/09, không sửa bây giờ.** Chữ đã hiện hết
+      nhưng nút gửi còn kẹt ở trạng thái "dừng" thêm 1.57-2.09s (đo trên `agenticRAG/vva.log`,
+      3 lượt: 2.09 / 2.08 / 1.57 — trước khi gộp `write_session_turn` là 6.5-7.9s).
+      **Không phải TTS** — cả 3 lượt đo đều không có audio trong cửa sổ đó. Đây là
+      `write_session_turn`: 5 lượt đi-về tới Neon us-east-1 (`BEGIN`, `set_config`, 2 câu
+      lệnh, `COMMIT`) × ~350ms từ Việt Nam. Là **chờ đường truyền**, không phải chờ ghi.
+      **Không gộp tiếp thành 1 CTE được** — lý do đã ghi nguyên văn trong docstring của
+      `db/session_store.py::write_session_turn`: RLS `WITH CHECK` của `messages` subquery
+      bảng `conversations`, mà các nhánh cùng một `WITH` dùng chung snapshot ⇒ hỏng lượt
+      đầu của mọi phiên mới. Hai hướng còn lại nếu sau này cần: (A) phóng `write_session_turn`
+      thành task rồi `await` sau khi stream xong audio — chỉ che được lượt có bật giọng nói,
+      vì `output_mode` quyết định có gọi TTS hay không; (B) ghi dòng tin nhắn của user ngay
+      đầu lượt, song song với graph (~10s) — trị được cả lượt text thuần, giá là 2 transaction.
+      **Nhiều khả năng tự hết khi deploy**: agent chạy cùng vùng với Neon ⇒ 5 lượt đi-về còn
+      ~10ms. **Đo lại sau deploy trước khi bỏ công sửa.**
+- [ ] 🟠 **`anne_en.wav` quá nhỏ tiếng** — 24 kHz, peak 0.168, RMS 0.018; bản tiếng Việt
+      `anne_vi.wav` là 44.1 kHz, peak 0.945. Thấp hơn ~14 dB ⇒ clone tiếng Anh chắc chắn
+      kém hơn tiếng Việt nghe thấy rõ. File này chính là bản cũ bị đổi tên thành
+      `seele_en.wav` (đổi lại 12/09, commit `3fff88e7`), nguồn gốc không rõ. Phải **thu lại**
+      ở giai đoạn 1, không phải chuẩn hoá gain — khuếch đại một bản thu nhỏ tiếng thì kéo
+      luôn nền nhiễu lên.
+- [ ] **422 không phân biệt "request sai" với "nhân vật chưa có giọng"** — cả 3 trường hợp
+      (thiếu `voice_path`, file không tồn tại, file hỏng) đều trả cùng một 422. Trường hợp
+      giữa là **kho giọng của server thiếu dữ liệu**, không phải client gửi bậy, và trong
+      thực tế nó là trường hợp phổ biến nhất vì `voice.py` tự sinh đường dẫn từ `persona_id`
+      đã validate. Breaker đã không còn bị ảnh hưởng (`63cd9fe2`), nên đây thuần tuý là
+      chuyện chọn đúng mã lỗi để về sau đọc log không phải đoán.
+- [ ] **Chưa kiểm FLAC/Opus giải mã trên iOS WebView thật** — Capacitor. Chunk là file FLAC
+      độc lập, `decodeAudioData` từng cái. Chưa chạy trên máy thật lần nào.
+- [ ] ⚪ **`int8` cho VieNeu** — nhanh ~3x nếu giọng không méo; phải đo, chưa đo.
 
 - [ ] **`ai_understanding` (AI tự đúc kết về user)** — AI-auto trích facts vào `user_memory`
       (background, throttled mỗi 5 turn). Advisory; `valid` flag sẵn cho conflict. (D14 phase sau)

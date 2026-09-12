@@ -312,6 +312,11 @@ export function MotionProvider({ children }: { children: ReactNode }) {
     [cameraController],
   )
 
+  const notifyManualInteraction = useCallback(
+    () => cameraController.notifyManualInteraction(),
+    [cameraController],
+  )
+
   const handleReset = useCallback(() => animController?.restart(), [animController])
 
   // Dev-only test handle. Lives here (always mounted) rather than in the debug
@@ -485,6 +490,7 @@ export function MotionProvider({ children }: { children: ReactNode }) {
       motionFileOptions: MOTION_FILES,
       cameraMode,
       setCameraMode,
+      notifyManualInteraction,
       cameraConfig,
       setCameraConfig,
       dispatchActivity,
@@ -521,6 +527,7 @@ export function MotionProvider({ children }: { children: ReactNode }) {
       playMotionFile,
       cameraMode,
       setCameraMode,
+      notifyManualInteraction,
       cameraConfig,
       setCameraConfig,
       dispatchActivity,

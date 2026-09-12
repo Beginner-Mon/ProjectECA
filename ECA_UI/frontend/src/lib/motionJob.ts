@@ -13,14 +13,13 @@
  * `environment: 'node'` with no DOM and no auth.
  *
  * ── The one thing to get right ────────────────────────────────────────────
- * This looks like `speakText`, and the 404 means the opposite:
- *
- *     GET /tts/{id}/result   404 → not ready yet, keep polling
  *     GET /motion/{job_id}   404 → the row is gone. STOP.
  *
- * api.ts maps that 404 to `{status: 'not_found'}`, which is terminal here.
- * Copying the TTS loop's shape without inverting this gives a loop that runs to
- * its timeout for a job that will never arrive.
+ * Not "not ready yet". api.ts maps that 404 to `{status: 'not_found'}`, which
+ * is terminal here. Treating it as pending gives a loop that runs to its
+ * timeout for a job that will never arrive. (The TTS poll this loop was once
+ * modelled on read its 404 the other way; it has since been replaced by a
+ * stream, which is why the warning outlives the comparison.)
  */
 
 export interface MotionStatus {
@@ -49,7 +48,7 @@ export async function pollMotionJob(
   while (Date.now() < deadline) {
     if (signal?.aborted) throw new DOMException('aborted', 'AbortError')
 
-    // Fetch BEFORE sleeping, unlike speakText. A `cache_hit` is already
+    // Fetch BEFORE sleeping. A `cache_hit` is already
     // rendered — somebody else asked for this exact movement — and sleeping
     // first would put a needless 1.5s in front of an instant answer.
     const res = await fetchStatus(jobId)

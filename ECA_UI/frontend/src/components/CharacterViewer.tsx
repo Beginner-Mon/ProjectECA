@@ -36,6 +36,7 @@ import { useGraphics } from '../hooks/useGraphics'
 const CAMERA_MODES: Record<CameraMode, { boneName: VRMHumanBoneName }> = {
   head: { boneName: VRMHumanBoneName.Head },
   hips: { boneName: VRMHumanBoneName.Head },
+  manual: { boneName: VRMHumanBoneName.Head },
 }
 
 /** Responsive presets per camera mode. wideFraming = current desktop-tuned offsets;
@@ -52,6 +53,12 @@ const CAMERA_RESPONSIVE_PRESETS: Record<CameraMode, CameraResponsivePreset> = {
     wideFraming: [1.5, 3.8, 1.5],
     narrowFraming: [1.5, 4.5, 1.5],
     narrowTargetZ: -0.4,
+  },
+  manual: {
+    // Not used while manual (follow is disabled), but keep a valid entry
+    wideFraming: [0, 0.5, 0],
+    narrowFraming: [0, 2.0, 0],
+    narrowTargetZ: -0.6,
   },
 }
 
@@ -417,8 +424,8 @@ interface SceneProps {
 
 function Scene({ theme, vrmUrl, modelId, onReady, avatarRef }: SceneProps) {
   // Camera mode is owned by CameraController and driven by FSM state
-  // (exercise → wide + 3s cooldown). The old URL-substring heuristic is gone.
-  const { cameraMode, cameraConfig } = useMotion()
+  // (exercise → wide + 3s cooldown), plus manual override when user drags.
+  const { cameraMode, cameraConfig, notifyManualInteraction } = useMotion()
   const { settings: gfx } = useGraphics()
   // eslint-disable-next-line @typescript-eslint/no-explicit-any -- drei OrbitControls ref is an untyped Three.js controls instance
   const controlsRef = useRef<any>(null)
@@ -436,6 +443,11 @@ function Scene({ theme, vrmUrl, modelId, onReady, avatarRef }: SceneProps) {
   const responsiveDisplayRef = useRef(new THREE.Vector3(0, 0.5, 0))
 
   const TRANSITION_DURATION = 0.6
+  // Manual: rotate never counts, only zoom/pan far enough counts (reduced sensitivity).
+  const MANUAL_THRESHOLD_PAN = 0.5
+  const MANUAL_THRESHOLD_ZOOM = 0.6
+  const manualStartTargetRef = useRef<THREE.Vector3 | null>(null)
+  const manualStartDistRef = useRef<number | null>(null)
 
   useEffect(() => {
     camera.up.set(0, 0, 1)
@@ -485,7 +497,9 @@ function Scene({ theme, vrmUrl, modelId, onReady, avatarRef }: SceneProps) {
   // Every frame: make the camera orbit target follow the selected bone.
   // We also shift the camera position by the same delta so the orbital
   // offset (angle + distance) is preserved while the rig moves.
+  // In manual mode the camera is fully user-owned — do not follow.
   useFrame((_state, delta) => {
+    if (cameraMode === 'manual') return
     if (!vrmRef.current || !controlsRef.current) return
 
     // Compute t from canvas width: desktop (>768px) → t=0 (wideFraming only),
@@ -674,6 +688,29 @@ return (
         minDistance={cameraConfig.minDistance}
         maxDistance={cameraConfig.maxDistance}
         target={[0, 0, 0]}
+        onStart={() => {
+          if (controlsRef.current) {
+            manualStartTargetRef.current = controlsRef.current.target.clone()
+            manualStartDistRef.current = camera.position.distanceTo(controlsRef.current.target as THREE.Vector3)
+          }
+        }}
+        onEnd={() => {
+          const startTarget = manualStartTargetRef.current
+          const startDist = manualStartDistRef.current
+          manualStartTargetRef.current = null
+          manualStartDistRef.current = null
+          if (!startTarget || startDist === null || !controlsRef.current) return
+          const targetDelta = (controlsRef.current.target as THREE.Vector3).distanceTo(startTarget)
+          const endDist = camera.position.distanceTo(controlsRef.current.target as THREE.Vector3)
+          const distDelta = Math.abs(endDist - startDist)
+          const hasPanned = targetDelta > MANUAL_THRESHOLD_PAN
+          const hasZoomed = distDelta > MANUAL_THRESHOLD_ZOOM
+          const shouldManual = hasPanned || hasZoomed
+          console.log('[manual-check]', { target: targetDelta.toFixed(3), dist: distDelta.toFixed(3), hasPanned, hasZoomed, shouldManual, from: cameraMode })
+          if (shouldManual) {
+            notifyManualInteraction()
+          }
+        }}
       />
       <BodyPartClickLogger vrmRef={vrmRef} />
     </>

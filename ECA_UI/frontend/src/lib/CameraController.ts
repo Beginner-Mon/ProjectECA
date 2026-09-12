@@ -16,10 +16,14 @@ import { cameraModeOf, type CameraMode, type CharState } from './AnimationStates
 /** How long the wide framing is held after LEAVING a wide state. */
 const COOLDOWN_MS = 3000
 
+/** How long manual camera stays before auto-returning to head (2.5 min). */
+const OVERRIDE_IDLE_MS = 150_000
+
 export class CameraController {
   private state: CharState = 'idle'
   private mode: CameraMode = 'head'
   private timer: ReturnType<typeof setTimeout> | null = null
+  private overrideTimer: ReturnType<typeof setTimeout> | null = null
 
   private readonly onModeChanged: (mode: CameraMode) => void
 
@@ -31,12 +35,17 @@ export class CameraController {
     return this.mode
   }
 
+  get isManual(): boolean {
+    return this.mode === 'manual'
+  }
+
   onStateChanged(next: CharState): void {
     const wasWide = cameraModeOf(this.state) === 'hips'
-    const isWide = cameraModeOf(next) === 'hips'
     this.state = next
+    if (this.mode === 'manual') return
     this.clearTimer()
 
+    const isWide = cameraModeOf(next) === 'hips'
     if (isWide) {
       this.set('hips')
       return
@@ -53,14 +62,25 @@ export class CameraController {
     this.set('head')
   }
 
-  /** Manual override from the debug panel. Cancels any pending cooldown. */
+  /** Manual free-camera triggered by user drag/zoom/pan. */
+  notifyManualInteraction(): void {
+    if (this.mode !== 'manual') {
+      this.clearTimer()
+      this.set('manual')
+    }
+    this.restartOverrideTimer()
+  }
+
+  /** Preset switch from UI. Exits manual and cancels idle timer. */
   setMode(mode: CameraMode): void {
+    this.clearOverrideTimer()
     this.clearTimer()
     this.set(mode)
   }
 
   dispose(): void {
     this.clearTimer()
+    this.clearOverrideTimer()
   }
 
   private set(mode: CameraMode): void {
@@ -73,5 +93,19 @@ export class CameraController {
     if (this.timer === null) return
     clearTimeout(this.timer)
     this.timer = null
+  }
+
+  private clearOverrideTimer(): void {
+    if (this.overrideTimer === null) return
+    clearTimeout(this.overrideTimer)
+    this.overrideTimer = null
+  }
+
+  private restartOverrideTimer(): void {
+    this.clearOverrideTimer()
+    this.overrideTimer = setTimeout(() => {
+      this.overrideTimer = null
+      this.set('head')
+    }, OVERRIDE_IDLE_MS)
   }
 }

@@ -103,6 +103,8 @@ export interface MotionContextType {
   /** Camera framing. FSM-driven; the setter is a manual debug override. */
   cameraMode: CameraMode
   setCameraMode: (mode: CameraMode) => void
+  /** Called when user drags/zooms/pans OrbitControls — enters manual mode. */
+  notifyManualInteraction: () => void
   cameraConfig: CameraConfig
   setCameraConfig: (config: CameraConfig) => void
 

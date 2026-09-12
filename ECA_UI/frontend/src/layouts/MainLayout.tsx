@@ -10,6 +10,7 @@ import { ChatProvider } from '../contexts/ChatContext'
 import { GraphicsProvider } from '../contexts/GraphicsContext'
 import { AvatarBgProvider } from '../contexts/AvatarBgContext'
 import { PreferencesProvider } from '../contexts/PreferencesContext'
+import { PANEL_BG, PANEL_BORDER } from '../lib/utils'
 
 function AudioToggle() {
   const { t } = useTranslation()
@@ -54,8 +55,8 @@ export default function MainLayout() {
           <Outlet />
         </div>
 
-        {/* Mobile chat — fixed at bottom */}
-        <div className="block md:hidden fixed bottom-0 inset-x-0 z-40 h-[40vh] max-h-[40vh] rounded-t-2xl border-t border-border/30 shadow-2xl overflow-hidden backdrop-blur-md">
+        {/* Mobile chat — fixed at bottom — reuse desktop panel style, không duplicate literal */}
+        <div className={`block md:hidden fixed bottom-0 inset-x-0 z-40 h-[40vh] max-h-[40vh] rounded-t-2xl border-t ${PANEL_BORDER} shadow-[0_-8px_40px_rgba(0,0,0,0.4)] overflow-hidden ${PANEL_BG}`}>
           <ChatPanel />
         </div>
 

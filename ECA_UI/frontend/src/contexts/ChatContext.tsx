@@ -9,9 +9,12 @@ import {
 } from 'react'
 import type { Message } from '../components/ChatMessage'
 import {
-  getSession, listSessions, deleteSession, streamChat, fetchMotionStatus,
+  getSession, listSessions, deleteSession, streamChat, fetchMotionStatus, DEFAULT_PERSONA_ID,
   type SessionMessage,
 } from '../lib/api'
+import { CLIP_ABORTED, SpeechClip, speechPlayer, unlockSpeechAudio } from '../lib/speechPlayer'
+import { routeSpeechEvent } from '../lib/speechSource'
+import { createTurnLifecycle } from '../lib/turnLifecycle'
 import { pollMotionJob } from '../lib/motionJob'
 import { clearSessionPointer, readSessionPointer, stampSessionPointer } from '../lib/chatSession'
 import { useMotion } from '../hooks/useMotion'
@@ -57,7 +60,7 @@ function buildInitialMessages(ui: UiStrings): Message[] {
 
 
 export function ChatProvider({ children }: { children: ReactNode }) {
-  const { transitionTo, selectedVrmId, vrmOptions, playMotionFile, registerSessionMotion, consumePreviousAvatar } =
+  const { transitionTo, selectedVrmId, vrmOptions, playMotionFile, registerSessionMotion, consumePreviousAvatar, avatarRef } =
     useMotion()
 
   /** Copy for whoever is on screen, in the language the site is being read in.
@@ -83,8 +86,9 @@ export function ChatProvider({ children }: { children: ReactNode }) {
   const [isGenerating, setIsGenerating] = useState(false)
   const [stageLabel, setStageLabel] = useState<string | null>(null)
   const [webSearch, setWebSearch] = useState(false)
-  // Off by default: VieNeu runs on CPU and takes ~10-20s for a long Vietnamese
-  // answer, and the backend holds the SSE stream open until it finishes.
+  // Off by default. With it on, the voice starts ~0.5s after synthesis does,
+  // but VieNeu is CPU-only and the backend holds the SSE stream open for
+  // roughly half the spoken length while it generates the rest.
   const [voiceReply, setVoiceReply] = useState(false)
   const [isRestoring, setIsRestoring] = useState(true)
   const [imageUrls, setImageUrls] = useState<string[]>([])
@@ -234,8 +238,9 @@ export function ChatProvider({ children }: { children: ReactNode }) {
             role: m.role,
             content: m.content,
             timestamp: new Date(m.timestamp),
-            // Audio is not persisted — the WAV lives on the TTS box under a
-            // random name. The per-message speaker button can re-synthesise it.
+            // Audio is not persisted with the transcript. The speaker button
+            // replays it from this browser's cache (IndexedDB, per user, one
+            // day — lib/ttsCache.ts) or synthesises it again.
             //
             // Motion IS: the job id rides on the message row, so a refresh
             // does not lose a render the GPU already paid for. Carried here
@@ -302,6 +307,9 @@ export function ChatProvider({ children }: { children: ReactNode }) {
   const startNewSession = useCallback(() => {
     abortControllerRef.current?.abort()
     if (stageTimeoutRef.current) clearTimeout(stageTimeoutRef.current)
+    // The old conversation's voice does not follow the user into a new one —
+    // including a replay the abort above would not reach.
+    speechPlayer.stop()
     // Clear the pointer rather than mint a new one. Minting here is what left
     // an id behind for anyone who opened a new chat and never typed in it —
     // and that id 404'd on every load from then on, permanently. The next
@@ -342,6 +350,7 @@ export function ChatProvider({ children }: { children: ReactNode }) {
     if (sessionId === sessionIdRef.current || switchingRef.current) return
     switchingRef.current = true
     abortControllerRef.current?.abort()
+    speechPlayer.stop() // same as startNewSession
 
     // Đổi UI ngay: không hiện session cũ trong lúc load session mới
     setIsSwitching(true)
@@ -411,6 +420,12 @@ export function ChatProvider({ children }: { children: ReactNode }) {
   const handleSend = useCallback(async () => {
     const text = inputRef.current.trim()
     if (!text || isGeneratingRef.current) return
+    // Voice mode: wake the AudioContext NOW, while this is still the click (or
+    // Enter) that sent the message. The reply's audio lands seconds later, far
+    // outside any user gesture; a context started here stays running, so the
+    // first chunk plays the moment it arrives. Safari honours this only inside
+    // the gesture itself, which is why it cannot wait for speech_start.
+    if (voiceReply) unlockSpeechAudio()
 
     const userMsg: Message = {
       id: crypto.randomUUID(),
@@ -440,22 +455,61 @@ export function ChatProvider({ children }: { children: ReactNode }) {
     void transitionTo('thinking_intro')
 
     const assistantMsgId = crypto.randomUUID()
+    /* The character answering, resolved once. It goes to /chat, onto the
+     * message (so a replay asks POST /tts for the same voice) and into the
+     * cache key — three places that must agree. */
+    const persona = selectedVrmId || DEFAULT_PERSONA_ID
+    /* Voice mode: the clip exists from the start, empty, so the speaker shows
+     * "audio coming" rather than an idle button — which, clicked, would start a
+     * second synthesis of the same answer. */
+    const speech = voiceReply ? new SpeechClip() : undefined
+    /** The answer as streamed: what the cache is keyed by, and exactly the
+     *  text the speaker button will look up on a replay. */
+    let answer = ''
     setMessages((prev) => [
       ...prev,
-      { id: assistantMsgId, role: 'assistant', content: '', timestamp: new Date() },
+      { id: assistantMsgId, role: 'assistant', content: '', timestamp: new Date(), speech, personaId: persona },
     ])
 
     const controller = new AbortController()
     abortControllerRef.current = controller
     /** True while this stream is still the newest one.
      *
-     *  With voice on, the backend keeps the stream open long after the text is
-     *  done, and we release the composing UI at `speech_pending` — so the user
-     *  can send a second message while this one is still streaming. Without this
-     *  check the old stream's `done` would clear `isGenerating` for the NEW
-     *  reply. Message updates are exempt: they target their own `assistantMsgId`
-     *  and stay correct however late they land. */
+     *  The backend keeps the stream open after the text is done (saving the
+     *  turn, a summarizer check, then the voice), and we release the composing
+     *  UI as soon as the turn is saved — so the user can send a second message
+     *  while this one is still streaming. Without this check the old stream's
+     *  `done` would clear `isGenerating` for the NEW reply. Message updates are
+     *  exempt: they target their own `assistantMsgId` and stay correct however
+     *  late they land. */
     const isCurrent = () => abortControllerRef.current === controller
+
+    /* session_persisted, speech_* and done: when the composer is handed back
+     * (at session_persisted, with speech_start and done as fallbacks) and where
+     * the reply's voice goes. The ordering rules and their tests live in
+     * lib/turnLifecycle.ts; these are just the effects. */
+    const lifecycle = createTurnLifecycle(speech, {
+      isCurrent,
+      releaseComposing: () => {
+        if (stageTimeoutRef.current) clearTimeout(stageTimeoutRef.current)
+        setStageLabel(null)
+        setIsGenerating(false)
+        endThinking()
+      },
+      markSessionsDirty: () => setSessionsDirty(true),
+      // `answer` is read per event, not captured here: speech events come
+      // after the last token, so by then it holds the whole reply — the text
+      // the cache is keyed by. A failure is a console line, never an error
+      // bubble: the text is there and readable.
+      routeSpeech: (clip, type, data) => {
+        routeSpeechEvent(clip, type, data, { text: answer, persona })
+      },
+      // If the browser will not start audio yet, play() says so and the audio
+      // waits in the clip for the speaker button.
+      playSpeech: (clip) => {
+        void speechPlayer.play(clip, avatarRef.current)
+      },
+    })
 
     /* Captured once per send rather than read per event: switching character
      * mid-stream must not swap the label under a reply already being written,
@@ -476,7 +530,7 @@ export function ChatProvider({ children }: { children: ReactNode }) {
           // backend caches personas under, and ChatRequest.persona_id already
           // accepts exactly this shape. Picking an avatar changes how the
           // assistant speaks, which until now it did not.
-          personaId: selectedVrmId || undefined,
+          personaId: persona,
           previousPersonaId: consumePreviousAvatar(),
           // Same locale that renders this page. It selects the character's voice
           // and any safety warning the backend inserts — both are text a person
@@ -484,6 +538,7 @@ export function ChatProvider({ children }: { children: ReactNode }) {
           locale,
         },
         (type, data) => {
+          if (lifecycle(type, data)) return
           if (type === 'stage') {
             const { node, status } = data as { node: string; status: string }
             if (node === 'planner' && status === 'complete') {
@@ -503,47 +558,10 @@ export function ChatProvider({ children }: { children: ReactNode }) {
             setIsTyping(false)
             endThinking()
             const content = (data as { content: string }).content
+            answer += content
             setMessages((prev) =>
               prev.map((msg) =>
                 msg.id === assistantMsgId ? { ...msg, content: msg.content + content } : msg
-              )
-            )
-          } else if (type === 'speech_pending') {
-            // Spin the speaker on this message. Without it the toggle has no
-            // visible effect at all during the 30-45s wait, which reads exactly
-            // like it is broken.
-            setMessages((prev) =>
-              prev.map((msg) =>
-                msg.id === assistantMsgId ? { ...msg, speechPending: true } : msg
-              )
-            )
-            // The answer text is already complete here — the backend only holds
-            // the stream open to poll Redis for the audio (up to 130s). Release
-            // the composing UI now, otherwise the stop button lingers for two
-            // minutes after the reply is fully readable.
-            if (!isCurrent()) return
-            setStageLabel(null)
-            setIsGenerating(false)
-            endThinking()
-          } else if (type === 'speech_ready') {
-            const { url } = data as { url?: string }
-            setMessages((prev) =>
-              prev.map((msg) =>
-                msg.id === assistantMsgId
-                  // `autoplay` is what makes voice mode audible. Setting only
-                  // `audioUrl` attaches a file nobody plays, which is why the
-                  // toggle looked identical whether it was on or off.
-                  ? { ...msg, audioUrl: url, speechPending: false, autoplay: !!url }
-                  : msg
-              )
-            )
-          } else if (type === 'speech_failed') {
-            // Text is still there and readable — a missing voice is not worth
-            // an error bubble. Surface it in the console for diagnosis only.
-            console.warn('[TTS]', (data as { error?: string }).error ?? 'speech failed')
-            setMessages((prev) =>
-              prev.map((msg) =>
-                msg.id === assistantMsgId ? { ...msg, speechPending: false } : msg
               )
             )
           } else if (type === 'motion') {
@@ -599,12 +617,6 @@ export function ChatProvider({ children }: { children: ReactNode }) {
                 }
               })()
             }
-          } else if (type === 'done') {
-            if (stageTimeoutRef.current) clearTimeout(stageTimeoutRef.current)
-            if (!isCurrent()) return
-            setStageLabel(null)
-            setIsGenerating(false)
-            setSessionsDirty(true)
           }
         },
         controller.signal,
@@ -620,6 +632,12 @@ export function ChatProvider({ children }: { children: ReactNode }) {
         )
       }
     } finally {
+      // A clip still unfinished when the stream is over never will be: it was
+      // aborted (stop, new chat, another conversation), cut off, or the backend
+      // had nothing to voice. Failing it stops a half-heard reply, stops the
+      // speaker spinning, and lets a click fall back to cache/POST /tts.
+      // A no-op for a clip that completed.
+      speech?.fail(CLIP_ABORTED)
       // Same reason as `done`: a superseded stream must not reset the UI that
       // now belongs to a newer message.
       if (isCurrent()) {
@@ -633,7 +651,7 @@ export function ChatProvider({ children }: { children: ReactNode }) {
     // request. Without it the closure keeps whichever locale was active when the
     // callback was created, and the backend would keep serving the old
     // character voice and the old safety-warning language.
-  }, [webSearch, voiceReply, selectedVrmId, locale, transitionTo, endThinking, playMotionFile, ensureSessionId])
+  }, [webSearch, voiceReply, selectedVrmId, locale, transitionTo, endThinking, playMotionFile, ensureSessionId, avatarRef])
 
   useEffect(() => {
     return () => {

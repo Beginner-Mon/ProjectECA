@@ -3,6 +3,7 @@
 import json
 from unittest.mock import AsyncMock, MagicMock, patch
 
+import httpx
 import pytest
 from langchain_core.messages import ToolMessage
 
@@ -82,10 +83,17 @@ def _set_graph(mock_graph):
     return mock_graph
 
 
-def _set_redis(mock_redis):
-    """Set the module-global redis client for a test. Returns the mock."""
+def _set_health_redis(mock_redis):
+    """Set the module-global /health/detailed redis client for a test.
+
+    feature/tts-streaming: TTS no longer touches Redis at all (no task, no
+    task_result:{id} key, no polling) — the only Redis client left in
+    api/main.py is `_health_redis`, used solely by GET /health/detailed's
+    "redis" readiness check. Named accordingly so this fixture does not read
+    as though it is still wiring up the TTS path.
+    """
     import langgraph_agents.api.main as api_module
-    api_module._redis = mock_redis
+    api_module._health_redis = mock_redis
     return mock_redis
 
 
@@ -104,13 +112,13 @@ def api_client():
     variable could. See api/auth.py.
     """
     mock_redis = MagicMock()
-    mock_redis.get = AsyncMock(return_value=None)
+    mock_redis.ping = AsyncMock(return_value=True)
 
     mock_graph = MagicMock()
     mock_graph.astream = _make_fake_astream_stage_only()
 
     _set_graph(mock_graph)
-    _set_redis(mock_redis)
+    _set_health_redis(mock_redis)
 
     from langgraph_agents.api.main import create_app
     from langgraph_agents.api.auth import current_user_id, override_user
@@ -128,7 +136,7 @@ def api_client():
     # Reset module globals after test
     import langgraph_agents.api.main as api_module
     api_module._graph = None
-    api_module._redis = None
+    api_module._health_redis = None
 
 
 # ── Health ─────────────────────────────────────────────────────────
@@ -256,10 +264,55 @@ def test_sse_chat_emits_retriever_stage(api_client, monkeypatch):
 
 
 # ── Speech mode ────────────────────────────────────────────────────
+#
+# feature/tts-streaming: SpeechLLm now streams NDJSON lines
+# ({"type": "start"|"chunk"|"end"|"error"}) instead of returning one complete
+# wav after ~38s. The agent forwards each line as an SSE event the moment it
+# arrives via client.synthesize_stream() (services/vieneu_tts/client.py) and
+# api/main.py::_stream_speech — no background task, no task id, no Redis.
+# speech_pending/speech_ready are gone; speech_start/speech_chunk/speech_end
+# replace them (see the CONTRACT table these tests are checked against).
+#
+# _FakeTTSClient stands in for get_vieneu_tts_client()'s return value so these
+# tests exercise the real translation logic in _stream_speech without an
+# actual SpeechLLm process — same spirit as mock_graph standing in for the
+# LangGraph graph above.
+
+
+class _FakeTTSClient:
+    """A fake VieNeuTTSClient whose synthesize_stream yields canned NDJSON events."""
+
+    def __init__(self, events):
+        self._events = events
+
+    async def synthesize_stream(self, text, voice_path=None, language=None):
+        for event in self._events:
+            yield event
+
+
+class _FakeTTSClientRaising:
+    """A fake client whose synthesize_stream raises before yielding anything —
+    stands in for a breaker-open / connect-failure / mid-stream-drop, all of
+    which client.synthesize_stream turns into ServiceUnavailableError."""
+
+    def __init__(self, exc):
+        self._exc = exc
+
+    async def synthesize_stream(self, text, voice_path=None, language=None):
+        raise self._exc
+        yield  # pragma: no cover — unreachable; makes this an async generator function
+
+
+def _set_fake_tts_client(monkeypatch, fake_client):
+    import langgraph_agents.api.main as api_module
+    monkeypatch.setattr(api_module, "get_vieneu_tts_client", lambda: fake_client)
+    monkeypatch.setattr(api_module, "get_persona", lambda pid: {})
 
 
 @pytest.mark.unit
-def test_sse_chat_speech_mode_emits_speech_pending(api_client, monkeypatch):
+def test_sse_chat_speech_mode_emits_start_chunks_end_in_order(api_client, monkeypatch):
+    """The success path: speech_start, N speech_chunk in seq order, speech_end,
+    then done — and done carries no speech_task_id, because there is no task."""
     client, _, mock_graph = api_client
     mock_graph.astream = _make_fake_astream_stage_only()
     _set_graph(mock_graph)
@@ -269,37 +322,175 @@ def test_sse_chat_speech_mode_emits_speech_pending(api_client, monkeypatch):
     # The deployed agent runs without it (TTS is unhosted), so this test has to
     # say explicitly that it wants the enabled path.
     monkeypatch.setenv("VIENEU_TTS_URL", "http://localhost:5000")
-    fake_synth = AsyncMock()
-    monkeypatch.setattr(api_module, "synthesize_speech_async", fake_synth)
-    monkeypatch.setattr(api_module, "get_persona", lambda pid: {})
+    fake_events = [
+        {"type": "start", "codec": "opus", "sample_rate": 48000, "voice_version": "abc123"},
+        {"type": "chunk", "seq": 0, "codec": "opus", "audio": "QQ==", "duration": 0.32},
+        {"type": "chunk", "seq": 1, "codec": "opus", "audio": "Qg==", "duration": 0.30},
+        {"type": "chunk", "seq": 2, "codec": "opus", "audio": "Qw==", "duration": 0.28},
+        {"type": "end", "chunks": 3, "duration": 0.90},
+    ]
+    _set_fake_tts_client(monkeypatch, _FakeTTSClient(fake_events))
 
-    async def fake_poll(task_id, timeout=15):
-        yield api_module.encode_event("speech_ready", {"task_id": task_id, "url": "http://x.wav"})
+    resp = client.post("/chat", json={"query": "Hãy đọc", "output_mode": "speech"})
+    assert resp.status_code == 200
+    events = _parse_sse_stream(resp.content)
+    kinds = [e["event"] for e in events]
 
-    monkeypatch.setattr(api_module, "_poll_speech_result", fake_poll)
+    assert "speech_pending" not in kinds
+    assert "speech_ready" not in kinds
+
+    start_events = [e for e in events if e["event"] == "speech_start"]
+    assert len(start_events) == 1
+    # lang comes from resolve_voice()'s own detection over (final_answer,
+    # query), not from SpeechLLm's "start" line — this turn's answer and
+    # query are both Vietnamese, so "vi" (see test_lang_detect.py for the
+    # detector itself; this just pins that _stream_speech forwards it).
+    assert start_events[0]["data"] == {
+        "voice_version": "abc123", "codec": "opus", "sample_rate": 48000,
+        "lang": "vi",
+    }
+
+    chunk_events = [e for e in events if e["event"] == "speech_chunk"]
+    assert [c["data"]["seq"] for c in chunk_events] == [0, 1, 2]
+    assert [c["data"]["audio"] for c in chunk_events] == ["QQ==", "Qg==", "Qw=="]
+
+    end_events = [e for e in events if e["event"] == "speech_end"]
+    assert len(end_events) == 1
+    assert end_events[0]["data"] == {"chunks": 3}
+
+    # Ordering: speech_start before any chunk, all chunks before speech_end.
+    idx = {e["event"]: i for i, e in enumerate(events)}
+    first_chunk_idx = next(i for i, e in enumerate(events) if e["event"] == "speech_chunk")
+    assert idx["speech_start"] < first_chunk_idx
+    last_chunk_idx = max(i for i, e in enumerate(events) if e["event"] == "speech_chunk")
+    assert last_chunk_idx < idx["speech_end"]
+
+    assert kinds[-1] == "done"
+    assert "speech_task_id" not in events[-1]["data"]
+
+
+@pytest.mark.unit
+def test_sse_chat_speech_error_line_emits_speech_failed(api_client, monkeypatch):
+    """A mid-stream {"type": "error"} line — SpeechLLm's own report that it
+    could not finish — becomes exactly one speech_failed, then the turn ends."""
+    client, _, mock_graph = api_client
+    mock_graph.astream = _make_fake_astream_stage_only()
+    _set_graph(mock_graph)
+
+    import langgraph_agents.api.main as api_module
+    monkeypatch.setenv("VIENEU_TTS_URL", "http://localhost:5000")
+    fake_events = [
+        {"type": "start", "codec": "opus", "sample_rate": 48000, "voice_version": "abc123"},
+        {"type": "error", "message": "model crashed mid-utterance"},
+    ]
+    _set_fake_tts_client(monkeypatch, _FakeTTSClient(fake_events))
 
     resp = client.post("/chat", json={"query": "Hãy đọc", "output_mode": "speech"})
     events = _parse_sse_stream(resp.content)
-    speech_pending = [e for e in events if e["event"] == "speech_pending"]
-    assert len(speech_pending) == 1
-    assert "task_id" in speech_pending[0]["data"]
-    speech_ready = [e for e in events if e["event"] == "speech_ready"]
-    assert len(speech_ready) == 1
+    kinds = [e["event"] for e in events]
+
+    assert kinds.count("speech_failed") == 1
+    failed = [e for e in events if e["event"] == "speech_failed"][0]
+    assert "model crashed mid-utterance" in failed["data"]["error"]
+    assert "speech_end" not in kinds
+    assert kinds[-1] == "done"
+
+
+@pytest.mark.unit
+def test_sse_chat_speech_service_unavailable_emits_speech_failed(api_client, monkeypatch):
+    """A transport failure (breaker open, connect refused, stream dropped) —
+    client.synthesize_stream raises ServiceUnavailableError — also becomes
+    exactly one speech_failed, and the turn still finishes with `done`."""
+    client, _, mock_graph = api_client
+    mock_graph.astream = _make_fake_astream_stage_only()
+    _set_graph(mock_graph)
+
+    from langgraph_agents.services.exceptions import ServiceUnavailableError
+    monkeypatch.setenv("VIENEU_TTS_URL", "http://localhost:5000")
+    _set_fake_tts_client(
+        monkeypatch,
+        _FakeTTSClientRaising(ServiceUnavailableError("vieneu_tts", "circuit breaker open")),
+    )
+
+    resp = client.post("/chat", json={"query": "Hãy đọc", "output_mode": "speech"})
+    assert resp.status_code == 200
+    events = _parse_sse_stream(resp.content)
+    kinds = [e["event"] for e in events]
+
+    assert kinds.count("speech_failed") == 1
+    failed = [e for e in events if e["event"] == "speech_failed"][0]
+    assert "circuit breaker open" in failed["data"]["error"]
+    assert kinds[-1] == "done"
+
+
+@pytest.mark.unit
+def test_sse_chat_speech_truncated_stream_emits_exactly_one_speech_failed(api_client, monkeypatch):
+    """End-to-end regression, through the REAL client.synthesize_stream (an
+    httpx.MockTransport, no network — not _FakeTTSClient) and the real
+    _stream_speech: a stream that closes without ever sending "end" or "error"
+    must still produce exactly one terminal speech_failed, not silence. Before
+    client.synthesize_stream() was fixed to treat a missing terminal line as a
+    failure, this case produced no speech_end AND no speech_failed — the
+    browser had no way to learn the turn was over.
+    """
+    client, _, mock_graph = api_client
+    mock_graph.astream = _make_fake_astream_stage_only()
+    _set_graph(mock_graph)
+
+    import langgraph_agents.api.main as api_module
+    import langgraph_agents.services.vieneu_tts.client as vieneu_client_module
+
+    monkeypatch.setenv("VIENEU_TTS_URL", "http://speechllm.test")
+    monkeypatch.setattr(api_module, "get_persona", lambda pid: {})
+    # get_vieneu_tts_client() is a process-wide singleton (see client.py); a
+    # client cached by an earlier test would ignore the transport patch below
+    # (it is looked up fresh per httpx.AsyncClient() call, but starting clean
+    # keeps this test's breaker state and base_url its own).
+    monkeypatch.setattr(vieneu_client_module, "_client", None)
+
+    body = "".join(json.dumps(e) + "\n" for e in [
+        {"type": "start", "codec": "opus", "sample_rate": 48000, "voice_version": "abc"},
+        {"type": "chunk", "seq": 0, "codec": "opus", "audio": "QQ==", "duration": 0.3},
+        # no "end", no "error" — response body just stops here.
+    ])
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, content=body, headers={"content-type": "application/x-ndjson"})
+
+    transport = httpx.MockTransport(handler)
+    real_async_client = httpx.AsyncClient
+
+    def _patched(*args, **kwargs):
+        kwargs["transport"] = transport
+        return real_async_client(*args, **kwargs)
+
+    monkeypatch.setattr(vieneu_client_module.httpx, "AsyncClient", _patched)
+
+    resp = client.post("/chat", json={"query": "Hãy đọc", "output_mode": "speech"})
+    assert resp.status_code == 200
+    events = _parse_sse_stream(resp.content)
+    kinds = [e["event"] for e in events]
+
+    assert kinds.count("speech_failed") == 1
+    assert kinds.count("speech_end") == 0
+    assert kinds.count("speech_start") == 1  # the "start" line did get through
+    assert kinds[-1] == "done"
 
 
 @pytest.mark.unit
 def test_sse_chat_speech_mode_without_tts_configured(api_client, monkeypatch):
     """No VIENEU_TTS_URL: say so once and finish, never promise audio.
 
-    speech_pending is a promise that speech_ready or speech_failed follows. With
-    no TTS service, nothing can follow — the UI would sit on a spinner forever.
-    Worse on Lambda, where a streaming invocation is billed for its FULL duration
-    even after the client disconnects: the old code would have spent 130 seconds
-    of memory polling for a result nothing was going to write.
+    speech_disabled is not a promise that a later event follows — unlike
+    speech_start, nothing else is coming. The old speech_pending WAS such a
+    promise (speech_ready or speech_failed had to follow), which is exactly
+    why disabled must never emit it: with no TTS service, nothing could ever
+    follow and the UI would sit on a spinner forever.
 
     The `done` assertion is the other half. The stream must still terminate
     normally, because a caller that asked for speech and cannot have it should
-    still get its answer.
+    still get its answer — and `done` no longer carries a speech_task_id key
+    at all, since there is no task any more.
     """
     client, _, mock_graph = api_client
     mock_graph.astream = _make_fake_astream_stage_only()
@@ -307,27 +498,54 @@ def test_sse_chat_speech_mode_without_tts_configured(api_client, monkeypatch):
 
     import langgraph_agents.api.main as api_module
     monkeypatch.delenv("VIENEU_TTS_URL", raising=False)
-    # If the disabled branch leaks, this blows up instead of silently passing.
-    monkeypatch.setattr(api_module, "synthesize_speech_async", None)
+    # If the disabled branch leaks and tries to synthesize anyway, this blows
+    # up instead of silently passing.
+    monkeypatch.setattr(api_module, "get_vieneu_tts_client", None)
 
     resp = client.post("/chat", json={"query": "Hãy đọc", "output_mode": "speech"})
     events = _parse_sse_stream(resp.content)
     kinds = [e["event"] for e in events]
 
     assert "speech_disabled" in kinds
+    assert "speech_start" not in kinds
     assert "speech_pending" not in kinds
     assert kinds[-1] == "done"
-    assert [e for e in events if e["event"] == "done"][0]["data"]["speech_task_id"] is None
+    assert "speech_task_id" not in events[-1]["data"]
 
 
 @pytest.mark.unit
 def test_tts_endpoint_503_when_not_configured(api_client, monkeypatch):
-    """POST /tts must refuse rather than hand back an id nothing will fulfil."""
+    """POST /tts must refuse rather than open a stream nothing will feed."""
     client, _, _ = api_client
     monkeypatch.delenv("VIENEU_TTS_URL", raising=False)
 
     resp = client.post("/tts", json={"text": "xin chào", "persona_id": "anne"})
     assert resp.status_code == 503
+
+
+@pytest.mark.unit
+def test_tts_endpoint_streams_speech_events_when_enabled(api_client, monkeypatch):
+    """POST /tts (the per-message speaker button) streams the same speech_*
+    shape /chat does, via the shared _stream_speech helper."""
+    client, _, _ = api_client
+    monkeypatch.setenv("VIENEU_TTS_URL", "http://localhost:5000")
+    fake_events = [
+        {"type": "start", "codec": "opus", "sample_rate": 48000, "voice_version": "def456"},
+        {"type": "chunk", "seq": 0, "codec": "opus", "audio": "QQ==", "duration": 0.5},
+        {"type": "end", "chunks": 1, "duration": 0.5},
+    ]
+    _set_fake_tts_client(monkeypatch, _FakeTTSClient(fake_events))
+
+    resp = client.post("/tts", json={"text": "xin chào", "persona_id": "anne"})
+    assert resp.status_code == 200
+    events = _parse_sse_stream(resp.content)
+    kinds = [e["event"] for e in events]
+
+    assert kinds == ["speech_start", "speech_chunk", "speech_end"]
+    assert events[0]["data"]["voice_version"] == "def456"
+    assert events[0]["data"]["lang"] == "vi"  # "xin chào" — resolve_voice()'s own detection
+    assert events[1]["data"]["seq"] == 0
+    assert events[2]["data"]["chunks"] == 1
 
 
 # ── Session persisted ──────────────────────────────────────────────
@@ -371,6 +589,57 @@ def test_sse_chat_persist_failure_does_not_block(api_client, monkeypatch):
     resp = client.post("/chat", json={"query": "Xin chào"})
     events = _parse_sse_stream(resp.content)
     assert events[-1]["event"] == "done"
+
+
+@pytest.mark.unit
+def test_slow_summarizer_does_not_delay_session_persisted_or_done(api_client, monkeypatch):
+    """Regression for the 11-09 "send button stuck in stop for 6.5-7.9s" bug
+    (owner's vva.log — text-mode turns, no TTS involved). maybe_summarize is
+    now `asyncio.create_task`'d right after session_persisted, not awaited —
+    a slow summarizer check must not hold up session_persisted OR done.
+
+    Before this fix, `await maybe_summarize(...)` sat on the critical path
+    between session_persisted and done; a summarizer this slow would have
+    made the whole response take >1s to even start returning.
+    """
+    import asyncio
+    import time
+
+    client, _, mock_graph = api_client
+    mock_graph.astream = _make_fake_astream_stage_only()
+    _set_graph(mock_graph)
+
+    import langgraph_agents.api.main as api_module
+
+    async def fake_write(*args, **kwargs):
+        pass
+
+    monkeypatch.setattr(api_module, "write_session_turn", fake_write)
+
+    async def slow_summarizer(session_id):
+        # Long enough that awaiting it inline would be trivially detectable;
+        # short enough not to make the suite slow when the fix holds.
+        await asyncio.sleep(1.0)
+
+    monkeypatch.setattr(api_module, "maybe_summarize", slow_summarizer)
+
+    t0 = time.perf_counter()
+    resp = client.post("/chat", json={"query": "Xin chào"})
+    elapsed = time.perf_counter() - t0
+
+    assert resp.status_code == 200
+    events = _parse_sse_stream(resp.content)
+    kinds = [e["event"] for e in events]
+    assert "session_persisted" in kinds
+    assert kinds[-1] == "done"
+    assert elapsed < 0.5, (
+        f"response took {elapsed:.2f}s — maybe_summarize appears to still "
+        "be on the critical path (fake sleeps 1.0s)"
+    )
+
+    # Let the background task actually finish before the fixture tears the
+    # app down, rather than leaving it pending mid-sleep.
+    time.sleep(1.1)
 
 
 # ── Kimodo job id capture (R26) ─────────────────────────────────────
@@ -571,35 +840,8 @@ def test_kimodo_malformed_content_does_not_break_the_stream(api_client, monkeypa
     assert events[-1]["event"] == "done"
 
 
-# ── TTS result (fallback) ──────────────────────────────────────────
-
-
-@pytest.mark.unit
-def test_tts_result_404_when_missing(api_client):
-    client, mock_redis, _ = api_client
-    mock_redis.get.return_value = None
-    _set_redis(mock_redis)
-    resp = client.get("/tts/nonexistent/result")
-    assert resp.status_code == 404
-
-
-@pytest.mark.unit
-def test_tts_result_200_when_present(api_client):
-    client, mock_redis, _ = api_client
-    mock_redis.get.return_value = b'{"event":"speech_ready","url":"http://x.wav"}'
-    _set_redis(mock_redis)
-    resp = client.get("/tts/abc/result")
-    assert resp.status_code == 200
-    assert resp.json()["event"] == "speech_ready"
-
-
-@pytest.mark.unit
-def test_tts_result_500_on_corrupt(api_client):
-    client, mock_redis, _ = api_client
-    mock_redis.get.return_value = b'not json'
-    _set_redis(mock_redis)
-    resp = client.get("/tts/abc/result")
-    assert resp.status_code == 500
+# GET /tts/{task_id}/result — deleted along with the Redis-backed task it
+# polled for (feature/tts-streaming). See test_tts_endpoint_* above.
 
 
 # ── Schema tests ───────────────────────────────────────────────────

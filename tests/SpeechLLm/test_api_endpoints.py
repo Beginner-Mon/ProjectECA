@@ -2,14 +2,21 @@
 Unit tests for the SpeechLLm API endpoints.
 
 Tests cover:
-- Health check
-- Successful TTS synthesis (simple mode and LLM mode)
-- Request validation (empty text, missing fields)
-- Audio file serving (MP3, WAV, 404)
+- Health check, including the warm-up state machine (loading / ready / error)
+
+POST /synthesize (TestSynthesizeEndpoint) and GET /audio/{filename}
+(TestAudioEndpoint) are both gone along with their routes: streaming
+(POST /synthesize/stream) replaces "write a file, hand back a URL" entirely.
+Its own request-validation coverage (empty/whitespace-only/missing text,
+NDJSON framing) lives in test_synthesize_stream.py, next to the rest of the
+streaming behaviour rather than here.
 """
 
+import threading
+import time
+
 import pytest
-from unittest.mock import patch
+from fastapi.testclient import TestClient
 
 
 # ── Health ────────────────────────────────────────────────────────────────────
@@ -18,117 +25,123 @@ from unittest.mock import patch
 class TestHealthEndpoint:
 
     def test_returns_ok(self, tts_client):
-        """GET /health should return 200 with status ok."""
+        """GET /health should return 200 with status ok.
+
+        tts_client's TestClient has `api_server._warm_up_model` monkeypatched
+        (see conftest.py) to mark the model "ready" immediately without
+        touching the real one — this test is about the response shape once
+        ready, not about warm-up itself.
+        """
         response = tts_client.get("/health")
         assert response.status_code == 200
         assert response.json() == {"status": "ok"}
 
+    def test_loading_then_ready(self, monkeypatch):
+        """/health must not lie: 503 while the model is loading, 200 only
+        once it actually is.
 
-# ── Synthesize ────────────────────────────────────────────────────────────────
+        This test builds its own TestClient rather than using the
+        `tts_client` fixture, so it goes through the REAL `_warm_up_model`
+        (background-thread warm-up) instead of the fake `tts_client`
+        installs. The model load itself is still faked (gated on a
+        threading.Event) so this stays a millisecond-scale unit test rather
+        than one that downloads real weights. Voice enrolment is stubbed to
+        a no-op here on purpose — this test is about the model-load leg of
+        warm-up in isolation; enrolment's own gating gets its own test
+        below.
+        """
+        import api_server
 
-@pytest.mark.unit
-class TestSynthesizeEndpoint:
+        release = threading.Event()
 
-    def test_simple_mode_success(self, tts_client, mock_tts_router):
-        """POST /synthesize with text+emotion should return synthesis metadata."""
-        payload = {"text": "Hello world", "emotion": "happy", "language": "en"}
-        response = tts_client.post("/synthesize", json=payload)
+        def fake_load_model():
+            release.wait(timeout=5)
 
-        assert response.status_code == 200
-        data = response.json()
-        assert data["message"] == "Synthesis complete"
-        assert data["audio_file"] == "test_audio.mp3"
-        assert data["language"] == "en"
-        assert data["emotion"] == "happy"
-        assert "tts_time_sec" in data
-        assert data["tts_provider"] == "elevenlabs"
-        mock_tts_router.synthesize.assert_called_once()
+        monkeypatch.setattr(api_server.vieneu_client, "_load_model", fake_load_model)
+        monkeypatch.setattr(api_server.vieneu_client, "_enrol_known_voices", lambda: None)
+        monkeypatch.setitem(api_server._MODEL_STATE, "status", "loading")
+        monkeypatch.setitem(api_server._MODEL_STATE, "error", None)
 
-    def test_llm_mode_with_voice_prompt(self, tts_client, mock_tts_router):
-        """POST /synthesize with voice_prompt object should extract text and emotion."""
-        payload = {
-            "voice_prompt": {"text": "Do some stretches", "emotion": "calm"},
-            "language": "vi",
-        }
-        response = tts_client.post("/synthesize", json=payload)
+        with TestClient(api_server.app) as client:
+            loading = client.get("/health")
+            assert loading.status_code == 503
+            assert loading.json() == {"status": "loading"}
 
-        assert response.status_code == 200
-        data = response.json()
-        assert data["language"] == "vi"
-        assert data["emotion"] == "calm"
+            release.set()
+            for _ in range(100):
+                if api_server._MODEL_STATE["status"] != "loading":
+                    break
+                time.sleep(0.02)
 
-    def test_empty_text_returns_400(self, tts_client):
-        """POST /synthesize with empty text should return 400."""
-        payload = {"text": ""}
-        response = tts_client.post("/synthesize", json=payload)
-        assert response.status_code == 400
-        assert "empty" in response.json()["detail"].lower()
+            ready = client.get("/health")
+            assert ready.status_code == 200
+            assert ready.json() == {"status": "ok"}
 
-    def test_whitespace_only_text_returns_400(self, tts_client):
-        """POST /synthesize with whitespace-only text should return 400."""
-        payload = {"text": "   "}
-        response = tts_client.post("/synthesize", json=payload)
-        assert response.status_code == 400
+    def test_stays_loading_until_voice_enrolment_finishes(self, monkeypatch):
+        """/health's "ready" has to cover voice enrolment too, not just the
+        model load — a request naming a voice whose reference had not been
+        pre-enrolled yet would pay the ~3-4s encode_reference() cost that
+        this whole warm-up step exists to move out of the request path.
 
-    def test_no_text_at_all_returns_400(self, tts_client):
-        """POST /synthesize with neither text nor voice_prompt should return 400."""
-        payload = {"language": "en"}
-        response = tts_client.post("/synthesize", json=payload)
-        assert response.status_code == 400
+        Model load is instant here (not what this test is about); voice
+        enrolment is the one gated on a threading.Event. Builds its own
+        TestClient (not the `tts_client` fixture) for the same reason as
+        test_loading_then_ready above — this needs the REAL `_warm_up_model`.
+        """
+        import api_server
 
-    def test_default_language_is_en(self, tts_client):
-        """Omitting language should default to 'en'."""
-        payload = {"text": "Hello"}
-        response = tts_client.post("/synthesize", json=payload)
+        release = threading.Event()
 
-        assert response.status_code == 200
-        assert response.json()["language"] == "en"
+        monkeypatch.setattr(api_server.vieneu_client, "_load_model", lambda: None)
 
-    def test_default_emotion_is_neutral(self, tts_client):
-        """Omitting emotion should default to 'neutral'."""
-        payload = {"text": "Hello"}
-        response = tts_client.post("/synthesize", json=payload)
+        def fake_enrol_known_voices():
+            release.wait(timeout=5)
 
-        assert response.status_code == 200
-        assert response.json()["emotion"] == "neutral"
+        monkeypatch.setattr(
+            api_server.vieneu_client, "_enrol_known_voices", fake_enrol_known_voices
+        )
+        monkeypatch.setitem(api_server._MODEL_STATE, "status", "loading")
+        monkeypatch.setitem(api_server._MODEL_STATE, "error", None)
 
-    def test_tts_failure_returns_500(self, tts_client, mock_tts_router):
-        """When TTS router raises, API should return 500."""
-        mock_tts_router.synthesize.side_effect = RuntimeError("GPU out of memory")
+        with TestClient(api_server.app) as client:
+            # Model "loaded" instantly, but enrolment is still blocked on
+            # `release` — /health must still read "loading".
+            still_loading = client.get("/health")
+            assert still_loading.status_code == 503
+            assert still_loading.json() == {"status": "loading"}
 
-        payload = {"text": "Hello"}
-        response = tts_client.post("/synthesize", json=payload)
+            release.set()
+            for _ in range(100):
+                if api_server._MODEL_STATE["status"] != "loading":
+                    break
+                time.sleep(0.02)
 
-        assert response.status_code == 500
-        assert "TTS failed" in response.json()["detail"]
+            ready = client.get("/health")
+            assert ready.status_code == 200
+            assert ready.json() == {"status": "ok"}
 
-    def test_response_includes_request_id(self, tts_client):
-        """user_id should be passed through as response request_id."""
-        payload = {"text": "Hello", "user_id": "user_abc"}
-        response = tts_client.post("/synthesize", json=payload)
+    def test_error_status_when_warmup_fails(self, monkeypatch):
+        """A model that fails to load must show up as 503 + the error, not
+        as a silent "ok" once it (never) finishes loading. Builds its own
+        TestClient for the REAL `_warm_up_model`, same as the two tests
+        above."""
+        import api_server
 
-        assert response.status_code == 200
-        assert response.json()["request_id"] == "user_abc"
+        def failing_load_model():
+            raise RuntimeError("model weights corrupted")
 
+        monkeypatch.setattr(api_server.vieneu_client, "_load_model", failing_load_model)
+        monkeypatch.setitem(api_server._MODEL_STATE, "status", "loading")
+        monkeypatch.setitem(api_server._MODEL_STATE, "error", None)
 
-# ── Audio ─────────────────────────────────────────────────────────────────────
+        with TestClient(api_server.app) as client:
+            for _ in range(100):
+                if api_server._MODEL_STATE["status"] != "loading":
+                    break
+                time.sleep(0.02)
 
-@pytest.mark.unit
-class TestAudioEndpoint:
-
-    def test_serve_mp3_file(self, tts_client):
-        """GET /audio/test.mp3 should serve the file as audio/mpeg."""
-        response = tts_client.get("/audio/test.mp3")
-        assert response.status_code == 200
-        assert "audio/mpeg" in response.headers["content-type"]
-
-    def test_serve_wav_file(self, tts_client):
-        """GET /audio/test.wav should serve the file as audio/wav."""
-        response = tts_client.get("/audio/test.wav")
-        assert response.status_code == 200
-        assert "audio/wav" in response.headers["content-type"]
-
-    def test_missing_file_returns_404(self, tts_client):
-        """GET /audio/nonexistent.mp3 should return 404."""
-        response = tts_client.get("/audio/nonexistent.mp3")
-        assert response.status_code == 404
+            response = client.get("/health")
+            assert response.status_code == 503
+            body = response.json()
+            assert body["status"] == "error"
+            assert "model weights corrupted" in body["message"]

@@ -1,23 +1,28 @@
 """Launch all ECA dev services, each in its own PowerShell window.
 
 Usage:
-    python start_services.py                # start everything
+    python start_services.py                # start everything (docker excluded)
     python start_services.py --only backend frontend
     python start_services.py --skip tts     # start all except TTS
+    python start_services.py --only docker  # optional SearXNG fallback
     python start_services.py --list         # show services and exit
 
 Notes:
 - Kimodo + web_search MCP servers are NOT here — the backend spawns them as
   stdio subprocesses automatically (see config/mcp_servers.yaml).
-- Container deps (Redis/SearXNG) come up together via the one `docker` service
-  below. Docker Desktop must already be running. Postgres is NOT started: the
-  database lives on Neon (VVA_PG_DSN in agenticRAG/.env).
+- No Redis by default. TTS now streams audio to the agent over SSE instead of
+  going through a Redis-backed task queue, and STM runs without Redis
+  (STM_BACKEND=none unless a developer's own .env already says otherwise — see
+  _stm_backend_configured below). `docker` is opt-in — `--only docker` — and
+  starts SearXNG only, for the rare case that needs it; Docker Desktop must
+  already be running for that. Postgres is NOT started: the database lives on
+  Neon (VVA_PG_DSN in agenticRAG/.env).
 - The backend needs text-to-motion/kimodo on PYTHONPATH or it will not import;
   this launcher sets it. See BACKEND_PYTHONPATH.
 - Each window stays open after the process exits (-NoExit) so you can read logs
   / errors. Close the window to stop that service.
 
-Ports: backend :8000, UI :5173, TTS :5000, Redis :6379, SearXNG :6666.
+Ports: backend :8000, UI :5173, TTS :5000, SearXNG :6666.
 """
 from __future__ import annotations
 
@@ -80,14 +85,24 @@ SERVICES: dict[str, dict] = {
     "docker": {
         "cwd": ".",
         "conda_env": None,
-        # `up redis searxng`, not bare `up`: the compose file still defines a
-        # local pgvector service, but the database moved to Neon (VVA_PG_DSN in
-        # agenticRAG/.env points at ep-snowy-sky-...neon.tech). Starting the
-        # container anyway spends RAM on a database nothing connects to.
-        # Bring it back with `docker compose -f docker-compose.langgraph.yml up
-        # postgres` if a local DB is ever wanted again.
-        "command": "docker compose -f docker-compose.langgraph.yml up redis searxng",
-        "note": "Redis :6379 + SearXNG :6666 (needs Docker Desktop; postgres skipped — DB is on Neon)",
+        # Redis dropped from this command. It served two things and both are
+        # gone: TTS now streams audio to the agent over SSE instead of going
+        # through a Redis-backed task queue, and STM runs with
+        # STM_BACKEND=none (see _stm_backend_configured() below) because the
+        # owner's machine has neither Docker nor Redis installed. That leaves
+        # only SearXNG, and even that is opt-in now (see DEFAULT_ORDER) rather
+        # than started by default.
+        #
+        # The compose file still defines a local pgvector service, but the
+        # database moved to Neon (VVA_PG_DSN in agenticRAG/.env points at
+        # ep-snowy-sky-...neon.tech). Starting it anyway spends RAM on a
+        # database nothing connects to.
+        #
+        # To bring Redis back for a one-off reason, the service definition is
+        # still in the compose file, just not started here:
+        #     docker compose -f docker-compose.langgraph.yml up redis
+        "command": "docker compose -f docker-compose.langgraph.yml up searxng",
+        "note": "Optional SearXNG :6666 fallback (needs Docker Desktop) — not started by default",
     },
     "backend": {
         "cwd": "agenticRAG",
@@ -111,8 +126,11 @@ SERVICES: dict[str, dict] = {
     "tts": {
         "cwd": "SpeechLLm",
         "conda_env": "tts",
-        "command": "python api_server.py",
-        "note": "VieNeu TTS :5000",
+        "command": "python -m uvicorn api_server:app --host 127.0.0.1 --port 5000",
+        "note": (
+            "VieNeu TTS :5000 — streams audio to the agent over SSE (no Redis); "
+            "/health answers 503 for ~14s while the model + reference voices warm up"
+        ),
     },
     # Static debug harnesses (health-test, sse-test). Off by default — they are
     # not part of the product and only one person at a time ever wants them.
@@ -125,9 +143,43 @@ SERVICES: dict[str, dict] = {
     },
 }
 
-# Order matters: docker first (deps), then backend, then the rest.
-# test-ui is absent on purpose — see its entry above.
-DEFAULT_ORDER = ["docker", "backend", "frontend", "tts"]
+
+def _stm_backend_configured() -> bool:
+    """True if STM_BACKEND is already decided, by the process env or by the
+    developer's own agenticRAG/.env, and this launcher should leave it alone.
+
+    python-dotenv (loaded by the backend on startup) does NOT override a
+    variable already set in the process environment, so forcing
+    STM_BACKEND=none unconditionally here would silently defeat a developer's
+    own .env choice — e.g. someone who does have Redis running locally and
+    wants STM backed by it. This only scans agenticRAG/.env for the KEY,
+    never opens it for a VALUE: that file holds secrets.
+    """
+    if "STM_BACKEND" in os.environ:
+        return True
+    env_file = ROOT / "agenticRAG" / ".env"
+    if not env_file.is_file():
+        return False
+    try:
+        with open(env_file, "r", encoding="utf-8", errors="replace") as f:
+            for line in f:
+                if line.strip().startswith("STM_BACKEND="):
+                    return True
+    except OSError:
+        return False
+    return False
+
+
+# The owner's machine has neither Docker nor Redis, so STM defaults to
+# STM_BACKEND=none unless a developer has already made their own choice (see
+# _stm_backend_configured above).
+if not _stm_backend_configured():
+    SERVICES["backend"]["env"] = {"STM_BACKEND": "none"}
+
+# Order matters: backend first, then frontend, then tts.
+# `docker` and `test-ui` are both absent from DEFAULT_ORDER on purpose — both
+# are opt-in via `--only <name>`. See their entries above for why.
+DEFAULT_ORDER = ["backend", "frontend", "tts"]
 
 # Everything selectable, default set first. `--list` and `--only` read this, not
 # DEFAULT_ORDER: a service that is opt-in must still be listable and startable,
@@ -200,6 +252,12 @@ def build_ps_command(svc: dict, conda_hook: Path | None = None) -> str:
         # Set AFTER `conda activate`: activation replays the env's own
         # configured vars and would overwrite an assignment made before it.
         parts.append(f"$env:PYTHONPATH = '{roots}'")
+    if svc.get("env"):
+        # Same ordering reason as PYTHONPATH above: `conda activate` replays
+        # the env's own configured vars and would clobber an assignment made
+        # before it, so per-service env vars are set after activation too.
+        for key, value in svc["env"].items():
+            parts.append(f"$env:{key} = '{value}'")
     parts.append(svc["command"])
     return "; ".join(parts)
 

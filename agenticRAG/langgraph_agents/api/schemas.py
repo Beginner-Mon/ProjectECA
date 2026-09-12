@@ -51,10 +51,6 @@ class TTSRequest(BaseModel):
     persona_id: str = Field(default="anne", pattern=r"^[A-Za-z0-9_-]{1,64}$")
 
 
-class TTSTaskResponse(BaseModel):
-    task_id: str
-
-
 class SessionListItem(BaseModel):
     session_id: str
     created_at: str

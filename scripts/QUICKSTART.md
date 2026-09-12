@@ -74,15 +74,39 @@ Mở **http://localhost:5173** → nhấn nút **Chat** ở thanh điều hướ
 Bỏ qua bước này thì chat vẫn chạy bình thường, chỉ là không có tiếng.
 
 ```bash
-# ⚠️ env là `tts`, KHÔNG phải `firstconda` — firstconda không có gói `vieneu`.
+# Cần một env Python 3.12 đã `pip install -r SpeechLLm/requirements.txt`
+# (KHÔNG phải `firstconda` — env đó không có gói `vieneu`). Tên env tuỳ bạn đặt,
+# `tts` chỉ là quy ước chứ không phải tên bắt buộc.
 cd SpeechLLm
-C:/Users/Nguyen/miniconda3/envs/tts/python.exe api_server.py    # :5000
+python -m uvicorn api_server:app --port 5000
 ```
 
-Rồi trong khung chat: menu **`+`** → **"Trả lời bằng giọng nói"**. Mặc định tắt vì lượt có giọng
-mất ~**77 s** so với ~**33 s** chỉ chữ (VieNeu chạy CPU, ~18 ms mỗi ký tự).
+Rồi khai báo trong `agenticRAG/.env`:
 
-Lần synthesize đầu tiên phải nạp model GGUF 223 MB nên chậm hơn hẳn — đừng tưởng treo.
+```env
+VIENEU_TTS_URL=http://localhost:5000
+```
+
+> ⚠️ Thiếu biến này thì agent **âm thầm giữ TTS ở trạng thái tắt** (SSE phát
+> `speech_disabled`, không có lỗi nào để thấy). Tên cũ `VIENEU_URL` (không có
+> `_TTS_`) chỉ được dùng làm fallback cho health check — **một mình nó không đủ**
+> để bật giọng nói.
+
+Rồi trong khung chat: menu **`+`** → **"Trả lời bằng giọng nói"**. Mặc định tắt.
+
+TTS chạy streaming: synthesizer chỉ chạy sau khi graph đã có câu trả lời chữ đầy
+đủ (`final_answer`), nên tiếng bắt đầu phát ra khoảng **0,5 giây sau khi câu trả
+lời chữ hiện xong** — không phải ngay từ token chữ đầu tiên. Cái streaming ở đây
+là không còn phải đợi **synthesize xong cả câu** mới có tiếng đầu tiên như trước
+(VieNeu chạy CPU, ~25,6 ms/ký tự tổng thời gian synthesize — không còn liên quan
+tới độ trễ tiếng đầu tiên). Lần chạy
+đầu tiên trên máy phải tải model từ HuggingFace (thêm ~30s), các lần sau dùng bản
+cache. `GET /health` của SpeechLLm trả **503** trong lúc model + giọng mẫu đang
+nạp (~14s), xong mới **200** — đừng tưởng treo.
+
+Không cần Redis cho giọng nói — Redis (Docker `eca-redis`) giờ chỉ dùng cho STM
+(`STM_BACKEND=redis`, mặc định khi chạy local). `STM_BACKEND=none` chạy được mà
+không cần Redis.
 
 > ⚠️ Chạy backend + TTS cùng lúc ăn gần hết **commit limit** của máy này. Lúc đó `npm run build`
 > có thể chết với `paging file is too small` / `VirtualAlloc failed` — **không phải lỗi code**.

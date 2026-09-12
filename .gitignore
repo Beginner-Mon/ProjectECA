@@ -110,3 +110,6 @@ data/knowledge_base/humanml3d_descriptions.jsonl
 # scripts/export_e5_onnx.py, and baked into the Lambda image at build time by a
 # throwaway Docker stage. Never commit it.
 models/
+
+# Ad-hoc VieNeu sample clips generated while testing TTS streaming locally
+SpeechLLm/sample_*.ogg

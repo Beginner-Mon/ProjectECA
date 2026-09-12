@@ -7,6 +7,7 @@ import { AuthContext, type AuthUser, type FetchUserAttributesOutput } from '../c
 import { AUTH_ERROR_KEY, clearExpectedEmail, cognitoLogoutUrl, emailsMatch, peekExpectedEmail } from '../lib/googleSignIn'
 import LoadingOverlay from './ui/LoadingOverlay'
 import { clearSessionPointer } from '../lib/chatSession'
+import { clearTtsCache, sweepTtsCache } from '../lib/ttsCache'
 
 function clearLocalAuthStorage() {
   const purge = (storage: Storage) => {
@@ -71,6 +72,12 @@ function CognitoAuthGuard() {
               // next "Continue with Google" was authorised straight back into it
               // with no prompt at all, and the user had no way out. Bounce
               // through Cognito's /logout so the session actually ends.
+              //
+              // The TTS cache first, and awaited: replace() below ends this
+              // page, and anything still pending dies with it. It is bounded
+              // (~1.5s) so a wedged IndexedDB cannot hold the user here; the
+              // next sign-in's sweep covers whatever did not finish.
+              await clearTtsCache()
               clearLocalAuthStorage()
               sessionStorage.setItem(AUTH_ERROR_KEY, 'email_mismatch')
               const logoutUrl = cognitoLogoutUrl('/')
@@ -83,9 +90,19 @@ function CognitoAuthGuard() {
           }
 
           setSession(tokenSource)
+          // THE isolation guarantee for cached speech: now that we know who
+          // is signed in, delete every row that is not theirs. The sign-out
+          // clear below can be cut off by navigation or a closed tab; this
+          // runs on every load, so the previous account's audio never
+          // survives into this one however their session ended.
+          const sub = tokenSource.tokens?.idToken?.payload?.sub
+          void sweepTtsCache(typeof sub === 'string' && sub ? sub : null)
           setUser({ signInDetails: { loginId: tokenSource.tokens?.idToken?.payload?.email as string || '' } })
           return fetchUserAttributes()
         }
+        // Nobody is signed in (or this is demo mode), so no cached speech here
+        // belongs to anyone who may use it.
+        void sweepTtsCache(null)
         return undefined
       })
       .then(data => {
@@ -101,6 +118,13 @@ function CognitoAuthGuard() {
   const handleSignOut = useCallback(async () => {
     if (signingOutRef.current) return
     signingOutRef.current = true
+
+    // Cached speech goes BEFORE signOut, and awaited: signOut may navigate away
+    // mid-call (see below), and then nothing after it runs. Bounded, never
+    // throws — a sign-out must not wait on storage. The sign-in sweep in the
+    // effect above is the real guarantee; this is the courtesy that makes it
+    // rarely needed.
+    await clearTtsCache()
 
     try {
       // This used to hand-roll a GlobalSignOut call with `fetch('')` — an empty

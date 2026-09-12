@@ -12,7 +12,7 @@ from pydantic import BaseModel
 import uvicorn
 import yaml
 
-from src.services.vieneu_client import VieNeuClient
+from src.services.vieneu_client import VieNeuClient, VoiceResolutionError
 
 logger = logging.getLogger("speechllm.api")
 
@@ -160,12 +160,14 @@ async def synthesize_stream(req: TTSRequest):
     synthesis fails partway through).
 
     Validation that can still produce a clean HTTP status happens HERE,
-    before StreamingResponse is constructed. Once that response exists,
-    status 200 is already effectively committed — Starlette's
-    StreamingResponse sends the ASGI `http.response.start` message before it
-    pulls the first item out of the body iterator, not after — so anything
-    that goes wrong past this point can only be reported as an `error` line
-    inside the stream, which is exactly what synthesize_stream does.
+    before StreamingResponse is constructed — both the text-emptiness check
+    below and, since voice fallback was removed, resolving/encoding the
+    reference voice. Once that response exists, status 200 is already
+    effectively committed — Starlette's StreamingResponse sends the ASGI
+    `http.response.start` message before it pulls the first item out of the
+    body iterator, not after — so anything that goes wrong past this point
+    can only be reported as an `error` line inside the stream, which is
+    exactly what synthesize_stream does.
     """
     if req.voice_prompt:
         text = req.voice_prompt.text.strip()
@@ -178,6 +180,19 @@ async def synthesize_stream(req: TTSRequest):
         raise HTTPException(status_code=400, detail="Voice text cannot be empty")
 
     clean_text = clean_text_for_tts(text)
+
+    # Resolve (and encode) the reference voice HERE, before StreamingResponse
+    # exists — this is the last point where a failure can still become a
+    # normal HTTP error. A missing/unreadable reference, or no voice_path at
+    # all, now raises instead of silently substituting VieNeu's preset voice
+    # (see VoiceResolutionError) — that silence is what once let a character
+    # answer in the wrong voice with nothing in the product saying so. The
+    # result is cached, so synthesize_stream()'s own resolution below is a
+    # cache hit, not duplicated work.
+    try:
+        vieneu_client._resolve_voice(req.voice_path)
+    except VoiceResolutionError as e:
+        raise HTTPException(status_code=422, detail=str(e)) from e
 
     def ndjson_lines():
         # A plain (sync) generator, deliberately: infer_stream() underneath

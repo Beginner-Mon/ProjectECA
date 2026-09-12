@@ -1,18 +1,22 @@
 # -*- coding: utf-8 -*-
-"""A missing reference .wav must degrade to the preset voice, never raise.
+"""A missing or unusable reference .wav must FAIL LOUDLY, never fall back.
 
 SpeechLLm is the only place in the system that can answer "does that file
 exist?" — the LangGraph service builds `voices/<slug>_<lang>.wav` in another
-process and, deployed, on another host. So the check and the fallback both
-belong here, and a character with no recording yet still has to be able to
-speak.
+process and, deployed, on another host. So the check belongs here, and since
+12-09-2026 a failed check raises `VoiceResolutionError` instead of quietly
+substituting VieNeu's built-in preset voice. The preset fallback is what let a
+character with a missing reference answer in the wrong language and the wrong
+gender with nothing in the product saying anything was wrong — this file
+replaces `test_voice_fallback.py`, which asserted exactly that (now-deleted)
+behaviour.
 """
 
 import logging
 
 import pytest
 
-from src.services.vieneu_client import VieNeuClient, _resolve_ref
+from src.services.vieneu_client import VieNeuClient, VoiceResolutionError, _resolve_ref
 
 
 class _FakeTTS:
@@ -43,23 +47,59 @@ class _FakeTTS:
 
 @pytest.fixture
 def client(tmp_path):
-    c = VieNeuClient({"output_dir": str(tmp_path / "out"), "voice_path": ""})
+    c = VieNeuClient({"output_dir": str(tmp_path / "out")})
     c._tts = _FakeTTS()          # _load_model() short-circuits on this
     return c
 
 
-@pytest.mark.unit
-def test_missing_reference_falls_back_instead_of_raising(client, caplog):
-    with caplog.at_level(logging.WARNING, logger="speechllm.vieneu"):
-        voice = client._resolve_voice("voices/nobody_recorded_this_vi.wav")
+# ── _resolve_voice: the new contract ─────────────────────────────────────────
 
-    assert voice is None                       # preset
+@pytest.mark.unit
+def test_missing_reference_raises_and_nothing_is_synthesized(client):
+    with pytest.raises(VoiceResolutionError) as exc_info:
+        client._resolve_voice("voices/nobody_recorded_this_vi.wav")
+
     assert client._tts.encoded == []           # never attempted to encode
-    assert "voice_reference_missing" in caplog.text
-    # The absolute path matters: the symptom of this branch is audio in the
-    # wrong voice, which by ear is indistinguishable from "right voice, bad
-    # model". Without the resolved path in the log there is nothing to search.
-    assert str(_resolve_ref("voices/nobody_recorded_this_vi.wav")) in caplog.text
+    # The absolute path matters: the symptom of this branch is "no audio at
+    # all", which by ear is indistinguishable from "right voice, mediocre
+    # model" until someone actually goes looking — without the resolved path
+    # in the message there is nothing to search for.
+    assert str(_resolve_ref("voices/nobody_recorded_this_vi.wav")) in str(exc_info.value)
+
+
+@pytest.mark.unit
+def test_no_voice_path_at_all_raises(client):
+    with pytest.raises(VoiceResolutionError):
+        client._resolve_voice(None)
+
+    assert client._tts.encoded == []
+
+
+@pytest.mark.unit
+def test_empty_voice_path_raises(client):
+    with pytest.raises(VoiceResolutionError):
+        client._resolve_voice("")
+
+    assert client._tts.encoded == []
+
+
+@pytest.mark.unit
+def test_unencodable_reference_raises(client, tmp_path):
+    """A file that exists but that the model can't turn into an embedding
+    (truncated download, wrong format) must fail the same way as a missing
+    one — not propagate whatever raw exception the model library throws."""
+    wav = tmp_path / "corrupt.wav"
+    wav.write_bytes(b"not really audio")
+
+    def _boom(path, denoise=False):
+        raise RuntimeError("corrupt reference")
+
+    client._tts.encode_reference = _boom
+
+    with pytest.raises(VoiceResolutionError) as exc_info:
+        client._resolve_voice(str(wav))
+
+    assert str(wav) in str(exc_info.value)
 
 
 @pytest.mark.unit
@@ -90,12 +130,6 @@ def test_absolute_paths_are_left_alone():
     assert p.name == "x.wav"
 
 
-@pytest.mark.unit
-def test_no_voice_path_at_all_is_the_preset(client):
-    assert client._resolve_voice(None) is None
-    assert client._tts.encoded == []
-
-
 # ── _enrol_known_voices ──────────────────────────────────────────────────────
 #
 # The startup warm-up thread (api_server._warm_up_model) calls this after
@@ -103,6 +137,9 @@ def test_no_voice_path_at_all_is_the_preset(client):
 # once at startup instead of inside whichever user's request happens to name
 # a voice first — a real-model check measured 4.36s time-to-first-chunk on a
 # voice's first-ever request against 0.25s on an identical warm repeat.
+#
+# Startup stays forgiving even though a REQUEST does not: a bad file here
+# must not abort enrolment of the rest of the catalog.
 
 class _SelectivelyFailingTTS(_FakeTTS):
     """Like _FakeTTS, but one specific reference is "corrupt": encoding it
@@ -127,7 +164,7 @@ def test_enrols_every_wav_in_the_voices_dir(tmp_path):
     (voices_dir / "anne_vi.wav").write_bytes(b"RIFF-anne-vi")
     (voices_dir / "notes.txt").write_text("not a voice, must be ignored")
 
-    c = VieNeuClient({"output_dir": str(tmp_path / "out"), "voice_path": ""})
+    c = VieNeuClient({"output_dir": str(tmp_path / "out")})
     c._tts = _FakeTTS()
 
     c._enrol_known_voices(voices_dir)
@@ -154,7 +191,7 @@ def test_a_corrupt_reference_does_not_abort_the_rest_of_warm_up(tmp_path, caplog
     (voices_dir / "good_en.wav").write_bytes(b"RIFF-good")
     (voices_dir / "bad_vi.wav").write_bytes(b"RIFF-bad")
 
-    c = VieNeuClient({"output_dir": str(tmp_path / "out"), "voice_path": ""})
+    c = VieNeuClient({"output_dir": str(tmp_path / "out")})
     c._tts = _SelectivelyFailingTTS(bad_name="bad_vi.wav")
 
     with caplog.at_level(logging.WARNING, logger="speechllm.vieneu"):
@@ -170,7 +207,7 @@ def test_a_corrupt_reference_does_not_abort_the_rest_of_warm_up(tmp_path, caplog
 
 @pytest.mark.unit
 def test_missing_voices_dir_does_not_raise(tmp_path, caplog):
-    c = VieNeuClient({"output_dir": str(tmp_path / "out"), "voice_path": ""})
+    c = VieNeuClient({"output_dir": str(tmp_path / "out")})
     c._tts = _FakeTTS()
 
     with caplog.at_level(logging.WARNING, logger="speechllm.vieneu"):

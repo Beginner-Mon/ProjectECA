@@ -30,8 +30,6 @@ vieneu:
   # must be baked into the image or pulled from S3 via the free gateway endpoint.
   model_path: ""
 
-  voice_path: ""  # path to reference .wav for voice cloning, e.g. "voices/my_voice.wav"
-
   # Passed to encode_reference(). The library defaults this to true; we do not.
   # False is the setting the current Anne reference was accepted under, and it is
   # the one that matters once stage 1 supplies a deliberately processed recording —

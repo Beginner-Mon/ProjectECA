@@ -14,8 +14,8 @@ voice, streamed chunk by chunk. Port 5000. CPU only.
 ## What it does
 
 ```
-POST /synthesize/stream   {text, voice_path?, language?}  ->  NDJSON stream
-GET  /health                                               ->  200 once ready, 503 until then
+POST /synthesize/stream   {text, voice_path, language?}  ->  NDJSON stream
+GET  /health                                              ->  200 once ready, 503 until then
 ```
 
 There is no `GET /audio/{filename}` any more, and no CORS middleware — see
@@ -23,12 +23,14 @@ There is no `GET /audio/{filename}` any more, and no CORS middleware — see
 
 ### `POST /synthesize/stream`
 
-Body: `{text, voice_path?, language?}` — this is what the LangGraph service
-actually sends (`services/vieneu_tts/client.py`'s `_payload`). A legacy
-`voice_prompt: {text, emotion?}` shape is also accepted as an alternative to
-`text`, left over from the request schema `POST /synthesize` used; nothing
-current sends it. Response is `application/x-ndjson` — one JSON object per
-line:
+Body: `{text, voice_path, language?}` — this is what the LangGraph service
+actually sends (`services/vieneu_tts/client.py`'s `_payload`). `voice_path` is
+now **required**: a missing/unreadable reference, or no `voice_path` at all,
+fails the request with HTTP 422 rather than falling back to VieNeu's preset
+voice (see "Voices" below). A legacy `voice_prompt: {text, emotion?}` shape is
+also accepted as an alternative to `text`, left over from the request schema
+`POST /synthesize` used; nothing current sends it. Response is
+`application/x-ndjson` — one JSON object per line:
 
 ```
 {"type":"start", "codec":"flac", "sample_rate":48000, "voice_version":"<hex>"}
@@ -37,6 +39,10 @@ line:
 {"type":"end",   "chunks":24, "duration":78.1}
 {"type":"error", "message":"..."}      <- instead of "end", if synthesis fails mid-stream
 ```
+
+A `voice_path` that fails to resolve is instead reported as a normal HTTP 422
+— before any of the above goes out — since that check runs ahead of
+`StreamingResponse` (see "Voices" below).
 
 (`codec` here follows `configs/models.yaml`'s `vieneu.codec` — see "Codec" below;
 `flac` is shown as the current default.)
@@ -49,11 +55,13 @@ line:
   measured: 84.5s of audio -> 39 chunks; 29.3s -> 14 chunks.
 - Each chunk is a **complete, independently-encoded** audio file (base64),
   so a client can decode any one chunk without the others.
-- `voice_version` is a content hash of the reference `.wav` — `"preset"` when
-  none was used. It changes only when a voice is re-recorded, not when its
-  filename changes. The LangGraph service forwards it as-is; it is the
-  **frontend's** cache (IndexedDB) that actually reads it, to know when a
-  locally-cached clip is stale.
+- `voice_version` is a content hash of the reference `.wav` that was actually
+  cloned — there is no more `"preset"` value, since a request with no
+  resolvable reference never reaches `start` at all (see "Voices"). It
+  changes only when a voice is re-recorded, not when its filename changes.
+  The LangGraph service forwards it as-is; it is the **frontend's** cache
+  (IndexedDB) that actually reads it, to know when a locally-cached clip is
+  stale.
 - If synthesis fails after `start` has gone out, the stream ends with an
   `error` line instead of `end` rather than just dying — see
   `VieNeuClient.synthesize_stream`'s docstring for why that also covers
@@ -95,18 +103,26 @@ emits `speech_disabled` and the product runs text-only.
 The caller (the LangGraph service, on another process and in the deployed layout
 another host) builds a name of the form `voices/<character>_<lang>.wav` and sends
 it as `voice_path`. This service resolves it against **its own root**, not the
-working directory, and falls back to VieNeu's preset voice — with a WARNING
-naming the absolute path — when the file is absent. A character with no recording
-yet still has to be able to speak.
+working directory.
+
+A missing file, an unreadable/corrupt file, or no `voice_path` at all is now a
+hard failure — `VoiceResolutionError`, surfaced as HTTP 422 before the stream
+starts (or as an `{"type":"error"}` NDJSON line if it happens mid-stream; see
+above). There is no fallback to VieNeu's built-in preset voice any more: a
+character whose reference was missing used to answer anyway, silently, in
+whatever voice the library shipped — including the wrong language and the
+wrong gender — with nothing in the product saying anything was wrong. A
+character with no recording yet simply cannot speak until one is added.
 
 Every file under `voices/*.wav` is **pre-enrolled at startup**, as part of
 warm-up (`VieNeuClient._enrol_known_voices`, called from `/health`'s warm-up
 thread before it reports ready). Enrolling a full-length reference
 (`encode_reference`) costs several seconds; paying that once here — before
-any request — is what keeps a voice's first real request fast. A missing or
-corrupt file is logged as a WARNING and skipped rather than failing the
-whole startup: characters land in the catalog before anyone records audio
-for them, same as the request-time fallback above.
+any request — is what keeps a voice's first real request fast. Startup stays
+forgiving where a request no longer is: a missing or corrupt file here is
+logged as a WARNING and skipped rather than aborting the rest of enrolment,
+because characters land in the catalog before anyone records audio for them —
+but the very next live request naming that same file still fails loudly.
 
 Give the enrolment the **highest-quality source you have**; do not pre-convert.
 `encode_reference` resamples internally and accepted 44.1 kHz stereo directly. The

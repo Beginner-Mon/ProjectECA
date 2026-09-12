@@ -27,6 +27,20 @@ def _resolve_ref(voice_path: str) -> Path:
     return p if p.is_absolute() else (_ROOT / p)
 
 
+class VoiceResolutionError(FileNotFoundError):
+    """A requested reference voice could not be resolved into cloned audio.
+
+    Covers all three failure shapes under one exception so a caller needs
+    only one `except` clause: no `voice_path` supplied at all, the resolved
+    path does not exist, or it exists but cannot be encoded (corrupt/unreadable
+    file). The message always names the resolved, ABSOLUTE path (or says none
+    was given) — "wrong voice" and "no voice configured" sound identical by
+    ear, which is exactly what let a missing reference answer in VieNeu's own
+    preset voice with nothing in the product saying anything was wrong. There
+    is no fallback left to reach for; this is raised instead.
+    """
+
+
 class VieNeuClient:
     """
     Local TTS using VieNeu-TTS v3-Turbo (ONNX Runtime, CPU-only).
@@ -45,7 +59,6 @@ class VieNeuClient:
         # deliberately processed recording, and denoising would strip exactly the
         # character that was tuned into it.
         self.denoise = bool(config.get("denoise", False))
-        self.default_voice_path = config.get("voice_path", None)
         # Codec for synthesize_stream()'s chunks. "opus" (OGG/Opus, via
         # soundfile) is the default; "wav" (PCM_16) is the fallback for a
         # client that cannot decode Opus. See configs/models.yaml for the
@@ -55,12 +68,10 @@ class VieNeuClient:
         self._tts = None
         self._voice_cache: dict = {}
         self._voice_version_cache: dict = {}
-        self._default_voice = None
 
         src = self.model_path or "HF hub (auto-download)"
-        voice_info = self.default_voice_path or "preset"
         print(f"[VieNeu] Initialized (mode={self.mode}, device={self.device}, "
-              f"model={src}, voice={voice_info}).")
+              f"model={src}).")
 
     def _load_model(self):
         if self._tts is not None:
@@ -81,19 +92,6 @@ class VieNeuClient:
             kwargs["backbone_repo"] = self.model_path
 
         self._tts = Vieneu(**kwargs)
-
-        # Pre-load default voice if configured
-        if self.default_voice_path:
-            default_ref = _resolve_ref(self.default_voice_path)
-            if default_ref.is_file():
-                print(f"[VieNeu] Encoding default voice: {default_ref}")
-                self._default_voice = self._encode_voice(self._tts, default_ref)
-                print("[VieNeu] Default voice ready.")
-            else:
-                logger.warning(
-                    "default_voice_missing configured=%s resolved=%s -> VieNeu preset",
-                    self.default_voice_path, default_ref,
-                )
 
         print(f"[VieNeu] Model loaded in {time.time() - load_start:.1f}s")
         return self._tts
@@ -117,39 +115,49 @@ class VieNeuClient:
         return {"speaker_emb": emb, "codes": codes}
 
     def _resolve_voice(self, voice_path: Optional[str] = None):
-        """Encode the requested reference voice, or fall back to the preset.
+        """Encode the requested reference voice. Raises if it cannot be.
 
-        A missing .wav must NOT raise: characters appear in the UI catalog long
-        before anyone records a voice for them, and a character with no
-        recording still has to be able to speak. This is also the only place in
-        the system that can answer "does that file exist?" — the caller builds
-        the name on another process, and in the deployed layout another host.
+        No more silent substitution: a missing `voice_path`, a reference that
+        does not exist, or one that exists but fails to encode (corrupt/
+        unreadable) all raise `VoiceResolutionError` now instead of quietly
+        answering in VieNeu's built-in preset voice. This is also the only
+        place in the system that can answer "does that file exist?" — the
+        caller builds the name on another process, and in the deployed layout
+        another host.
         """
-        if voice_path:
-            ref = _resolve_ref(voice_path)
-            key = str(ref)
-            if key in self._voice_cache:
-                return self._voice_cache[key]
-            if ref.is_file():
-                tts = self._load_model()
-                print(f"[VieNeu] Encoding voice: {ref}")
-                v_start = time.time()
-                self._voice_cache[key] = self._encode_voice(tts, ref)
-                print(f"[VieNeu] Voice encoded in {time.time() - v_start:.1f}s")
-                return self._voice_cache[key]
-            # WARNING with the absolute path, not a debug line: the symptom of
-            # this branch is audio in the wrong voice, which by ear is indis-
-            # tinguishable from "right voice, mediocre model". Without this
-            # there is nothing to search for.
-            logger.warning(
-                "voice_reference_missing requested=%s resolved=%s -> falling back to %s",
-                voice_path, ref,
-                "configured default voice" if self._default_voice is not None
-                else "VieNeu preset",
+        if not voice_path:
+            raise VoiceResolutionError(
+                "No voice_path supplied — a reference voice is required."
             )
-        if self._default_voice is not None:
-            return self._default_voice
-        return None
+
+        ref = _resolve_ref(voice_path)
+        key = str(ref)
+        if key in self._voice_cache:
+            return self._voice_cache[key]
+
+        if not ref.is_file():
+            # The absolute path matters: the symptom of this branch is "no
+            # audio at all", which by ear is indistinguishable from "right
+            # voice, mediocre model" until someone actually goes looking —
+            # without the resolved path in the message there is nothing to
+            # search for.
+            raise VoiceResolutionError(
+                f"Reference voice not found: requested={voice_path} resolved={ref}"
+            )
+
+        tts = self._load_model()
+        print(f"[VieNeu] Encoding voice: {ref}")
+        v_start = time.time()
+        try:
+            encoded = self._encode_voice(tts, ref)
+        except Exception as e:
+            raise VoiceResolutionError(
+                f"Reference voice could not be encoded: requested={voice_path} "
+                f"resolved={ref} ({e})"
+            ) from e
+        self._voice_cache[key] = encoded
+        print(f"[VieNeu] Voice encoded in {time.time() - v_start:.1f}s")
+        return self._voice_cache[key]
 
     def _enrol_known_voices(self, voices_dir: Optional[Path] = None) -> None:
         """Pre-encode every reference clip under voices/*.wav at startup.
@@ -196,7 +204,7 @@ class VieNeuClient:
     def _content_hash(self, path: Path) -> str:
         return hashlib.sha256(path.read_bytes()).hexdigest()[:16]
 
-    def _voice_version(self, voice_path: Optional[str] = None) -> str:
+    def _voice_version(self, voice_path: str) -> str:
         """Hash of the reference audio actually used, for the stream's `start` line.
 
         The frontend's IndexedDB cache is what actually reads this, to know
@@ -204,30 +212,20 @@ class VieNeuClient:
         voice got re-recorded) even though its path/name did not. The
         LangGraph service in between does not interpret this value at all;
         it only forwards it from `start` to the browser as `speech_start`.
-        Mirrors `_resolve_voice`'s own fallback order so the version always
-        matches what was actually cloned, not merely what was asked for: a
-        missing `voice_path` falls through to the configured default voice,
-        and only "preset" (the literal string, per the /synthesize/stream
-        contract) means no reference audio was used at all.
+
+        Always the resolved reference file's own hash: `_resolve_voice` has
+        already guaranteed, by the time this runs, that `voice_path` names a
+        real, readable file — there is no more "preset" fallback version for
+        this to report instead.
 
         Hashed once per resolved file and cached — reading + hashing a ~1MB
         wav on every request would undo the point of caching voice encoding.
         """
-        if voice_path:
-            ref = _resolve_ref(voice_path)
-            if ref.is_file():
-                key = str(ref)
-                if key not in self._voice_version_cache:
-                    self._voice_version_cache[key] = self._content_hash(ref)
-                return self._voice_version_cache[key]
-        if self.default_voice_path:
-            default_ref = _resolve_ref(self.default_voice_path)
-            if default_ref.is_file():
-                key = str(default_ref)
-                if key not in self._voice_version_cache:
-                    self._voice_version_cache[key] = self._content_hash(default_ref)
-                return self._voice_version_cache[key]
-        return "preset"
+        ref = _resolve_ref(voice_path)
+        key = str(ref)
+        if key not in self._voice_version_cache:
+            self._voice_version_cache[key] = self._content_hash(ref)
+        return self._voice_version_cache[key]
 
     def _encode_chunk(self, audio: np.ndarray, sample_rate: int) -> bytes:
         """Encode one chunk of float32 PCM to a complete, self-standing file.

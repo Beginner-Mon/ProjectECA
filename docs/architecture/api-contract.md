@@ -145,10 +145,13 @@ Client action: `avatarController.setEmotion(emotion, intensity, duration)`.
 > Audio now streams inline over the same SSE connection as the turn — no polling, no Redis in
 > the path.
 
-SpeechLLm exposes `POST /synthesize/stream` (`{text, voice_path?, language?}`) returning
-`application/x-ndjson` lines. The agent forwards each line as an SSE event on the existing
-per-turn `/chat` stream, and also on `POST /tts` (`{text, persona_id}`, which now returns this
-same SSE stream directly — `503` when TTS isn't configured):
+SpeechLLm exposes `POST /synthesize/stream` (`{text, voice_path, language?}`) returning
+`application/x-ndjson` lines. `voice_path` is **required** as of 12-09-2026: a missing or
+unreadable reference, or no `voice_path` at all, is an HTTP 422 before the stream starts —
+SpeechLLm no longer falls back to VieNeu's built-in preset voice (see `SpeechLLm/README.md`).
+The agent forwards each line as an SSE event on the existing per-turn `/chat` stream, and also
+on `POST /tts` (`{text, persona_id}`, which now returns this same SSE stream directly — `503`
+when TTS isn't configured):
 
 | Event | Payload | Notes |
 |-------|---------|-------|

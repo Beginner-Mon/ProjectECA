@@ -87,6 +87,7 @@ class SpeechllmStack(Stack):
         self,
         scope: Construct,
         construct_id: str,
+        voice_bucket_name: str | None = None,
         **kwargs,
     ) -> None:
         super().__init__(scope, construct_id, **kwargs)
@@ -179,8 +180,19 @@ class SpeechllmStack(Stack):
 
         # ── Function ────────────────────────────────────────────────────
 
-        # Chua co Secret/DB, nhung van can log level va offline flags (weights
-        # da bake, khong duoc thu download lai luc cold start).
+        # D5d: voice_bucket_name tu AssetStack.voice_bucket — SpeechLLm doc
+        # S3 key (voice_vi_key / voice_en_key) truc tiep qua IAM read-only.
+        # Local dev khi thieu bucket thi fallback ve voices/*.wav.
+        voice_bucket_env = voice_bucket_name or ctx("voice_bucket_name") or ""
+        env_vars = {
+            "LOG_LEVEL": "INFO",
+            "HF_HUB_OFFLINE": "1",
+            "TRANSFORMERS_OFFLINE": "1",
+            # Khong co VIENEU_TTS_URL o day — day la callee, khong phai caller.
+            # Agent se tro toi Function URL cua ham nay (D3).
+        }
+        if voice_bucket_env:
+            env_vars["VOICE_BUCKET"] = voice_bucket_env
         self.fn = lambda_.DockerImageFunction(
             self, "Speechllm",
             function_name="vva-speechllm",
@@ -196,15 +208,34 @@ class SpeechllmStack(Stack):
             # nhat khong cham hon. Dung hardcode.
             memory_size=memory_mb,
             timeout=Duration.seconds(_DEFAULT_TIMEOUT_S),
-            environment={
-                "LOG_LEVEL": "INFO",
-                "HF_HUB_OFFLINE": "1",
-                "TRANSFORMERS_OFFLINE": "1",
-                # Khong co VIENEU_TTS_URL o day — day la callee, khong phai caller.
-                # Agent se tro toi Function URL cua ham nay (D3).
-            },
+            environment=env_vars,
             description="VieNeu-TTS v3 Turbo — /synthesize/stream, NDJSON, response_stream",
         )
+
+        # ── IAM: read voices from private bucket (D5d) ───────────────
+        # Bucket rieng, private, KHONG CloudFront — chi SpeechLLm doc qua S3.
+        # Neu voice_bucket_env thieu (synth don le truoc khi AssetStack), van
+        # tao ham nhung ghi warning — deploy that phai truyen dung.
+        if voice_bucket_env:
+            # ListBucket on bucket, GetObject on prefix (voices/* and characters/*)
+            # The bucket holds only voices, so ListBucket + GetObject on "*" is fine;
+            # scope to "arn:aws:s3:::bucket/*" for objects, bucket ARN for List.
+            self.fn.add_to_role_policy(iam.PolicyStatement(
+                actions=["s3:ListBucket"],
+                resources=[f"arn:aws:s3:::{voice_bucket_env}"],
+            ))
+            self.fn.add_to_role_policy(iam.PolicyStatement(
+                actions=["s3:GetObject"],
+                resources=[f"arn:aws:s3:::{voice_bucket_env}/*"],
+            ))
+        else:
+            Annotations.of(self).add_warning(
+                "VvaSpeechllmStack: thieu voice_bucket_name — SpeechLLm se fallback ve voices/*.wav local. "
+                "Deploy that truyen ten bucket tu VvaAssetStack:\n"
+                "  cdk deploy VvaSpeechllmStack -c speechllm_image_tag=<sha> "
+                "-c voice_bucket_name=<from VvaAssetStack output VoiceBucketName>\n"
+                "Hoac qua app.py: SpeechllmStack(..., voice_bucket_name=asset_stack.voice_bucket.bucket_name)"
+            )
 
         # ── Function URL: AWS_IAM + RESPONSE_STREAM ─────────────────────
 

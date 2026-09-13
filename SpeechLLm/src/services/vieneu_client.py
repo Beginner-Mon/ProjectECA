@@ -2,6 +2,9 @@ import base64
 import hashlib
 import io
 import logging
+import os
+import re
+import tempfile
 import time
 from pathlib import Path
 from typing import Optional
@@ -25,6 +28,115 @@ def _resolve_ref(voice_path: str) -> Path:
     """
     p = Path(voice_path)
     return p if p.is_absolute() else (_ROOT / p)
+
+
+# ── S3 voice bucket (D5d) ─────────────────────────────────────────────────
+# Reference voices are S3 KEYS in the private voice bucket (no CloudFront).
+# Local dev keeps plain files under voices/*.wav when VOICE_BUCKET is unset.
+# Deployed, SpeechLLm has IAM read-only on the bucket prefix and downloads to
+# /tmp before encoding. The bucket name is injected by speechllm_stack.py.
+
+_VOICE_BUCKET_ENV_VARS = ("VOICE_BUCKET", "VOICE_S3_BUCKET", "VVA_VOICE_BUCKET", "SPEECHLLM_VOICE_BUCKET")
+_S3_CACHE_DIR = Path(tempfile.gettempdir()) / "speechllm_voices"
+_S3_HASH_RE = re.compile(r"([0-9a-fA-F]{8})")
+
+
+def _voice_bucket() -> Optional[str]:
+    for name in _VOICE_BUCKET_ENV_VARS:
+        v = os.getenv(name, "").strip()
+        if v:
+            return v
+    return None
+
+
+def _is_s3_enabled() -> bool:
+    return _voice_bucket() is not None
+
+
+def _strip_s3_prefix(key: str) -> str:
+    if key.startswith("s3://"):
+        # s3://bucket/key -> key
+        parts = key[5:].split("/", 1)
+        return parts[1] if len(parts) == 2 else parts[0]
+    return key.lstrip("/")
+
+
+def _should_use_s3(voice_path: str) -> bool:
+    """True if voice_path should be fetched from S3 rather than local FS."""
+    if not _is_s3_enabled() or not voice_path:
+        return False
+    # Explicit s3:// always uses S3
+    if voice_path.startswith("s3://"):
+        return True
+    # Heuristic: S3 keys look like S3 paths (contain '/' and end with .wav)
+    # and the bucket is configured. If the local file exists, prefer it for
+    # dev (so a developer without bucket can still run). In prod voices/ is
+    # NOT baked into the image (.dockerignore), so local won't exist and we
+    # correctly fall through to S3.
+    if "/" in voice_path and voice_path.lower().endswith(".wav"):
+        local = _resolve_ref(voice_path)
+        if local.is_file():
+            return False
+        return True
+    return False
+
+
+def _get_s3_client():
+    import boto3
+    return boto3.client("s3")
+
+
+def _s3_download_path(s3_key: str) -> Path:
+    """Local cache path for a given S3 key (under /tmp)."""
+    _S3_CACHE_DIR.mkdir(parents=True, exist_ok=True)
+    # Use hash of full key to avoid collisions on same filename from different prefixes
+    key_hash = hashlib.sha256(s3_key.encode()).hexdigest()[:8]
+    # Preserve original filename for debuggability
+    fname = Path(s3_key).name
+    return _S3_CACHE_DIR / f"{key_hash}_{fname}"
+
+
+def _download_from_s3(s3_key: str) -> Path:
+    """Download S3 key to local cache and return the local Path. Raises VoiceResolutionError on failure."""
+    bucket = _voice_bucket()
+    if not bucket:
+        raise VoiceResolutionError(f"VOICE_BUCKET not configured but S3 key requested: {s3_key}")
+    key = _strip_s3_prefix(s3_key)
+    local_path = _s3_download_path(key)
+    if local_path.is_file() and local_path.stat().st_size > 0:
+        return local_path
+    try:
+        _get_s3_client().download_file(bucket, key, str(local_path))
+    except Exception as e:
+        # Clean up partial file
+        try:
+            if local_path.exists():
+                local_path.unlink()
+        except Exception:
+            pass
+        raise VoiceResolutionError(
+            f"Reference voice not found in S3: bucket={bucket} key={key} ({e})"
+        ) from e
+    if not local_path.is_file():
+        raise VoiceResolutionError(
+            f"Reference voice not found in S3 after download: bucket={bucket} key={key}"
+        )
+    return local_path
+
+
+def _extract_hash_from_s3_key(s3_key: str) -> str:
+    """Extract 8-char hash embedded in S3 key (e.g. characters/anne/audio/9f2c1a4b.ogg -> 9f2c1a4b).
+
+    Falls back to sha256 of the key string if no 8-hex substring is found — still
+    stable per key, just not the content hash the uploader embedded. The uploader
+    (scripts/upload_characters_to_s3.py) always embeds sha256[:8] of the file
+    content in the filename, so the regex path is the normal one.
+    """
+    m = _S3_HASH_RE.search(Path(s3_key).stem)
+    if m:
+        return m.group(1).lower()
+    # Fallback: hash of the key string itself (stable, not content hash, but better than random)
+    return hashlib.sha256(s3_key.encode()).hexdigest()[:8]
 
 
 class VoiceResolutionError(FileNotFoundError):
@@ -70,6 +182,9 @@ class VieNeuClient:
         self._voice_version_cache: dict = {}
 
         src = self.model_path or "HF hub (auto-download)"
+        bucket = _voice_bucket()
+        if bucket:
+            src += f", voice_bucket={bucket}"
         print(f"[VieNeu] Initialized (mode={self.mode}, device={self.device}, "
               f"model={src}).")
 
@@ -124,12 +239,41 @@ class VieNeuClient:
         place in the system that can answer "does that file exist?" — the
         caller builds the name on another process, and in the deployed layout
         another host.
+
+        D5d: voice_path may be an S3 key (characters/anne/voice/a1b2c3d4.wav)
+        when VOICE_BUCKET is set. In that case the file is downloaded to /tmp
+        and cached before encoding. The cache key is the S3 key's hash, not the
+        filename, so re-recording the same character with new content (new hash)
+        naturally busts the cache.
         """
         if not voice_path:
             raise VoiceResolutionError(
                 "No voice_path supplied — a reference voice is required."
             )
 
+        # S3 path: download to temp and cache by S3 key
+        if _should_use_s3(voice_path):
+            s3_key = _strip_s3_prefix(voice_path)
+            cache_key = f"s3://{_voice_bucket()}/{s3_key}"
+            if cache_key in self._voice_cache:
+                return self._voice_cache[cache_key]
+            # Download (or reuse cached download)
+            local_ref = _download_from_s3(s3_key)
+            tts = self._load_model()
+            print(f"[VieNeu] Encoding voice from S3: {s3_key} -> {local_ref}")
+            v_start = time.time()
+            try:
+                encoded = self._encode_voice(tts, local_ref)
+            except Exception as e:
+                raise VoiceResolutionError(
+                    f"Reference voice could not be encoded: requested={voice_path} "
+                    f"s3_key={s3_key} local={local_ref} ({e})"
+                ) from e
+            self._voice_cache[cache_key] = encoded
+            print(f"[VieNeu] Voice encoded in {time.time() - v_start:.1f}s")
+            return self._voice_cache[cache_key]
+
+        # Local path (dev or fallback)
         ref = _resolve_ref(voice_path)
         key = str(ref)
         if key in self._voice_cache:
@@ -160,7 +304,7 @@ class VieNeuClient:
         return self._voice_cache[key]
 
     def _enrol_known_voices(self, voices_dir: Optional[Path] = None) -> None:
-        """Pre-encode every reference clip under voices/*.wav at startup.
+        """Pre-encode every reference clip at startup.
 
         Enrolment (`encode_reference`, inside `_resolve_voice`) costs ~3-4s
         for a full-length reference and was previously paid inside the
@@ -171,20 +315,50 @@ class VieNeuClient:
         `/health` reports ready, so that cost is paid once here instead of
         by whichever user's request happens to name a voice first.
 
-        Goes through `_resolve_voice` and `_voice_version` exactly as a real
-        request would — same `_resolve_ref` anchoring, same cache dicts — so
-        the key this writes is the key a later request reads under. Default
-        `voices_dir` is `_ROOT / "voices"`; overridable so tests can point
-        this at a tmp directory instead of the repo's real voice catalog.
+        D5d: when VOICE_BUCKET is set, lists the S3 prefix for *.wav and
+        pre-enrols each S3 key via _resolve_voice's S3 path (download + cache).
+        This is why SpeechLLm reads S3 directly rather than via presigned URLs:
+        pre-enrol is what brings 4.36s -> 0.25s, and presigned URLs would lose it.
+        The health check stays red until this finishes, so a cold start that
+        still needs to enrol is not reported as ready.
 
         A missing or corrupt file must not take down the whole warm-up:
         voices are added to the catalog before anyone records audio for
-        them (see `_resolve_voice`'s own docstring) — a bad file here is
-        that same case, not a startup failure. Logged as a WARNING with the
-        exception rather than silently skipped, because "voice never got
-        enrolled" is otherwise indistinguishable from "voice enrolled fine,
-        first live request was just unlucky".
+        them — a bad file here is that same case, not a startup failure.
+        Logged as a WARNING with the exception rather than silently skipped.
         """
+        # S3 path: enumerate bucket
+        if _is_s3_enabled():
+            bucket = _voice_bucket()
+            try:
+                s3 = _get_s3_client()
+                paginator = s3.get_paginator("list_objects_v2")
+                # List all .wav keys — the bucket is private and only holds voices,
+                # so full scan is cheap. If it grows, add Prefix="voices/" or "characters/"
+                found = 0
+                for page in paginator.paginate(Bucket=bucket):
+                    for obj in page.get("Contents", []):
+                        key = obj["Key"]
+                        if not key.lower().endswith(".wav"):
+                            continue
+                        found += 1
+                        enrol_start = time.time()
+                        try:
+                            self._resolve_voice(key)
+                            self._voice_version(key)
+                        except Exception:
+                            logger.warning("voice_enrolment_failed s3_key=%s", key, exc_info=True)
+                            continue
+                        print(f"[VieNeu] Pre-enrolled s3://{bucket}/{key} in "
+                              f"{time.time() - enrol_start:.2f}s")
+                if found == 0:
+                    logger.warning("voices_s3_empty bucket=%s -> no voices pre-enrolled", bucket)
+                return
+            except Exception:
+                logger.warning("voices_s3_list_failed bucket=%s", bucket, exc_info=True)
+                # Fall through to local scan as fallback — warm-up must not die
+
+        # Local path (dev or S3 fallback)
         voices_dir = Path(voices_dir) if voices_dir is not None else (_ROOT / "voices")
         if not voices_dir.is_dir():
             logger.warning("voices_dir_missing path=%s -> no voices pre-enrolled", voices_dir)
@@ -213,14 +387,20 @@ class VieNeuClient:
         LangGraph service in between does not interpret this value at all;
         it only forwards it from `start` to the browser as `speech_start`.
 
-        Always the resolved reference file's own hash: `_resolve_voice` has
-        already guaranteed, by the time this runs, that `voice_path` names a
-        real, readable file — there is no more "preset" fallback version for
-        this to report instead.
-
-        Hashed once per resolved file and cached — reading + hashing a ~1MB
-        wav on every request would undo the point of caching voice encoding.
+        D5d: for S3 keys the version is the hash EMBEDDED in the key itself
+        (e.g. characters/anne/audio/9f2c1a4b.ogg -> 9f2c1a4b), not the file's
+        content hash — the key already is content-addressed by the uploader.
+        For local files it is the file's sha256[:16] as before. Cached per
+        resolved key.
         """
+        # S3 key: extract hash from key, not file content
+        if _should_use_s3(voice_path):
+            s3_key = _strip_s3_prefix(voice_path)
+            cache_key = f"s3://{_voice_bucket()}/{s3_key}"
+            if cache_key not in self._voice_version_cache:
+                self._voice_version_cache[cache_key] = _extract_hash_from_s3_key(s3_key)
+            return self._voice_version_cache[cache_key]
+
         ref = _resolve_ref(voice_path)
         key = str(ref)
         if key not in self._voice_version_cache:

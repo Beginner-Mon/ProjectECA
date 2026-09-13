@@ -47,3 +47,10 @@ fastapi==0.141.1
 uvicorn==0.52.4
 pydantic==2.13.5
 PyYAML==6.0.3
+
+# ── S3 voice bucket (D5d) ───────────────────────────────────────────────────
+# SpeechLLm reads reference voices from the private voice bucket (no CloudFront)
+# via IAM read-only on prefix. Local dev keeps plain files under voices/*.wav
+# when VOICE_BUCKET is unset. boto3 is the only S3 client here — the image is
+# python:3.12-slim, not Lambda base, so nothing is preinstalled.
+boto3>=1.34.0

@@ -138,6 +138,7 @@ agent_stack = AgentStack(
 # va chot muc nho nhat khong cham hon. Dung hardcode.
 speechllm_stack = SpeechllmStack(
     app, "VvaSpeechllmStack",
+    voice_bucket_name=asset_stack.voice_bucket.bucket_name,
     env=env,
 )
 

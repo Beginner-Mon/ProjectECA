@@ -189,6 +189,30 @@ export function ChatProvider({ children }: { children: ReactNode }) {
     setMessages((prev) => withGreeting(prev, GREETING_ID, getGreeting(uiRef.current)))
   }, [locale])
 
+  // ── Static greeting audio (D7) ────────────────────────────────────────────
+  // Play characters/{slug}/audio/{hash}.ogg via CloudFront signed URL, not via
+  // SpeechLLm. The URL is signed at read time in /characters (D5c) and lives
+  // ~5 minutes; on 403 the helper in lib/characters.ts refetches /characters
+  // once and retries. No request reaches SpeechLLm for this clip, so greeting
+  // costs no GB-seconds. Text is already there (withGreeting above); audio is
+  // chrome that happens to be shaped like a message — a failed play is not an
+  // error bubble.
+  useEffect(() => {
+    if (isRestoring) return
+    if (messages.length !== 1 || messages[0].id !== GREETING_ID) return
+    if (!selectedVrmId) return
+    const controller = new AbortController()
+    void (async () => {
+      try {
+        const { playStaticAudio } = await import('../lib/characters')
+        await playStaticAudio(selectedVrmId, 'greeting', locale, controller.signal)
+      } catch {
+        // greeting stays text-only on failure — not worth an error bubble
+      }
+    })()
+    return () => controller.abort()
+  }, [messages, selectedVrmId, locale, isRestoring])
+
   const addImage = useCallback((file: File) => {
     const url = URL.createObjectURL(file)
     imageUrlsRef.current = [...imageUrlsRef.current, url]

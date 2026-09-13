@@ -26,6 +26,7 @@ from fastapi import APIRouter, HTTPException
 from fastapi.responses import JSONResponse
 
 from langgraph_agents.shared import get_pg_client
+from langgraph_agents.shared.asset_urls import sign_static_audio
 from langgraph_agents.shared.logging import get_logger
 
 logger = get_logger("langgraph.api.characters")
@@ -35,11 +36,15 @@ router = APIRouter(tags=["characters"])
 _SLUG_RE = re.compile(r"^[A-Za-z0-9_-]{1,64}$")
 
 # Lite for card grid: display + compatibility (no vrm_url/voice/ui_strings).
-_PUBLIC_COLUMNS_LITE = "slug, display_name, thumbnail_url, description, vrm_metadata"
+# D5c: static_audio is signed at read time (characters/*/audio/* behind CloudFront
+# trusted key group). It lives in the same bucket as VRM but needs signing;
+# vrm_url itself stays unsigned (public). voice_vi_key/_en_key are NEVER returned
+# (private bucket, no CloudFront) — SpeechLLm alone reads them via S3 IAM.
+_PUBLIC_COLUMNS_LITE = "slug, display_name, thumbnail_url, description, vrm_metadata, static_audio"
 _PUBLIC_COLUMNS = (
     "slug, display_name, description, "
     "vrm_url, thumbnail_url, vrm_metadata, "
-    "voice_language, sort_order, ui_strings"
+    "voice_language, sort_order, ui_strings, static_audio"
 )
 
 _CACHE_SECONDS = 300
@@ -59,7 +64,26 @@ async def list_characters():
             f"SELECT {_PUBLIC_COLUMNS_LITE} FROM characters "
             "WHERE is_active ORDER BY sort_order, slug"
         )
-    characters = [dict(r) for r in rows]
+    characters = []
+    for r in rows:
+        d = dict(r)
+        # static_audio is JSONB — may arrive as str (asyncpg) or dict
+        sa = d.get("static_audio")
+        if isinstance(sa, str):
+            try:
+                sa = json.loads(sa)
+            except Exception:
+                sa = {}
+        # Sign every key inside the map (characters/*/audio/* via CloudFront)
+        # Keep raw keys for legacy/empty; signing never fails the whole response
+        d["static_audio"] = sign_static_audio(sa or {})
+        # Also parse vrm_metadata if string (same as get_character does)
+        if isinstance(d.get("vrm_metadata"), str):
+            try:
+                d["vrm_metadata"] = json.loads(d["vrm_metadata"])
+            except Exception:
+                pass
+        characters.append(d)
     return JSONResponse(
         content={"characters": characters, "total": len(characters)},
         headers=_cache_headers(),
@@ -82,12 +106,14 @@ async def get_character(slug: str):
     if row is None:
         raise HTTPException(status_code=404, detail="Character not found")
     result = dict(row)
-    for k in ("vrm_metadata", "ui_strings", "avatar_profile"):
+    for k in ("vrm_metadata", "ui_strings", "avatar_profile", "static_audio"):
         if isinstance(result.get(k), str):
             try:
                 result[k] = json.loads(result[k])
             except Exception:
                 pass
+    # Sign static_audio keys into CloudFront URLs (same key group as motion)
+    result["static_audio"] = sign_static_audio(result.get("static_audio") or {})
     return JSONResponse(content=result, headers=_cache_headers())
 
 

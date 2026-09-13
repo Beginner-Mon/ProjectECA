@@ -28,9 +28,14 @@ import os
 from functools import lru_cache
 
 import boto3
+from botocore.exceptions import BotoCoreError, ClientError
 from botocore.signers import CloudFrontSigner
 from cryptography.hazmat.primitives import hashes, serialization
 from cryptography.hazmat.primitives.asymmetric import padding
+
+from langgraph_agents.shared.logging import get_logger
+
+logger = get_logger("langgraph.shared.asset_urls")
 
 # 5 minutes — same as motion_status before the move; see module docstring for
 # why static_audio may want longer and how D7 handles expiry.
@@ -67,6 +72,20 @@ def sign_static_audio(static_audio: dict) -> dict:
     Output: {"greeting": {"vi": "https://.../characters/anne/audio/9f2c.ogg?Expires=...&Signature=...&Key-Pair-Id=...", ...}, ...}
     Missing or empty maps are returned as-is. Keys that are already URLs (http)
     are left untouched — they are either legacy data or already signed.
+
+    A key that fails to sign is DROPPED from its language map, not replaced
+    with anything — never the raw S3 key, never a placeholder. An earlier
+    version put the raw key in the field the frontend treats as a URL; the
+    browser then requested it as a relative path against its own origin,
+    404'd, and that looked exactly like "this character has no greeting" —
+    indistinguishable from the working case, with no way for the caller to
+    tell the difference. Same silent-fallback pattern commit 3fff88e7
+    deliberately removed from the voice path. Dropping the key instead makes
+    it genuinely absent: `getStaticAudioUrl()` on the frontend already falls
+    back through voice_language → vi → en → null for a kind/lang that was
+    simply never recorded, and a signing failure now looks the same as that,
+    not like a broken link. The failure itself is never silent — it is
+    logged here with the reason before the key is dropped.
     """
     if not static_audio:
         return static_audio
@@ -85,9 +104,24 @@ def sign_static_audio(static_audio: dict) -> dict:
                 continue
             try:
                 signed_langs[lang] = sign_url(key)
-            except Exception:
-                # Signing must never fail the whole /characters response —
-                # return the raw key and let the caller surface the error
-                signed_langs[lang] = key
+            except (KeyError, ClientError, BotoCoreError, ValueError) as exc:
+                # Narrowed from a bare `except Exception`: these are the
+                # expected operational failure modes — KeyError for a missing
+                # MOTION_SIGNING_KEY_PARAM/MOTION_KEY_PAIR_ID/ASSET_BASE_URL
+                # env var, ClientError/BotoCoreError for SSM (throttled,
+                # denied, parameter doesn't exist), ValueError for a
+                # malformed PEM key. Signing must never fail the whole
+                # /characters response over one bad key, so these are logged
+                # and the key is dropped rather than raised. Anything else
+                # (TypeError, AttributeError, ...) is a bug in this module,
+                # not an operational condition, and is deliberately NOT
+                # caught here — it surfaces as a 500 instead of a silently
+                # missing greeting.
+                logger.error(
+                    "static_audio signing failed, dropping key: "
+                    "kind=%r lang=%r key=%r error=%s: %s",
+                    kind, lang, key, type(exc).__name__, exc,
+                )
+                continue
         out[kind] = signed_langs
     return out

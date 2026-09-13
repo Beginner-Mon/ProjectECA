@@ -1,0 +1,47 @@
+# SpeechLLm .dockerignore — giữ image nhỏ và không rò rỉ giọng mẫu
+#
+# Nguyên tắc: giọng mẫu đi S3 bucket riêng private (D5), KHÔNG CloudFront,
+# nên KHÔNG nướng vào image. Nướng vào vừa phình image vừa tạo đường rò thứ hai.
+
+# ── Output / mẫu thử (ràng buộc D1) ───────────────────────────────────────────
+cmp_infer_*.wav
+sample_*.wav
+sample_*.ogg
+_k_win.wav
+
+# ── Dữ liệu tạm / cache ───────────────────────────────────────────────────────
+data/
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.pytest_cache/
+*.log
+
+# ── Giọng mẫu — đi S3, không vào image (D5) ──────────────────────────────────
+voices/
+
+# ── Môi trường / bí mật ───────────────────────────────────────────────────────
+.env
+.venv/
+venv/
+env/
+
+# ── IDE / OS ─────────────────────────────────────────────────────────────────
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+*.swp
+
+# ── Git ──────────────────────────────────────────────────────────────────────
+.git/
+.gitignore
+
+# ── Model weights local không commit (nếu ai cache thủ công) ─────────────────
+models/
+checkpoints/
+*.pt
+*.pth
+*.ckpt
+*.bin

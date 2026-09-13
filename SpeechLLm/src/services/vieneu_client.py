@@ -62,23 +62,37 @@ def _strip_s3_prefix(key: str) -> str:
 
 
 def _should_use_s3(voice_path: str) -> bool:
-    """True if voice_path should be fetched from S3 rather than local FS."""
-    if not _is_s3_enabled() or not voice_path:
+    """True if voice_path should be fetched from S3 rather than local FS.
+
+    Explicit, not heuristic (finding 8, 13-09-2026). When VOICE_BUCKET is
+    configured, S3 is the source of truth for every voice_path — full stop.
+    A local file of the same name is never preferred, even if one happens to
+    exist. Local files are the source ONLY when no bucket is configured at
+    all (a developer machine with no S3 access).
+
+    This used to be a heuristic: "looks like an S3 key (has '/', ends in
+    .wav) AND the local file doesn't already exist" — prefer local, on the
+    theory that ".dockerignore excludes voices/ from the image, so in prod
+    local won't exist and this falls through to S3 anyway." That is a
+    derived assumption about the CONTENTS of another file, not an enforced
+    invariant, and it failed silently in both directions:
+      - If voices/ ever reappeared in the image (a .dockerignore edit, a
+        base layer copying it, a future build step), the Lambda would serve
+        a STALE LOCAL voice while _voice_version() kept reporting the hash
+        embedded in the S3 key — the browser caches audio under a version
+        that does not match what it actually heard, with no symptom.
+      - A key that did not end in ".wav" silently took the local branch and
+        then failed as "missing", pointing at the wrong cause.
+    Making the mode explicit deletes the "local silently wins" path:
+    production behaviour no longer depends on what happens to be on disk.
+    """
+    if not voice_path:
         return False
-    # Explicit s3:// always uses S3
+    # Explicit s3:// always uses S3, bucket configured or not — _download_from_s3
+    # raises VoiceResolutionError loudly if the bucket is missing.
     if voice_path.startswith("s3://"):
         return True
-    # Heuristic: S3 keys look like S3 paths (contain '/' and end with .wav)
-    # and the bucket is configured. If the local file exists, prefer it for
-    # dev (so a developer without bucket can still run). In prod voices/ is
-    # NOT baked into the image (.dockerignore), so local won't exist and we
-    # correctly fall through to S3.
-    if "/" in voice_path and voice_path.lower().endswith(".wav"):
-        local = _resolve_ref(voice_path)
-        if local.is_file():
-            return False
-        return True
-    return False
+    return _is_s3_enabled()
 
 
 def _get_s3_client():

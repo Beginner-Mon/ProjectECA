@@ -286,10 +286,20 @@ class VieNeuTTSClient:
 
         httpx's `read` timeout is the max time between two socket reads, reset
         on every byte received — paired with a short, separate `connect` timeout
-        for "SpeechLLm never picked up at all". We set httpx read=None and
-        enforce the two budgets ourselves via `asyncio.wait_for` around each
-        `aiter_lines().__anext__()`, so first line uses 45s and every later line
-        uses 30s. Cold start no longer eats the liveness budget.
+        for "SpeechLLm never picked up at all". `client.stream()` itself awaits
+        the RESPONSE HEADERS before any line can be read, so that wait needs a
+        bound distinct from "no request in flight yet" (connect) and from
+        "gap between NDJSON lines" (below): httpx read= is set to the
+        first-byte budget so a connection that is accepted but never gets
+        headers (model load wedged, Lambda stuck in INIT) cannot hang this
+        method forever. We ALSO wrap entering the stream in `asyncio.wait_for`
+        with the same budget — belt and suspenders, and the only one of the
+        two that a mocked transport (tests) actually honours, since
+        `httpx.MockTransport` does not run the real httpcore timeout machinery.
+        Once headers are in, first line and every later line each go through
+        `asyncio.wait_for` around `aiter_lines().__anext__()`: first line uses
+        45s (covers the 25s cold start), every later line uses 30s. Cold start
+        no longer eats the liveness budget.
 
         Circuit breaker: a connect/timeout failure, a 5xx response, or the
         stream dropping/sending unparseable NDJSON mid-flight all record a
@@ -344,11 +354,22 @@ class VieNeuTTSClient:
         signed_headers = self._signed_headers_for("POST", url, payload)
         # httpx Timeout: connect/write/pool share the connect budget — neither
         # is the axis we care about here, they just need *a* bound so httpx
-        # does not fall back to its own (longer) default. Read is None — we
-        # enforce first-byte vs gap via asyncio.wait_for below (D3).
+        # does not fall back to its own (longer) default. `read` bounds the
+        # wait for RESPONSE HEADERS inside `client.stream()` below — that
+        # await happens before any line has been read, so it is not covered
+        # by the asyncio.wait_for() around aiter_lines() further down. It
+        # used to be None (unbounded): a SpeechLLm that accepts the TCP
+        # connection but never sends headers — model load wedged, Lambda
+        # stuck in INIT — hung this method forever, with no breaker failure
+        # and no speech_failed, which is exactly the failure this method's
+        # docstring says must not happen. Set to the first-byte budget (45s,
+        # which already covers the 25s cold start) so the header wait is
+        # bounded by the same number that governs the first NDJSON line;
+        # asyncio.wait_for still enforces the tighter 30s gap budget once
+        # lines start arriving, so the two budgets stay distinct.
         stream_timeout = httpx.Timeout(
             connect=self._stream_connect_timeout,
-            read=None,
+            read=self._stream_first_byte_timeout,
             write=self._stream_connect_timeout,
             pool=self._stream_connect_timeout,
         )
@@ -367,7 +388,28 @@ class VieNeuTTSClient:
 
         try:
             async with httpx.AsyncClient(timeout=stream_timeout) as client:
-                async with client.stream("POST", url, **request_kwargs) as resp:
+                stream_cm = client.stream("POST", url, **request_kwargs)
+                # `stream_cm.__aenter__()` is where response HEADERS are
+                # awaited (it runs `AsyncClient.send()` internally, then
+                # yields). httpx's own `read=` timeout (set above) bounds this
+                # on a real connection; `asyncio.wait_for` here bounds it too,
+                # independent of transport — the only one of the two a
+                # MockTransport in tests actually enforces, and cheap
+                # insurance against a stuck-INIT Lambda in production. Same
+                # first-byte budget as the first NDJSON line, since this wait
+                # is a prerequisite for that line ever arriving.
+                try:
+                    resp = await asyncio.wait_for(
+                        stream_cm.__aenter__(), timeout=self._stream_first_byte_timeout,
+                    )
+                except asyncio.TimeoutError as exc:
+                    self._breaker.record_failure()
+                    raise ServiceUnavailableError(
+                        "vieneu_tts",
+                        f"stream first_byte timeout after {self._stream_first_byte_timeout}s "
+                        "waiting for response headers",
+                    ) from exc
+                try:
                     try:
                         resp.raise_for_status()
                     except httpx.HTTPStatusError as exc:
@@ -375,10 +417,9 @@ class VieNeuTTSClient:
                         # reason: a 4xx is SpeechLLm rejecting THIS request
                         # (e.g. VoiceResolutionError for a missing reference),
                         # not a sign the service itself is unhealthy. Handled
-                        # here, still inside the `client.stream()` context, so
+                        # here, still inside the stream context, so
                         # `_client_error_reason` can still read the body — once
-                        # this `async with` exits the connection is closed and
-                        # the body is gone.
+                        # the stream is closed the body is gone.
                         if resp.status_code >= 500:
                             self._breaker.record_failure()
                             reason = (f"{type(exc).__name__}: {exc}"
@@ -436,6 +477,11 @@ class VieNeuTTSClient:
                         raise ServiceUnavailableError(
                             "vieneu_tts", "stream ended without end/error line",
                         )
+                finally:
+                    # Mirrors `async with client.stream(...)`'s own cleanup
+                    # (`response.aclose()`). __aenter__ already succeeded at
+                    # this point, so this always has a response to release.
+                    await stream_cm.__aexit__(None, None, None)
         except ServiceUnavailableError:
             raise
         except (httpx.TimeoutException, httpx.ConnectError) as exc:

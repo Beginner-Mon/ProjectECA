@@ -18,8 +18,10 @@ a transport. These tests monkeypatch `httpx.AsyncClient` itself, inside the
 
 from __future__ import annotations
 
+import asyncio
 import contextlib
 import json
+import time
 
 import httpx
 import pytest
@@ -259,6 +261,47 @@ async def test_synthesize_stream_http_error_raises_service_unavailable(monkeypat
     with pytest.raises(ServiceUnavailableError):
         await _collect(client)
 
+    assert client._breaker.snapshot()["failures"] == 1
+
+
+@pytest.mark.unit
+async def test_synthesize_stream_never_sends_headers_raises_within_first_byte_budget(monkeypatch):
+    """Finding 2 regression: a server that accepts the connection but never
+    sends response headers (wedged model load, Lambda stuck in INIT) must not
+    hang this method forever — it must raise ServiceUnavailableError, and do
+    so within the first-byte budget, not the caller's patience.
+
+    `httpx.MockTransport` does not run the real httpcore/anyio timeout
+    machinery (verified against httpx 0.28.1: a `read=` timeout is silently
+    ignored when the transport is mocked), so this cannot be exercised by
+    simply setting a short `read=` and waiting — that would only prove the
+    fix works against a real socket, which this suite has no way to open.
+    What IS transport-independent is `synthesize_stream`'s own
+    `asyncio.wait_for` around entering the stream (client.py's fix for this
+    finding). The handler here sleeps far longer than the injected first-byte
+    budget; if that wait_for is missing or misconfigured, this test hangs
+    until pytest's own timeout kills the run instead of failing fast.
+    """
+    first_byte_timeout = 0.05  # short and injected, so the test stays fast
+
+    async def handler(request: httpx.Request) -> httpx.Response:
+        await asyncio.sleep(first_byte_timeout * 50)  # "never" sends headers
+        raise AssertionError("should have been cancelled before headers were built")
+
+    _install_mock_transport(monkeypatch, handler)
+    client = VieNeuTTSClient(
+        base_url="http://speechllm.test",
+        stream_first_byte_timeout=first_byte_timeout,
+    )
+
+    start = time.monotonic()
+    with pytest.raises(ServiceUnavailableError, match="first_byte timeout"):
+        await _collect(client)
+    elapsed = time.monotonic() - start
+
+    # Generous slack over the injected budget — this only needs to prove
+    # "bounded", not pin an exact scheduler-dependent number.
+    assert elapsed < first_byte_timeout * 20
     assert client._breaker.snapshot()["failures"] == 1
 
 

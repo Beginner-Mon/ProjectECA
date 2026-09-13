@@ -351,6 +351,38 @@ class AssetStack(Stack):
                 compress=True,
                 trusted_key_groups=[self.motion_key_group],
             )
+        else:
+            # Without a key group, BOTH `motions/*` and `characters/*/audio/*`
+            # are simply never added above, and CloudFront falls back to
+            # serving those paths from the DEFAULT (unsigned) behavior —
+            # working, in the sense that a request still gets a 200, and
+            # silently wrong, in the sense that pre-rendered greeting/safety
+            # audio (D5c/D7) would then be fetchable by anyone holding the
+            # URL, which was an explicit product decision to prevent, the
+            # same as motions/*.
+            #
+            # `not motion_public_key_pem` already trips the stack-level
+            # add_error above (this stack cannot reach here with a key group
+            # unless motion_public_key_pem was set), so today this is
+            # belt-and-suspenders on the same condition. It is kept as its
+            # own explicit guard, named for characters/*/audio/* specifically
+            # and placed at the exact point that behavior would be built, so
+            # that if a future change ever gives characters/*/audio/* its own
+            # key group or otherwise decouples it from motions/* (see the
+            # `if self.motion_key_group is not None:` above), this still
+            # fires instead of quietly falling through to unsigned — same
+            # precedent as agent_stack.py's motion_key_pair_id/asset_base_url
+            # checks.
+            Annotations.of(self).add_error(
+                "VvaAssetStack has no CloudFront signing key group, so "
+                "characters/*/audio/* (pre-rendered greeting/safety audio "
+                "clips, D5c/D7) would fall through to the DEFAULT behavior "
+                "and be served UNSIGNED — readable by anyone with the URL. "
+                "That was an explicit decision to prevent, same as "
+                "motions/*. Pass the same key used for motions/*:\n"
+                "  cdk deploy VvaAssetStack -c motion_public_key_file="
+                "motion_signing_key.pub"
+            )
 
         self.distribution = cloudfront.Distribution(
             self, "AssetDistribution",

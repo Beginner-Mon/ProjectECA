@@ -108,7 +108,7 @@ export async function fetchAvatarProfile(
  * Get a signed URL for a pre-rendered clip (e.g. greeting) without calling TTS.
  *
  * The URL comes from characters.static_audio via /characters (signed at read
- * time, characters/*/audio/* via CloudFront trusted key group). No request
+ * time, characters/<slug>/audio/<hash> via CloudFront trusted key group). No request
  * reaches SpeechLLm. On 403 (signature expired, 5m TTL) the caller should
  * refetch /characters once and retry — this helper does that for the fetch
  * check, but the plain `getStaticAudioUrl` below just returns the first URL
@@ -176,6 +176,13 @@ export async function fetchStaticAudioUrlWithRetry(
  * Returns the Audio element so the caller can stop it, or null if there
  * was no clip. Fire-and-forget is fine for greeting — it is chrome, not
  * transcript, and a failed play is not an error bubble.
+ *
+ * `signal` is wired past the fetch: aborting it also pauses and releases
+ * an element that is already playing (or about to). Without this, a
+ * caller's `controller.abort()` only cancelled the network lookup — audio
+ * that had already started kept playing, and a second call (e.g. switching
+ * avatar while the first greeting is still going) produced two overlapping
+ * clips with no way for the caller to stop either one.
  */
 export async function playStaticAudio(
   slug: string,
@@ -183,18 +190,38 @@ export async function playStaticAudio(
   lang: string,
   signal?: AbortSignal,
 ): Promise<HTMLAudioElement | null> {
+  if (signal?.aborted) return null
   const url = await fetchStaticAudioUrlWithRetry(slug, kind, lang, signal)
-  if (!url) return null
+  if (!url || signal?.aborted) return null
+
   const audio = new Audio(url)
   audio.crossOrigin = 'anonymous'
-  // If the HEAD probe above was skipped (CORS), the Audio element may still
-  // 403. On error, refetch once and retry the Audio src.
   let retried = false
-  audio.addEventListener('error', async () => {
-    if (retried) return
+  let stopped = false
+
+  const stop = () => {
+    if (stopped) return
+    stopped = true
+    audio.removeEventListener('error', onError)
+    signal?.removeEventListener('abort', onAbort)
+    audio.pause()
+    audio.removeAttribute('src')
+    audio.load()
+  }
+
+  function onAbort() {
+    stop()
+  }
+
+  // If the HEAD probe above was skipped (CORS), the Audio element may still
+  // 403. On error, refetch once and retry the Audio src — unless playback
+  // was cancelled in the meantime, in which case there is nothing to retry.
+  async function onError() {
+    if (retried || stopped || signal?.aborted) return
     retried = true
     try {
       const retryUrl = await fetchStaticAudioUrlWithRetry(slug, kind, lang, signal)
+      if (stopped || signal?.aborted) return
       if (retryUrl && retryUrl !== url) {
         audio.src = retryUrl
         await audio.play().catch(() => {})
@@ -202,12 +229,18 @@ export async function playStaticAudio(
     } catch {
       // give up — greeting stays text-only
     }
-  })
+  }
+
+  audio.addEventListener('error', onError)
+  signal?.addEventListener('abort', onAbort)
+
   try {
     await audio.play()
   } catch {
     // Autoplay blocked — wait for user gesture (speaker button would still work)
     // For greeting, we silently ignore; the text is already there.
   }
+  // The signal may have fired while `play()` was in flight.
+  if (signal?.aborted) stop()
   return audio
 }

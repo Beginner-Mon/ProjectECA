@@ -273,20 +273,31 @@ class SpeechllmStack(Stack):
         # loi khong noi ro thieu cai nao. Ca hai deu can. Template phai co ca
         # hai permission voi InvokeMode RESPONSE_STREAM de `cdk synth` sach
         # (nghiem thu D2) — nen tao permission ngay ca khi agent_role_arn chua
-        # co, voi placeholder, va chi canh bao thay vi block synth.
+        # co, voi placeholder, de template khong bi thieu resource.
         #
         # Giong VvaAssetStack/VvaAgentStack: app.py construct moi stack moi lan
-        # `cdk synth`/`cdk list`, nen raise o day se lam hong lenh khong lien
-        # quan. Dung add_warning de deploy that van thay canh bao nhung synth
-        # don le van pass; add_error chi khi thieu image_tag (truong hop xoa ham).
+        # `cdk synth`/`cdk list`, nen mot `raise` o day se lam hong lenh khong
+        # lien quan (vd `cdk synth VvaAssetStack`). Nhung day KHONG con la
+        # add_warning nua: reached only past the `bootstrap` early-return and
+        # the `image_tag` check above (both return/raise before this point),
+        # so `self.fn` always exists here — image_tag present AND
+        # agent_role_arn absent is unambiguously a real deploy, not a
+        # convenience synth of another stack. A warning is easy to lose in CI
+        # output; what actually ships with only a warning is a Function URL
+        # invokable by ANY principal in the account
+        # (iam.AccountPrincipal(self.account)) — the exact production risk
+        # this check exists to prevent. add_error blocks `cdk deploy`/`cdk
+        # synth` for THIS stack only (see agent_stack.py's
+        # motion_key_pair_id/asset_base_url checks for the same pattern),
+        # while `cdk list` and a synth with no image tag are unaffected.
         if not agent_role_arn:
-            Annotations.of(self).add_warning(
-                "VvaSpeechllmStack: thieu agent_role_arn — Function URL dang dung placeholder "
-                f"arn:aws:iam::{self.account}:root. Deploy that phai thay bang ARN that cua vva-agent:\n"
+            Annotations.of(self).add_error(
+                "VvaSpeechllmStack: thieu agent_role_arn khi deploy that (co "
+                "speechllm_image_tag). Khong the tao Function URL voi placeholder "
+                f"principal arn:aws:iam::{self.account}:root — bat ky ai trong "
+                "account nay se goi duoc /synthesize/stream. Truyen ARN that:\n"
                 "  cdk deploy VvaSpeechllmStack -c speechllm_image_tag=<sha> "
-                "-c agent_role_arn=<ARN role thuc thi cua vva-agent>\n"
-                "Placeholder van tao du 2 permission (InvokeFunctionUrl + InvokeFunction) de cdk synth sach,"
-                " nhung chua han che dung principal — chua du bao ve that su."
+                "-c agent_role_arn=<ARN role thuc thi cua vva-agent>"
             )
             # Placeholder de template van co du 2 action cho nghiem thu D2
             placeholder = iam.AccountPrincipal(self.account)

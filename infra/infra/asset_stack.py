@@ -252,6 +252,22 @@ class AssetStack(Stack):
             auto_delete_objects=False,
         )
 
+        # ── Voice bucket — private, NO CloudFront, NO behavior ─────────────
+        # Giong mau de clone: ai tai duoc la clone duoc nhan vat. Khoa nhung
+        # sha256[:8] chi 32 bit: du de khong doan trung, khong du lam ranh gioi
+        # bao mat. Nen voice bucket KHONG co behavior nao tro toi — khong co
+        # cach nao tai qua CloudFront. Chi SpeechLLm doc qua S3 IAM read tren
+        # prefix (D5d). Bucket rieng, private, enforce SSL, RETAIN nhu asset bucket.
+        self.voice_bucket = s3.Bucket(
+            self, "VoiceBucket",
+            block_public_access=s3.BlockPublicAccess.BLOCK_ALL,
+            encryption=s3.BucketEncryption.S3_MANAGED,
+            enforce_ssl=True,
+            versioned=False,
+            removal_policy=RemovalPolicy.RETAIN,
+            auto_delete_objects=False,
+        )
+
         # Ephemeral motion renders expire after 1 day. Scoped to the `motions/`
         # prefix only — everything else in this bucket is a VRM model asset that
         # must never expire. `motions-pinned/` intentionally has no rule; see the
@@ -304,11 +320,17 @@ class AssetStack(Stack):
 
         # ── Distribution ────────────────────────────────────────────────
 
-        # motions/* is its own behavior, not folded into the default one,
-        # because it is the only path that needs a trusted key group — a
-        # signed-URL requirement on the VRM paths would break every existing
-        # caller of the unsigned model URLs. Only added when the key group
-        # exists; see the guard above.
+        # motions/* and characters/*/audio/* are their own behaviors, not folded
+        # into the default one, because they are the only paths that need a
+        # trusted key group — a signed-URL requirement on the VRM paths would
+        # break every existing caller of the unsigned model URLs. Only added
+        # when the key group exists; see the guard above.
+        # D5b: audio clips (greeting, safety_warning, ...) live at
+        # characters/{slug}/audio/{hash}.ogg on the SAME bucket as VRM, behind
+        # the SAME key group (KHONG tao khoa moi). Van duoc cache bien:
+        # CACHING_OPTIMIZED khong dua query string vao cache key, ma chu ky
+        # nam o query string — CloudFront kiem chu ky o bien roi phuc vu mot
+        # ban cache dung chung. Khong danh doi hieu nang lay bao mat.
         additional_behaviors = {}
         if self.motion_key_group is not None:
             additional_behaviors["motions/*"] = cloudfront.BehaviorOptions(
@@ -318,6 +340,15 @@ class AssetStack(Stack):
                 cache_policy=cloudfront.CachePolicy.CACHING_OPTIMIZED,
                 response_headers_policy=cors_policy,
                 compress=True,   # .bvh is plain text and compresses well
+                trusted_key_groups=[self.motion_key_group],
+            )
+            additional_behaviors["characters/*/audio/*"] = cloudfront.BehaviorOptions(
+                origin=origins.S3BucketOrigin.with_origin_access_control(self.bucket),
+                viewer_protocol_policy=cloudfront.ViewerProtocolPolicy.REDIRECT_TO_HTTPS,
+                allowed_methods=cloudfront.AllowedMethods.ALLOW_GET_HEAD_OPTIONS,
+                cache_policy=cloudfront.CachePolicy.CACHING_OPTIMIZED,
+                response_headers_policy=cors_policy,
+                compress=True,
                 trusted_key_groups=[self.motion_key_group],
             )
 
@@ -370,6 +401,11 @@ class AssetStack(Stack):
             self, "AssetBucketName",
             value=self.bucket.bucket_name,
             description="Upload target for scripts/upload_characters_to_s3.py",
+        )
+        CfnOutput(
+            self, "VoiceBucketName",
+            value=self.voice_bucket.bucket_name,
+            description="Private bucket for reference voices (no CloudFront) — SpeechLLm read only",
         )
         CfnOutput(
             self, "AssetBaseUrl",

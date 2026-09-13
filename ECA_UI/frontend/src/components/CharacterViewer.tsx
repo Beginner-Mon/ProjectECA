@@ -443,9 +443,9 @@ function Scene({ theme, vrmUrl, modelId, onReady, avatarRef }: SceneProps) {
   const responsiveDisplayRef = useRef(new THREE.Vector3(0, 0.5, 0))
 
   const TRANSITION_DURATION = 0.6
-  // Manual: rotate never counts, only zoom/pan far enough counts (reduced sensitivity).
-  const MANUAL_THRESHOLD_PAN = 0.5
-  const MANUAL_THRESHOLD_ZOOM = 0.6
+  // Manual: rotate never counts, only zoom/pan far enough counts.
+  const MANUAL_THRESHOLD_PAN = 0.3
+  const MANUAL_THRESHOLD_ZOOM = 0.2
   const manualStartTargetRef = useRef<THREE.Vector3 | null>(null)
   const manualStartDistRef = useRef<number | null>(null)
 

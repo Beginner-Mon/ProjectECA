@@ -185,7 +185,7 @@ function DraggableBar({
         floating-nav-bar
         flex ${isHorizontal ? 'flex-row' : 'flex-col'} items-center gap-1
         p-1.5 rounded-2xl
-        bg-card/70 backdrop-blur-2xl
+        bg-card
         border border-border/50
         shadow-[0_8px_40px_rgba(0,0,0,0.3),0_0_0_1px_rgba(255,255,255,0.05)_inset]
       `}

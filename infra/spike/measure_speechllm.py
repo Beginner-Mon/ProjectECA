@@ -23,6 +23,18 @@ spreads across tens of seconds, tracking emit stamps.
 D6 gate: if synthesis_time / audio_duration > 1 → SLOWER THAN REALTIME →
 STOP, do not enable for users, recalc cost table.
 
+synthesis_time for the gate is COLD-START-FREE: wall time from request send
+also includes the ~25s Lambda cold start (model load + pre-enrol), and a
+freshly deployed memory/arch configuration is ALWAYS cold on its first
+measurement — exactly when D6 runs. For a 20s clip that inflates
+(25+18)/20 ≈ 2.15 (STOP) when the model itself was actually ~0.9x realtime.
+The gate metric is measured from the first NDJSON line ("start") to "end";
+wall time (including cold start) and time-to-first-byte are both still
+reported, clearly labelled, alongside it. The tool also states whether the
+run was warm or cold and warns when the gate decision comes from a cold run
+— D6's own first invocation of a new config always is one, and should be
+corroborated with a second (warm) run before trusting the verdict.
+
 Outputs JSON with per-line arrival, FirstByte, total, chunks, audio duration,
 and whether streamed vs buffered.
 
@@ -98,6 +110,13 @@ def main() -> int:
     ap.add_argument("--out", help="Write JSON results to file")
     ap.add_argument("--timeout-first-byte", type=float, default=45, help="First byte timeout (D3: 45s covers 25s cold start)")
     ap.add_argument("--timeout-gap", type=float, default=30, help="Gap between NDJSON lines (D3: 30s)")
+    ap.add_argument(
+        "--warm-threshold-s", type=float, default=8.0,
+        help="first_byte_at at or above this is classified COLD (finding 6). "
+             "Cold start is model load (13s) + pre-enrol ≈ 25s; a warm "
+             "Lambda should answer well under this. Default 8.0s sits "
+             "clear of both.",
+    )
     args = ap.parse_args()
 
     text = args.text
@@ -196,7 +215,8 @@ def main() -> int:
                     # httpx iter_bytes blocks on read; our read=None means it will block
                     # indefinitely, so we cannot enforce gap here without asyncio.
                     # For this CLI we rely on httpx not timing out and just report
-                    # what we got; the gate is synthesis_time vs audio_duration.
+                    # what we got; the gate is the cold-start-free synthesis time
+                    # (first line -> end) vs audio_duration — see finding 6 below.
                 # Handle terminal line if loop exited without seeing end/error
     except httpx.HTTPStatusError as e:
         print(f"[measure] HTTP error {e.response.status_code}: {e.response.text[:500]}", file=sys.stderr)
@@ -208,20 +228,68 @@ def main() -> int:
         return 1
 
     ended_at = time.monotonic() - started
-    synthesis_time = ended_at  # wall time from request send to end
+    # Wall time from request send to "end" — includes connect + any cold
+    # start (model load + pre-enrol, ~25s). Reported, clearly labelled, but
+    # NOT the gate metric: see finding 6 in the module docstring.
+    synthesis_time_wall = ended_at
+    # Cold-start-free: first NDJSON line ("start") to "end". The protocol
+    # always sends "start" first, so first_byte_at IS the start-line arrival
+    # — this is what the D6 realtime gate actually measures. None only when
+    # the stream never produced a line at all (error path already returned
+    # above in that case, so this should not happen for a run that reaches
+    # here, but guarded rather than assumed).
+    synthesis_time_warm = (
+        (ended_at - first_byte_at) if first_byte_at is not None else None
+    )
     spread = (arrivals[-1]["at"] - arrivals[0]["at"]) if len(arrivals) >= 2 else 0
     streamed = spread >= 0.5
-    # D6 gate: synthesis_time / audio_duration
-    realtime_ratio = (synthesis_time / total_audio) if total_audio else None
+
+    # Warm vs cold classification — no direct signal from the Lambda (no
+    # cold-start header on a Function URL response), so first_byte_at is the
+    # proxy: a warm invocation should answer far below the ~25s cold-start
+    # figure; --warm-threshold-s (default 8.0s) sits clear of both.
+    is_cold_start = (
+        (first_byte_at is not None and first_byte_at >= args.warm_threshold_s)
+        if first_byte_at is not None else None
+    )
+
+    # D6 gate: synthesis_time / audio_duration, using the COLD-START-FREE
+    # figure. Using wall time here was the bug (finding 6): a freshly
+    # deployed config's first measurement is always cold, inflating the
+    # ratio and printing "SLOWER THAN REALTIME — STOP" for a model that was
+    # actually faster than realtime once warm.
+    realtime_ratio = (
+        (synthesis_time_warm / total_audio)
+        if (total_audio and synthesis_time_warm is not None) else None
+    )
     slower_than_realtime = (realtime_ratio is not None and realtime_ratio > 1.0)
+    # For comparison only — never the gate decision.
+    realtime_ratio_wall = (synthesis_time_wall / total_audio) if total_audio else None
 
     print()
-    print(f"[measure] done in {synthesis_time:.3f}s, {chunks} chunks, {total_audio:.3f}s audio, spread {spread:.3f}s")
-    print(f"[measure] streamed={'YES' if streamed else 'NO (BUFFERED — all lines at once)'}")
-    if realtime_ratio is not None:
-        print(f"[measure] realtime_ratio synthesis/audio = {realtime_ratio:.3f} ({'SLOWER THAN REALTIME — STOP' if slower_than_realtime else 'faster than realtime — OK'})")
+    print(f"[measure] wall time (request send → end, includes cold start if any): {synthesis_time_wall:.3f}s")
     if first_byte_at is not None:
-        print(f"[measure] first_byte {first_byte_at:.3f}s (budget {args.timeout_first_byte}s, cold start 25s + model 13s)")
+        print(f"[measure] time to first byte / \"start\" line: {first_byte_at:.3f}s (budget {args.timeout_first_byte}s, cold start ≈25s = model 13s + pre-enrol)")
+    if synthesis_time_warm is not None:
+        print(f"[measure] synthesis time, cold-start-free (\"start\" line → \"end\"): {synthesis_time_warm:.3f}s  ← D6 gate metric")
+    print(f"[measure] {chunks} chunks, {total_audio:.3f}s audio, spread {spread:.3f}s")
+    print(f"[measure] streamed={'YES' if streamed else 'NO (BUFFERED — all lines at once)'}")
+    if is_cold_start is not None:
+        print(f"[measure] run classification: {'COLD' if is_cold_start else 'WARM'} (threshold {args.warm_threshold_s}s)")
+
+    if realtime_ratio is not None:
+        print(f"[measure] realtime_ratio (cold-start-free synthesis/audio) = {realtime_ratio:.3f} ({'SLOWER THAN REALTIME — STOP' if slower_than_realtime else 'faster than realtime — OK'})")
+        if realtime_ratio_wall is not None:
+            print(f"[measure] for reference only, NOT the gate: realtime_ratio including wall/cold-start = {realtime_ratio_wall:.3f}")
+    if is_cold_start:
+        print(
+            "[warn] this run was COLD — even with cold start subtracted out of the "
+            "gate metric above, a cold invocation can still run slower end-to-end "
+            "(e.g. CPU/IO contention during init) than a steady-state one. Do not "
+            "chốt (finalize) a memory/arch decision off a single cold run — repeat "
+            "immediately after (Lambda should still be warm) and compare.",
+            file=sys.stderr,
+        )
 
     if slower_than_realtime:
         print()
@@ -236,9 +304,13 @@ def main() -> int:
         "started_at_monotonic": started,
         "first_byte_at": first_byte_at,
         "ended_at": ended_at,
-        "synthesis_time": round(synthesis_time, 3),
+        "warm_threshold_s": args.warm_threshold_s,
+        "is_cold_start": is_cold_start,
+        "synthesis_time_wall_s": round(synthesis_time_wall, 3),
+        "synthesis_time_warm_s": round(synthesis_time_warm, 3) if synthesis_time_warm is not None else None,
         "audio_duration": round(total_audio, 3),
-        "realtime_ratio": round(realtime_ratio, 3) if realtime_ratio else None,
+        "realtime_ratio": round(realtime_ratio, 3) if realtime_ratio is not None else None,
+        "realtime_ratio_wall_reference_only": round(realtime_ratio_wall, 3) if realtime_ratio_wall is not None else None,
         "slower_than_realtime": slower_than_realtime,
         "chunks": chunks,
         "codec": codec,

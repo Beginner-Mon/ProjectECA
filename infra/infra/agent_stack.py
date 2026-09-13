@@ -325,13 +325,15 @@ class AgentStack(Stack):
             # CPU-bound work and false of sitting on a socket.
             # Re-measure from the INIT_DURATION line before changing it.
             memory_size=1024,
-            # 120s is a COST CEILING, not a safety net. AWS documents that a
-            # streaming invocation is billed for its full duration and is NOT
-            # stopped when the client disconnects — so main.py's
-            # request.is_disconnected() cannot save money here. A real turn is
-            # 10-30s; 120s is four times the bad case, and a hung DeepSeek costs
-            # 120s x 1 GB rather than the 300s an intuitive value would.
-            timeout=Duration.seconds(120),
+            # 300s to match vva-speechllm (D3): a turn with voice = graph
+            # (5-10s) + synthesis (up to 78s measured) ~90s, near the old 120s
+            # ceiling; hitting it mid-stream kills the agent and the browser
+            # loses speech_end. Cost ceiling still matters — streaming is billed
+            # for full duration even after client disconnect — but 120s was four
+            # times the text-only bad case, not the voice bad case. 300s is the
+            # speech case's equivalent, and matches speechllm's own 300s so the
+            # caller does not die before the callee.
+            timeout=Duration.seconds(300),
             # No reserved concurrency: AWS refuses any reservation that leaves
             # the account under 100 unreserved units, and this account's whole
             # limit is 10. Set one and the deploy fails outright. That limit is
@@ -382,6 +384,23 @@ class AgentStack(Stack):
         self.fn.add_to_role_policy(iam.PolicyStatement(
             actions=["dynamodb:GetItem", "dynamodb:PutItem", "dynamodb:Query"],
             resources=[motion_table_arn, f"{motion_table_arn}/index/*"],
+        ))
+
+        # ── IAM: invoke SpeechLLm Function URL (D3, D2 Security) ──────────
+        #
+        # vva-speechllm's Function URL is AuthType=AWS_IAM with resource policy
+        # requiring BOTH lambda:InvokeFunctionUrl and lambda:InvokeFunction
+        # (10/2025, missing one fails silently). This IAM grant is the caller
+        # side; the resource policy on vva-speechllm (speechllm_stack.py) is
+        # the callee side. Both must exist or the call 403s before the function
+        # runs (no invoke cost). Fixed ARN by name — speechllm_stack is built
+        # AFTER this one in app.py (like the motion table), so no construct
+        # reference is possible without reordering. Name is hard-coded in both
+        # stacks: speechllm_stack.py's function_name == "vva-speechllm".
+        speechllm_fn_arn = f"arn:aws:lambda:{self.region}:{self.account}:function:vva-speechllm"
+        self.fn.add_to_role_policy(iam.PolicyStatement(
+            actions=["lambda:InvokeFunctionUrl", "lambda:InvokeFunction"],
+            resources=[speechllm_fn_arn, f"{speechllm_fn_arn}:*"],
         ))
 
         CfnOutput(self, "AgentFunctionName", value=self.fn.function_name)

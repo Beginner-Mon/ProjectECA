@@ -315,19 +315,24 @@ class RestApiStack(Stack):
 
             # ── /motion/{job_id} — authenticated ─────────────────────────
             #
-            # Motion files are the first user-derived artifacts on the CDN
-            # (see asset_stack.py's module docstring) — everything served
-            # from it before this was a static app asset, so this is the
-            # first route that needs the same Cognito authorizer every other
-            # data route already carries. Reuses `authorizer`/`authed` built
-            # above; no second authorizer.
+            # STREAM, not BUFFERED — even though the response is a small JSON.
+            # The Lambda runs with AWS_LWA_INVOKE_MODE=response_stream
+            # globally (Dockerfile), which wraps EVERY response in the
+            # streaming prelude format. A BUFFERED integration cannot parse
+            # that format and returns 502 Bad Gateway. Any route pointing at
+            # agent_fn must use STREAM, same as /chat.
             #
-            # BUFFERED, not streamed: the response is a small JSON status (+
-            # a signed URL string), the same shape as /tts's routes. The file
-            # itself never passes through this Lambda — the client fetches it
-            # straight from CloudFront with the URL this returns.
+            # The file itself never passes through this Lambda — the client
+            # fetches it straight from CloudFront with the URL this returns.
             motion = self.api.root.add_resource("motion")
-            motion.add_resource("{job_id}").add_method("GET", agent, **authed)
+            motion.add_resource("{job_id}").add_method(
+                "GET",
+                apigw.LambdaIntegration(
+                    agent_fn,
+                    response_transfer_mode=apigw.ResponseTransferMode.STREAM,
+                ),
+                **authed,
+            )
 
             billing = self.api.root.add_resource("billing")
             billing.add_resource("{proxy+}").add_method("ANY", agent, **authed)

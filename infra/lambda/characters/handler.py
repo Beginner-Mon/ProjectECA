@@ -39,9 +39,21 @@ logger.setLevel(logging.INFO)
 _CACHE_SECONDS = 300
 
 
-def success(body: dict, status_code: int = 200) -> dict:
+def success(body: dict, status_code: int = 200, cache_control: str | None = None) -> dict:
+    """Wrap a body with per-route Cache-Control (contract A).
+
+    The caller names the policy — list responses are identical for every
+    viewer (`public`), detail/profile responses travel with a token
+    (`private`), and /audio must never be stored (`no-store`, T4). There is
+    deliberately no single default that fits all three: handler.py:44 used
+    to stamp `public, max-age=300` on EVERY response, which would let a
+    shared cache serve one user's signed clip URLs to another.
+    """
     resp = _success(body, status_code)
-    resp["headers"] = {**resp["headers"], "Cache-Control": f"public, max-age={_CACHE_SECONDS}"}
+    resp["headers"] = {
+        **resp["headers"],
+        "Cache-Control": cache_control or f"public, max-age={_CACHE_SECONDS}",
+    }
     return resp
 
 # Same shape the backend enforces on ChatRequest.persona_id, because a slug is
@@ -82,7 +94,12 @@ def _list_characters(cur) -> dict:
         "WHERE is_active ORDER BY sort_order, slug"
     )
     rows = fetch_all(cur)
-    return success({"characters": rows, "total": len(rows)})
+    # Public catalog, identical for every viewer — the one route where a
+    # shared cache is safe.
+    return success(
+        {"characters": rows, "total": len(rows)},
+        cache_control=f"public, max-age={_CACHE_SECONDS}",
+    )
 
 
 def _get_character(cur, slug: str) -> dict:
@@ -94,7 +111,9 @@ def _get_character(cur, slug: str) -> dict:
     row = fetch_one(cur)
     if row is None:
         return error("Character not found", 404)
-    return success(row)
+    # Behind Cognito (contract A): private so a shared cache can never serve
+    # one viewer's detail (and T5's audio_version) to another.
+    return success(row, cache_control=f"private, max-age={_CACHE_SECONDS}")
 
 
 def _get_avatar_profile(cur, slug: str) -> dict:
@@ -105,7 +124,10 @@ def _get_avatar_profile(cur, slug: str) -> dict:
     row = fetch_one(cur)
     if row is None:
         return error("Character not found", 404)
-    return success(row["avatar_profile"] or {})
+    return success(
+        row["avatar_profile"] or {},
+        cache_control=f"private, max-age={_CACHE_SECONDS}",
+    )
 
 
 def _request_method(event) -> str:

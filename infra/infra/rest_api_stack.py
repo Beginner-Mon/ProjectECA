@@ -206,15 +206,19 @@ class RestApiStack(Stack):
         crud = apigw.LambdaIntegration(crud_fn)
         characters = apigw.LambdaIntegration(characters_fn)
 
-        # ── /characters — public ────────────────────────────────────────
-        # No authorizer, on purpose: the catalog is public data and the app reads
-        # it before anyone signs in. Attaching one here would make you log in
-        # before you could see which characters exist.
+        # ── /characters — list public, everything under {slug} authed ──
+        # Only the LIST is public: the app reads the picker grid before anyone
+        # signs in, and rows are identical for every viewer. Detail,
+        # avatar-profile and (T4) audio all carry per-viewer material — vrm_url
+        # plus T5's audio_version, the profile, signed clip URLs — so they sit
+        # behind the same Cognito authorizer as every other data route
+        # (contract A). Signing clip URLs inside a public response would hand
+        # them to anyone without a token, which is exactly what T1 removed.
         chars = self.api.root.add_resource("characters")
         chars.add_method("GET", characters)
         chars_slug = chars.add_resource("{slug}")
-        chars_slug.add_method("GET", characters)
-        chars_slug.add_resource("avatar-profile").add_method("GET", characters)
+        chars_slug.add_method("GET", characters, **authed)
+        chars_slug.add_resource("avatar-profile").add_method("GET", characters, **authed)
 
         # ── /health — public, and it has to be ──────────────────────────
         # The EventBridge warmer in crud_api_stack.py calls /health/db on a

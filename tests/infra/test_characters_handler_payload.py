@@ -169,6 +169,88 @@ def test_allowed_origin_is_echoed_not_wildcarded(handler_module, monkeypatch):
     )
 
 
+# ── Cache-Control per route (T2, contract A) ──────────────────────────────
+
+
+class _FakeCursor:
+    """Enough of a pg8000 cursor for fetch_all/fetch_one, with no database."""
+
+    def __init__(self, columns, rows):
+        self.description = [(c,) for c in columns]
+        self._rows = rows
+
+    def execute(self, *args, **kwargs):
+        pass
+
+    def fetchall(self):
+        return self._rows
+
+    def fetchone(self):
+        return self._rows[0] if self._rows else None
+
+    def close(self):
+        pass
+
+
+class _FakeConn:
+    def __init__(self, cursor):
+        self._cursor = cursor
+
+    def cursor(self):
+        return self._cursor
+
+
+def _connected(handler_module, cursor):
+    """Patch get_connection to hand out a cursor over canned rows."""
+    return patch.object(
+        handler_module, "get_connection",
+        return_value=_FakeConn(cursor),
+    )
+
+
+@pytest.mark.unit
+def test_list_is_public_cacheable(handler_module):
+    """The picker grid is identical for every viewer — the one route where a
+    shared cache is safe."""
+    cur = _FakeCursor(
+        ("slug", "display_name", "thumbnail_url", "description", "vrm_metadata"),
+        [("anne", "Anne", None, None, {})],
+    )
+    with _connected(handler_module, cur):
+        result = handler_module.handler(_v1("/characters"), None)
+
+    assert result["statusCode"] == 200
+    assert result["headers"]["Cache-Control"] == "public, max-age=300"
+
+
+@pytest.mark.unit
+def test_detail_is_private_cacheable(handler_module):
+    """Behind Cognito: a shared cache must never serve one viewer's detail
+    (and T5's audio_version) to another."""
+    cur = _FakeCursor(
+        ("slug", "display_name"),
+        [("anne", "Anne")],
+    )
+    with _connected(handler_module, cur):
+        result = handler_module.handler(_v1("/characters/anne"), None)
+
+    assert result["statusCode"] == 200
+    assert result["headers"]["Cache-Control"] == "private, max-age=300"
+
+
+@pytest.mark.unit
+def test_avatar_profile_is_private_cacheable(handler_module):
+    cur = _FakeCursor(
+        ("avatar_profile",),
+        [({"recipes": []},)],
+    )
+    with _connected(handler_module, cur):
+        result = handler_module.handler(_v1("/characters/anne/avatar-profile"), None)
+
+    assert result["statusCode"] == 200
+    assert result["headers"]["Cache-Control"] == "private, max-age=300"
+
+
 @pytest.mark.unit
 def test_unknown_origin_does_not_get_a_wildcard(handler_module, monkeypatch):
     from shared import response as response_module

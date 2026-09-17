@@ -38,6 +38,15 @@
 export const TTS_CACHE_TTL_MS = 24 * 60 * 60 * 1000
 
 /**
+ * How long a PRE-RENDERED clip (greeting via /audio) may be replayed. 30 days:
+ * the bytes only change when the character is re-rendered, and then
+ * `audio_version` (part of the key) changes too — so a long TTL cannot serve
+ * a stale voice the way it could for a synthesised turn. Still bounded, so a
+ * dead character does not squat in the quota forever.
+ */
+export const STATIC_CACHE_TTL_MS = 30 * 24 * 60 * 60 * 1000
+
+/**
  * Most rows kept; the oldest go first.
  *
  * Rows hold whatever codec the server sent, unexamined. Opus speech is a few kB
@@ -62,6 +71,14 @@ export interface CacheMeta {
   sampleRate: number
   createdAt: number
   bytes: number
+  /**
+   * Which half of the cache this row belongs to. Absent on rows written
+   * before T7 — they are turns. `static` rows (pre-rendered /audio clips)
+   * carry their own TTL and never count towards the turn cap.
+   */
+  kind?: 'turn' | 'static'
+  /** Per-row TTL override. Absent means the default for the row's kind. */
+  ttlMs?: number
 }
 
 export interface CachedClip {
@@ -70,6 +87,28 @@ export interface CachedClip {
 }
 
 // ── Pure decisions (unit-tested) ─────────────────────────────────────────────
+
+/**
+ * SHA-256 hex of one exact string — the single hashing primitive in this
+ * file. cacheKeyFor and the greeting key below both go through here, so
+ * there is no second implementation to drift (and its output matches
+ * Python's sha256 over the same UTF-8 bytes, which is what contract E and
+ * the /audio text_sha256 check rely on).
+ *
+ * @returns null where SubtleCrypto does not exist — it is secure-context only,
+ *          so plain http:// on a LAN address has none. No key, no cache.
+ */
+export async function sha256Hex(text: string): Promise<string | null> {
+  const subtle = globalThis.crypto?.subtle
+  if (!subtle) return null
+  try {
+    const input = new TextEncoder().encode(text)
+    const digest = await subtle.digest('SHA-256', input)
+    return Array.from(new Uint8Array(digest), (b) => b.toString(16).padStart(2, '0')).join('')
+  } catch {
+    return null
+  }
+}
 
 /**
  * SHA-256 hex of the text and the character that speaks it.
@@ -88,15 +127,7 @@ export interface CachedClip {
  *          so plain http:// on a LAN address has none. No key, no cache.
  */
 export async function cacheKeyFor(text: string, persona: string): Promise<string | null> {
-  const subtle = globalThis.crypto?.subtle
-  if (!subtle) return null
-  try {
-    const input = new TextEncoder().encode(JSON.stringify([text, persona]))
-    const digest = await subtle.digest('SHA-256', input)
-    return Array.from(new Uint8Array(digest), (b) => b.toString(16).padStart(2, '0')).join('')
-  } catch {
-    return null
-  }
+  return sha256Hex(JSON.stringify([text, persona]))
 }
 
 /**
@@ -128,6 +159,17 @@ export function isExpired(createdAt: number, now: number, ttlMs = TTS_CACHE_TTL_
   return !(age >= 0 && age < ttlMs)
 }
 
+/** A row's own TTL: its override, else its kind's default, else the turn TTL. */
+export function ttlOf(meta: Pick<CacheMeta, 'kind' | 'ttlMs'>): number {
+  if (typeof meta.ttlMs === 'number') return meta.ttlMs
+  return meta.kind === 'static' ? STATIC_CACHE_TTL_MS : TTS_CACHE_TTL_MS
+}
+
+/** True for a synthesised-turn row (including rows written before T7). */
+export function isTurnRow(meta: Pick<CacheMeta, 'kind'>): boolean {
+  return (meta.kind ?? 'turn') === 'turn'
+}
+
 /** This user's rows for this voice scope that were made with a different voice. */
 export function staleIds(
   metas: readonly CacheMeta[],
@@ -143,17 +185,21 @@ export function staleIds(
     .map((m) => m.id)
 }
 
-/** Rows that are not `sub`'s, plus `sub`'s expired ones. A null sub owns nothing. */
+/** Rows that are not `sub`'s, plus `sub`'s expired ones. A null sub owns nothing.
+ * Expiry honours EACH row's own TTL — a 29-day-old static clip is kept while
+ * a 2-day-old turn is swept. */
 export function sweepIds(metas: readonly CacheMeta[], sub: string | null, now: number): string[] {
-  return metas.filter((m) => m.sub !== sub || isExpired(m.createdAt, now)).map((m) => m.id)
+  return metas.filter((m) => m.sub !== sub || isExpired(m.createdAt, now, ttlOf(m))).map((m) => m.id)
 }
 
-/** The oldest rows beyond `max`. */
+/** The oldest TURN rows beyond `max`. Static rows never count towards the
+ * turn cap and are never evicted by it — a greeting must survive 101 turns. */
 export function evictionIds(metas: readonly CacheMeta[], max = TTS_CACHE_MAX_ENTRIES): string[] {
-  if (metas.length <= max) return []
-  return [...metas]
+  const turns = metas.filter(isTurnRow)
+  if (turns.length <= max) return []
+  return [...turns]
     .sort((a, b) => a.createdAt - b.createdAt)
-    .slice(0, metas.length - max)
+    .slice(0, turns.length - max)
     .map((m) => m.id)
 }
 
@@ -269,7 +315,7 @@ export function readCachedClip(sub: string, key: string): Promise<CachedClip | n
       const meta = metaReq.result as CacheMeta | undefined
       const audio = audioReq.result as { id: string; chunks: ArrayBuffer[] } | undefined
       if (!meta || !audio || !Array.isArray(audio.chunks)) return null
-      if (isExpired(meta.createdAt, Date.now())) {
+      if (isExpired(meta.createdAt, Date.now(), ttlOf(meta))) {
         void prune(() => [id]).catch(() => {})
         return null
       }
@@ -287,6 +333,11 @@ export interface CacheEntry {
   codec: string
   sampleRate: number
   chunks: ArrayBuffer[]
+  /** 'static' for a pre-rendered /audio clip (own TTL, exempt from the turn
+   * cap). Absent means 'turn'. */
+  kind?: 'turn' | 'static'
+  /** Per-row TTL override. Absent means the default for the row's kind. */
+  ttlMs?: number
 }
 
 /** Store a complete clip, then trim the cache back under its cap. */
@@ -296,6 +347,7 @@ export function writeCachedClip(sub: string, key: string, entry: CacheEntry): Pr
       const db = await openDb()
       if (!db) return
       const id = `${sub}:${key}`
+      const kind = entry.kind ?? 'turn'
       const meta: CacheMeta = {
         id,
         sub,
@@ -307,6 +359,8 @@ export function writeCachedClip(sub: string, key: string, entry: CacheEntry): Pr
         sampleRate: entry.sampleRate,
         createdAt: Date.now(),
         bytes: entry.chunks.reduce((n, c) => n + c.byteLength, 0),
+        kind,
+        ttlMs: entry.ttlMs ?? (kind === 'static' ? STATIC_CACHE_TTL_MS : TTS_CACHE_TTL_MS),
       }
       const tx = db.transaction([META, AUDIO], 'readwrite')
       const metaStore = tx.objectStore(META)

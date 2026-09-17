@@ -33,12 +33,14 @@ function toAssetOption(character: Character): AssetOption {
   }
 }
 function toAssetOptionLite(character: CharacterLite): AssetOption {
-  // Lite has no vrm_url — panel only needs card display; url empty until full fetch
+  // Lite has no vrm_url — panel only needs card display; url empty until full fetch.
+  // audio_version is null here for the same reason: the lite list never
+  // carries clips, so a lite-backed greeting stays text-only (T7).
   return {
     id: character.slug,
     label: character.display_name,
     url: '',
-    character: { ...character, vrm_url: '', voice_language: '', sort_order: 0, vrm_metadata: character.vrm_metadata } as Character,
+    character: { ...character, vrm_url: '', voice_language: '', sort_order: 0, vrm_metadata: character.vrm_metadata, audio_version: null } as Character,
   }
 }
 

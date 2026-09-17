@@ -189,29 +189,34 @@ export function ChatProvider({ children }: { children: ReactNode }) {
     setMessages((prev) => withGreeting(prev, GREETING_ID, getGreeting(uiRef.current)))
   }, [locale])
 
-  // ── Static greeting audio (D7) ────────────────────────────────────────────
-  // Play characters/{slug}/audio/{hash}.ogg via CloudFront signed URL, not via
-  // SpeechLLm. The URL is signed at read time in /characters (D5c) and lives
-  // ~5 minutes; on 403 the helper in lib/characters.ts refetches /characters
-  // once and retries. No request reaches SpeechLLm for this clip, so greeting
-  // costs no GB-seconds. Text is already there (withGreeting above); audio is
-  // chrome that happens to be shaped like a message — a failed play is not an
-  // error bubble.
+  // ── Greeting voice (T7) ─────────────────────────────────────────────────
+  // The opening line, spoken from a pre-rendered /audio clip: caption and
+  // voice come from the same ui_strings (lib/greetingAudio.ts), bytes come
+  // from cache or CloudFront — never from SpeechLLm, so a greeting costs no
+  // synthesis. Playback runs through speechPlayer, so the avatar lip-syncs.
+  // Text is already on screen (withGreeting above); audio is chrome shaped
+  // like a message, and any failure here stays text-only — never a bubble.
   useEffect(() => {
     if (isRestoring) return
     if (messages.length !== 1 || messages[0].id !== GREETING_ID) return
-    if (!selectedVrmId) return
+    const character = vrmOptions.find((o) => o.id === selectedVrmId)?.character
+    if (!character) return
     const controller = new AbortController()
     void (async () => {
       try {
-        const { playStaticAudio } = await import('../lib/characters')
-        await playStaticAudio(selectedVrmId, 'greeting', locale, controller.signal)
+        const { playGreeting } = await import('../lib/greetingAudio')
+        await playGreeting({
+          character,
+          locale,
+          controller: avatarRef.current,
+          signal: controller.signal,
+        })
       } catch {
         // greeting stays text-only on failure — not worth an error bubble
       }
     })()
     return () => controller.abort()
-  }, [messages, selectedVrmId, locale, isRestoring])
+  }, [messages, selectedVrmId, locale, isRestoring, vrmOptions, avatarRef])
 
   const addImage = useCallback((file: File) => {
     const url = URL.createObjectURL(file)

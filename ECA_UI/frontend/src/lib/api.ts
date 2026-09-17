@@ -56,7 +56,7 @@ export const DEFAULT_PERSONA_ID = 'anne'
  * so this returned {} for every request and the API was called with no
  * credentials at all. Nothing failed loudly; requests just went out anonymous.
  */
-async function authHeader(): Promise<Record<string, string>> {
+export async function authHeader(): Promise<Record<string, string>> {
   try {
     const session = await fetchAuthSession()
     const token = session.tokens?.idToken?.toString()
@@ -497,28 +497,4 @@ export function startSandboxCheckout() {
 
 export function openSandboxPortal() {
   return openBillingDestination('/billing/portal')
-}
-
-// ── Static audio (D7) ─────────────────────────────────────────────────────
-
-/**
- * Greeting audio via pre-rendered clip, not TTS.
- *
- * The clip lives at characters/{slug}/audio/{hash}.ogg on the asset bucket,
- * behind CloudFront with a trusted key group (same as motion). The URL is
- * signed at read time in /characters (api/routes_characters.py via
- * shared/asset_urls.sign_static_audio) and is fetched straight from CloudFront
- * — no request reaches SpeechLLm. On 403 (signature expired, 5m TTL) the
- * helper in lib/characters.ts refetches /characters once and retries.
- *
- * This thin wrapper keeps the file named in the plan (lib/api.ts) while the
- * real logic lives beside the catalog client it belongs to.
- */
-export async function fetchGreetingAudioUrl(
-  slug: string,
-  lang: string,
-  signal?: AbortSignal,
-): Promise<string | null> {
-  const { fetchStaticAudioUrlWithRetry } = await import('./characters')
-  return fetchStaticAudioUrlWithRetry(slug, 'greeting', lang, signal)
 }

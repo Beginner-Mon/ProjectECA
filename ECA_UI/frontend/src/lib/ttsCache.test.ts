@@ -1,12 +1,15 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
 import {
+  STATIC_CACHE_TTL_MS,
   TTS_CACHE_TTL_MS,
   cacheKeyFor,
   evictionIds,
   isExpired,
+  sha256Hex,
   staleIds,
   sweepIds,
+  ttlOf,
   voiceScope,
   type CacheMeta,
 } from './ttsCache'
@@ -153,5 +156,58 @@ describe('evictionIds', () => {
     ]
     expect(evictionIds(rows, 2)).toEqual(['old'])
     expect(evictionIds(rows, 1)).toEqual(['old', 'mid'])
+  })
+
+  it('never counts static rows towards the turn cap (T7)', () => {
+    // 101 turns plus one greeting: the greeting survives, the oldest turn goes.
+    const turns = Array.from({ length: 101 }, (_, i) => meta({ id: `turn-${i}`, createdAt: i }))
+    const rows = [...turns, meta({ id: 'greeting', kind: 'static', createdAt: 10_000 })]
+    expect(evictionIds(rows, 100)).toEqual(['turn-0'])
+  })
+})
+
+describe('static entries (T7)', () => {
+  const DAY = 24 * 60 * 60 * 1000
+
+  it('static TTL is 30 days', () => {
+    expect(STATIC_CACHE_TTL_MS).toBe(30 * DAY)
+  })
+
+  it('ttlOf prefers the row override, then the kind default', () => {
+    expect(ttlOf({})).toBe(TTS_CACHE_TTL_MS)
+    expect(ttlOf({ kind: 'turn' })).toBe(TTS_CACHE_TTL_MS)
+    expect(ttlOf({ kind: 'static' })).toBe(STATIC_CACHE_TTL_MS)
+    expect(ttlOf({ kind: 'static', ttlMs: 123 })).toBe(123)
+  })
+
+  it('a 29-day-old static row is kept, a 31-day-old one is swept', () => {
+    const now = 100 * DAY
+    const rows = [
+      meta({ id: 'static-29d', kind: 'static', createdAt: now - 29 * DAY }),
+      meta({ id: 'static-31d', kind: 'static', createdAt: now - 31 * DAY }),
+    ]
+    expect(sweepIds(rows, 'user-a', now)).toEqual(['static-31d'])
+  })
+
+  it('a 2-day-old turn is still swept while the static row lives on', () => {
+    const now = 100 * DAY
+    const rows = [
+      meta({ id: 'turn-2d', createdAt: now - 2 * DAY }),
+      meta({ id: 'static-2d', kind: 'static', createdAt: now - 2 * DAY }),
+    ]
+    expect(sweepIds(rows, 'user-a', now)).toEqual(['turn-2d'])
+  })
+
+  it("other users' static rows are swept like everything else", () => {
+    const now = 100 * DAY
+    const rows = [meta({ id: 'theirs', sub: 'user-b', kind: 'static', createdAt: now })]
+    expect(sweepIds(rows, 'user-a', now)).toEqual(['theirs'])
+  })
+
+  it('sha256Hex matches the precomputed Vietnamese digest (contract E)', async () => {
+    // printf '%s' 'Chào buổi sáng! Hôm nay mình giúp gì cho bạn?' | sha256sum
+    expect(await sha256Hex('Chào buổi sáng! Hôm nay mình giúp gì cho bạn?')).toBe(
+      '6d4d8e320d2a1eb08dbea2ba55ffeedb038eaaf013a29c7e59899efaae6b3939',
+    )
   })
 })

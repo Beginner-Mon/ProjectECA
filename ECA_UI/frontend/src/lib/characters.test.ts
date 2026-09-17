@@ -1,86 +1,21 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
-import { playStaticAudio } from './characters'
+import { fetchAvatarProfile, fetchCharacter, fetchCharacters, fetchClips } from './characters'
+import { authHeader } from './api'
+
+// The token comes from the ONE authHeader() in lib/api.ts — mocked here so
+// these tests assert the wiring (header attached / not attached), not Amplify.
+vi.mock('./api', () => ({
+  authHeader: vi.fn(async () => ({ Authorization: 'Bearer test-token' })),
+  cognitoSub: vi.fn(async () => 'user-test'),
+}))
 
 /*
- * playStaticAudio only (finding 7): does aborting a signal actually stop
- * playback, not just cancel the network lookup that precedes it.
- *
- * The suite runs in vitest's `node` environment (see vitest.config.ts), so
- * `Audio` and `fetch` are not real browser globals — they are stubbed here
- * with the minimum surface playStaticAudio touches. That keeps this file
- * off jsdom (no DOM behaviour is under test, just event wiring).
+ * Suite runs in vitest's `node` environment: `fetch` is stubbed per test.
  */
 
-type Listener = () => void
-
-class FakeAudio {
-  src: string
-  crossOrigin: string | null = null
-  paused = true
-  loaded = false
-  private listeners: Record<string, Listener[]> = {}
-
-  constructor(src: string) {
-    this.src = src
-  }
-
-  addEventListener(type: string, cb: Listener) {
-    ;(this.listeners[type] ??= []).push(cb)
-  }
-
-  removeEventListener(type: string, cb: Listener) {
-    this.listeners[type] = (this.listeners[type] ?? []).filter((l) => l !== cb)
-  }
-
-  play = vi.fn(async () => {
-    this.paused = false
-  })
-
-  pause = vi.fn(() => {
-    this.paused = true
-  })
-
-  load = vi.fn(() => {
-    this.loaded = true
-  })
-
-  removeAttribute = vi.fn((name: string) => {
-    if (name === 'src') this.src = ''
-  })
-
-  dispatch(type: string) {
-    for (const cb of this.listeners[type] ?? []) cb()
-  }
-}
-
-function stubCharacterFetch(slug: string, url: string) {
-  vi.stubGlobal(
-    'fetch',
-    vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
-      const href = typeof input === 'string' ? input : input.toString()
-      if (init?.method === 'HEAD') {
-        return new Response(null, { status: 200 })
-      }
-      if (href.includes(`/characters/${slug}`)) {
-        return new Response(
-          JSON.stringify({
-            slug,
-            display_name: slug,
-            description: null,
-            thumbnail_url: null,
-            vrm_metadata: null,
-            vrm_url: 'https://cdn.example/model.vrm',
-            voice_language: 'vi',
-            sort_order: 0,
-            static_audio: { greeting: { vi: url } },
-          }),
-          { status: 200 },
-        )
-      }
-      return new Response(null, { status: 404 })
-    }),
-  )
+function jsonResponse(body: unknown, status = 200): Response {
+  return new Response(JSON.stringify(body), { status })
 }
 
 afterEach(() => {
@@ -88,93 +23,77 @@ afterEach(() => {
   vi.restoreAllMocks()
 })
 
-describe('playStaticAudio — abort wiring (finding 7)', () => {
-  it('aborting the signal mid-playback pauses and releases the element', async () => {
-    stubCharacterFetch('anne', 'https://cdn.example/anne-greeting.ogg')
-    let created: FakeAudio | null = null
+describe('fetchCharacters (list)', () => {
+  it('sends no token — the grid is public', async () => {
+    const seen: RequestInit[] = []
     vi.stubGlobal(
-      'Audio',
-      vi.fn(function (src: string) {
-        created = new FakeAudio(src)
-        return created
+      'fetch',
+      vi.fn(async (_input: unknown, init?: RequestInit) => {
+        seen.push(init ?? {})
+        return jsonResponse({ characters: [], total: 0 })
       }),
     )
 
-    const controller = new AbortController()
-    const audio = (await playStaticAudio('anne', 'greeting', 'vi', controller.signal)) as unknown as FakeAudio
-    expect(audio).toBe(created)
-    expect(audio.paused).toBe(false) // play() resolved before abort
+    await fetchCharacters()
 
-    controller.abort()
-
-    expect(audio.pause).toHaveBeenCalled()
-    expect(audio.paused).toBe(true)
-    expect(audio.src).toBe('') // released, so a lingering reference can't keep fetching
+    // No init at all — certainly no Authorization header.
+    expect(seen[0]?.headers ?? {}).toEqual({})
+    expect(authHeader).not.toHaveBeenCalled()
   })
+})
 
-  it('does not start playback at all when the signal is already aborted', async () => {
-    stubCharacterFetch('anne', 'https://cdn.example/anne-greeting.ogg')
-    const audioCtor = vi.fn()
-    vi.stubGlobal('Audio', audioCtor)
-
-    const controller = new AbortController()
-    controller.abort()
-    const result = await playStaticAudio('anne', 'greeting', 'vi', controller.signal)
-
-    expect(result).toBeNull()
-    expect(audioCtor).not.toHaveBeenCalled()
-  })
-
-  it('an error-triggered retry bails out once the signal is aborted, instead of restarting playback', async () => {
-    stubCharacterFetch('anne', 'https://cdn.example/anne-greeting.ogg')
-    let created: FakeAudio | null = null
+describe('fetchCharacter / fetchAvatarProfile (detail)', () => {
+  it('attaches the Cognito token (T2)', async () => {
+    const seen: Array<{ href: string; init?: RequestInit }> = []
     vi.stubGlobal(
-      'Audio',
-      vi.fn(function (src: string) {
-        created = new FakeAudio(src)
-        return created
+      'fetch',
+      vi.fn(async (input: unknown, init?: RequestInit) => {
+        const href = typeof input === 'string' ? input : String(input)
+        seen.push({ href, init })
+        if (href.includes('avatar-profile')) return jsonResponse({ recipes: [] })
+        return jsonResponse({ slug: 'anne' })
       }),
     )
 
-    const controller = new AbortController()
-    const audio = (await playStaticAudio('anne', 'greeting', 'vi', controller.signal)) as unknown as FakeAudio
+    await fetchCharacter('anne')
+    await fetchAvatarProfile('anne')
 
-    controller.abort()
-    const playCallsBeforeError = audio.play.mock.calls.length
-    audio.dispatch('error')
-    await Promise.resolve()
-    await Promise.resolve()
-
-    // No retry fetch/play was attempted once aborted.
-    expect(audio.play.mock.calls.length).toBe(playCallsBeforeError)
+    expect(seen).toHaveLength(2)
+    for (const { init } of seen) {
+      expect((init?.headers ?? {}) as Record<string, string>).toMatchObject({
+        Authorization: 'Bearer test-token',
+      })
+    }
   })
+})
 
-  it('two rapid calls (abort-then-restart, as the greeting effect does) never leave two elements playing', async () => {
-    stubCharacterFetch('anne', 'https://cdn.example/anne-greeting.ogg')
-    const instances: FakeAudio[] = []
+describe('fetchClips (/audio)', () => {
+  it('calls /audio with repeated clip params, lang, and the token', async () => {
+    const seen: Array<{ href: string; init?: RequestInit }> = []
     vi.stubGlobal(
-      'Audio',
-      vi.fn(function (src: string) {
-        const a = new FakeAudio(src)
-        instances.push(a)
-        return a
+      'fetch',
+      vi.fn(async (input: unknown, init?: RequestInit) => {
+        seen.push({ href: String(input), init })
+        return jsonResponse({ clips: {} })
       }),
     )
 
-    const controllerA = new AbortController()
-    const audioA = (await playStaticAudio('anne', 'greeting', 'vi', controllerA.signal)) as unknown as FakeAudio
+    const clips = await fetchClips('anne', ['greeting.morning', 'greeting.evening'], 'vi')
 
-    // Caller switches avatar: cleanup aborts the first controller, then a
-    // fresh effect run starts a second playback — the same order React
-    // effect cleanup/re-run uses.
-    controllerA.abort()
+    expect(clips).toEqual({})
+    const { href, init } = seen[0]
+    expect(href).toContain('/characters/anne/audio?')
+    expect(href).toContain('clip=greeting.morning')
+    expect(href).toContain('clip=greeting.evening')
+    expect(href).toContain('lang=vi')
+    expect((init?.headers ?? {}) as Record<string, string>).toMatchObject({
+      Authorization: 'Bearer test-token',
+    })
+  })
 
-    stubCharacterFetch('miki', 'https://cdn.example/miki-greeting.ogg')
-    const controllerB = new AbortController()
-    const audioB = (await playStaticAudio('miki', 'greeting', 'vi', controllerB.signal)) as unknown as FakeAudio
+  it('throws on a non-2xx so the caller stays text-only', async () => {
+    vi.stubGlobal('fetch', vi.fn(async () => new Response(null, { status: 401 })))
 
-    expect(instances.length).toBe(2)
-    expect(audioA.paused).toBe(true)
-    expect(audioB.paused).toBe(false)
+    await expect(fetchClips('anne', ['greeting.morning'], 'vi')).rejects.toThrow('401')
   })
 })

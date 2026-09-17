@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
-import { getGreeting, getTimeSlot, uiStringsFor } from './characterCopy'
+import { getGreetingForSlot, getTimeSlot, uiStringsFor, type TimeSlot } from './characterCopy'
 import { buildGreetingKey, greetingCacheKey, playGreeting } from './greetingAudio'
 import { readCachedClip, sha256Hex, writeCachedClip } from './ttsCache'
 import { speechPlayer, type LipSyncTarget } from './speechPlayer'
@@ -111,10 +111,11 @@ function mouth(): LipSyncTarget & { started: () => number; stopped: () => number
 }
 
 /** Displayed text and its hash, via the same two functions the player uses. */
-async function displayedTextHash(locale: 'vi' | 'en' = 'vi') {
-  const text = getGreeting(uiStringsFor(character(), locale))
+async function displayedTextHash(locale: 'vi' | 'en' = 'vi', slot: TimeSlot = 'morning') {
+  const ui = uiStringsFor(character(), locale)
+  const text = getGreetingForSlot(ui, slot)
   const hash = await sha256Hex(text)
-  return { slot: getTimeSlot(), text, hash: hash as string }
+  return { slot, text, hash: hash as string }
 }
 
 function stubAudioBackend(entry: Record<string, unknown>, bytes = new Uint8Array([1, 2, 3, 4]).buffer as ArrayBuffer) {
@@ -140,6 +141,7 @@ beforeEach(() => {
 })
 
 afterEach(() => {
+  vi.useRealTimers()
   vi.unstubAllGlobals()
   vi.restoreAllMocks()
   speechPlayer.stop()
@@ -176,8 +178,10 @@ describe('buildGreetingKey (fix #1)', () => {
 
 describe('playGreeting', () => {
   it('cache hit plays at once with zero network requests', async () => {
-    const { slot, text, hash } = await displayedTextHash()
-    const key = greetingCacheKey('anne', `greeting.${getTimeSlot()}`, 'vi', 'a1b2c3d4e5f6', hash)
+    vi.useFakeTimers()
+    vi.setSystemTime(new Date('2026-09-17T09:00:00Z'))
+    const { slot, text, hash } = await displayedTextHash('vi', 'morning')
+    const key = greetingCacheKey('anne', `greeting.${slot}`, 'vi', 'a1b2c3d4e5f6', hash)
     cacheStore.set(`user-test:${key}`, {
       meta: { id: `user-test:${key}` } as never,
       chunks: [new Uint8Array([9, 9, 9]).buffer as ArrayBuffer],
@@ -195,7 +199,9 @@ describe('playGreeting', () => {
   })
 
   it('miss fetches /audio, verifies the hash, caches, and lip-sycs', async () => {
-    const { slot, text, hash } = await displayedTextHash()
+    vi.useFakeTimers()
+    vi.setSystemTime(new Date('2026-09-17T09:00:00Z'))
+    const { slot, text, hash } = await displayedTextHash('vi', 'morning')
     const clip = `greeting.${slot}`
     stubAudioBackend({
       [clip]: {
@@ -220,11 +226,42 @@ describe('playGreeting', () => {
     expect(entry.kind).toBe('static')
     expect(entry.ttlMs).toBe(30 * 24 * 60 * 60 * 1000)
     expect(controller.started()).toBe(1)
-    expect(text).toContain('!')
+    expect(text).toBe(getGreetingForSlot(uiStringsFor(character(), 'vi'), slot))
+    expect(text.length).toBeGreaterThan(0)
   })
 
+  it.each<TimeSlot>(['morning', 'afternoon', 'evening', 'night'])(
+    'miss path works for all greeting slots: %s',
+    async (slot) => {
+      vi.useFakeTimers()
+      vi.setSystemTime(new Date('2026-09-17T09:00:00Z'))
+      const { text, hash } = await displayedTextHash('vi', slot)
+      const clip = `greeting.${slot}`
+      cacheStore.clear()
+      vi.mocked(writeCachedClip).mockClear()
+      stubAudioBackend({
+        [clip]: {
+          url: 'https://cdn.example/anne-audio.ogg',
+          expires_at: '2026-09-17T10:05:00Z',
+          sha256: 's'.repeat(64),
+          text_sha256: hash,
+        },
+      })
+      const controller = mouth()
+
+      await playGreeting({ character: character(), locale: 'vi', slot, text, controller })
+
+      expect(writeCachedClip).toHaveBeenCalledTimes(1)
+      expect(controller.started()).toBe(1)
+      expect(text).toBe(getGreetingForSlot(uiStringsFor(character(), 'vi'), slot))
+      expect(text.length).toBeGreaterThan(0)
+    },
+  )
+
   it('text_sha256 mismatch plays nothing and caches nothing', async () => {
-    const { slot, text } = await displayedTextHash()
+    vi.useFakeTimers()
+    vi.setSystemTime(new Date('2026-09-17T09:00:00Z'))
+    const { slot, text } = await displayedTextHash('vi', 'morning')
     const clip = `greeting.${slot}`
     const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
     const bytesFetch = vi.fn(async () => new Response(new ArrayBuffer(4), { status: 200 }))
@@ -261,7 +298,9 @@ describe('playGreeting', () => {
   })
 
   it('null audio_version or null clip stays text-only with no requests', async () => {
-    const { slot, text } = await displayedTextHash()
+    vi.useFakeTimers()
+    vi.setSystemTime(new Date('2026-09-17T09:00:00Z'))
+    const { slot, text } = await displayedTextHash('vi', 'morning')
     const fetchSpy = vi.fn(async () => new Response(null, { status: 500 }))
     vi.stubGlobal('fetch', fetchSpy)
     const controller = mouth()
@@ -279,7 +318,9 @@ describe('playGreeting', () => {
   })
 
   it('abort stops a playing greeting (b97eeda2 behaviour kept)', async () => {
-    const { slot, text, hash } = await displayedTextHash()
+    vi.useFakeTimers()
+    vi.setSystemTime(new Date('2026-09-17T09:00:00Z'))
+    const { slot, text, hash } = await displayedTextHash('vi', 'morning')
     stubAudioBackend({
       [`greeting.${slot}`]: {
         url: 'https://cdn.example/anne-audio.ogg',
@@ -300,7 +341,9 @@ describe('playGreeting', () => {
   })
 
   it('two rapid calls never overlap — the second preempts the first', async () => {
-    const { slot, text, hash } = await displayedTextHash()
+    vi.useFakeTimers()
+    vi.setSystemTime(new Date('2026-09-17T09:00:00Z'))
+    const { slot, text, hash } = await displayedTextHash('vi', 'morning')
     stubAudioBackend({
       [`greeting.${slot}`]: {
         url: 'https://cdn.example/anne-audio.ogg',

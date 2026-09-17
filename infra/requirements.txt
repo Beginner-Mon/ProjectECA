@@ -1,2 +1,5 @@
-aws-cdk-lib>=2.254.0,<3.0.0
+# Floor is 2.269, not 2.254: VvaSpeechllmStack uses
+# aws_lambda.CfnResourcePolicy (T9's explicit-Deny policy), which does not
+# exist in 2.254 — synth crashes with AttributeError there instead of working.
+aws-cdk-lib>=2.269.0,<3.0.0
 constructs>=10.5.0,<11.0.0

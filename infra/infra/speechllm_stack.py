@@ -29,16 +29,25 @@
     Cau hinh VPC chi quyet dinh ham RA NGOAI toi dau. Agent co y ngoai VPC de
     tranh NAT (~$32/mo) va ENI attach moi cold start; SpeechLLm theo dung khuon do.
 
-    SECURITY — chi agent goi duoc. Function URL AuthType=AWS_IAM => request khong
-    ky bi Lambda tu choi truoc khi ham chay (403, khong ton luot invoke). Resource
-    policy tren ham TTS cho phep ca hai action ma Function URL moi doi tu 10/2025:
+    SECURITY — chi agent goi duoc (T9). Function URL AuthType=AWS_IAM =>
+    request khong ky bi Lambda tu choi truoc khi ham chay (403, khong ton
+    luot invoke). Nhung voi nguoi goi CUNG TAI KHOAN, IAM chi can HOAC
+    identity policy HOAC resource policy cho phep — mot Allow cho agent thi
+    cong quyen, KHONG chan ai (admin van goi duoc). Chan that su can Deny
+    tuong minh, ma `add_permission` (API AddPermission) chi tao duoc Allow.
+    Nen toan bo policy nam trong MOT AWS::Lambda::ResourcePolicy:
 
-        Principal: <ARN role thuc thi cua vva-agent>
-        Action:    lambda:InvokeFunctionUrl  VA  lambda:InvokeFunction
-        Condition: lambda:FunctionUrlAuthType = AWS_IAM
+        Allow lambda:InvokeFunctionUrl cho role agent,
+            dieu kien lambda:FunctionUrlAuthType = AWS_IAM;
+        Allow lambda:InvokeFunction cho role agent,
+            dieu kien lambda:InvokedViaFunctionUrl = true;
+        Allow lambda:InvokeFunction cho role cua bo lam am (ping /health);
+        Deny ca hai action cho Principal "*" NGOAI TRU hai ARN tren
+            (StringNotEquals aws:PrincipalArn).
 
-    Thieu mot trong hai la hong va loi tra ve khong noi ro thieu cai nao.
-    Agent cung can IAM policy tuong ung (them o VvaAgentStack, D3).
+    Khong tron AWS::Lambda::Permission voi AWS::Lambda::ResourcePolicy
+    tren cung mot ham — AWS canh bao quyen cua cai truoc co the bi cai sau
+    ghi de. Agent cung can IAM policy tuong ung (o VvaAgentStack, D3).
 
     COST: 100 audio/ngay x 20s = 60k giay/thang = 207.3k GB-giay + ping 1.5k = 208.8k
     GB-giay — con trong free tier 400k => $0. Neu het free tier: $2.78 (arm64) /
@@ -268,74 +277,110 @@ class SpeechllmStack(Stack):
             description="arm64 (re 20%) vs x86_64 — D6 chot",
         )
 
-        # ── Resource policy: chi agent duoc goi ─────────────────────────
-        # Tu 10/2025 Function URL moi doi ca hai quyen, thieu mot la hong va
-        # loi khong noi ro thieu cai nao. Ca hai deu can. Template phai co ca
-        # hai permission voi InvokeMode RESPONSE_STREAM de `cdk synth` sach
-        # (nghiem thu D2) — nen tao permission ngay ca khi agent_role_arn chua
-        # co, voi placeholder, de template khong bi thieu resource.
-        #
-        # Giong VvaAssetStack/VvaAgentStack: app.py construct moi stack moi lan
-        # `cdk synth`/`cdk list`, nen mot `raise` o day se lam hong lenh khong
-        # lien quan (vd `cdk synth VvaAssetStack`). Nhung day KHONG con la
-        # add_warning nua: reached only past the `bootstrap` early-return and
-        # the `image_tag` check above (both return/raise before this point),
-        # so `self.fn` always exists here — image_tag present AND
-        # agent_role_arn absent is unambiguously a real deploy, not a
-        # convenience synth of another stack. A warning is easy to lose in CI
-        # output; what actually ships with only a warning is a Function URL
-        # invokable by ANY principal in the account
-        # (iam.AccountPrincipal(self.account)) — the exact production risk
-        # this check exists to prevent. add_error blocks `cdk deploy`/`cdk
-        # synth` for THIS stack only (see agent_stack.py's
-        # motion_key_pair_id/asset_base_url checks for the same pattern),
-        # while `cdk list` and a synth with no image tag are unaffected.
-        if not agent_role_arn:
-            Annotations.of(self).add_error(
-                "VvaSpeechllmStack: thieu agent_role_arn khi deploy that (co "
-                "speechllm_image_tag). Khong the tao Function URL voi placeholder "
-                f"principal arn:aws:iam::{self.account}:root — bat ky ai trong "
-                "account nay se goi duoc /synthesize/stream. Truyen ARN that:\n"
-                "  cdk deploy VvaSpeechllmStack -c speechllm_image_tag=<sha> "
-                "-c agent_role_arn=<ARN role thuc thi cua vva-agent>"
-            )
-            # Placeholder de template van co du 2 action cho nghiem thu D2
-            placeholder = iam.AccountPrincipal(self.account)
-            self.fn.add_permission(
-                "AllowAgentInvokeFunctionUrl",
-                principal=placeholder,
-                action="lambda:InvokeFunctionUrl",
-                function_url_auth_type=lambda_.FunctionUrlAuthType.AWS_IAM,
-            )
-            self.fn.add_permission(
-                "AllowAgentInvokeFunction",
-                principal=placeholder,
-                action="lambda:InvokeFunction",
-            )
-        else:
-            # Dua tren agent_role_arn cu the
-            self.fn.add_permission(
-                "AllowAgentInvokeFunctionUrl",
-                principal=iam.ArnPrincipal(agent_role_arn),
-                action="lambda:InvokeFunctionUrl",
-                function_url_auth_type=lambda_.FunctionUrlAuthType.AWS_IAM,
-            )
-            self.fn.add_permission(
-                "AllowAgentInvokeFunction",
-                principal=iam.ArnPrincipal(agent_role_arn),
-                action="lambda:InvokeFunction",
-            )
-
         # ── Warmer: EventBridge ping /health moi 5 phut ──────────────────
         # Cold start 25s (model 13s + pre-enrol). Provisioned concurrency
         # $30-37/mo, gap hon nghin lan ping $0.03/mo. Dung Scheduler nhu
         # VvaCrudApiStack._add_warmer — Scheduler -> warmer lambda -> invoke
         # speechllm voi payload HTTP 2.0 (LWA can HTTP shape, khong phai JSON
         # event thuong cua EventBridge).
-        self._add_warmer()
+        #
+        # Tao TRUOC resource policy: role ARN cua warmer nam trong danh sach
+        # mien tru cua cau Deny (thieu no thi Deny chan luon luot ping va
+        # cold start 25 giay quay lai).
+        warmer_role_arn = self._add_warmer()
 
-    def _add_warmer(self) -> None:
-        """Ping /health moi 5 phut de giu model warm, qua Scheduler + warmer lambda."""
+        # ── Resource policy: chi agent (+ warmer) duoc goi (T9) ──────────
+        # add_permission CHI TAO DUOC Allow — ma Allow thi cong quyen, khong
+        # chan mot principal cung account nao (admin van goi duoc). Toan bo
+        # policy therefore nam trong MOT CfnResourcePolicy, va KHONG mot
+        # AWS::Lambda::Permission nao duoc tao cho ham nay (ke ca
+        # grant_invoke — warmer lay quyen tu Allow thu ba ben duoi).
+        #
+        # add_error (NOT raise, NOT warning): app.py construct moi stack moi
+        # lan `cdk` invocation, nhung den day thi bootstrap/image_tag da
+        # return/raise truoc — image_tag present AND agent_role_arn absent
+        # la mot deploy that thieu bao ve, khong phai synth tien loi.
+        if not agent_role_arn:
+            Annotations.of(self).add_error(
+                "VvaSpeechllmStack: thieu agent_role_arn khi deploy that (co "
+                "speechllm_image_tag). Khong co ARN that thi khong the viet "
+                "cau Deny — de trong la mo cua cho ca account goi "
+                "/synthesize/stream. Truyen ARN that:\n"
+                "  cdk deploy VvaSpeechllmStack -c speechllm_image_tag=<sha> "
+                "-c agent_role_arn=<ARN role thuc thi cua vva-agent>"
+            )
+        else:
+            # CfnResourcePolicy takes a JSON STRING + resource ARN (NOT
+            # function_name + dict) — to_json_string keeps the Fn::GetAtt
+            # tokens for function_arn / warmer role intact inside it.
+            # Requires aws-cdk-lib>=2.269 (CfnResourcePolicy does not exist
+            # in 2.254): see infra/requirements.txt.
+            fn_arn = self.fn.function_arn
+            lambda_.CfnResourcePolicy(
+                self, "SpeechllmResourcePolicy",
+                resource_arn=fn_arn,
+                policy_document=self.to_json_string({
+                    "Version": "2012-10-17",
+                    "Statement": [
+                        {
+                            "Sid": "AllowAgentInvokeFunctionUrl",
+                            "Effect": "Allow",
+                            "Principal": {"AWS": agent_role_arn},
+                            "Action": "lambda:InvokeFunctionUrl",
+                            "Resource": fn_arn,
+                            "Condition": {
+                                "StringEquals": {
+                                    "lambda:FunctionUrlAuthType": "AWS_IAM",
+                                },
+                            },
+                        },
+                        {
+                            "Sid": "AllowAgentInvokeFunction",
+                            "Effect": "Allow",
+                            "Principal": {"AWS": agent_role_arn},
+                            "Action": "lambda:InvokeFunction",
+                            "Resource": fn_arn,
+                            "Condition": {
+                                "Bool": {"lambda:InvokedViaFunctionUrl": True},
+                            },
+                        },
+                        {
+                            "Sid": "AllowWarmerInvokeFunction",
+                            "Effect": "Allow",
+                            "Principal": {"AWS": warmer_role_arn},
+                            "Action": "lambda:InvokeFunction",
+                            "Resource": fn_arn,
+                        },
+                        {
+                            "Sid": "DenyEveryoneElse",
+                            "Effect": "Deny",
+                            "Principal": {"AWS": "*"},
+                            "Action": [
+                                "lambda:InvokeFunctionUrl",
+                                "lambda:InvokeFunction",
+                            ],
+                            "Resource": fn_arn,
+                            "Condition": {
+                                "StringNotEquals": {
+                                    "aws:PrincipalArn": [
+                                        agent_role_arn,
+                                        warmer_role_arn,
+                                    ],
+                                },
+                            },
+                        },
+                    ],
+                }),
+            )
+
+    def _add_warmer(self) -> str:
+        """Ping /health moi 5 phut de giu model warm, qua Scheduler + warmer lambda.
+
+        Tra ve role ARN cua warmer de resource policy (T9) mien tru no khoi
+        cau Deny. Warmer lay quyen InvokeFunction tu Allow trong policy do —
+        KHONG dung grant_invoke o day, vi no sinh AWS::Lambda::Permission va
+        AWS canh bao khong tron hai loai policy tren cung mot ham.
+        """
         warmer = lambda_.Function(
             self, "Warmer",
             function_name="vva-speechllm-warmer",
@@ -377,9 +422,11 @@ class SpeechllmStack(Stack):
             timeout=Duration.seconds(30),
             description="Keeps vva-speechllm warm (model + pre-enrol) via /health ping",
         )
-        # Warmer duoc phep invoke speechllm (khac voi agent permission o tren)
-        self.fn.grant_invoke(warmer)
-
+        # KHONG grant_invoke warmer o day: quyen InvokeFunction cua warmer
+        # nam trong CfnResourcePolicy ben tren (AllowWarmerInvokeFunction).
+        # grant_invoke sinh AWS::Lambda::Permission, tron voi ResourcePolicy
+        # tren cung ham la dieu AWS canh bao. Grant nay la tren WARMER (cho
+        # Scheduler goi warmer) — ham khac, khong anh huong.
         scheduler_role = iam.Role(
             self, "WarmerSchedulerRole",
             assumed_by=iam.ServicePrincipal("scheduler.amazonaws.com"),
@@ -401,3 +448,4 @@ class SpeechllmStack(Stack):
             ),
             description="Ping vva-speechllm /health every 5m to avoid 25s cold start",
         )
+        return warmer.role.role_arn

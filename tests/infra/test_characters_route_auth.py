@@ -95,6 +95,15 @@ def test_avatar_profile_requires_cognito(rest_template):
 
 
 @pytest.mark.unit
+def test_audio_requires_cognito(rest_template):
+    """T4: signed clip URLs are per-viewer — same authorizer, no public door."""
+    props = _method_for_path_part(
+        rest_template, ["characters", "{slug}", "audio"], "GET",
+    )
+    assert props["AuthorizationType"] == "COGNITO_USER_POOLS"
+
+
+@pytest.mark.unit
 def test_still_a_single_authorizer(rest_template):
     """T2 reuses the authorizer built for /sessions — no second one."""
     rest_template.resource_count_is("AWS::ApiGateway::Authorizer", 1)

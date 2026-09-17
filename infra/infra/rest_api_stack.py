@@ -3,7 +3,8 @@
     GET    /v1/characters                        GET    /v1/sessions
     GET    /v1/characters/{slug}                 GET    /v1/sessions/{id}
     GET    /v1/characters/{slug}/avatar-profile  DELETE /v1/sessions/{id}
-    GET    /v1/health, /v1/health/db             GET|POST /v1/me/memory
+    GET    /v1/characters/{slug}/audio           GET    /v1/health, /v1/health/db
+                                                 GET|POST /v1/me/memory
                                                  DELETE /v1/me/memory/{fact_id}
                                                  GET|PATCH /v1/me/preferences
 
@@ -219,6 +220,11 @@ class RestApiStack(Stack):
         chars_slug = chars.add_resource("{slug}")
         chars_slug.add_method("GET", characters, **authed)
         chars_slug.add_resource("avatar-profile").add_method("GET", characters, **authed)
+        # T4: signed clip URLs (contract B). Same authorizer — clips are
+        # per-viewer signed URLs, never public (see the T1 note above).
+        # no-store is set by the handler, not here: under a proxy
+        # integration the function owns the response headers.
+        chars_slug.add_resource("audio").add_method("GET", characters, **authed)
 
         # ── /health — public, and it has to be ──────────────────────────
         # The EventBridge warmer in crud_api_stack.py calls /health/db on a

@@ -120,3 +120,53 @@ def test_persona_is_never_public():
             assert "persona" not in _columns(consts[name]), (
                 f"{path.name}: {name} exposes the system prompt"
             )
+
+
+def _tuple_constants(path: Path) -> dict[str, tuple]:
+    """Every module-level `NAME = (...)` tuple in a file, without importing it."""
+    tree = ast.parse(path.read_text(encoding="utf-8"))
+    found: dict[str, tuple] = {}
+    for node in tree.body:
+        if not isinstance(node, ast.Assign) or len(node.targets) != 1:
+            continue
+        target = node.targets[0]
+        if not isinstance(target, ast.Name):
+            continue
+        try:
+            value = ast.literal_eval(node.value)
+        except ValueError:
+            continue
+        if isinstance(value, tuple):
+            found[target.id] = value
+    return found
+
+
+@pytest.mark.unit
+def test_both_implementations_allow_the_same_clips():
+    """T4: the /audio allowlist must be identical in both implementations —
+    same mechanism as the column lists above, for the same reason. A clip the
+    Lambda rejects but local dev serves (or vice versa) is a bug that only
+    appears after deploy."""
+    lambda_clips = set(_tuple_constants(_LAMBDA).get("_ALLOWED_CLIPS", ()))
+    fastapi_clips = set(_tuple_constants(_FASTAPI).get("_ALLOWED_CLIPS", ()))
+
+    assert lambda_clips, f"{_LAMBDA.name} no longer defines _ALLOWED_CLIPS"
+    assert fastapi_clips, f"{_FASTAPI.name} no longer defines _ALLOWED_CLIPS"
+    assert lambda_clips == fastapi_clips, (
+        "the /audio allowlist has drifted between the two implementations.\n"
+        f"  only in the Lambda (production): {sorted(lambda_clips - fastapi_clips)}\n"
+        f"  only in the FastAPI shim (dev):  {sorted(fastapi_clips - lambda_clips)}"
+    )
+
+
+@pytest.mark.unit
+def test_allowlist_is_the_four_greeting_slots():
+    """Contract B fixes the set: greeting.morning/afternoon/evening/night."""
+    for path in (_LAMBDA, _FASTAPI):
+        clips = set(_tuple_constants(path).get("_ALLOWED_CLIPS", ()))
+        assert clips == {
+            "greeting.morning",
+            "greeting.afternoon",
+            "greeting.evening",
+            "greeting.night",
+        }, f"{path.name}: _ALLOWED_CLIPS is not the contract-B set: {sorted(clips)}"

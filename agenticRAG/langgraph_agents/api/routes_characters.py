@@ -26,7 +26,6 @@ from fastapi import APIRouter, HTTPException
 from fastapi.responses import JSONResponse
 
 from langgraph_agents.shared import get_pg_client
-from langgraph_agents.shared.asset_urls import sign_static_audio
 from langgraph_agents.shared.logging import get_logger
 
 logger = get_logger("langgraph.api.characters")
@@ -36,15 +35,17 @@ router = APIRouter(tags=["characters"])
 _SLUG_RE = re.compile(r"^[A-Za-z0-9_-]{1,64}$")
 
 # Lite for card grid: display + compatibility (no vrm_url/voice/ui_strings).
-# D5c: static_audio is signed at read time (characters/*/audio/* behind CloudFront
-# trusted key group). It lives in the same bucket as VRM but needs signing;
-# vrm_url itself stays unsigned (public). voice_vi_key/_en_key are NEVER returned
+# T1: static_audio is GONE from every public column list. Signing it inside a
+# public GET /characters response was meaningless — anyone could fetch the
+# signed URL without a token. Clips now live behind GET /characters/{slug}/audio
+# (Cognito, no-store), and the detail route only exposes `audio_version`
+# (a hash, not the keys). voice_vi_key/_en_key are NEVER returned
 # (private bucket, no CloudFront) — SpeechLLm alone reads them via S3 IAM.
-_PUBLIC_COLUMNS_LITE = "slug, display_name, thumbnail_url, description, vrm_metadata, static_audio"
+_PUBLIC_COLUMNS_LITE = "slug, display_name, thumbnail_url, description, vrm_metadata"
 _PUBLIC_COLUMNS = (
     "slug, display_name, description, "
     "vrm_url, thumbnail_url, vrm_metadata, "
-    "voice_language, sort_order, ui_strings, static_audio"
+    "voice_language, sort_order, ui_strings"
 )
 
 _CACHE_SECONDS = 300
@@ -67,17 +68,7 @@ async def list_characters():
     characters = []
     for r in rows:
         d = dict(r)
-        # static_audio is JSONB — may arrive as str (asyncpg) or dict
-        sa = d.get("static_audio")
-        if isinstance(sa, str):
-            try:
-                sa = json.loads(sa)
-            except Exception:
-                sa = {}
-        # Sign every key inside the map (characters/*/audio/* via CloudFront)
-        # Keep raw keys for legacy/empty; signing never fails the whole response
-        d["static_audio"] = sign_static_audio(sa or {})
-        # Also parse vrm_metadata if string (same as get_character does)
+        # T1: no static_audio here at all — not raw, not signed. See module note.
         if isinstance(d.get("vrm_metadata"), str):
             try:
                 d["vrm_metadata"] = json.loads(d["vrm_metadata"])
@@ -106,14 +97,15 @@ async def get_character(slug: str):
     if row is None:
         raise HTTPException(status_code=404, detail="Character not found")
     result = dict(row)
-    for k in ("vrm_metadata", "ui_strings", "avatar_profile", "static_audio"):
+    for k in ("vrm_metadata", "ui_strings", "avatar_profile"):
         if isinstance(result.get(k), str):
             try:
                 result[k] = json.loads(result[k])
             except Exception:
                 pass
-    # Sign static_audio keys into CloudFront URLs (same key group as motion)
-    result["static_audio"] = sign_static_audio(result.get("static_audio") or {})
+    # T1: static_audio is never returned — not raw, not signed. T5 will read
+    # it internally to compute `audio_version`; T4 serves clips via /audio.
+    result.pop("static_audio", None)
     return JSONResponse(content=result, headers=_cache_headers())
 
 

@@ -170,3 +170,74 @@ def test_allowlist_is_the_four_greeting_slots():
             "greeting.evening",
             "greeting.night",
         }, f"{path.name}: _ALLOWED_CLIPS is not the contract-B set: {sorted(clips)}"
+
+
+def _both_audio_versions():
+    """Import audio_version() from both implementations.
+
+    The Lambda's third-party deps (pg8000, boto3) are built at deploy time,
+    so they are stubbed exactly like test_characters_handler_payload.py
+    does; the FastAPI twin needs the repo's agenticRAG on the path.
+    """
+    import sys
+    from unittest.mock import MagicMock
+
+    lambda_root = _ROOT / "infra" / "lambda"
+    sys.path.insert(0, str(lambda_root / "layer"))
+    sys.path.insert(0, str(lambda_root / "characters"))
+    sys.path.insert(0, str(_ROOT / "agenticRAG"))
+
+    pg8000 = MagicMock()
+    pg8000.dbapi = MagicMock()
+    sys.modules.setdefault("pg8000", pg8000)
+    sys.modules.setdefault("pg8000.dbapi", pg8000.dbapi)
+    sys.modules.setdefault("boto3", MagicMock())
+
+    import handler as lambda_handler
+    from langgraph_agents.api import routes_characters
+    return lambda_handler.audio_version, routes_characters.audio_version
+
+
+_SAMPLE_STATIC_AUDIO = {
+    "greeting.evening": {
+        "en": {
+            "key": "characters/anne/audio/1b7e08d3.ogg",
+            "sha256": "b" * 64,
+            "text_sha256": "c" * 64,
+        },
+    },
+    "greeting.morning": {
+        "vi": {
+            "key": "characters/anne/audio/9f2c1a4b.ogg",
+            "sha256": "a" * 64,
+            "text_sha256": "d" * 64,
+        },
+    },
+}
+
+
+@pytest.mark.unit
+def test_both_implementations_agree_on_audio_version():
+    """Contract D: same input → same 12 hex chars, whichever half computes it.
+    Key order in the input must not matter (canonical sort)."""
+    lambda_version, fastapi_version = _both_audio_versions()
+
+    assert lambda_version(_SAMPLE_STATIC_AUDIO) == fastapi_version(_SAMPLE_STATIC_AUDIO)
+    assert lambda_version(_SAMPLE_STATIC_AUDIO) == fastapi_version(
+        dict(reversed(list(_SAMPLE_STATIC_AUDIO.items())))
+    )
+
+    version = lambda_version(_SAMPLE_STATIC_AUDIO)
+    assert isinstance(version, str) and len(version) == 12
+    int(version, 16)  # hex, not a truncated repr of something else
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize("empty", [{}, None, ""])
+def test_empty_static_audio_versions_to_null(empty):
+    """Contract D: no clips → audio_version is null (the frontend shows text
+    only and reports no error)."""
+    lambda_version, fastapi_version = _both_audio_versions()
+
+    assert lambda_version(empty) is None
+    assert fastapi_version(empty) is None

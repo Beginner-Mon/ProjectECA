@@ -23,6 +23,7 @@ serves all four without it, exactly as it already did for detail/profile.
 from __future__ import annotations
 
 import datetime
+import hashlib
 import re
 
 import json
@@ -101,6 +102,24 @@ async def list_characters():
     )
 
 
+def audio_version(static_audio) -> str | None:
+    """12 hex chars over the canonical static_audio JSON (contract D).
+
+    Mirrors audio_version() in infra/lambda/characters/handler.py verbatim —
+    same loads, same dumps, same slice — so both halves agree byte for byte.
+    Pinned by tests/infra/test_characters_contract.py; change both together.
+    """
+    if isinstance(static_audio, str):
+        try:
+            static_audio = json.loads(static_audio)
+        except Exception:
+            return None
+    if not isinstance(static_audio, dict) or not static_audio:
+        return None
+    canonical = json.dumps(static_audio, sort_keys=True, separators=(",", ":"))
+    return hashlib.sha256(canonical.encode("utf-8")).hexdigest()[:12]
+
+
 @router.get("/characters/{slug}")
 async def get_character(slug: str):
     """One character by slug — public."""
@@ -110,7 +129,7 @@ async def get_character(slug: str):
     await pg.connect()
     async with pg._raw_transaction() as conn:
         row = await conn.fetchrow(
-            f"SELECT {_PUBLIC_COLUMNS}, avatar_profile FROM characters "
+            f"SELECT {_PUBLIC_COLUMNS}, avatar_profile, static_audio FROM characters "
             "WHERE slug = $1 AND is_active",
             slug,
         )
@@ -123,9 +142,9 @@ async def get_character(slug: str):
                 result[k] = json.loads(result[k])
             except Exception:
                 pass
-    # T1: static_audio is never returned — not raw, not signed. T5 will read
-    # it internally to compute `audio_version`; T4 serves clips via /audio.
-    result.pop("static_audio", None)
+    # T1+T5: static_audio is READ for the version and never returned — not
+    # raw, not signed. T4 serves clips via /audio.
+    result["audio_version"] = audio_version(result.pop("static_audio", None))
     return JSONResponse(content=result, headers=_cache_headers())
 
 

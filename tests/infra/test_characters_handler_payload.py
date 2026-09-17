@@ -380,6 +380,41 @@ def test_list_is_public_cacheable(handler_module):
 
 
 @pytest.mark.unit
+def test_detail_carries_audio_version_but_never_static_audio(handler_module):
+    """T5: the version travels, the raw S3 keys do not (T1)."""
+    static_audio = {
+        "greeting.morning": {"vi": {"key": "k", "sha256": "s", "text_sha256": "t"}},
+    }
+    cur = _FakeCursor(
+        ("slug", "display_name", "static_audio"),
+        [("anne", "Anne", static_audio)],
+    )
+    with _connected(handler_module, cur):
+        result = handler_module.handler(_v1("/characters/anne"), None)
+
+    import json as _json
+
+    body = _json.loads(result["body"])
+    assert result["statusCode"] == 200
+    assert "static_audio" not in body
+    assert body["audio_version"] == handler_module.audio_version(static_audio)
+    assert isinstance(body["audio_version"], str) and len(body["audio_version"]) == 12
+
+
+@pytest.mark.unit
+def test_detail_without_clips_versions_to_null(handler_module):
+    cur = _FakeCursor(("slug", "display_name", "static_audio"), [("anne", "Anne", {})])
+    with _connected(handler_module, cur):
+        result = handler_module.handler(_v1("/characters/anne"), None)
+
+    import json as _json
+
+    body = _json.loads(result["body"])
+    assert result["statusCode"] == 200
+    assert body["audio_version"] is None
+
+
+@pytest.mark.unit
 def test_detail_is_private_cacheable(handler_module):
     """Behind Cognito: a shared cache must never serve one viewer's detail
     (and T5's audio_version) to another."""

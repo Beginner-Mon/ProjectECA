@@ -19,6 +19,7 @@ and no client has any use for it.
 
 from __future__ import annotations
 
+import hashlib
 import json
 import logging
 import re
@@ -129,17 +130,42 @@ def _list_characters(cur) -> dict:
     )
 
 
+def audio_version(static_audio) -> str | None:
+    """12 hex chars over the canonical static_audio JSON (contract D).
+
+    The frontend keys its greeting cache on this: any re-rendered clip
+    changes the map, changes the hash, and stale cache entries stop
+    matching. Empty map → None (no clips, nothing to version). The
+    canonical form (sorted keys, no whitespace) is what makes the Lambda
+    and the local FastAPI twin — and the upload script — agree byte for
+    byte on the same input.
+    """
+    if isinstance(static_audio, str):
+        try:
+            static_audio = json.loads(static_audio)
+        except Exception:
+            return None
+    if not isinstance(static_audio, dict) or not static_audio:
+        return None
+    canonical = json.dumps(static_audio, sort_keys=True, separators=(",", ":"))
+    return hashlib.sha256(canonical.encode("utf-8")).hexdigest()[:12]
+
+
 def _get_character(cur, slug: str) -> dict:
     cur.execute(
-        f"SELECT {_PUBLIC_COLUMNS}, avatar_profile FROM characters "
+        f"SELECT {_PUBLIC_COLUMNS}, avatar_profile, static_audio FROM characters "
         "WHERE slug = %s AND is_active",
         (slug,),
     )
     row = fetch_one(cur)
     if row is None:
         return error("Character not found", 404)
+    # static_audio is READ for the version and never returned (T1): the
+    # response carries `audio_version`, not the raw S3 keys.
+    version = audio_version(row.pop("static_audio", None))
+    row["audio_version"] = version
     # Behind Cognito (contract A): private so a shared cache can never serve
-    # one viewer's detail (and T5's audio_version) to another.
+    # one viewer's detail (and its audio_version) to another.
     return success(row, cache_control=f"private, max-age={_CACHE_SECONDS}")
 
 

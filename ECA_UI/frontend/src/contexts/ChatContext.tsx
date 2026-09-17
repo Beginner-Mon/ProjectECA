@@ -19,7 +19,7 @@ import { pollMotionJob } from '../lib/motionJob'
 import { clearSessionPointer, readSessionPointer, stampSessionPointer } from '../lib/chatSession'
 import { useMotion } from '../hooks/useMotion'
 import { ChatContext, type ChatContextType, type SessionItem } from '../hooks/useChat'
-import { uiStringsFor, getGreeting, type UiStrings } from '../lib/characterCopy'
+import { uiStringsFor, getGreeting, getTimeSlot, buildGreetingKey, type UiStrings } from '../lib/characterCopy'
 import { withGreeting } from '../lib/greeting'
 import { useLocale } from '../hooks/useLocale'
 
@@ -189,17 +189,38 @@ export function ChatProvider({ children }: { children: ReactNode }) {
     setMessages((prev) => withGreeting(prev, GREETING_ID, getGreeting(uiRef.current)))
   }, [locale])
 
-  // ── Greeting voice (T7) ─────────────────────────────────────────────────
+  // ── Greeting voice (T7, fix #1) ─────────────────────────────────────────
   // The opening line, spoken from a pre-rendered /audio clip: caption and
   // voice come from the same ui_strings (lib/greetingAudio.ts), bytes come
   // from cache or CloudFront — never from SpeechLLm, so a greeting costs no
   // synthesis. Playback runs through speechPlayer, so the avatar lip-syncs.
   // Text is already on screen (withGreeting above); audio is chrome shaped
   // like a message, and any failure here stays text-only — never a bubble.
+  //
+  // The effect depends ONLY on stable primitives — never on the vrmOptions
+  // ARRAY. Reloading the catalog (e.g. opening the picker before the first
+  // message) builds a fresh array with fresh object identities; depending on
+  // it re-ran this effect and Anne greeted twice — or cut her own greeting
+  // off mid-play and restarted. And greetedKeyRef records which greeting key
+  // already sounded: a re-render with the same key plays nothing.
+  const greetingCharacter = vrmOptions.find((o) => o.id === selectedVrmId)?.character ?? null
+  const greetingSlug = greetingCharacter?.slug ?? null
+  const greetingAudioVersion = greetingCharacter?.audio_version ?? null
+  const greetingSlot = getTimeSlot()
+  const greetingKey = buildGreetingKey(greetingCharacter, locale, greetingSlot)
+  const greetedKeyRef = useRef<string | null>(null)
+  const greetingCharacterRef = useRef(greetingCharacter)
+  greetingCharacterRef.current = greetingCharacter
   useEffect(() => {
     if (isRestoring) return
-    if (messages.length !== 1 || messages[0].id !== GREETING_ID) return
-    const character = vrmOptions.find((o) => o.id === selectedVrmId)?.character
+    if (messages.length !== 1 || messages[0].id !== GREETING_ID) {
+      // The conversation moved on: a later pristine opening may greet again.
+      greetedKeyRef.current = null
+      return
+    }
+    if (greetingKey === null || greetedKeyRef.current === greetingKey) return
+    greetedKeyRef.current = greetingKey
+    const character = greetingCharacterRef.current
     if (!character) return
     const controller = new AbortController()
     void (async () => {
@@ -216,7 +237,7 @@ export function ChatProvider({ children }: { children: ReactNode }) {
       }
     })()
     return () => controller.abort()
-  }, [messages, selectedVrmId, locale, isRestoring, vrmOptions, avatarRef])
+  }, [messages, isRestoring, greetingSlug, greetingAudioVersion, locale, greetingSlot, greetingKey])
 
   const addImage = useCallback((file: File) => {
     const url = URL.createObjectURL(file)
@@ -346,6 +367,10 @@ export function ChatProvider({ children }: { children: ReactNode }) {
     clearSessionPointer()
     sessionIdRef.current = null
     setActiveSessionId(null)
+    // A fresh pristine opening greets again even if its key matches the last
+    // one (the effect below only replays on key CHANGE; an explicit new chat
+    // is a new opening, including pristine-to-pristine).
+    greetedKeyRef.current = null
     setMessages(buildInitialMessages(uiRef.current))
     setInput('')
     setIsTyping(false)
@@ -388,6 +413,10 @@ export function ChatProvider({ children }: { children: ReactNode }) {
     // Picking a conversation out of the list makes it the one you are in, so
     // its clock starts now however old the conversation itself is.
     stampSessionPointer(sessionId)
+    // Same as startNewSession: an empty target session is a new pristine
+    // opening and may greet (a history restores non-pristine, which the
+    // effect itself resets on).
+    greetedKeyRef.current = null
     setMessages([])
     setInput('')
     setIsTyping(false)

@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { getGreeting, getTimeSlot, uiStringsFor } from './characterCopy'
-import { greetingCacheKey, playGreeting } from './greetingAudio'
+import { buildGreetingKey, greetingCacheKey, playGreeting } from './greetingAudio'
 import { readCachedClip, sha256Hex, writeCachedClip } from './ttsCache'
 import { speechPlayer, type LipSyncTarget } from './speechPlayer'
 import type { Character } from './characters'
@@ -150,6 +150,27 @@ describe('greetingCacheKey', () => {
     expect(greetingCacheKey('anne', 'greeting.morning', 'vi', 'a1b2', 'h4sh')).toBe(
       'static:anne:greeting.morning:vi:a1b2:h4sh',
     )
+  })
+})
+
+describe('buildGreetingKey (fix #1)', () => {
+  it('is identical across catalog reloads with fresh object identities', () => {
+    // ensureCatalogLoaded rebuilds the array: same content, new references.
+    // The old effect depended on the array and replayed Anne's greeting.
+    const before = { slug: 'anne', audio_version: 'a1b2c3d4e5f6' }
+    const after = { slug: 'anne', audio_version: 'a1b2c3d4e5f6' }
+    expect(before).not.toBe(after)
+    expect(buildGreetingKey(after, 'vi', 'morning')).toBe(buildGreetingKey(before, 'vi', 'morning'))
+  })
+
+  it('changes on avatar, language, slot, or re-render — null without a slug', () => {
+    const base = { slug: 'anne', audio_version: 'a1b2c3d4e5f6' }
+    const key = buildGreetingKey(base, 'vi', 'morning')
+    expect(buildGreetingKey({ slug: 'miki', audio_version: 'a1b2c3d4e5f6' }, 'vi', 'morning')).not.toBe(key)
+    expect(buildGreetingKey(base, 'en', 'morning')).not.toBe(key)
+    expect(buildGreetingKey(base, 'vi', 'evening')).not.toBe(key)
+    expect(buildGreetingKey({ slug: 'anne', audio_version: 'zzzz' }, 'vi', 'morning')).not.toBe(key)
+    expect(buildGreetingKey(null, 'vi', 'morning')).toBeNull()
   })
 })
 

@@ -115,6 +115,24 @@ export function getGreeting(ui: UiStrings, now = new Date()): string {
 }
 
 /**
+ * Which greeting opening this is (fix #1). A plain string over stable
+ * PRIMITIVES — slug, audio_version, locale, slot — so a catalog reload that
+ * rebuilds the vrmOptions array with fresh object identities still yields
+ * the SAME key, and the ChatContext guard (already greeted for this key?)
+ * stays shut. Any real change (avatar, language, hour slot, re-render)
+ * yields a different key and may greet again.
+ */
+export function buildGreetingKey(
+  character: { slug?: string | null; audio_version?: string | null } | null | undefined,
+  locale: string,
+  slot: string,
+): string | null {
+  const slug = character?.slug ?? null
+  if (!slug) return null
+  return `${slug}|${character?.audio_version ?? ''}|${locale}|${slot}`
+}
+
+/**
  * Resolve one character's copy for the locale the site is being read in.
  *
  * The catalog now serves `ui_strings` keyed by language — `{vi: {...}, en: {...}}`

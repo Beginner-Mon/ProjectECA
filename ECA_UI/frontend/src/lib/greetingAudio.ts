@@ -53,6 +53,21 @@ export function greetingCacheKey(
   return `static:${slug}:${clip}:${locale}:${audioVersion}:${textHash}`
 }
 
+/**
+ * Which greeting opening this is (fix #1). A plain string over stable
+ * PRIMITIVES — slug, audio_version, locale, slot — so a catalog reload that
+ * rebuilds the vrmOptions array with fresh object identities still yields
+ * the SAME key, and the ChatContext guard (already greeted for this key?)
+ * stays shut. Any real change (avatar, language, hour slot, re-render)
+ * yields a different key and may greet again.
+ *
+ * Lives in characterCopy.ts (re-exported here for callers that already
+ * import this module): ChatContext needs it at render time, and a static
+ * import of this module would drag speechPlayer into the main bundle,
+ * undoing the dynamic-import code split.
+ */
+export { buildGreetingKey } from './characterCopy'
+
 /** Stop OUR greeting if it is the thing playing — never anyone else's voice. */
 function stopOurs(clip: SpeechClip): void {
   if (speechPlayer.getSnapshot().clip === clip) speechPlayer.stop()

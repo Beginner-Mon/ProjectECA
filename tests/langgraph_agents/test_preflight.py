@@ -128,6 +128,25 @@ def test_log_names_the_interpreter(caplog):
 
 
 @pytest.mark.unit
+def test_botocore_required_only_for_a_signed_speechllm_url(monkeypatch):
+    """Fix #4: botocore is critical exactly when VIENEU_TTS_URL needs SigV4
+    (a Function URL) — localhost TTS must not start demanding AWS libraries."""
+    entry = next(d for d in preflight.LAZY_DEPENDENCIES if d.module == "botocore")
+
+    monkeypatch.delenv("VIENEU_TTS_URL", raising=False)
+    assert entry.is_required() is False
+
+    monkeypatch.setenv("VIENEU_TTS_URL", "http://localhost:5000")
+    assert entry.is_required() is False
+
+    monkeypatch.setenv(
+        "VIENEU_TTS_URL", "https://abc123.lambda-url.us-east-1.on.aws/"
+    )
+    assert entry.is_required() is True
+    assert entry.critical is True
+
+
+@pytest.mark.unit
 @pytest.mark.asyncio
 async def test_health_reports_missing_dependency_as_degraded_not_down():
     """A missing optional package must not take the instance out of the pool."""

@@ -30,14 +30,15 @@ D5e — voices + static audio (2026-09):
         voices/{slug}_{lang}_{sha256[:8]}.wav  (or characters/{slug}/voice/{hash}.wav)
     Stored in characters.voice_vi_key / voice_en_key (S3 keys, not URLs).
 
-    Static audio (greeting, safety_warning, ...) is pre-rendered once per
-    character per language by calling SpeechLLm, then uploaded to the ASSET
-    bucket at:
+    Static audio (T6: greeting.morning/afternoon/evening/night x vi/en) is
+    pre-rendered once per slot per language by calling SpeechLLm with the
+    EXACT ui_strings text, then uploaded to the ASSET bucket at:
         characters/{slug}/audio/{sha256[:8]}.ogg
-    Stored in characters.static_audio JSONB as S3 keys, signed at read time
+    Stored in characters.static_audio JSONB per contract C
+    ({clip: {lang: {key, sha256, text_sha256}}}), signed at read time
     (characters/*/audio/* via CloudFront trusted key group, same as motions/*).
     Regenerating a clip with unchanged text+voice produces the same hash and
-    does not create a new object.
+    does not create a new object. No safety_warning (pending decision).
 """
 
 from __future__ import annotations
@@ -78,22 +79,66 @@ SPINE_CHAIN = ("hips", "spine", "chest", "upperChest")
 
 GLB_MAGIC = 0x46546C67  # "glTF"
 
-# ── Static audio phrases (D5e) ────────────────────────────────────────────
-# Each kind is rendered once per character per language where a reference voice
-# exists. Text is intentionally short (2-5s audio) so one NDJSON `chunk` is
-# usually the whole clip, but the collector handles multi-chunk streams anyway.
-# Uses the character's display_name for greeting personalization.
+# ── Static audio clips (T6) ─────────────────────────────────────────────
+# No hardcoded phrases anymore (STATIC_PHRASES is deleted): every clip's text
+# comes from ui_strings.greeting.{morning,afternoon,evening,night} for vi/en —
+# the SAME projection the catalog serves, read off the record's own persona
+# dict (which is what sync_personas_to_db writes into the ui_strings column).
+# That is what keeps the rendered audio byte-identical in words to the text
+# the frontend displays (T7 compares text_sha256 before playing).
+#
+# A slot with no text is SKIPPED with a warning, never filled from the
+# frontend's FALLBACK_UI_STRINGS: copying that bundle into Python would fork
+# it, and the two copies would drift until clips mismatch their captions.
+# The client already treats a missing clip as text-only, and T7's text_sha256
+# check refuses to play a wrong one — so a gap stays visible instead of
+# going wrong silently.
+#
+# safety_warning is NOT built here — pending the open decision (where it
+# plays, and which language source it follows).
 
-STATIC_PHRASES: dict[str, dict[str, str]] = {
-    "greeting": {
-        "vi": "Xin chào! Mình là {name}, rất vui được gặp bạn.",
-        "en": "Hello! I'm {name}, nice to meet you.",
-    },
-    "safety_warning": {
-        "vi": "Lưu ý: Đây không phải lời khuyên y tế chuyên môn. Hãy tham khảo bác sĩ trước khi tập.",
-        "en": "Note: This is not professional medical advice. Please consult your doctor before exercising.",
-    },
-}
+_GREETING_SLOTS = ("morning", "afternoon", "evening", "night")
+_CLIP_LANGS = ("vi", "en")
+
+
+def _ui_strings_for(persona: dict) -> dict:
+    """{lang: ui_strings} via sync_personas_to_db's own projection.
+
+    Imported, not reimplemented, so the clip text cannot drift from the
+    column the catalog serves: same input dict, same function, same output.
+    """
+    sys.path.insert(0, str(Path(__file__).resolve().parent))
+    from sync_personas_to_db import _public_ui_strings
+    return _public_ui_strings(persona)
+
+
+def _greeting_texts(persona: dict) -> dict[str, dict[str, str]]:
+    """slot -> {lang: text} for every authored greeting slot.
+
+    Only non-blank strings survive; a missing slot or language is simply
+    absent (the caller warns per skip). At most 4 slots x 2 langs = 8 clips
+    per character.
+    """
+    ui_by_lang = _ui_strings_for(persona) or {}
+    out: dict[str, dict[str, str]] = {}
+    for slot in _GREETING_SLOTS:
+        per_lang: dict[str, str] = {}
+        for lang in _CLIP_LANGS:
+            greeting = (ui_by_lang.get(lang) or {}).get("greeting") or {}
+            text = greeting.get(slot) if isinstance(greeting, dict) else None
+            if isinstance(text, str) and text.strip():
+                per_lang[lang] = text
+        if per_lang:
+            out[slot] = per_lang
+    return out
+
+
+def _text_sha256(text: str) -> str:
+    """Contract E: sha256 hex of the UTF-8 bytes of EXACTLY this string —
+    no trim, no Unicode normalisation. Python and the browser
+    (crypto.subtle) must agree, so this hashes what is SENT to SpeechLLm,
+    character for character."""
+    return hashlib.sha256(text.encode("utf-8")).hexdigest()
 
 
 def classify(preset_name: str | None) -> str:
@@ -463,10 +508,14 @@ def build_static_audio(
     speechllm_url: str,
     dry_run: bool = False,
 ) -> dict[str, dict]:
-    """Render static clips for each character+language where a voice exists.
+    """Render greeting clips for each slot+language with text AND voice.
 
-    Returns slug -> {kind: {lang: s3_key}} map for DB upsert. Uploads to
-    s3://asset_bucket/characters/{slug}/audio/{hash}.ogg when not dry-run.
+    Returns slug -> {clip: {lang: {key, sha256, text_sha256}}} per contract C
+    for DB upsert. Uploads to s3://asset_bucket/characters/{slug}/audio/{hash}.ogg
+    when not dry-run (content hash = rerunnable: unchanged text+voice reuses
+    the same object). A slot with no ui_strings text, or a language with no
+    uploaded voice, is skipped with a warning — never synthesised from a
+    fallback, never silenced.
     """
     import boto3
 
@@ -475,27 +524,41 @@ def build_static_audio(
 
     for rec in records:
         slug = rec["slug"]
-        display_name = rec["display_name"]
         langs = voice_keys.get(slug, {})
         if not langs:
+            print(f"  skip {slug}: no uploaded voices — every clip needs a voice per language")
             continue
-        clip_map: dict[str, dict[str, str]] = {}
-        for kind, lang_texts in STATIC_PHRASES.items():
-            lang_keys: dict[str, str] = {}
-            for lang, template in lang_texts.items():
+        texts = _greeting_texts(rec.get("persona") or {})
+        clip_map: dict[str, dict[str, dict]] = {}
+        for slot in _GREETING_SLOTS:
+            kind = f"greeting.{slot}"
+            slot_texts = texts.get(slot)
+            if not slot_texts:
+                print(f"  skip {slug}/{kind}: no text in ui_strings.greeting.{slot} (no fallback used)")
+                continue
+            lang_entries: dict[str, dict] = {}
+            for lang in _CLIP_LANGS:
+                text = slot_texts.get(lang)
+                if text is None:
+                    continue
                 voice_key = langs.get(lang)
                 if not voice_key:
+                    print(f"  skip {slug}/{kind}/{lang}: text exists but no uploaded voice")
                     continue
-                text = template.format(name=display_name)
-                # Derive the voice_path SpeechLLm expects: for S3 voices it is
-                # the S3 key itself (D5d), for local dev it would be voices/... but
-                # we are in private bucket mode here, so use the S3 key.
+                # The voice_path SpeechLLm expects is the S3 key itself (D5d).
                 voice_path = voice_key
+                entry_text_sha256 = _text_sha256(text)
                 if dry_run:
-                    # Hash the text as placeholder so key is stable and previewable
+                    # No audio rendered: key previews from the text hash, the
+                    # text hash itself is REAL (it is what T7 will compare),
+                    # audio sha256 stays None until a real render fills it.
                     h = hashlib.sha256(f"{voice_path}:{text}".encode()).hexdigest()[:8]
                     s3_key = f"characters/{slug}/audio/{h}.ogg"
-                    lang_keys[lang] = s3_key
+                    lang_entries[lang] = {
+                        "key": s3_key,
+                        "sha256": None,
+                        "text_sha256": entry_text_sha256,
+                    }
                     print(f"  [dry-run] static {slug}/{kind}/{lang} -> {s3_key} text={text[:40]!r}")
                     continue
                 # Real render
@@ -520,9 +583,13 @@ def build_static_audio(
                         ContentType="audio/ogg",
                         CacheControl="public, max-age=31536000, immutable",
                     )
-                lang_keys[lang] = s3_key
-            if lang_keys:
-                clip_map[kind] = lang_keys
+                lang_entries[lang] = {
+                    "key": s3_key,
+                    "sha256": _hash_bytes(audio_bytes),
+                    "text_sha256": entry_text_sha256,
+                }
+            if lang_entries:
+                clip_map[kind] = lang_entries
         if clip_map:
             static_map[slug] = clip_map
     return static_map
@@ -685,7 +752,7 @@ def main() -> None:
     asyncio.run(upsert(records, voice_keys, static_map))
     print("\nDone. Voices and static audio are now data, not derived from persona_id.")
     print("Add a new voice: upload + one UPDATE characters SET voice_vi_key=... .")
-    print("Add a new clip kind: add key to STATIC_PHRASES and re-run.")
+    print("Add clips: author ui_strings.greeting slots in the persona, sync, re-run.")
 
 
 if __name__ == "__main__":

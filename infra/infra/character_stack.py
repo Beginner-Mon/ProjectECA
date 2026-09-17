@@ -38,6 +38,7 @@ from pathlib import Path
 
 import jsii
 from aws_cdk import (
+    Annotations,
     CfnOutput,
     Duration,
     ILocalBundling,
@@ -55,6 +56,13 @@ _LAMBDA_DIR = _INFRA_ROOT / "lambda"
 
 # Default; override at deploy time with `-c neon_dsn_param=/some/other/path`.
 _DEFAULT_DSN_PARAM = "/vva/neon/dsn"
+
+# T3: CloudFront signing for GET /characters/{slug}/audio. Same values the
+# agent uses (agent_stack.py): the SSM parameter NAME (never the key), and the
+# public key-pair id (not a secret). asset_base_url cannot come from AssetStack
+# as a construct reference — app.py builds this stack BEFORE VvaAssetStack —
+# so it is a `-c asset_base_url=https://...` flag like motion_key_pair_id.
+_DEFAULT_MOTION_SIGNING_KEY_PARAM = "/vva/motion/signing-key-pem"
 
 # Extensions that make a build host-specific. Their presence means the artifact
 # is only valid for the OS that produced it.
@@ -132,7 +140,38 @@ class CharacterStack(Stack):
         super().__init__(scope, construct_id, **kwargs)
 
         allowed_origins = resolve_origins(self.node)
-        dsn_param = self.node.try_get_context("neon_dsn_param") or _DEFAULT_DSN_PARAM
+        ctx = self.node.try_get_context
+        dsn_param = ctx("neon_dsn_param") or _DEFAULT_DSN_PARAM
+        motion_signing_key_param = (
+            ctx("motion_signing_key_param") or _DEFAULT_MOTION_SIGNING_KEY_PARAM
+        )
+        # Public identifiers, but with no safe default: an empty key pair id
+        # signs URLs CloudFront answers with 403, and an empty origin builds
+        # URLs with no host — both fail silently in production, hours after a
+        # green deploy. Annotations.add_error (NOT raise): app.py constructs
+        # this stack on every `cdk` invocation, so raising would break
+        # `cdk list` / `cdk diff` for unrelated stacks. Same mechanism
+        # agent_stack.py uses for these exact two values.
+        motion_key_pair_id = ctx("motion_key_pair_id") or ""
+        asset_base_url = ctx("asset_base_url") or ""
+        if not motion_key_pair_id:
+            Annotations.of(self).add_error(
+                "VvaCharacterStack needs the CloudFront key pair id that verifies "
+                "the /audio signed URLs it hands out. Pass:\n"
+                '  cdk deploy VvaCharacterStack -c motion_key_pair_id="K2EXAMPLE..."\n'
+                "The id is assigned by CloudFront and only exists after "
+                "VvaAssetStack has been deployed once with "
+                "-c motion_public_key_pem. Without it every /audio clip signs "
+                "with an empty key pair id and CloudFront answers 403."
+            )
+        if not asset_base_url:
+            Annotations.of(self).add_error(
+                "VvaCharacterStack needs asset_base_url — the CDN origin that "
+                "/audio signed URLs are built on. Pass:\n"
+                "  cdk deploy VvaCharacterStack -c asset_base_url=https://d111111abcdef8.cloudfront.net\n"
+                "(VvaAssetStack output AssetBaseUrl.) Without it signing.py "
+                "builds URLs with no host."
+            )
 
         # ── Layer ───────────────────────────────────────────────────────
         # Same source as Track 1's vva-shared-layer. It is built again here
@@ -182,6 +221,13 @@ class CharacterStack(Stack):
                 # having its fetch blocked by the browser while curl works fine.
                 # That is exactly how this was found, after deploy, on 20-08.
                 "ALLOWED_ORIGINS": ",".join(allowed_origins),
+                # T3: CloudFront signing for GET /characters/{slug}/audio.
+                # PARAM carries the SSM parameter NAME, never the key (ruling
+                # R24, same as agent_stack.py) — signing.py resolves it at
+                # call time. KEY_PAIR_ID names the trusted public key.
+                "MOTION_SIGNING_KEY_PARAM": motion_signing_key_param,
+                "MOTION_KEY_PAIR_ID": motion_key_pair_id,
+                "ASSET_BASE_URL": asset_base_url,
             },
             # 10s: one indexed read of a four-row table. The only slow path is a
             # cold start landing on a Neon compute that has scaled to zero.
@@ -222,6 +268,16 @@ class CharacterStack(Stack):
                     "kms:ViaService": f"ssm.{self.region}.amazonaws.com"
                 }
             },
+        ))
+
+        # ── IAM: read the CloudFront signing key (T3) ───────────────────
+        # Copied from agent_stack.py's DSN/LLM grant: the SSM parameter NAME,
+        # never the key (ruling R24). signing.py resolves it at call time.
+        self.fn_characters.add_to_role_policy(iam.PolicyStatement(
+            actions=["ssm:GetParameter"],
+            resources=[
+                f"arn:aws:ssm:{self.region}:{self.account}:parameter{motion_signing_key_param}"
+            ],
         ))
 
         # ── Function URL ────────────────────────────────────────────────

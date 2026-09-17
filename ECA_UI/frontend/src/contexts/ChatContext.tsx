@@ -19,8 +19,8 @@ import { pollMotionJob } from '../lib/motionJob'
 import { clearSessionPointer, readSessionPointer, stampSessionPointer } from '../lib/chatSession'
 import { useMotion } from '../hooks/useMotion'
 import { ChatContext, type ChatContextType, type SessionItem } from '../hooks/useChat'
-import { uiStringsFor, getGreeting, getTimeSlot, buildGreetingKey, type UiStrings } from '../lib/characterCopy'
-import { withGreeting } from '../lib/greeting'
+import { uiStringsFor, getGreetingForSlot, getTimeSlot, buildGreetingKey, type UiStrings } from '../lib/characterCopy'
+import { resolveGreeting, type CapturedGreeting } from '../lib/greeting'
 import { useLocale } from '../hooks/useLocale'
 
 export type { SessionItem, ChatContextType } from '../hooks/useChat'
@@ -46,12 +46,12 @@ const GREETING_ID = '1'
  * button on the first message played a fixed clip that had nothing to do with
  * the text. That was debug scaffolding and is gone.
  */
-function buildInitialMessages(ui: UiStrings): Message[] {
+function buildInitialMessages(text: string): Message[] {
   return [
     {
       id: GREETING_ID,
       role: 'assistant',
-      content: getGreeting(ui),
+      content: text,
       timestamp: new Date(),
     },
   ]
@@ -74,13 +74,24 @@ export function ChatProvider({ children }: { children: ReactNode }) {
   const uiRef = useRef<UiStrings>(ui)
   uiRef.current = ui
 
+  /** The slot+text pair actually on screen in the greeting bubble right now.
+   *  Set ONLY where the bubble's text is written (here, and the two
+   *  `resolveGreeting` effects below, and `startNewSession`/`switchToSession`)
+   *  — never recomputed from the live clock at render time. Everything that
+   *  must agree with the caption (the greeting key, the voice clip) reads
+   *  this ref instead of calling `getTimeSlot()` itself. */
+  const displayedGreetingRef = useRef<CapturedGreeting | null>(null)
+
   // Neutral copy, not this character's — the catalog has not resolved on the
   // first render and a wrong name is worse than no name. The effect below swaps
   // in the character's own greeting once `selectedVrmId` settles. Passing no
   // character is what selects that neutral set, now per locale.
-  const [messages, setMessages] = useState<Message[]>(() =>
-    buildInitialMessages(uiStringsFor(null, locale)),
-  )
+  const [messages, setMessages] = useState<Message[]>(() => {
+    const slot = getTimeSlot()
+    const text = getGreetingForSlot(uiStringsFor(null, locale), slot)
+    displayedGreetingRef.current = { slot, text }
+    return buildInitialMessages(text)
+  })
   const [input, setInput] = useState('')
   const [isTyping, setIsTyping] = useState(false)
   const [isGenerating, setIsGenerating] = useState(false)
@@ -168,7 +179,13 @@ export function ChatProvider({ children }: { children: ReactNode }) {
   useEffect(() => {
     if (isRestoring) return
     if (!selectedVrmId) return
-    setMessages((prev) => withGreeting(prev, GREETING_ID, getGreeting(uiRef.current)))
+    const slot = getTimeSlot()
+    const candidate: CapturedGreeting = { slot, text: getGreetingForSlot(uiRef.current, slot) }
+    setMessages((prev) => {
+      const { messages: next, captured } = resolveGreeting(prev, GREETING_ID, candidate, displayedGreetingRef.current)
+      displayedGreetingRef.current = captured
+      return next
+    })
     prevVrmRef.current = selectedVrmId
   }, [selectedVrmId, isRestoring])
 
@@ -186,7 +203,13 @@ export function ChatProvider({ children }: { children: ReactNode }) {
    * above already follows.
    */
   useEffect(() => {
-    setMessages((prev) => withGreeting(prev, GREETING_ID, getGreeting(uiRef.current)))
+    const slot = getTimeSlot()
+    const candidate: CapturedGreeting = { slot, text: getGreetingForSlot(uiRef.current, slot) }
+    setMessages((prev) => {
+      const { messages: next, captured } = resolveGreeting(prev, GREETING_ID, candidate, displayedGreetingRef.current)
+      displayedGreetingRef.current = captured
+      return next
+    })
   }, [locale])
 
   // ── Greeting voice (T7, fix #1) ─────────────────────────────────────────
@@ -206,7 +229,14 @@ export function ChatProvider({ children }: { children: ReactNode }) {
   const greetingCharacter = vrmOptions.find((o) => o.id === selectedVrmId)?.character ?? null
   const greetingSlug = greetingCharacter?.slug ?? null
   const greetingAudioVersion = greetingCharacter?.audio_version ?? null
-  const greetingSlot = getTimeSlot()
+  // The FROZEN slot, not a fresh getTimeSlot() read: this line runs on every
+  // render (a keystroke re-renders ChatProvider), and re-reading the clock
+  // here is exactly the bug — the key would change mid-render while the
+  // bubble above stays on the previous slot's text. Falls back to the live
+  // clock only for the sliver before the mount-time useState initializer has
+  // run (never observed after it, since that initializer sets the ref
+  // synchronously during the same render).
+  const greetingSlot = displayedGreetingRef.current?.slot ?? getTimeSlot()
   const greetingKey = buildGreetingKey(greetingCharacter, locale, greetingSlot)
   const greetedKeyRef = useRef<string | null>(null)
   const greetingCharacterRef = useRef(greetingCharacter)
@@ -222,6 +252,12 @@ export function ChatProvider({ children }: { children: ReactNode }) {
     greetedKeyRef.current = greetingKey
     const character = greetingCharacterRef.current
     if (!character) return
+    // Same slot+text the bubble was written with — never recomputed here.
+    // Without a captured value yet (should not happen once mounted; the
+    // useState initializer sets it synchronously) there is nothing frozen to
+    // play, so stay text-only rather than let playGreeting guess.
+    const captured = displayedGreetingRef.current
+    if (!captured) return
     const controller = new AbortController()
     void (async () => {
       try {
@@ -229,6 +265,8 @@ export function ChatProvider({ children }: { children: ReactNode }) {
         await playGreeting({
           character,
           locale,
+          slot: captured.slot,
+          text: captured.text,
           controller: avatarRef.current,
           signal: controller.signal,
         })
@@ -371,7 +409,10 @@ export function ChatProvider({ children }: { children: ReactNode }) {
     // one (the effect below only replays on key CHANGE; an explicit new chat
     // is a new opening, including pristine-to-pristine).
     greetedKeyRef.current = null
-    setMessages(buildInitialMessages(uiRef.current))
+    const newSlot = getTimeSlot()
+    const newGreetingText = getGreetingForSlot(uiRef.current, newSlot)
+    displayedGreetingRef.current = { slot: newSlot, text: newGreetingText }
+    setMessages(buildInitialMessages(newGreetingText))
     setInput('')
     setIsTyping(false)
     setStageLabel(null)
@@ -441,7 +482,10 @@ export function ChatProvider({ children }: { children: ReactNode }) {
           })),
         )
       } else {
-        setMessages(buildInitialMessages(uiRef.current))
+        const switchSlot = getTimeSlot()
+        const switchGreetingText = getGreetingForSlot(uiRef.current, switchSlot)
+        displayedGreetingRef.current = { slot: switchSlot, text: switchGreetingText }
+        setMessages(buildInitialMessages(switchGreetingText))
       }
     } catch (e) {
       const isAbort = (e as { name?: string })?.name === 'AbortError' || (e as { code?: string })?.code === 'ERR_CANCELED'

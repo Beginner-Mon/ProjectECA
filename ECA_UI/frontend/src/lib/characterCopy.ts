@@ -109,9 +109,22 @@ export function getTimeSlot(date = new Date()): TimeSlot {
   return 'night'
 }
 
-export function getGreeting(ui: UiStrings, now = new Date()): string {
-  const slot = getTimeSlot(now)
+/**
+ * The greeting text for an ALREADY-KNOWN slot.
+ *
+ * Split out of `getGreeting` so a caller that needs to freeze a slot
+ * alongside the text it produced (ChatContext's greeting bubble, and the
+ * voice clip played for it) can read the clock exactly once and hand the
+ * same `slot` to both this function and `buildGreetingKey` — rather than
+ * each call re-reading `new Date()` and risking two different answers either
+ * side of an hour boundary.
+ */
+export function getGreetingForSlot(ui: UiStrings, slot: TimeSlot): string {
   return ui.greeting[slot] ?? FALLBACK_UI_STRINGS[DEFAULT_LOCALE].greeting[slot]
+}
+
+export function getGreeting(ui: UiStrings, now = new Date()): string {
+  return getGreetingForSlot(ui, getTimeSlot(now))
 }
 
 /**

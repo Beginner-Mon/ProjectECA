@@ -176,7 +176,7 @@ describe('buildGreetingKey (fix #1)', () => {
 
 describe('playGreeting', () => {
   it('cache hit plays at once with zero network requests', async () => {
-    const { text, hash } = await displayedTextHash()
+    const { slot, text, hash } = await displayedTextHash()
     const key = greetingCacheKey('anne', `greeting.${getTimeSlot()}`, 'vi', 'a1b2c3d4e5f6', hash)
     cacheStore.set(`user-test:${key}`, {
       meta: { id: `user-test:${key}` } as never,
@@ -186,7 +186,7 @@ describe('playGreeting', () => {
     vi.stubGlobal('fetch', fetchSpy)
     const controller = mouth()
 
-    await playGreeting({ character: character(), locale: 'vi', controller })
+    await playGreeting({ character: character(), locale: 'vi', slot, text, controller })
 
     expect(fetchSpy).not.toHaveBeenCalled()
     expect(writeCachedClip).not.toHaveBeenCalled()
@@ -207,7 +207,7 @@ describe('playGreeting', () => {
     })
     const controller = mouth()
 
-    await playGreeting({ character: character(), locale: 'vi', controller })
+    await playGreeting({ character: character(), locale: 'vi', slot, text, controller })
 
     expect(readCachedClip).toHaveBeenCalled()
     expect(writeCachedClip).toHaveBeenCalledTimes(1)
@@ -224,7 +224,7 @@ describe('playGreeting', () => {
   })
 
   it('text_sha256 mismatch plays nothing and caches nothing', async () => {
-    const { slot } = await displayedTextHash()
+    const { slot, text } = await displayedTextHash()
     const clip = `greeting.${slot}`
     const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
     const bytesFetch = vi.fn(async () => new Response(new ArrayBuffer(4), { status: 200 }))
@@ -252,7 +252,7 @@ describe('playGreeting', () => {
     )
     const controller = mouth()
 
-    await playGreeting({ character: character(), locale: 'vi', controller })
+    await playGreeting({ character: character(), locale: 'vi', slot, text, controller })
 
     expect(warn).toHaveBeenCalledWith(expect.stringContaining(clip))
     expect(bytesFetch).not.toHaveBeenCalled()
@@ -261,6 +261,7 @@ describe('playGreeting', () => {
   })
 
   it('null audio_version or null clip stays text-only with no requests', async () => {
+    const { slot, text } = await displayedTextHash()
     const fetchSpy = vi.fn(async () => new Response(null, { status: 500 }))
     vi.stubGlobal('fetch', fetchSpy)
     const controller = mouth()
@@ -268,6 +269,8 @@ describe('playGreeting', () => {
     await playGreeting({
       character: { ...character(), audio_version: null },
       locale: 'vi',
+      slot,
+      text,
       controller,
     })
 
@@ -276,7 +279,7 @@ describe('playGreeting', () => {
   })
 
   it('abort stops a playing greeting (b97eeda2 behaviour kept)', async () => {
-    const { slot, hash } = await displayedTextHash()
+    const { slot, text, hash } = await displayedTextHash()
     stubAudioBackend({
       [`greeting.${slot}`]: {
         url: 'https://cdn.example/anne-audio.ogg',
@@ -288,7 +291,7 @@ describe('playGreeting', () => {
     const controller = mouth()
     const aborter = new AbortController()
 
-    await playGreeting({ character: character(), locale: 'vi', controller, signal: aborter.signal })
+    await playGreeting({ character: character(), locale: 'vi', slot, text, controller, signal: aborter.signal })
     expect(speechPlayer.getSnapshot().status).toBe('playing')
 
     aborter.abort()
@@ -297,7 +300,7 @@ describe('playGreeting', () => {
   })
 
   it('two rapid calls never overlap — the second preempts the first', async () => {
-    const { slot, hash } = await displayedTextHash()
+    const { slot, text, hash } = await displayedTextHash()
     stubAudioBackend({
       [`greeting.${slot}`]: {
         url: 'https://cdn.example/anne-audio.ogg',
@@ -310,9 +313,9 @@ describe('playGreeting', () => {
     const second = mouth()
     const abortFirst = new AbortController()
 
-    await playGreeting({ character: character(), locale: 'vi', controller: first, signal: abortFirst.signal })
+    await playGreeting({ character: character(), locale: 'vi', slot, text, controller: first, signal: abortFirst.signal })
     abortFirst.abort() // React cleanup before the re-run, as the effect does
-    await playGreeting({ character: { ...character(), slug: 'miki' }, locale: 'vi', controller: second })
+    await playGreeting({ character: { ...character(), slug: 'miki' }, locale: 'vi', slot, text, controller: second })
 
     expect(first.started()).toBe(1)
     expect(second.started()).toBe(1)

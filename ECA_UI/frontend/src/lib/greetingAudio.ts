@@ -5,9 +5,11 @@
  * anyone could fetch them — played through a bare <audio> element the avatar
  * could not lip-sync to). Now:
  *
- *   - text comes from getGreeting(uiStringsFor(character, locale)) — the SAME
- *     two functions that choose the displayed words, so caption and voice
- *     cannot disagree;
+ *   - `slot`/`text` arrive as parameters, captured by the caller at the same
+ *     moment it wrote the on-screen bubble (`lib/greeting.ts`'s
+ *     `resolveGreeting`) — this module never calls `getTimeSlot()` or
+ *     `getGreeting()` itself, so caption and voice cannot disagree even if a
+ *     render lands between the two (see the frozen-slot fix in ChatContext);
  *   - bytes come from GET /characters/{slug}/audio (Cognito, contract B) or
  *     from this browser's cache — never from SpeechLLm, so a greeting costs
  *     no synthesis;
@@ -25,7 +27,7 @@ import type { Locale } from '@/i18n/locale'
 
 import { cognitoSub } from './api'
 import { fetchClips, type Character } from './characters'
-import { getGreeting, getTimeSlot, uiStringsFor } from './characterCopy'
+import type { TimeSlot } from './characterCopy'
 import { speechPlayer, SpeechClip, type LipSyncTarget } from './speechPlayer'
 import {
   readCachedClip,
@@ -37,6 +39,16 @@ import {
 export interface GreetingRequest {
   character: Character
   locale: Locale
+  /**
+   * The slot and the exact words already on screen, captured once by the
+   * caller at the moment it wrote the greeting bubble (ChatContext /
+   * `lib/greeting.ts`'s `resolveGreeting`). `playGreeting` must never
+   * recompute either from the live clock: doing so is what let the played
+   * clip (a fresh `getTimeSlot()` read) diverge from the caption still
+   * showing the previous slot's text after an hour boundary passed mid-render.
+   */
+  slot: TimeSlot
+  text: string
   /** Avatar mouth. Null in tests / where no avatar is mounted — plays blind. */
   controller: LipSyncTarget | null
   signal?: AbortSignal
@@ -109,13 +121,11 @@ async function playBytes(
 }
 
 export async function playGreeting(req: GreetingRequest): Promise<void> {
-  const { character, locale, controller, signal } = req
+  const { character, locale, slot, text, controller, signal } = req
   if (signal?.aborted) return
 
   const slug = character.slug
-  const slot = getTimeSlot()
   const clip = `greeting.${slot}`
-  const text = getGreeting(uiStringsFor(character, locale))
 
   const textHash = await sha256Hex(text)
   if (!textHash || signal?.aborted) return

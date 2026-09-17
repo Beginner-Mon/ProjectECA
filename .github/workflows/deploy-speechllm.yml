@@ -13,10 +13,21 @@
 # Docker lives here and nowhere else — no developer machine needs a daemon
 # (rang buoc #5: het RAM/o C:, da co tien le).
 #
-# OIDC trust is per branch — same note as deploy-agent.yml. If a branch is not
-# listed in GitHubActionsECRRole's trust policy, assume-role fails with
-# "Not authorized to perform sts:AssumeRoleWithWebIdentity". See that file's
-# long comment for how to add a branch (needs the owner/repo IDs form).
+# T10 — TWO LANES, one file. `build` runs on every listed branch and touches
+# no AWS at all (no credentials step anywhere in it): pushing
+# feature/tts-streaming proves the Dockerfile still builds, including the
+# baked-weights step. Everything that needs AWS — credentials, ECR push,
+# update-function-code — lives in `release`, gated on
+# `github.ref == 'refs/heads/release'`.
+#
+# OIDC trust is per branch — same note as deploy-agent.yml. The trust policy
+# of GitHubActionsECRRole lists exact `sub` claims, and it names `release`
+# (and kimodo-release), NOT feature branches. Opening trust for a feature
+# branch would hand everyone who can push that branch the keys to deploy,
+# so feature branches deliberately cannot reach the steps that need them —
+# the `if:` gates below are the enforcement, not just an optimisation.
+# If a branch is not trusted, assume-role fails with
+# "Not authorized to perform sts:AssumeRoleWithWebIdentity".
 
 name: Deploy SpeechLLM Image
 
@@ -111,9 +122,51 @@ jobs:
         run: PYTHONPATH=SpeechLLm pytest tests/SpeechLLm -q
 
   # ───────────────────────────────────────────────────────────────────────────
-  build-and-push:
-    name: "📦 Build and push"
+  # LANE 1 — build. No AWS: no credentials, no push, no deploy. Runs on every
+  # listed branch, including feature/tts-streaming, so a broken Dockerfile
+  # (bad CMD, weights baked to the wrong HF cache path) fails here in
+  # minutes instead of at Lambda INIT after a release.
+  # ───────────────────────────────────────────────────────────────────────────
+  build:
+    name: "🔨 Build image (no push)"
     needs: [unit-tests, runtime-imports]
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: docker/setup-buildx-action@v3
+
+      # Context is REPOSITORY ROOT, not SpeechLLm/. The Dockerfile copies
+      # SpeechLLm/api_server.py, SpeechLLm/src, SpeechLLm/configs and bakes
+      # weights from HuggingFace (pnnbao-ump/VieNeu-TTS-v3-Turbo + MOSS codec)
+      # into the HF cache at /root/.cache/huggingface. That bake is what lets
+      # HF_HUB_OFFLINE=1 work without a network at cold start.
+      - name: Build (no push, no credentials)
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          file: SpeechLLm/Dockerfile
+          push: false
+          # LAMBDA CANNOT READ AN IMAGE INDEX. buildx adds provenance
+          # attestations by default since v0.10, and an attestation makes the
+          # pushed artifact an OCI image INDEX rather than a plain manifest.
+          # Lambda takes a single manifest, Docker v2 or OCI, but not an
+          # index — same trap deploy-agent.yml documents.
+          provenance: false
+          sbom: false
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+  # ───────────────────────────────────────────────────────────────────────────
+  # LANE 2 — release. Push + deploy, `release` ONLY. Every step that touches
+  # AWS carries the branch gate; without it a push to feature/tts-streaming
+  # would reach ECR with credentials it must never hold.
+  # ───────────────────────────────────────────────────────────────────────────
+  release:
+    name: "🚀 Push and deploy (release only)"
+    needs: [build]
+    if: github.ref == 'refs/heads/release'
     runs-on: ubuntu-latest
     timeout-minutes: 60
     outputs:
@@ -136,6 +189,9 @@ jobs:
         run: |
           echo "image-uri=${{ steps.login-ecr.outputs.registry }}/${{ env.ECR_REPOSITORY }}:${{ github.sha }}" >> "$GITHUB_OUTPUT"
 
+      # Immutable tags make a re-push of the same commit an error. Re-running a
+      # workflow is a normal thing to do, so detect it and skip rather than fail
+      # on something that is not wrong.
       - name: Skip build if this commit is already published
         id: exists
         run: |
@@ -148,11 +204,6 @@ jobs:
             echo "already=false" >> "$GITHUB_OUTPUT"
           fi
 
-      # Context is REPOSITORY ROOT, not SpeechLLm/. The Dockerfile copies
-      # SpeechLLm/api_server.py, SpeechLLm/src, SpeechLLm/configs and bakes
-      # weights from HuggingFace (pnnbao-ump/VieNeu-TTS-v3-Turbo + MOSS codec)
-      # into the HF cache at /root/.cache/huggingface. That bake is what lets
-      # HF_HUB_OFFLINE=1 work without a network at cold start.
       - name: Build and push
         if: steps.exists.outputs.already == 'false'
         uses: docker/build-push-action@v5
@@ -166,18 +217,12 @@ jobs:
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
-  # ───────────────────────────────────────────────────────────────────────────
-  deploy:
-    name: "🚀 Update function code"
-    needs: build-and-push
-    runs-on: ubuntu-latest
-    timeout-minutes: 15
-    steps:
-      - uses: aws-actions/configure-aws-credentials@v4
-        with:
-          role-to-assume: arn:aws:iam::${{ env.AWS_ACCOUNT_ID }}:role/GitHubActionsECRRole
-          aws-region: ${{ env.AWS_REGION }}
-
+      # The function may not exist yet: a container Lambda cannot be created
+      # before an image is pushed, so the FIRST run of this workflow legitimately
+      # has nothing to update. Every step after this one is gated on the answer
+      # (an `exit 0` here would end the STEP, not the JOB, and the smoke step
+      # would still run into ResourceNotFoundException — a bug deploy-agent.yml
+      # already hit once).
       - name: Does the function exist yet?
         id: fn
         run: |
@@ -201,7 +246,7 @@ jobs:
           set -euo pipefail
           aws lambda update-function-code \
             --function-name "${{ env.FUNCTION_NAME }}" \
-            --image-uri "${{ needs.build-and-push.outputs.image-uri }}" \
+            --image-uri "${{ steps.meta.outputs.image-uri }}" \
             --publish >/dev/null
 
           aws lambda wait function-updated \
@@ -209,25 +254,26 @@ jobs:
 
           echo "::notice::${{ env.FUNCTION_NAME }} now runs ${{ github.sha }}"
 
-      # A green update-function-code only means Lambda ACCEPTED the image. The
-      # container may still 500 at INIT (bad CMD, missing libsndfile, weights
-      # baked to wrong HF cache path). Smoke it with /health — it needs 503
-      # while warming (~13s model + pre-enrol) then 200. Without this the
-      # workflow reports success on a function that 502s on every /synthesize.
+      # Smoke by STATE, not by invocation. Since T9 the CI role is Denied at
+      # the resource policy — calling the function from here 403s by design,
+      # so the old invocation-based smoke would fail on a healthy deploy.
+      # State=Active + LastUpdateStatus=Successful means Lambda accepted AND
+      # unpacked the image; a bad CMD or missing libsndfile still only shows
+      # at first invocation, which D6's warm-up ping covers on the live stack.
       - name: Smoke the new image
         if: steps.fn.outputs.exists == 'true'
         run: |
           set -euo pipefail
-          aws lambda invoke \
+          state=$(aws lambda get-function \
             --function-name "${{ env.FUNCTION_NAME }}" \
-            --payload '{"version":"2.0","rawPath":"/health","rawQueryString":"","headers":{"host":"ci.internal"},"requestContext":{"http":{"method":"GET","path":"/health","protocol":"HTTP/1.1","sourceIp":"127.0.0.1"}},"isBase64Encoded":false}' \
-            --cli-binary-format raw-in-base64-out \
-            /tmp/out.json >/tmp/meta.json
+            --query 'Configuration.State' --output text)
+          update_status=$(aws lambda get-function \
+            --function-name "${{ env.FUNCTION_NAME }}" \
+            --query 'Configuration.LastUpdateStatus' --output text)
 
-          cat /tmp/meta.json
-          cat /tmp/out.json
+          echo "State=${state} LastUpdateStatus=${update_status}"
 
-          if grep -q '"FunctionError"' /tmp/meta.json; then
-            echo "::error::The new image fails at invocation. Check CloudWatch for INIT errors."
+          if [ "${state}" != "Active" ] || [ "${update_status}" != "Successful" ]; then
+            echo "::error::${{ env.FUNCTION_NAME }} is not healthy after update (State=${state}, LastUpdateStatus=${update_status}). Check CloudWatch for INIT errors."
             exit 1
           fi

@@ -147,6 +147,38 @@ def test_botocore_required_only_for_a_signed_speechllm_url(monkeypatch):
 
 
 @pytest.mark.unit
+@pytest.mark.parametrize(
+    "url",
+    [
+        "",
+        "http://localhost:5000",
+        "http://127.0.0.1:5000",
+        "http://speechllm.test",
+        "https://abc123.lambda-url.us-east-1.on.aws/",
+        "HTTPS://ABC123.LAMBDA-URL.US-EAST-1.ON.AWS/",
+        "https://abc123.lambda-url.us-east-1.on.aws/synthesize",
+    ],
+)
+def test_preflight_predicate_matches_client_predicate(monkeypatch, url):
+    """`_using_signed_speechllm` copies `client.py::_is_lambda_url` verbatim on
+    purpose — preflight must not import the client module. Nothing ties the two
+    copies together, so editing one silently desyncs them from the other. This
+    test IS that tie: it runs both functions over one table of URLs (empty,
+    localhost, 127.0.0.1, a plain http host, a real-shaped Lambda Function URL,
+    an uppercase variant, and a trailing-path variant) and asserts identical
+    answers for every one.
+    """
+    from langgraph_agents.services.vieneu_tts.client import _is_lambda_url
+
+    if url:
+        monkeypatch.setenv("VIENEU_TTS_URL", url)
+    else:
+        monkeypatch.delenv("VIENEU_TTS_URL", raising=False)
+
+    assert preflight._using_signed_speechllm() == _is_lambda_url(url), url
+
+
+@pytest.mark.unit
 @pytest.mark.asyncio
 async def test_health_reports_missing_dependency_as_degraded_not_down():
     """A missing optional package must not take the instance out of the pool."""

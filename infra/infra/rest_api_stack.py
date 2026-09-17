@@ -301,27 +301,33 @@ class RestApiStack(Stack):
                 **authed,
             )
 
-            # ── /tts and /billing — the agent's other routes ─────────────
+            # ── /tts — STREAMED, like /chat ───────────────────────────────
             #
-            # BUFFERED, not streamed: both return a small JSON body, and STREAM
-            # mode gives up caching, VTL and WAF inspection to buy a lower
-            # time-to-first-byte that a 200-byte response does not have.
+            # POST /tts IS the audio: the response itself streams SSE
+            # (speech_start/chunk/end) since 885ec019, and the frontend reads it
+            # with consumeSSE. The old comment here ("both return a small JSON
+            # body") described the pre-streaming shape — task_id JSON, Redis
+            # poll, wav download — that no longer exists: api/main.py answers
+            # POST /tts with stream_response(...), the /tts/{task_id}/result
+            # handler is gone, and nothing in the frontend calls it. A buffered
+            # integration would hold the whole synthesis before answering (504
+            # past ~29s, 10 MB ceiling past ~3 min of audio), so this copies
+            # /chat's integration options verbatim, timeout included.
             #
-            # Routed even though neither works in production today — TTS is
-            # unhosted so POST /tts answers 503, and billing is sandbox-gated so
-            # it does the same. That is the point: a 503 from the real endpoint
-            # is a correct answer, and it is what lets the frontend drop
-            # VITE_API_BASE_URL now instead of keeping a second origin alive for
-            # two features that are switched off. Turning TTS on later becomes
-            # one environment variable on the function, with no gateway change
-            # and no frontend change.
-            agent = apigw.LambdaIntegration(agent_fn)
+            # /billing below stays BUFFERED: it really does return a small JSON
+            # body, and STREAM gives up caching, VTL and WAF inspection for a
+            # time-to-first-byte a 200-byte response does not have.
+            tts_stream = apigw.LambdaIntegration(
+                agent_fn,
+                response_transfer_mode=apigw.ResponseTransferMode.STREAM,
+                timeout=Duration.seconds(120),
+            )
 
             tts = self.api.root.add_resource("tts")
-            tts.add_method("POST", agent, **authed)
-            tts.add_resource("{task_id}").add_resource("result").add_method(
-                "GET", agent, **authed,
-            )
+            tts.add_method("POST", tts_stream, **authed)
+            # No tts/{task_id}/result: the polling route died with the Redis
+            # path. Keeping it would 404 after waking the agent for nothing.
+            agent = apigw.LambdaIntegration(agent_fn)
 
             # ── /motion/{job_id} — authenticated ─────────────────────────
             #

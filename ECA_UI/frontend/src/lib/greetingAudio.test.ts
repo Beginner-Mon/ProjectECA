@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
-import { getGreetingForSlot, getTimeSlot, uiStringsFor, type TimeSlot } from './characterCopy'
+import { getGreetingForSlot, uiStringsFor, type TimeSlot } from './characterCopy'
 import { buildGreetingKey, greetingCacheKey, playGreeting } from './greetingAudio'
 import { readCachedClip, sha256Hex, writeCachedClip } from './ttsCache'
 import { speechPlayer, type LipSyncTarget } from './speechPlayer'

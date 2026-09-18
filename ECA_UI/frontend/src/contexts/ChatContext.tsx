@@ -1,4 +1,4 @@
-/* eslint-disable react-hooks/refs, react-hooks/set-state-in-effect */
+/* eslint-disable react-hooks/refs */
 import {
   useRef,
   useState,
@@ -275,7 +275,7 @@ export function ChatProvider({ children }: { children: ReactNode }) {
       }
     })()
     return () => controller.abort()
-  }, [messages, isRestoring, greetingSlug, greetingAudioVersion, locale, greetingSlot, greetingKey])
+  }, [messages, isRestoring, greetingSlug, greetingAudioVersion, locale, greetingSlot, greetingKey, avatarRef])
 
   const addImage = useCallback((file: File) => {
     const url = URL.createObjectURL(file)

@@ -601,6 +601,15 @@ def test_slow_summarizer_does_not_delay_session_persisted_or_done(api_client, mo
     Before this fix, `await maybe_summarize(...)` sat on the critical path
     between session_persisted and done; a summarizer this slow would have
     made the whole response take >1s to even start returning.
+
+    Measured as a DELTA between two runs of the same request against the
+    same fixtures — one with a summarizer that returns immediately, one
+    that sleeps 1.0s — rather than an absolute elapsed<0.5 threshold. Every
+    /chat call in this suite pays a per-request STM warm-up read
+    (`stm_warmup_failed` retries) that costs ~4s on CI; that fixed cost
+    lands on both runs equally, so subtracting it out isolates the
+    summarizer's own contribution to the response time, which is what
+    "not on the critical path" actually means.
     """
     import asyncio
     import time
@@ -616,25 +625,36 @@ def test_slow_summarizer_does_not_delay_session_persisted_or_done(api_client, mo
 
     monkeypatch.setattr(api_module, "write_session_turn", fake_write)
 
+    async def fast_summarizer(session_id):
+        return
+
     async def slow_summarizer(session_id):
         # Long enough that awaiting it inline would be trivially detectable;
         # short enough not to make the suite slow when the fix holds.
         await asyncio.sleep(1.0)
 
-    monkeypatch.setattr(api_module, "maybe_summarize", slow_summarizer)
+    def run_once(summarizer):
+        monkeypatch.setattr(api_module, "maybe_summarize", summarizer)
+        t0 = time.perf_counter()
+        resp = client.post("/chat", json={"query": "Xin chào"})
+        elapsed = time.perf_counter() - t0
 
-    t0 = time.perf_counter()
-    resp = client.post("/chat", json={"query": "Xin chào"})
-    elapsed = time.perf_counter() - t0
+        assert resp.status_code == 200
+        events = _parse_sse_stream(resp.content)
+        kinds = [e["event"] for e in events]
+        assert "session_persisted" in kinds
+        assert kinds[-1] == "done"
+        return elapsed
 
-    assert resp.status_code == 200
-    events = _parse_sse_stream(resp.content)
-    kinds = [e["event"] for e in events]
-    assert "session_persisted" in kinds
-    assert kinds[-1] == "done"
-    assert elapsed < 0.5, (
-        f"response took {elapsed:.2f}s — maybe_summarize appears to still "
-        "be on the critical path (fake sleeps 1.0s)"
+    fast_elapsed = run_once(fast_summarizer)
+    slow_elapsed = run_once(slow_summarizer)
+
+    delta = slow_elapsed - fast_elapsed
+    assert delta < 0.5, (
+        f"slow-summarizer run took {delta:.2f}s longer than the "
+        f"fast-summarizer baseline (fast={fast_elapsed:.2f}s, "
+        f"slow={slow_elapsed:.2f}s) despite the fake sleeping only 1.0s — "
+        "maybe_summarize appears to still be on the critical path"
     )
 
     # Let the background task actually finish before the fixture tears the

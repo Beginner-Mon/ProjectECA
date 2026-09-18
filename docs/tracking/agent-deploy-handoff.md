@@ -119,8 +119,10 @@ sau 2 giờ vẫn đọc được tới ~48 giờ — agent trả lời bằng n
 
 ### 3.3 + 3.4 Cổng TTS và web search
 
-`VIENEU_TTS_URL` không đặt ⇒ phát `speech_disabled`, **không** phát
-`speech_pending`; `POST /tts` trả 503. `SEARXNG_URL=""` ⇒ trả `[]`, log một lần.
+`VIENEU_TTS_URL` không đặt ⇒ phát `speech_disabled` ngay, **không** có
+`speech_start`/`speech_chunk`/`speech_end` nào được phát (event `speech_pending`
+của luồng Celery cũ đã bị gỡ hoàn toàn, xem [[api-contract]]); `POST /tts` trả
+503. `SEARXNG_URL=""` ⇒ trả `[]`, log một lần.
 
 **Tác động**: `main.py` chờ TTS **130 giây** trong request. Trên Lambda đó là
 130s tiền RAM chờ một service không tồn tại — và AWS tài liệu rõ **streaming tính

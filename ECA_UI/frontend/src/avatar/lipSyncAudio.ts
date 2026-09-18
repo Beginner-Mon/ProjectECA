@@ -1,7 +1,8 @@
 /**
  * Web Audio glue for lip sync. Builds the AnalyserNode that LipSyncController
  * reads. Three sources:
- *   - analyserFromElement: the real path for a `tts.audio` clip (Phase D).
+ *   - createSpeechAnalyser: the real path. Every chunk of a streamed TTS reply
+ *     plays through this one node (lib/speechPlayer.ts).
  *   - playSyntheticSpeech: a syllable-like tone for DevPanel testing without a
  *     wav asset (Phase C acceptance).
  *   - playWavSpeech: play a .wav file via AudioBuffer, returning its analyser
@@ -26,13 +27,19 @@ export function ensureAudioContext(): AudioContext {
 
 const FFT_SIZE = 1024
 
-/** Build an analyser fed by an <audio> element. Returns the analyser; caller plays the element. */
-export function analyserFromElement(el: HTMLAudioElement): AnalyserNode {
+/**
+ * The analyser TTS speech plays through: sources → analyser → speakers.
+ *
+ * Replaces `analyserFromElement`, which tapped an <audio> element with
+ * createMediaElementSource (callable only once per element, and all-zero for a
+ * cross-origin file without CORS). Speech now arrives as decoded buffers, so
+ * the player connects each chunk's source here directly. One node for the whole
+ * reply is what lets lip sync read it continuously across chunk joins.
+ */
+export function createSpeechAnalyser(): AnalyserNode {
   const ctx = ensureAudioContext()
-  const source = ctx.createMediaElementSource(el)
   const analyser = ctx.createAnalyser()
   analyser.fftSize = FFT_SIZE
-  source.connect(analyser)
   analyser.connect(ctx.destination)
   return analyser
 }

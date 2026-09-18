@@ -1,10 +1,18 @@
-import { useState, useRef, useCallback, useEffect } from 'react'
+import { useState, useRef, useEffect, useSyncExternalStore } from 'react'
 import { useTranslation } from 'react-i18next'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
 import { Copy, ThumbsUp, ThumbsDown, Volume2, Check, Pause, Square, Loader2 } from 'lucide-react'
-import { speakText } from '../lib/api'
-import { createSpeechAudio, startSpeaking, stopSpeaking } from '../lib/speechLipSync'
+import { DEFAULT_PERSONA_ID } from '../lib/api'
+import {
+  CLIP_ABORTED,
+  CLIP_UNDECODABLE,
+  speechPlayer,
+  unlockSpeechAudio,
+  type ClipSnapshot,
+  type SpeechClip,
+} from '../lib/speechPlayer'
+import { openSpeech } from '../lib/speechSource'
 import { useMotion } from '../hooks/useMotion'
 
 export interface Message {
@@ -16,15 +24,21 @@ export interface Message {
   kind?: 'chat' | 'divider'
   /** For divider: slug/label of the character switched to */
   dividerMeta?: { to: string; toLabel?: string }
+  /** USER voice notes only: an object URL for the recording, played by a plain
+   *  <audio controls>. An assistant's voice is `speech`. */
   audioUrl?: string
-  /** Voice mode: audio for this reply is being synthesised right now. Drives the
-   *  spinner, which is the only thing that tells the user the toggle did
-   *  anything during the 30-45s wait. */
-  speechPending?: boolean
-  /** Voice mode: speak as soon as the audio lands, without waiting for a click.
-   *  "Trả lời bằng giọng nói" promises exactly this — attaching a silent audio
-   *  file looks identical to the toggle being off. */
-  autoplay?: boolean
+  /**
+   * Voice mode: this reply's audio, streaming in as it is synthesised. Created
+   * empty when the message is, so the speaker shows "audio coming" from the
+   * start; ChatContext feeds it `speech_*` events and starts playback at
+   * `speech_start`. A mutable handle, not state — chunks land in it without a
+   * re-render each, and the speaker button subscribes to it.
+   */
+  speech?: SpeechClip
+  /** The character who wrote this reply, so a replay asks for the same voice
+   *  and finds the same cache row. Absent on restored turns; the button then
+   *  uses whoever is on screen. */
+  personaId?: string
   /** One line about this reply's 3D motion: rendering, or why there is none.
    *  Cleared once the clip plays, because the avatar is then saying it. The
    *  GPU worker is off by default, so "unavailable" is the ordinary case and a
@@ -84,9 +98,8 @@ export default function ChatMessage({ message, isStreaming }: ChatMessageProps) 
         )}
         <AssistantActions
           content={message.content}
-          audioUrl={message.audioUrl}
-          speechPending={message.speechPending}
-          autoplay={message.autoplay}
+          speech={message.speech}
+          personaId={message.personaId}
           isStreaming={isStreaming}
         />
       </div>
@@ -114,15 +127,13 @@ export default function ChatMessage({ message, isStreaming }: ChatMessageProps) 
 
 function AssistantActions({
   content,
-  audioUrl,
-  speechPending,
-  autoplay,
+  speech,
+  personaId,
   isStreaming,
 }: {
   content: string
-  audioUrl?: string
-  speechPending?: boolean
-  autoplay?: boolean
+  speech?: SpeechClip
+  personaId?: string
   isStreaming?: boolean
 }) {
   const { t } = useTranslation()
@@ -159,10 +170,9 @@ function AssistantActions({
         <ThumbsDown className={`${iconSize} ${disliked ? 'text-blue-500' : ''}`} />
       </button>
       <AudioButton
-        audioUrl={audioUrl}
+        speech={speech}
+        personaId={personaId}
         text={content}
-        speechPending={speechPending}
-        autoplay={autoplay}
         btnClass={btnClass}
         iconSize={iconSize}
       />
@@ -170,212 +180,166 @@ function AssistantActions({
   )
 }
 
+const noSubscribe = () => () => {}
+const noSnapshot = () => null
+
+/** A clip's state, re-rendering when it changes; null for no clip. */
+function useClipSnapshot(clip: SpeechClip | null | undefined): ClipSnapshot | null {
+  return useSyncExternalStore<ClipSnapshot | null>(
+    clip ? clip.subscribe : noSubscribe,
+    clip ? clip.getSnapshot : noSnapshot,
+  )
+}
+
 /**
  * Speaker control for one assistant message.
  *
- * `audioUrl` is present only when the reply was voiced automatically (the
- * "Trả lời bằng giọng nói" toggle). Otherwise the first click synthesises on
- * demand — which is also the only way a restored conversation can be heard,
- * since the WAV files are not persisted with the transcript.
+ * Where the audio comes from, in order:
+ *   1. `speech` — voice mode streamed it into this message as the reply was
+ *      written. ChatContext already started it at `speech_start`; this button
+ *      only pauses, resumes and replays it.
+ *   2. This browser's IndexedDB cache (1 day, per user), keyed by text and
+ *      character — a replay after a reload makes no request at all.
+ *   3. POST /tts, streamed and played as it arrives, then cached.
+ *
+ * It holds no <audio> element and no autoplay latch. The shared player knows
+ * which clip is speaking; this button reads that and asks it to do things, so
+ * two buttons can never both believe they are the one playing.
  */
 function AudioButton({
-  audioUrl,
+  speech,
+  personaId,
   text,
-  speechPending,
-  autoplay,
   btnClass,
   iconSize,
 }: {
-  audioUrl?: string
+  speech?: SpeechClip
+  personaId?: string
   text: string
-  speechPending?: boolean
-  autoplay?: boolean
   btnClass: string
   iconSize: string
 }) {
   const { t } = useTranslation()
-  const { avatarRef } = useMotion()
-  const audioRef = useRef<HTMLAudioElement | null>(null)
+  const { avatarRef, selectedVrmId } = useMotion()
   const barRef = useRef<HTMLDivElement | null>(null)
-  const rafRef = useRef<number>(0)
   const abortRef = useRef<AbortController | null>(null)
-  const autoplayedRef = useRef(false)
-  /** Non-zero while this clip owns the avatar's mouth. */
-  const speakerRef = useRef(0)
-  const [playing, setPlaying] = useState(false)
-  const [paused, setPaused] = useState(false)
+  /** A clip this button fetched itself, from the cache or POST /tts. */
+  const [ownClip, setOwnClip] = useState<SpeechClip | null>(null)
+  /** Looking in the cache / opening the request — before any clip exists. */
+  const [opening, setOpening] = useState(false)
   const [progress, setProgress] = useState(0)
-  const [url, setUrl] = useState<string | undefined>(audioUrl)
-  const [synthesizing, setSynthesizing] = useState(false)
-  const [failed, setFailed] = useState(false)
 
-  /* An automatically-voiced reply arrives *after* the message is first rendered
-   * (speech_ready lands seconds later), so the prop has to be adopted when it
-   * changes — and the old <audio> discarded, or the element keeps the stale
-   * source and plays the previous answer. */
+  const speechSnap = useClipSnapshot(speech)
+  const ownSnap = useClipSnapshot(ownClip)
+  const player = useSyncExternalStore(speechPlayer.subscribe, speechPlayer.getSnapshot)
+
+  /* Voice mode's clip is used while it is usable. Once it has failed —
+   * speech_failed, TTS disabled, the stream cut off — this message counts as
+   * having no audio in memory, exactly like a restored one, and a click goes
+   * to the cache and then the network. */
+  const voice = speech && speechSnap && speechSnap.status !== 'failed' ? speech : null
+  const own = ownClip && ownSnap && ownSnap.status !== 'failed' ? ownClip : null
+  const clip = voice ?? own
+  const snap = voice ? speechSnap : own ? ownSnap : null
+
+  const mine = !!clip && player.clip === clip
+  const playing = mine && player.status === 'playing'
+  const paused = mine && player.status === 'paused'
+  // Audio is on its way and none has arrived yet.
+  const waiting =
+    opening || (!!snap && (snap.status === 'pending' || (snap.status === 'streaming' && snap.received === 0)))
+  // Only this button's own request counts as a failure worth showing: voice
+  // mode's failure already falls back silently, and an abort is not a fault.
+  const failed =
+    (!!ownSnap && ownSnap.status === 'failed' && ownSnap.error !== CLIP_ABORTED) ||
+    snap?.error === CLIP_UNDECODABLE
+
+  /* The progress bar reads the player's clock once per frame while playing. */
   useEffect(() => {
-    if (!audioUrl || audioUrl === url) return
-    audioRef.current?.pause()
-    audioRef.current = null
-    // eslint-disable-next-line react-hooks/set-state-in-effect -- adopt prop audioUrl, discard stale <audio> element
-    setUrl(audioUrl)
-    setPlaying(false)
-    setPaused(false)
-    setProgress(0)
-  }, [audioUrl, url])
+    if (!playing) return
+    let raf = 0
+    const tick = () => {
+      setProgress(speechPlayer.progress() * 100)
+      raf = requestAnimationFrame(tick)
+    }
+    raf = requestAnimationFrame(tick)
+    return () => cancelAnimationFrame(raf)
+  }, [playing])
 
-  const tick = useCallback(() => {
-    const a = audioRef.current
-    if (!a) return
-    setProgress((a.currentTime / a.duration) * 100 || 0)
-    // eslint-disable-next-line react-hooks/immutability -- tick self-reference via closure, stable via raf
-    rafRef.current = requestAnimationFrame(tick)
+  /* Leaving the page (or this conversation) abandons an on-demand request.
+   * The clip fails as aborted, which also stops it if it was playing. */
+  useEffect(() => {
+    return () => abortRef.current?.abort()
   }, [])
 
-  /** Release the avatar's mouth. Safe to call when it was never taken. */
-  const releaseMouth = useCallback(() => {
-    stopSpeaking(speakerRef.current, avatarRef.current)
-    speakerRef.current = 0
-  }, [avatarRef])
-
-  const handleEnded = useCallback(() => {
-    setPlaying(false)
-    setPaused(false)
-    setProgress(0)
-    cancelAnimationFrame(rafRef.current)
-    releaseMouth()
-    if (audioRef.current) audioRef.current.currentTime = 0
-  }, [releaseMouth])
-
-  /** Stop for good: unlike the play/pause toggle this also rewinds, so the next
-   *  click on the speaker starts from the beginning instead of resuming. */
-  const handleStop = useCallback(() => {
-    const a = audioRef.current
-    if (!a) return
-    a.pause()
-    a.currentTime = 0
-    setPlaying(false)
-    setPaused(false)
-    setProgress(0)
-    cancelAnimationFrame(rafRef.current)
-    releaseMouth()
-  }, [releaseMouth])
-
-  useEffect(() => {
-    return () => {
-      cancelAnimationFrame(rafRef.current)
-      audioRef.current?.pause()
-      abortRef.current?.abort()
-      releaseMouth()
-    }
-  }, [releaseMouth])
-
-  const play = useCallback(
-    async (src: string) => {
-      if (!audioRef.current) {
-        // createSpeechAudio, not `new Audio(src)`: the element has to be
-        // CORS-clean *before* it loads or the lip-sync analyser reads silence.
-        audioRef.current = createSpeechAudio(src)
-        audioRef.current.addEventListener('ended', handleEnded)
-      }
-      const el = audioRef.current
-
-      // Tap the element BEFORE playing. Once it is routed through Web Audio its
-      // sound leaves via the graph, so doing this mid-playback would drop the
-      // first moments of speech.
-      speakerRef.current = await startSpeaking(el, avatarRef.current)
-
-      el.play().then(
-        () => {
-          setPlaying(true)
-          setPaused(false)
-          rafRef.current = requestAnimationFrame(tick)
-        },
-        () => {
-          // Browsers refuse to start audio without a recent user gesture. Voice
-          // mode can land 40s after the click that sent the message, so this is
-          // a normal outcome, not a failure: leave the speaker idle and the user
-          // can press it. Never surface it as an error.
-          setPlaying(false)
-          releaseMouth()
-        },
-      )
-    },
-    [handleEnded, tick, avatarRef, releaseMouth],
-  )
-
-  /* Voice mode: speak the moment the audio lands. Guarded by a ref so a later
-   * re-render (a sibling message updating, say) cannot replay the same clip. */
-  useEffect(() => {
-    if (!autoplay || !url || autoplayedRef.current) return
-    autoplayedRef.current = true
-    play(url)
-  }, [autoplay, url, play])
-
   const handleToggle = async () => {
+    // Before any await: Safari and iOS WebViews start an AudioContext only
+    // from inside the gesture's own call stack, and the play() below may be a
+    // cache lookup away from this click.
+    unlockSpeechAudio()
+
     if (playing) {
-      audioRef.current?.pause()
-      setPlaying(false)
-      setPaused(true)
-      cancelAnimationFrame(rafRef.current)
-      // The mouth must stop with the sound, not keep moving over a paused clip.
-      releaseMouth()
+      speechPlayer.pause()
       return
     }
-
-    if (url) {
-      play(url)
+    if (paused) {
+      void speechPlayer.resume(avatarRef.current)
       return
     }
+    if (clip) {
+      // Voice mode's clip that autoplay could not start, or one that already
+      // finished: from the top, from memory, no request.
+      void speechPlayer.play(clip, avatarRef.current)
+      return
+    }
+    if (opening) return
 
-    // Voice mode already has a job running for this message — clicking must not
-    // queue a second synthesis of the same text.
-    if (speechPending) return
-
-    // Nothing to play yet — ask the server to read this message aloud.
-    if (synthesizing) return
-    setSynthesizing(true)
-    setFailed(false)
+    // Nothing in memory — the cache, then the network.
+    setOpening(true)
+    abortRef.current?.abort()
     const controller = new AbortController()
     abortRef.current = controller
     try {
-      const fresh = await speakText(text, { signal: controller.signal })
+      const fresh = await openSpeech(
+        text,
+        personaId || selectedVrmId || DEFAULT_PERSONA_ID,
+        controller.signal,
+      )
       if (controller.signal.aborted) return
-      setUrl(fresh)
-      play(fresh)
-    } catch (e) {
-      if ((e as Error).name !== 'AbortError') {
-        console.warn('[TTS] on-demand synthesis failed:', e)
-        setFailed(true)
-      }
+      setOwnClip(fresh)
+      // Straight away, even if nothing has arrived: the player schedules
+      // chunks as they land, so the first one plays the moment it decodes.
+      void speechPlayer.play(fresh, avatarRef.current)
     } finally {
-      if (!controller.signal.aborted) setSynthesizing(false)
+      if (!controller.signal.aborted) setOpening(false)
     }
   }
 
-  const handleBarClick = (e: React.MouseEvent<HTMLDivElement>) => {
-    const a = audioRef.current
-    const bar = barRef.current
-    if (!a || !bar) return
-    const rect = bar.getBoundingClientRect()
-    const pct = ((e.clientX - rect.left) / rect.width) * 100
-    a.currentTime = (pct / 100) * a.duration
-    setProgress(pct)
+  /** Stop for good: unlike pause, the next click starts from the beginning. */
+  const handleStop = () => {
+    if (mine) speechPlayer.stop()
   }
 
-  // `speechPending` is voice mode synthesising in the background; `synthesizing`
-  // is this button's own on-demand request. Both mean "wait, audio is coming".
-  const busy = synthesizing || !!speechPending
+  const handleBarClick = (e: React.MouseEvent<HTMLDivElement>) => {
+    const bar = barRef.current
+    if (!mine || !bar) return
+    const rect = bar.getBoundingClientRect()
+    const fraction = (e.clientX - rect.left) / rect.width
+    speechPlayer.seek(fraction)
+    setProgress(fraction * 100)
+  }
+
   const isActive = playing || paused
+  const shownProgress = mine ? progress : 0
 
   return (
     <div className="group flex items-center gap-1">
       <button
         className={`${btnClass} ${isActive ? 'text-foreground' : ''} ${failed ? 'text-destructive' : ''}`}
         onClick={handleToggle}
-        disabled={busy}
+        disabled={waiting}
         title={
-          busy
+          waiting
             ? t('chat.audio_generating')
             : failed
               ? t('chat.audio_failed')
@@ -383,13 +347,13 @@ function AudioButton({
                 ? t('chat.audio_pause')
                 : paused
                   ? t('chat.audio_resume')
-                  : url
+                  : clip
                     ? t('chat.audio_listen')
                     : t('chat.audio_play')
         }
         onDoubleClick={(e) => e.preventDefault()}
       >
-        {busy ? (
+        {waiting ? (
           <Loader2 className={`${iconSize} animate-spin`} />
         ) : playing ? (
           <Pause className={iconSize} />
@@ -404,7 +368,7 @@ function AudioButton({
       >
         <div
           className="h-full bg-primary rounded-full"
-          style={{ width: `${progress}%` }}
+          style={{ width: `${shownProgress}%` }}
         />
       </div>
       {/* Kept mounted and collapsed rather than unmounted, so appearing does not
@@ -440,4 +404,3 @@ function UserCopyAction({ content }: { content: string }) {
     </div>
   )
 }
-

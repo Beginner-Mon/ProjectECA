@@ -274,6 +274,173 @@ async def test_run_all_checks_runs_in_parallel():
         assert result["all_ok"] is True
 
 
+# ── redis check is conditional on STM_BACKEND ────────────────────────────────
+#
+# feature/tts-streaming removed TTS's Redis usage entirely, leaving
+# shared/stm.py's RedisStore as the only remaining consumer — and only when
+# STM_BACKEND=redis (the default). "dynamodb" and "none" never touch Redis.
+# Before this fix, /health/detailed pinged (and required) Redis
+# unconditionally, so it 503'd on every machine with no Redis running,
+# including the deployed service itself (STM_BACKEND=dynamodb, no VPC, no
+# Redis reachable at all — a pre-existing bug this surfaced rather than
+# caused). These tests exercise the REAL check_redis / redis_in_use, unlike
+# every test above that mocks check_redis away.
+
+
+@pytest.mark.unit
+@pytest.mark.asyncio
+@pytest.mark.parametrize("backend", ["none", "dynamodb"])
+async def test_check_redis_not_pinged_when_stm_backend_is_not_redis(monkeypatch, backend):
+    """STM_BACKEND=none/dynamodb: check_redis must not touch the client at
+    all (it may be None) and must report ok=True — "not used", not "down"."""
+    monkeypatch.setenv("STM_BACKEND", backend)
+    from langgraph_agents.api.health import check_redis
+
+    never_touched = MagicMock()
+    never_touched.ping = AsyncMock(side_effect=AssertionError("must not be called"))
+
+    result = await check_redis(never_touched)
+
+    assert result.ok is True
+    assert backend in result.detail
+    never_touched.ping.assert_not_called()
+
+
+@pytest.mark.unit
+@pytest.mark.asyncio
+@pytest.mark.parametrize("backend", ["redis", None])  # None = unset → default "redis"
+async def test_check_redis_pings_when_stm_backend_is_redis(monkeypatch, backend):
+    """STM_BACKEND=redis (or unset — "redis" is shared/stm.py's default too):
+    check_redis must actually ping, and a healthy ping reports ok=True with no
+    "not used" detail."""
+    if backend is None:
+        monkeypatch.delenv("STM_BACKEND", raising=False)
+    else:
+        monkeypatch.setenv("STM_BACKEND", backend)
+    from langgraph_agents.api.health import check_redis
+
+    healthy = MagicMock()
+    healthy.ping = AsyncMock(return_value=True)
+
+    result = await check_redis(healthy)
+
+    assert result.ok is True
+    assert result.detail is None
+    healthy.ping.assert_awaited_once()
+
+
+@pytest.mark.unit
+@pytest.mark.asyncio
+async def test_check_redis_down_is_unhealthy_when_stm_backend_is_redis(monkeypatch):
+    """The property the fix must NOT remove: STM_BACKEND=redis with a
+    genuinely unreachable Redis still reports ok=False."""
+    monkeypatch.setenv("STM_BACKEND", "redis")
+    from langgraph_agents.api.health import check_redis
+
+    down = MagicMock()
+    down.ping = AsyncMock(side_effect=ConnectionError("connection refused"))
+
+    result = await check_redis(down)
+
+    assert result.ok is False
+    assert "connection refused" in result.detail
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize("backend,expected", [
+    ("redis", True), ("none", False), ("dynamodb", False),
+    ("REDIS", True),  # _build_store()/_stm_backend() both lowercase it
+])
+def test_redis_in_use_reflects_stm_backend(monkeypatch, backend, expected):
+    monkeypatch.setenv("STM_BACKEND", backend)
+    from langgraph_agents.api.health import redis_in_use
+    assert redis_in_use() is expected
+
+
+@pytest.mark.unit
+def test_health_detailed_503_when_stm_backend_redis_and_redis_down(api_client, monkeypatch):
+    """End-to-end: STM_BACKEND=redis + Redis actually down → 503, unchanged
+    from before this fix. Every check except redis is patched to ok, so a 503
+    here can only be the real check_redis (not mocked in this test) doing its
+    job."""
+    client, _, _ = api_client
+    monkeypatch.setenv("STM_BACKEND", "redis")
+
+    import langgraph_agents.api.main as api_module
+    down = MagicMock()
+    down.ping = AsyncMock(side_effect=ConnectionError("connection refused"))
+    # Pre-seed the module-global so _get_health_redis() reuses this fake
+    # instead of building a real aioredis client against REDIS_URL.
+    monkeypatch.setattr(api_module, "_health_redis", down)
+
+    from langgraph_agents.api.health import CheckResult
+    with patch("langgraph_agents.api.health.check_postgres", new_callable=AsyncMock) as m_pg, \
+         patch("langgraph_agents.api.health.check_graph", new_callable=AsyncMock) as m_graph, \
+         patch("langgraph_agents.api.health.check_llm", new_callable=AsyncMock) as m_llm, \
+         patch("langgraph_agents.api.health.check_mcp", new_callable=AsyncMock) as m_mcp, \
+         patch("langgraph_agents.api.health.check_speechllm", new_callable=AsyncMock) as m_speech, \
+         patch("langgraph_agents.api.health.check_searxng", new_callable=AsyncMock) as m_searxng:
+        m_pg.return_value = CheckResult(name="postgres", ok=True, latency_ms=1.0)
+        m_graph.return_value = CheckResult(name="graph", ok=True, latency_ms=0.0)
+        m_llm.return_value = CheckResult(name="llm", ok=True, latency_ms=0.0, detail="skipped")
+        m_mcp.return_value = CheckResult(name="mcp", ok=True, latency_ms=0.0, detail="0 tool(s)")
+        m_speech.return_value = CheckResult(name="speechllm", ok=True, latency_ms=0.0, detail="skipped")
+        m_searxng.return_value = CheckResult(name="searxng", ok=True, latency_ms=0.0, detail="skipped")
+
+        resp = client.get("/health/detailed")
+
+    assert resp.status_code == 503
+    body = resp.json()
+    if isinstance(body, list):
+        body = body[0]
+    assert body["status"] == "unhealthy"
+    assert body["checks"]["redis"]["ok"] is False
+    assert body["checks"]["redis"]["critical"] is True
+    down.ping.assert_awaited()
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize("backend", ["none", "dynamodb"])
+def test_health_detailed_ok_when_stm_backend_not_redis_and_no_redis_client(api_client, monkeypatch, backend):
+    """End-to-end: STM_BACKEND=none/dynamodb → 200 even though no Redis client
+    was ever built. Also pins the "don't construct the client" half of the
+    fix: `_health_redis` must still be None after the call."""
+    client, _, _ = api_client
+    monkeypatch.setenv("STM_BACKEND", backend)
+
+    import langgraph_agents.api.main as api_module
+    # Explicit reset (monkeypatch restores this after the test regardless of
+    # what any other test left behind) rather than asserting on whatever
+    # cross-test state happened to be there already.
+    monkeypatch.setattr(api_module, "_health_redis", None)
+
+    from langgraph_agents.api.health import CheckResult
+    with patch("langgraph_agents.api.health.check_postgres", new_callable=AsyncMock) as m_pg, \
+         patch("langgraph_agents.api.health.check_graph", new_callable=AsyncMock) as m_graph, \
+         patch("langgraph_agents.api.health.check_llm", new_callable=AsyncMock) as m_llm, \
+         patch("langgraph_agents.api.health.check_mcp", new_callable=AsyncMock) as m_mcp, \
+         patch("langgraph_agents.api.health.check_speechllm", new_callable=AsyncMock) as m_speech, \
+         patch("langgraph_agents.api.health.check_searxng", new_callable=AsyncMock) as m_searxng:
+        m_pg.return_value = CheckResult(name="postgres", ok=True, latency_ms=1.0)
+        m_graph.return_value = CheckResult(name="graph", ok=True, latency_ms=0.0)
+        m_llm.return_value = CheckResult(name="llm", ok=True, latency_ms=0.0, detail="skipped")
+        m_mcp.return_value = CheckResult(name="mcp", ok=True, latency_ms=0.0, detail="0 tool(s)")
+        m_speech.return_value = CheckResult(name="speechllm", ok=True, latency_ms=0.0, detail="skipped")
+        m_searxng.return_value = CheckResult(name="searxng", ok=True, latency_ms=0.0, detail="skipped")
+
+        resp = client.get("/health/detailed")
+
+    assert resp.status_code == 200
+    body = resp.json()
+    if isinstance(body, list):
+        body = body[0]
+    assert body["status"] == "ready"
+    assert body["checks"]["redis"]["ok"] is True
+    assert backend in body["checks"]["redis"]["detail"]
+    # Nothing in this request path should have built a Redis client.
+    assert api_module._health_redis is None
+
+
 # ── check_postgres must not build its own pool ──────────────────────────────
 #
 # Regression guard for the connection leak found 05/08: the probe used to do

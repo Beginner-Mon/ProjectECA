@@ -28,7 +28,7 @@ export type CharState =
   | 'exercise' //        One-shot generated motion → idle (wide camera + cooldown)
   | 'gesture' //         One-shot per-character animation → idle (clip at runtime)
 
-export type CameraMode = 'head' | 'hips'
+export type CameraMode = 'head' | 'hips' | 'manual'
 
 export interface SubclipRange {
   name: string
@@ -65,7 +65,7 @@ interface StateBase {
   /** `'dynamic'` = supplied at runtime via `registry.update()` (generated motion). */
   source: StaticSource | 'dynamic'
   reach: Reach
-  camera: CameraMode
+  camera: Exclude<CameraMode, 'manual'>
   /** Facial policy for this body state (plan §9.4): may the face idle-wander? */
   facial: { wander: boolean; hold?: CanonicalEmotion }
   /** Present ⇒ selectable in the debug state dropdown. Absent ⇒ not manual. */

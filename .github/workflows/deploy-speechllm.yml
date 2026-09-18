@@ -1,0 +1,279 @@
+# Build the vva-speechllm container image and roll it onto the Lambda.
+#
+# Modelled on deploy-agent.yml (which itself is modelled on deploy-production.yml
+# for kimodo). Two pipelines own the same OIDC trust, same ECR, same account —
+# only the repository and function name differ.
+#
+#   * IMMUTABLE TAGS ONLY. ECR repo vva-speechllm is IMMUTABLE (speechllm_stack.py),
+#     so `latest` is not possible. Same reason as deploy-agent.
+#   * CDK OWNS THE SHAPE, CI OWNS THE CODE. This workflow never runs `cdk deploy`:
+#     it pushes an image and calls update-function-code. Changing memory (D6 chot
+#     1769/3538/5308), arch, timeout or env is a CDK deploy a human runs.
+#
+# Docker lives here and nowhere else — no developer machine needs a daemon
+# (rang buoc #5: het RAM/o C:, da co tien le).
+#
+# T10 — TWO LANES, one file. `build` runs on every listed branch and touches
+# no AWS at all (no credentials step anywhere in it): pushing
+# feature/tts-streaming proves the Dockerfile still builds, including the
+# baked-weights step. Everything that needs AWS — credentials, ECR push,
+# update-function-code — lives in `release`, gated on
+# `github.ref == 'refs/heads/release'`.
+#
+# OIDC trust is per branch — same note as deploy-agent.yml. The trust policy
+# of GitHubActionsECRRole lists exact `sub` claims, and it names `release`
+# (and kimodo-release), NOT feature branches. Opening trust for a feature
+# branch would hand everyone who can push that branch the keys to deploy,
+# so feature branches deliberately cannot reach the steps that need them —
+# the `if:` gates below are the enforcement, not just an optimisation.
+# If a branch is not trusted, assume-role fails with
+# "Not authorized to perform sts:AssumeRoleWithWebIdentity".
+
+name: Deploy SpeechLLM Image
+
+on:
+  push:
+    branches:
+      - release
+      - feature/tts-streaming
+    paths:
+      - 'SpeechLLm/**'
+      - '.github/workflows/deploy-speechllm.yml'
+  workflow_dispatch:
+
+permissions:
+  id-token: write
+  contents: read
+
+env:
+  AWS_REGION: us-east-1
+  AWS_ACCOUNT_ID: "244203483654"
+  ECR_REPOSITORY: vva-speechllm
+  FUNCTION_NAME: vva-speechllm
+
+concurrency:
+  group: deploy-speechllm
+  cancel-in-progress: false
+
+jobs:
+  # ───────────────────────────────────────────────────────────────────────────
+  # TWO jobs, two dependency sets — same split as deploy-agent.
+  #
+  # runtime-imports proves the IMAGE's dependency set is sufficient (no missing
+  # libsndfile, no undeclared direct import). unit-tests proves the CODE is
+  # correct against the FULL dependency set. Sharing an env makes each a worse
+  # test of the other.
+  # ───────────────────────────────────────────────────────────────────────────
+  runtime-imports:
+    name: "📥 Image deps import the app"
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Install the image's dependency set
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r SpeechLLm/requirements.txt
+
+      - name: Import the app (without loading the model)
+        run: |
+          # vieneu_client imports vieneu==3.6.4 which pulls onnxruntime, numpy,
+          # soundfile. The model itself is NOT loaded here — _load_model() runs
+          # only on first request / warm-up thread. This import proves the
+          # dependency closure is complete without paying 13s model load.
+          PYTHONPATH=SpeechLLm python -c "
+          from src.services.vieneu_client import VieNeuClient
+          import yaml
+          cfg = yaml.safe_load(open('SpeechLLm/configs/models.yaml'))['vieneu']
+          c = VieNeuClient(cfg)
+          print(f'client OK mode={c.mode} codec={c.codec}')
+          "
+          # Also prove api_server imports without starting uvicorn
+          PYTHONPATH=SpeechLLm python -c "
+          import api_server
+          print(f'api_server OK routes={[r.path for r in api_server.app.routes]}')
+          "
+
+  unit-tests:
+    name: "🧪 Unit tests"
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Install test dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r SpeechLLm/requirements.txt
+          pip install pytest httpx pyyaml
+
+      - name: Run SpeechLLm unit tests
+        run: PYTHONPATH=SpeechLLm pytest tests/SpeechLLm -q
+
+  # ───────────────────────────────────────────────────────────────────────────
+  # LANE 1 — build. No AWS: no credentials, no push, no deploy. Runs on every
+  # listed branch, including feature/tts-streaming, so a broken Dockerfile
+  # (bad CMD, weights baked to the wrong HF cache path) fails here in
+  # minutes instead of at Lambda INIT after a release.
+  # ───────────────────────────────────────────────────────────────────────────
+  build:
+    name: "🔨 Build image (no push)"
+    needs: [unit-tests, runtime-imports]
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: docker/setup-buildx-action@v3
+
+      # Context is REPOSITORY ROOT, not SpeechLLm/. The Dockerfile copies
+      # SpeechLLm/api_server.py, SpeechLLm/src, SpeechLLm/configs and bakes
+      # weights from HuggingFace (pnnbao-ump/VieNeu-TTS-v3-Turbo + MOSS codec)
+      # into the HF cache at /root/.cache/huggingface. That bake is what lets
+      # HF_HUB_OFFLINE=1 work without a network at cold start.
+      - name: Build (no push, no credentials)
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          file: SpeechLLm/Dockerfile
+          push: false
+          # LAMBDA CANNOT READ AN IMAGE INDEX. buildx adds provenance
+          # attestations by default since v0.10, and an attestation makes the
+          # pushed artifact an OCI image INDEX rather than a plain manifest.
+          # Lambda takes a single manifest, Docker v2 or OCI, but not an
+          # index — same trap deploy-agent.yml documents.
+          provenance: false
+          sbom: false
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+  # ───────────────────────────────────────────────────────────────────────────
+  # LANE 2 — release. Push + deploy, `release` ONLY. Every step that touches
+  # AWS carries the branch gate; without it a push to feature/tts-streaming
+  # would reach ECR with credentials it must never hold.
+  # ───────────────────────────────────────────────────────────────────────────
+  release:
+    name: "🚀 Push and deploy (release only)"
+    needs: [build]
+    if: github.ref == 'refs/heads/release'
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    outputs:
+      image-uri: ${{ steps.meta.outputs.image-uri }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: docker/setup-buildx-action@v3
+
+      - uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: arn:aws:iam::${{ env.AWS_ACCOUNT_ID }}:role/GitHubActionsECRRole
+          aws-region: ${{ env.AWS_REGION }}
+
+      - uses: aws-actions/amazon-ecr-login@v2
+        id: login-ecr
+
+      - name: Resolve image URI
+        id: meta
+        run: |
+          echo "image-uri=${{ steps.login-ecr.outputs.registry }}/${{ env.ECR_REPOSITORY }}:${{ github.sha }}" >> "$GITHUB_OUTPUT"
+
+      # Immutable tags make a re-push of the same commit an error. Re-running a
+      # workflow is a normal thing to do, so detect it and skip rather than fail
+      # on something that is not wrong.
+      - name: Skip build if this commit is already published
+        id: exists
+        run: |
+          if aws ecr describe-images \
+               --repository-name "${{ env.ECR_REPOSITORY }}" \
+               --image-ids imageTag="${{ github.sha }}" >/dev/null 2>&1; then
+            echo "already=true" >> "$GITHUB_OUTPUT"
+            echo "::notice::${{ github.sha }} is already in ECR — skipping the build."
+          else
+            echo "already=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Build and push
+        if: steps.exists.outputs.already == 'false'
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          file: SpeechLLm/Dockerfile
+          push: true
+          tags: ${{ steps.meta.outputs.image-uri }}
+          provenance: false
+          sbom: false
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      # The function may not exist yet: a container Lambda cannot be created
+      # before an image is pushed, so the FIRST run of this workflow legitimately
+      # has nothing to update. Every step after this one is gated on the answer
+      # (an `exit 0` here would end the STEP, not the JOB, and the smoke step
+      # would still run into ResourceNotFoundException — a bug deploy-agent.yml
+      # already hit once).
+      - name: Does the function exist yet?
+        id: fn
+        run: |
+          if aws lambda get-function --function-name "${{ env.FUNCTION_NAME }}" >/dev/null 2>&1; then
+            echo "exists=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "exists=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: First run — the image is pushed, the function is not created
+        if: steps.fn.outputs.exists == 'false'
+        run: |
+          echo "::notice::${{ env.FUNCTION_NAME }} does not exist yet — this is the bootstrap run."
+          echo "The image is in ECR. Create the function with:"
+          echo "    cdk deploy VvaSpeechllmStack -c speechllm_image_tag=${{ github.sha }} -c agent_role_arn=<ARN of vva-agent>"
+          echo "Every run after that updates it in place."
+
+      - name: Update the function code
+        if: steps.fn.outputs.exists == 'true'
+        run: |
+          set -euo pipefail
+          aws lambda update-function-code \
+            --function-name "${{ env.FUNCTION_NAME }}" \
+            --image-uri "${{ steps.meta.outputs.image-uri }}" \
+            --publish >/dev/null
+
+          aws lambda wait function-updated \
+            --function-name "${{ env.FUNCTION_NAME }}"
+
+          echo "::notice::${{ env.FUNCTION_NAME }} now runs ${{ github.sha }}"
+
+      # Smoke by STATE, not by invocation. Since T9 the CI role is Denied at
+      # the resource policy — calling the function from here 403s by design,
+      # so the old invocation-based smoke would fail on a healthy deploy.
+      # State=Active + LastUpdateStatus=Successful means Lambda accepted AND
+      # unpacked the image; a bad CMD or missing libsndfile still only shows
+      # at first invocation, which D6's warm-up ping covers on the live stack.
+      - name: Smoke the new image
+        if: steps.fn.outputs.exists == 'true'
+        run: |
+          set -euo pipefail
+          state=$(aws lambda get-function \
+            --function-name "${{ env.FUNCTION_NAME }}" \
+            --query 'Configuration.State' --output text)
+          update_status=$(aws lambda get-function \
+            --function-name "${{ env.FUNCTION_NAME }}" \
+            --query 'Configuration.LastUpdateStatus' --output text)
+
+          echo "State=${state} LastUpdateStatus=${update_status}"
+
+          if [ "${state}" != "Active" ] || [ "${update_status}" != "Successful" ]; then
+            echo "::error::${{ env.FUNCTION_NAME }} is not healthy after update (State=${state}, LastUpdateStatus=${update_status}). Check CloudWatch for INIT errors."
+            exit 1
+          fi

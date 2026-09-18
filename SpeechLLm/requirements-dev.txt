@@ -1,0 +1,24 @@
+# SpeechLLm — tools that are NOT part of the running service.
+#
+#     pip install -r requirements.txt -r requirements-dev.txt
+#
+# Kept separate so the deployed image does not carry them. sounddevice in
+# particular binds PortAudio and wants a sound card: useful on a laptop that is
+# recording a reference voice, meaningless in a container that only synthesises.
+
+# ── Recording reference voices (record_voice.py) ─────────────────────────────
+# NOTE for stage 1: record_voice.py still defaults to sample_rate=24000, which
+# was right for the retired v2 path. v3turbo outputs 48 kHz, so that default
+# should be raised to 48000 before any new voice is recorded — otherwise every
+# new reference is capped at half the bandwidth the model can use.
+sounddevice==0.5.5
+
+# soundfile also arrives transitively through vieneu; declared because
+# record_voice.py imports it directly.
+soundfile==0.14.0
+
+# ── Tests ────────────────────────────────────────────────────────────────────
+# The CI job installs these separately (see .github/workflows/release-tests.yml),
+# listed here so a developer can reproduce the suite with one command.
+pytest
+httpx

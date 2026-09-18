@@ -1,8 +1,8 @@
 """FastAPI layer for the LangGraph v2.5 pipeline.
 
-POST /chat        → SSE stream (stage + tool + token + done events)
-POST /tts         → fire a TTS job, returns a task id
-GET  /tts/{task_id}/result   → poll Redis for TTS result (fallback)
+POST /chat        → SSE stream (stage + tool + token + speech_* + done events)
+POST /tts         → SSE stream of speech_* events for text the user asked to
+                     hear (the per-message speaker button)
 GET  /health      → liveness (no dependency checks)
 GET  /health/detailed → readiness (parallel DB/Redis/LLM checks, 3s timeout each)
 DELETE /sessions/{sid}/messages/{mid}, DELETE /me → GDPR
@@ -16,6 +16,7 @@ which a Lambda cannot do, since the sandbox freezes when the response returns.
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import json
 import os
 import time
@@ -44,16 +45,17 @@ from langgraph_agents.api.routes_characters import router as characters_router
 from langgraph_agents.api.routes_crud import router as crud_router
 from langgraph_agents.api.routes_preferences import router as preferences_router
 from langgraph_agents.api.schemas import (
-    ChatRequest, TTSRequest, TTSTaskResponse,
+    ChatRequest, TTSRequest,
 )
 from langgraph_agents.api.sse import encode_event, stream_response
 from langgraph_agents.graph import build_graph_async
 from langgraph_agents.nodes._persona_loader import (
     get_persona, get_ui_string, preload_personas_from_db,
 )
-from langgraph_agents.services.vieneu_tts.tasks import synthesize_speech_async
+from langgraph_agents.services.exceptions import ServiceUnavailableError
+from langgraph_agents.services.vieneu_tts.client import get_vieneu_tts_client
 from langgraph_agents.services.vieneu_tts.voice import resolve_voice
-from langgraph_agents.nodes.summarizer import maybe_summarize
+from langgraph_agents.nodes.summarizer import maybe_summarize, _pending_summarizer_tasks
 from langgraph_agents.db.session_store import (
     load_session_messages, populate_stm_from_messages, write_session_turn,
 )
@@ -64,7 +66,7 @@ from langgraph_agents.shared import get_pg_client
 from langgraph_agents.shared.env import env_source
 from langgraph_agents.shared.stm import get_stm
 from langgraph_agents.shared.preflight import run_preflight
-from langgraph_agents.api.health import run_all_checks
+from langgraph_agents.api.health import run_all_checks, redis_in_use
 
 logger = get_logger("langgraph.api")
 
@@ -75,13 +77,26 @@ logger = get_logger("langgraph.api")
 # spawned later get the default None).
 
 _graph = None
-_redis: aioredis.Redis | None = None
 
-# Keep strong references to fire-and-forget TTS tasks. asyncio.create_task
-# returns a Task that the event loop only holds via a WEAK reference — if
-# garbage collected mid-execution the task silently vanishes. Storing the
-# Task in this set + removing it via done_callback prevents GC.
-_pending_tts_tasks: set = set()
+# Redis used to be shared by two very different consumers: TTS task results
+# (write once, poll every 250ms for up to 130s) and this readiness probe (one
+# `PING`). feature/tts-streaming removes the first consumer entirely — the TTS
+# path forwards audio chunks straight through the open SSE connection now, no
+# task, no Redis key, no task id (see _stream_speech below and
+# services/vieneu_tts/client.py::synthesize_stream). What is left below is
+# ONLY for /health/detailed's "redis" check, and even that is now conditional:
+# health.redis_in_use() reports whether STM_BACKEND is actually "redis"
+# (shared/stm.py — "dynamodb" and "none" never touch Redis at all), and
+# health_detailed() below only calls _get_health_redis() when it is. Building
+# an unused client used to be harmless on its own (aioredis.from_url doesn't
+# dial until first command) — but check_redis WOULD have pinged it anyway,
+# turning "redis" into a critical dependency for every deployment that has no
+# Redis running, deployed (STM_BACKEND=dynamodb, no VPC, no Redis reachable
+# from there at all) included. Lazily built and reused across requests once
+# it IS needed, for the same reason the old client was: a fresh
+# aioredis.from_url() per request the load balancer sends (every ~10s per
+# check_postgres's docstring) would open and never close a socket.
+_health_redis: aioredis.Redis | None = None
 
 # Node names that emit stage events (Phase 6.9: conversation node removed)
 _STAGE_NODES = {
@@ -105,28 +120,22 @@ def tts_enabled() -> bool:
     return bool(os.getenv("VIENEU_TTS_URL", "").strip())
 
 
-def _get_redis() -> aioredis.Redis:
-    """Redis for TTS task results ONLY. Short-term memory goes through get_stm().
+def _get_health_redis() -> aioredis.Redis:
+    """Redis for the /health/detailed readiness probe ONLY.
 
-    The two used to share this client and a hardcoded localhost URL. They are
-    separated because they have different requirements: STM is one small read
-    and one write per turn, so it tolerates any key-value store and now runs on
-    DynamoDB when deployed (shared/stm.py). `_poll_speech_result` polls every
-    250ms for up to 130 seconds — 520 reads per answer — which is a genuine
-    Redis-shaped workload and the one place where the latency argument holds.
-
-    Nothing reaches this while TTS is off (VIENEU_TTS_URL unset), and the URL is
-    read from the environment rather than hardcoded so that turning TTS back on
-    does not require finding this line.
+    Not the STM store (get_stm() in shared/stm.py) and not, any more, a TTS
+    client — see the module docstring on `_health_redis` above for why this
+    still exists at all. Same REDIS_URL as STM's RedisStore reads, since
+    locally they are the same Redis; this just never touches STM's keyspace.
     """
-    global _redis
-    if _redis is None:
-        _redis = aioredis.from_url(
+    global _health_redis
+    if _health_redis is None:
+        _health_redis = aioredis.from_url(
             os.getenv("REDIS_URL", "redis://localhost:6379/0"),
             socket_timeout=5,
             socket_connect_timeout=5,
         )
-    return _redis
+    return _health_redis
 
 
 def _get_graph():
@@ -152,11 +161,14 @@ async def lifespan(application: FastAPI):
     global _graph
     _graph = await build_graph_async()
 
-    # `_get_redis()` used to be called here. Removed 21-08: it only constructed a
-    # lazy client (redis.asyncio does not dial until first command), so it proved
-    # nothing about reachability while making every deployment look like it
-    # needed a Redis. TTS opens its own on first use; short-term memory no longer
-    # goes through Redis at all — see shared/stm.py.
+    # `_get_health_redis()` used to be called here (as `_get_redis()`). Removed
+    # 21-08: it only constructed a lazy client (redis.asyncio does not dial
+    # until first command), so it proved nothing about reachability while
+    # making every deployment look like it needed a Redis. It is now built,
+    # still lazily, on the first /health/detailed call — TTS does not use
+    # Redis at all any more (feature/tts-streaming: chunks forward straight
+    # through the open SSE stream), and short-term memory has its own client —
+    # see shared/stm.py.
     #
     # Character personas live in the DB (characters.persona) but get_persona is
     # synchronous, so they are read once here rather than per request. Returns 0
@@ -170,8 +182,8 @@ async def lifespan(application: FastAPI):
         "config_source": env_source(),
     })
     yield
-    if _redis is not None:
-        await _redis.aclose()
+    if _health_redis is not None:
+        await _health_redis.aclose()
     logger.info("shutdown", extra={"event": "lifespan_end"})
 
 
@@ -224,7 +236,12 @@ def create_app() -> FastAPI:
     async def health_detailed():
         """Readiness — parallel checks with timeouts, breaker status, MCP."""
         graph = _get_graph()
-        redis_client = _get_redis()
+        # Only build a Redis client when STM_BACKEND=redis would actually use
+        # one — health.check_redis() short-circuits to the same "not used"
+        # result on its own if this ever passed a client anyway, but building
+        # one here unconditionally used to mean a fresh socket target for
+        # every deployment that runs no Redis at all. See health.redis_in_use.
+        redis_client = _get_health_redis() if redis_in_use() else None
         result = await run_all_checks(graph, redis_client)
         # 503 only when a CRITICAL dep is down (see health.CRITICAL_CHECKS).
         # A failing optional dep reports status "degraded" on a 200 so the
@@ -300,24 +317,31 @@ def create_app() -> FastAPI:
 
         return stream_response(event_generator())
 
-    @application.post("/tts", response_model=TTSTaskResponse)
+    @application.post("/tts")
     async def tts_synthesize(body: TTSRequest):
-        """Fire a TTS job for text the user asked to hear, return its task id.
+        """Stream synthesized speech for text the user has already read and
+        chose to hear — the per-message speaker button, used when a message's
+        audio is gone (e.g. the frontend's IndexedDB cache evicted it, or the
+        browser was reloaded) and needs to be resynthesized on demand.
 
-        Returns immediately rather than blocking: VieNeu runs on CPU at roughly
-        18ms per character, so a full clinical answer is 30-45s. The caller polls
-        GET /tts/{task_id}/result, which already exists for the /chat path.
+        Returns an SSE stream of the same speech_start/speech_chunk/speech_end/
+        speech_failed events /chat emits, via the shared _stream_speech()
+        helper — no task id to return any more, because there is no
+        fire-and-forget task: this handler is itself the long-lived request,
+        forwarding chunks the moment SpeechLLm produces them (see
+        _stream_speech). The old version returned a task id immediately and
+        made the caller poll GET /tts/{task_id}/result, which needed Redis as
+        a relay; that route and the Redis-backed task it polled for are both
+        gone (feature/tts-streaming).
 
-        503 rather than a task id when no TTS service is configured. Handing back
-        an id would be worse than an error: the caller would poll a key that
-        nothing will ever write, and give up only on its own timeout.
+        503 — not a stream that opens and immediately fails, and not a task id
+        nothing will ever resolve — when no TTS service is configured at all.
         """
         if not tts_enabled():
             raise HTTPException(
                 503, "text-to-speech is not configured on this deployment",
             )
 
-        task_id = str(uuid.uuid4())
         persona = get_persona(body.persona_id)
         # No query to fall back on here — /tts is given loose text, not a turn.
         # The character's own language is the last resort instead.
@@ -326,27 +350,12 @@ def create_app() -> FastAPI:
             body.text,
             persona_lang=persona.get("voice_identity", {}).get("language", "vi"),
         )
-        task = asyncio.create_task(synthesize_speech_async(
-            text=body.text,
-            task_id=task_id,
-            voice_path=voice_path,
-            language=language,
-        ))
-        # Same reason as the /chat path: without a strong reference the event
-        # loop may garbage-collect a task nobody is awaiting.
-        _pending_tts_tasks.add(task)
-        task.add_done_callback(_pending_tts_tasks.discard)
-        return TTSTaskResponse(task_id=task_id)
 
-    @application.get("/tts/{task_id}/result")
-    async def tts_result(task_id: str):
-        raw = await _get_redis().get(f"task_result:{task_id}")
-        if raw is None or not isinstance(raw, (bytes, str)):
-            raise HTTPException(404, "Task not ready or expired")
-        try:
-            return json.loads(raw)
-        except (json.JSONDecodeError, TypeError):
-            raise HTTPException(500, "Corrupt task result in cache")
+        async def event_generator():
+            async for sse_event in _stream_speech(body.text, voice_path, language):
+                yield sse_event
+
+        return stream_response(event_generator())
 
     @application.get("/motion/{job_id}")
     async def motion_status_endpoint(job_id: str, uid: str = Depends(current_user_id)):
@@ -485,7 +494,6 @@ async def _stream_chat(req, request_id, config, state, background_tasks, request
     """
     t0 = time.time()
     final_state: dict = {}
-    speech_task_id: str | None = None
     conversation_stage_started = False
 
     graph = _get_graph()
@@ -604,35 +612,56 @@ async def _stream_chat(req, request_id, config, state, background_tasks, request
         except Exception as exc:
             logger.warning("session_persist_failed", extra={"error": str(exc)})
 
-    # Background summarizer M.5 — fire-and-forget after session write
+    # Background summarizer M.5 — SCHEDULED, not awaited. Diagnosed 11-09
+    # alongside write_session_turn above (see that function's docstring): the
+    # send button stayed in "stop" for 6.5-7.9s after the answer text was
+    # already fully shown, on text-mode turns with no TTS involved.
+    # maybe_summarize's OWN body — before it ever gets to the point of
+    # backgrounding _run_summarize — does two Neon round trips just to decide
+    # whether enough NEW tokens have accumulated (fetchval, then a fetch of
+    # every uncached message's content). None of that outcome is needed for
+    # THIS turn's response; it only ever matters for a FUTURE turn's context.
+    # `await`ing it here bought nothing but latency.
+    #
+    # Lambda caveat: a task the runtime freezes mid-flight when the response
+    # returns just doesn't finish this turn — no different from the exposure
+    # _run_summarize (a task-of-a-task, scheduled from inside maybe_summarize
+    # once IT decides there is enough to summarize) already had. Both are
+    # idempotent by construction: a frozen check re-runs its own query on the
+    # NEXT turn and either now sees enough tokens or still doesn't — there is
+    # no partial state to recover, because nothing has been written yet at
+    # the point a freeze could land.
     if final_state.get("final_answer"):
-        try:
-            await maybe_summarize(req.session_id)
-        except Exception as exc:
-            logger.warning("summarizer_check_failed", extra={"error": str(exc)})
+        summarizer_task = asyncio.create_task(maybe_summarize(req.session_id))
+        # Strong reference — same reason _pending_summarizer_tasks already
+        # exists (nodes/summarizer.py, also used by the GDPR delete-message
+        # route below): asyncio.create_task() only holds a WEAK one, and a
+        # task the event loop garbage-collects mid-run vanishes silently.
+        _pending_summarizer_tasks.add(summarizer_task)
+        summarizer_task.add_done_callback(_pending_summarizer_tasks.discard)
 
-    # Fire TTS if needed
+    # Speak the answer if requested. This used to fire a background task,
+    # yield speech_pending, and poll Redis every 250ms for up to 130s — SpeechLLm
+    # built one complete wav before responding at all, so there was nothing to
+    # forward until it finished. Now SpeechLLm streams, so the producer
+    # (SpeechLLm) and the consumer (this generator) run in the SAME async
+    # generator: _stream_speech opens one httpx stream and `yield`s each
+    # translated SSE event as it arrives. No task, no queue, no Redis, no
+    # task_id — see _stream_speech below.
     if req.output_mode in ("speech", "both") and final_state.get("final_answer"):
         if not tts_enabled():
-            # Emit speech_disabled, and specifically NOT speech_pending.
+            # Emit speech_disabled, and specifically NOT a "pending" event.
             #
-            # The difference matters to the client, not just to the log.
-            # speech_pending is a promise that speech_ready or speech_failed
-            # follows; the UI shows "generating audio" and waits for it. With no
-            # TTS service configured, nothing would ever follow, so the promise
-            # would be a permanent spinner.
-            #
-            # The alternative — letting the code below run anyway — is worse than
-            # a spinner. _poll_speech_result waits 130 seconds, and on Lambda a
-            # streaming invocation is billed for its FULL duration even after the
-            # client disconnects. Every voice turn would cost two minutes of
-            # memory to reach a failure that was knowable up front.
+            # The difference matters to the client, not just to the log. A
+            # "pending" event is a promise that a speech event follows; the UI
+            # shows "generating audio" and waits for it. With no TTS service
+            # configured, nothing would ever follow, so the promise would be a
+            # permanent spinner.
             logger.info("speech_disabled", extra={"reason": "VIENEU_TTS_URL not set"})
             yield encode_event("speech_disabled", {
                 "reason": "text-to-speech is not configured on this deployment",
             })
         else:
-            speech_task_id = str(uuid.uuid4())
             persona = get_persona(req.persona_id)
             # The query is the tie-breaker: a reply of "Có." or "OK" carries no
             # language signal, and the synthesizer was told to answer in the
@@ -643,27 +672,16 @@ async def _stream_chat(req, request_id, config, state, background_tasks, request
                 query=req.query,
                 persona_lang=persona.get("voice_identity", {}).get("language", "vi"),
             )
-            # asyncio.create_task fires immediately (parallel with the polling
-            # loop below). FastAPI BackgroundTasks would run only AFTER the
-            # streaming response generator returns — but we're still streaming,
-            # so the task would never start until our 15s poll already timed
-            # out. Wrong order. Strong reference via _pending_tts_tasks
-            # prevents GC of the task.
-            _tts_task = asyncio.create_task(synthesize_speech_async(
-                text=final_answer,
-                task_id=speech_task_id,
-                voice_path=voice_path,
-                language=speech_language,
-            ))
-            _pending_tts_tasks.add(_tts_task)
-            _tts_task.add_done_callback(_pending_tts_tasks.discard)
-            yield encode_event("speech_pending", {"task_id": speech_task_id})
-
-            # Must outlast the TTS client's own timeout
-            # (services.vieneu_tts.timeout, 120s). Give up sooner and we emit
-            # speech_failed while the task is still running, then it writes
-            # speech_ready to Redis that nobody reads.
-            async for sse_event in _poll_speech_result(speech_task_id, timeout=130):
+            # Nice property, worth being explicit about: this is an ordinary
+            # `async for` over the SAME generator FastAPI is already streaming
+            # to the browser. If the browser disconnects, EventSourceResponse
+            # closes this generator (GeneratorExit), which unwinds out of
+            # _stream_speech's `async with` blocks and closes the httpx stream
+            # to SpeechLLm, which stops synthesizing. The old background task
+            # had no such link — a closed tab left `synthesize_speech_async`
+            # running to completion on the CPU for audio nobody would ever
+            # fetch.
+            async for sse_event in _stream_speech(final_answer, voice_path, speech_language):
                 yield sse_event
 
     elapsed_ms = round((time.time() - t0) * 1000)
@@ -671,44 +689,112 @@ async def _stream_chat(req, request_id, config, state, background_tasks, request
         "elapsed_ms": elapsed_ms,
         "total_tokens": final_state.get("total_tokens", 0),
         "required_outputs": final_state.get("required_outputs", []),
-        "speech_task_id": speech_task_id,
     })
 
+    # No speech_task_id: there is no task any more, so nothing for the client
+    # to look one up by. The frontend slice of this change is told not to rely
+    # on this field.
     yield encode_event("done", {
         "request_id": request_id,
         "total_tokens": final_state.get("total_tokens", 0),
         "required_outputs": final_state.get("required_outputs", []),
-        "speech_task_id": speech_task_id,
     })
 
 
-# ── Speech polling helper ──────────────────────────────────────────
+# ── Speech streaming helper ─────────────────────────────────────────
 
 
-async def _poll_speech_result(task_id: str, timeout: float = 15.0):
-    """Poll Redis task_result:{task_id} every 250ms up to timeout.
+async def _stream_speech(text: str, voice_path: str | None, language: str | None):
+    """Turn one SpeechLLm NDJSON stream into speech_* SSE events.
 
-    Yields:
-        - encode_event("speech_ready", {...}) when payload event="speech_ready"
-        - encode_event("speech_failed", {...}) when payload event="speech_failed"
-        - encode_event("speech_failed", ...) on timeout
+    Shared by /chat's speech block and POST /tts — both need the exact same
+    translation from client.synthesize_stream()'s
+    {"type": "start"|"chunk"|"end"|"error"} lines to the
+    speech_start/speech_chunk/speech_end/speech_failed events the browser
+    listens for (see the CONTRACT table in the plan this change implements).
+    One copy here is what makes it impossible for the two call sites to drift
+    on what a "chunk" event looks like.
+
+    Yields already-encoded SSE event dicts (encode_event output) — ready to
+    `yield` straight out of a FastAPI event generator, same shape as every
+    other event in this module.
     """
-    deadline = asyncio.get_event_loop().time() + timeout
-    key = f"task_result:{task_id}"
-
-    while asyncio.get_event_loop().time() < deadline:
-        raw = await _get_redis().get(key)
-        if raw is not None and isinstance(raw, (bytes, str)):
-            try:
-                payload = json.loads(raw)
-                event_name = payload.get("event", "speech_failed")
-                yield encode_event(event_name, payload)
-                return
-            except json.JSONDecodeError:
-                pass
-        await asyncio.sleep(0.25)
-
-    yield encode_event("speech_failed", {
-        "task_id": task_id,
-        "error": f"TTS task timeout after {timeout}s",
-    })
+    client = get_vieneu_tts_client()
+    try:
+        # contextlib.aclosing, not a bare `async for`: this loop `return`s the
+        # moment it sees "end" or "error" (see below), which — without this —
+        # would leave client.synthesize_stream()'s generator to be torn down
+        # whenever the garbage collector next gets to it, not deterministically
+        # when this function stops using it. aclosing() calls .aclose() on the
+        # inner generator on every exit path (normal, `return`, or an
+        # exception raised here or by the caller disconnecting), which is what
+        # actually closes the underlying httpx stream to SpeechLLm on the spot
+        # — the property this function's own module docstring promises the
+        # caller (see the /chat speech block in _stream_chat).
+        async with contextlib.aclosing(client.synthesize_stream(
+            text=text, voice_path=voice_path, language=language,
+        )) as events:
+            async for event in events:
+                event_type = event.get("type")
+                if event_type == "start":
+                    yield encode_event("speech_start", {
+                        "voice_version": event.get("voice_version"),
+                        "codec": event.get("codec"),
+                        "sample_rate": event.get("sample_rate"),
+                        # The reference wav — and so voice_version, its hash —
+                        # is per (persona, language): anne_vi.wav and
+                        # anne_en.wav always hash differently. Without `lang`
+                        # here the frontend's cache can only key staleness by
+                        # persona, so every language switch in a bilingual
+                        # conversation looked exactly like Anne's voice having
+                        # been re-recorded, and purged the OTHER language's
+                        # still-valid cached audio too. `language` is this
+                        # function's own parameter (resolve_voice()'s output
+                        # at both call sites) — SpeechLLm's "start" line itself
+                        # carries no language field, so this is not read off
+                        # `event`.
+                        "lang": language,
+                    })
+                elif event_type == "chunk":
+                    yield encode_event("speech_chunk", {
+                        "seq": event.get("seq"),
+                        "codec": event.get("codec"),
+                        "audio": event.get("audio"),
+                    })
+                elif event_type == "end":
+                    yield encode_event("speech_end", {"chunks": event.get("chunks")})
+                    return
+                elif event_type == "error":
+                    # SpeechLLm's own report of a mid-stream failure — not a
+                    # transport error, so the client already left the circuit
+                    # breaker alone for this one. Still ends the turn the same
+                    # way a transport failure does: one speech_failed, then
+                    # stop.
+                    #
+                    # `extra` key is "tts_message", not "message" — LogRecord
+                    # already reserves "message" for the formatted log line,
+                    # and passing it in `extra` raises KeyError from inside
+                    # logging itself (a test failure that only ever a real
+                    # error line would have surfaced).
+                    logger.warning("speech_stream_error", extra={
+                        "tts_message": event.get("message"),
+                    })
+                    yield encode_event("speech_failed", {
+                        "error": event.get("message") or "TTS error",
+                    })
+                    return
+                else:
+                    # Forward-compatible: an event type this code does not
+                    # know about yet is dropped, not treated as fatal —
+                    # SpeechLLm and the agent deploy independently, so a new
+                    # event type showing up here should not break existing
+                    # turns.
+                    logger.warning("speech_stream_unknown_event_type", extra={
+                        "event_type": event_type,
+                    })
+    except ServiceUnavailableError as exc:
+        # Breaker open, connect/HTTP failure, stream drop, or malformed
+        # NDJSON — client.synthesize_stream() already recorded the breaker
+        # failure; this just turns it into the one event the browser expects.
+        logger.error("speech_stream_unavailable", extra={"error": str(exc)})
+        yield encode_event("speech_failed", {"error": str(exc)})

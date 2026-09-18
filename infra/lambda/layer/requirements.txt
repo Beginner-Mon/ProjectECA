@@ -1,1 +1,8 @@
 pg8000>=1.31.2
+# Pure-Python CloudFront URL signing for the characters Lambda
+# (infra/lambda/layer/shared/signing.py). Deliberately NOT `cryptography`:
+# the layer bundles with a plain host-side `pip install` and no --platform
+# flag, so `cryptography` would install a Windows wheel into a Linux layer —
+# synth green, deploy green, ImportError at Lambda import. `rsa` publishes
+# py3-none-any wheels; the bundler's native-extension scan stays clean.
+rsa>=4.9

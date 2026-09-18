@@ -9,15 +9,18 @@ import {
 } from 'react'
 import type { Message } from '../components/ChatMessage'
 import {
-  getSession, listSessions, deleteSession, streamChat, fetchMotionStatus,
+  getSession, listSessions, deleteSession, streamChat, fetchMotionStatus, DEFAULT_PERSONA_ID,
   type SessionMessage,
 } from '../lib/api'
+import { CLIP_ABORTED, SpeechClip, speechPlayer, unlockSpeechAudio } from '../lib/speechPlayer'
+import { routeSpeechEvent } from '../lib/speechSource'
+import { createTurnLifecycle } from '../lib/turnLifecycle'
 import { pollMotionJob } from '../lib/motionJob'
 import { clearSessionPointer, readSessionPointer, stampSessionPointer } from '../lib/chatSession'
 import { useMotion } from '../hooks/useMotion'
 import { ChatContext, type ChatContextType, type SessionItem } from '../hooks/useChat'
-import { uiStringsFor, getGreeting, type UiStrings } from '../lib/characterCopy'
-import { withGreeting } from '../lib/greeting'
+import { uiStringsFor, getGreetingForSlot, getTimeSlot, buildGreetingKey, type UiStrings } from '../lib/characterCopy'
+import { resolveGreeting, type CapturedGreeting } from '../lib/greeting'
 import { useLocale } from '../hooks/useLocale'
 
 export type { SessionItem, ChatContextType } from '../hooks/useChat'
@@ -43,12 +46,12 @@ const GREETING_ID = '1'
  * button on the first message played a fixed clip that had nothing to do with
  * the text. That was debug scaffolding and is gone.
  */
-function buildInitialMessages(ui: UiStrings): Message[] {
+function buildInitialMessages(text: string): Message[] {
   return [
     {
       id: GREETING_ID,
       role: 'assistant',
-      content: getGreeting(ui),
+      content: text,
       timestamp: new Date(),
     },
   ]
@@ -57,7 +60,7 @@ function buildInitialMessages(ui: UiStrings): Message[] {
 
 
 export function ChatProvider({ children }: { children: ReactNode }) {
-  const { transitionTo, selectedVrmId, vrmOptions, playMotionFile, registerSessionMotion, consumePreviousAvatar } =
+  const { transitionTo, selectedVrmId, vrmOptions, playMotionFile, registerSessionMotion, consumePreviousAvatar, avatarRef } =
     useMotion()
 
   /** Copy for whoever is on screen, in the language the site is being read in.
@@ -71,20 +74,32 @@ export function ChatProvider({ children }: { children: ReactNode }) {
   const uiRef = useRef<UiStrings>(ui)
   uiRef.current = ui
 
+  /** The slot+text pair actually on screen in the greeting bubble right now.
+   *  Set ONLY where the bubble's text is written (here, and the two
+   *  `resolveGreeting` effects below, and `startNewSession`/`switchToSession`)
+   *  — never recomputed from the live clock at render time. Everything that
+   *  must agree with the caption (the greeting key, the voice clip) reads
+   *  this ref instead of calling `getTimeSlot()` itself. */
+  const displayedGreetingRef = useRef<CapturedGreeting | null>(null)
+
   // Neutral copy, not this character's — the catalog has not resolved on the
   // first render and a wrong name is worse than no name. The effect below swaps
   // in the character's own greeting once `selectedVrmId` settles. Passing no
   // character is what selects that neutral set, now per locale.
-  const [messages, setMessages] = useState<Message[]>(() =>
-    buildInitialMessages(uiStringsFor(null, locale)),
-  )
+  const [messages, setMessages] = useState<Message[]>(() => {
+    const slot = getTimeSlot()
+    const text = getGreetingForSlot(uiStringsFor(null, locale), slot)
+    displayedGreetingRef.current = { slot, text }
+    return buildInitialMessages(text)
+  })
   const [input, setInput] = useState('')
   const [isTyping, setIsTyping] = useState(false)
   const [isGenerating, setIsGenerating] = useState(false)
   const [stageLabel, setStageLabel] = useState<string | null>(null)
   const [webSearch, setWebSearch] = useState(false)
-  // Off by default: VieNeu runs on CPU and takes ~10-20s for a long Vietnamese
-  // answer, and the backend holds the SSE stream open until it finishes.
+  // Off by default. With it on, the voice starts ~0.5s after synthesis does,
+  // but VieNeu is CPU-only and the backend holds the SSE stream open for
+  // roughly half the spoken length while it generates the rest.
   const [voiceReply, setVoiceReply] = useState(false)
   const [isRestoring, setIsRestoring] = useState(true)
   const [imageUrls, setImageUrls] = useState<string[]>([])
@@ -164,7 +179,13 @@ export function ChatProvider({ children }: { children: ReactNode }) {
   useEffect(() => {
     if (isRestoring) return
     if (!selectedVrmId) return
-    setMessages((prev) => withGreeting(prev, GREETING_ID, getGreeting(uiRef.current)))
+    const slot = getTimeSlot()
+    const candidate: CapturedGreeting = { slot, text: getGreetingForSlot(uiRef.current, slot) }
+    setMessages((prev) => {
+      const { messages: next, captured } = resolveGreeting(prev, GREETING_ID, candidate, displayedGreetingRef.current)
+      displayedGreetingRef.current = captured
+      return next
+    })
     prevVrmRef.current = selectedVrmId
   }, [selectedVrmId, isRestoring])
 
@@ -182,8 +203,79 @@ export function ChatProvider({ children }: { children: ReactNode }) {
    * above already follows.
    */
   useEffect(() => {
-    setMessages((prev) => withGreeting(prev, GREETING_ID, getGreeting(uiRef.current)))
+    const slot = getTimeSlot()
+    const candidate: CapturedGreeting = { slot, text: getGreetingForSlot(uiRef.current, slot) }
+    setMessages((prev) => {
+      const { messages: next, captured } = resolveGreeting(prev, GREETING_ID, candidate, displayedGreetingRef.current)
+      displayedGreetingRef.current = captured
+      return next
+    })
   }, [locale])
+
+  // ── Greeting voice (T7, fix #1) ─────────────────────────────────────────
+  // The opening line, spoken from a pre-rendered /audio clip: caption and
+  // voice come from the same ui_strings (lib/greetingAudio.ts), bytes come
+  // from cache or CloudFront — never from SpeechLLm, so a greeting costs no
+  // synthesis. Playback runs through speechPlayer, so the avatar lip-syncs.
+  // Text is already on screen (withGreeting above); audio is chrome shaped
+  // like a message, and any failure here stays text-only — never a bubble.
+  //
+  // The effect depends ONLY on stable primitives — never on the vrmOptions
+  // ARRAY. Reloading the catalog (e.g. opening the picker before the first
+  // message) builds a fresh array with fresh object identities; depending on
+  // it re-ran this effect and Anne greeted twice — or cut her own greeting
+  // off mid-play and restarted. And greetedKeyRef records which greeting key
+  // already sounded: a re-render with the same key plays nothing.
+  const greetingCharacter = vrmOptions.find((o) => o.id === selectedVrmId)?.character ?? null
+  const greetingSlug = greetingCharacter?.slug ?? null
+  const greetingAudioVersion = greetingCharacter?.audio_version ?? null
+  // The FROZEN slot, not a fresh getTimeSlot() read: this line runs on every
+  // render (a keystroke re-renders ChatProvider), and re-reading the clock
+  // here is exactly the bug — the key would change mid-render while the
+  // bubble above stays on the previous slot's text. Falls back to the live
+  // clock only for the sliver before the mount-time useState initializer has
+  // run (never observed after it, since that initializer sets the ref
+  // synchronously during the same render).
+  const greetingSlot = displayedGreetingRef.current?.slot ?? getTimeSlot()
+  const greetingKey = buildGreetingKey(greetingCharacter, locale, greetingSlot)
+  const greetedKeyRef = useRef<string | null>(null)
+  const greetingCharacterRef = useRef(greetingCharacter)
+  greetingCharacterRef.current = greetingCharacter
+  useEffect(() => {
+    if (isRestoring) return
+    if (messages.length !== 1 || messages[0].id !== GREETING_ID) {
+      // The conversation moved on: a later pristine opening may greet again.
+      greetedKeyRef.current = null
+      return
+    }
+    if (greetingKey === null || greetedKeyRef.current === greetingKey) return
+    greetedKeyRef.current = greetingKey
+    const character = greetingCharacterRef.current
+    if (!character) return
+    // Same slot+text the bubble was written with — never recomputed here.
+    // Without a captured value yet (should not happen once mounted; the
+    // useState initializer sets it synchronously) there is nothing frozen to
+    // play, so stay text-only rather than let playGreeting guess.
+    const captured = displayedGreetingRef.current
+    if (!captured) return
+    const controller = new AbortController()
+    void (async () => {
+      try {
+        const { playGreeting } = await import('../lib/greetingAudio')
+        await playGreeting({
+          character,
+          locale,
+          slot: captured.slot,
+          text: captured.text,
+          controller: avatarRef.current,
+          signal: controller.signal,
+        })
+      } catch {
+        // greeting stays text-only on failure — not worth an error bubble
+      }
+    })()
+    return () => controller.abort()
+  }, [messages, isRestoring, greetingSlug, greetingAudioVersion, locale, greetingSlot, greetingKey])
 
   const addImage = useCallback((file: File) => {
     const url = URL.createObjectURL(file)
@@ -234,8 +326,9 @@ export function ChatProvider({ children }: { children: ReactNode }) {
             role: m.role,
             content: m.content,
             timestamp: new Date(m.timestamp),
-            // Audio is not persisted — the WAV lives on the TTS box under a
-            // random name. The per-message speaker button can re-synthesise it.
+            // Audio is not persisted with the transcript. The speaker button
+            // replays it from this browser's cache (IndexedDB, per user, one
+            // day — lib/ttsCache.ts) or synthesises it again.
             //
             // Motion IS: the job id rides on the message row, so a refresh
             // does not lose a render the GPU already paid for. Carried here
@@ -302,6 +395,9 @@ export function ChatProvider({ children }: { children: ReactNode }) {
   const startNewSession = useCallback(() => {
     abortControllerRef.current?.abort()
     if (stageTimeoutRef.current) clearTimeout(stageTimeoutRef.current)
+    // The old conversation's voice does not follow the user into a new one —
+    // including a replay the abort above would not reach.
+    speechPlayer.stop()
     // Clear the pointer rather than mint a new one. Minting here is what left
     // an id behind for anyone who opened a new chat and never typed in it —
     // and that id 404'd on every load from then on, permanently. The next
@@ -309,7 +405,14 @@ export function ChatProvider({ children }: { children: ReactNode }) {
     clearSessionPointer()
     sessionIdRef.current = null
     setActiveSessionId(null)
-    setMessages(buildInitialMessages(uiRef.current))
+    // A fresh pristine opening greets again even if its key matches the last
+    // one (the effect below only replays on key CHANGE; an explicit new chat
+    // is a new opening, including pristine-to-pristine).
+    greetedKeyRef.current = null
+    const newSlot = getTimeSlot()
+    const newGreetingText = getGreetingForSlot(uiRef.current, newSlot)
+    displayedGreetingRef.current = { slot: newSlot, text: newGreetingText }
+    setMessages(buildInitialMessages(newGreetingText))
     setInput('')
     setIsTyping(false)
     setStageLabel(null)
@@ -342,6 +445,7 @@ export function ChatProvider({ children }: { children: ReactNode }) {
     if (sessionId === sessionIdRef.current || switchingRef.current) return
     switchingRef.current = true
     abortControllerRef.current?.abort()
+    speechPlayer.stop() // same as startNewSession
 
     // Đổi UI ngay: không hiện session cũ trong lúc load session mới
     setIsSwitching(true)
@@ -350,6 +454,10 @@ export function ChatProvider({ children }: { children: ReactNode }) {
     // Picking a conversation out of the list makes it the one you are in, so
     // its clock starts now however old the conversation itself is.
     stampSessionPointer(sessionId)
+    // Same as startNewSession: an empty target session is a new pristine
+    // opening and may greet (a history restores non-pristine, which the
+    // effect itself resets on).
+    greetedKeyRef.current = null
     setMessages([])
     setInput('')
     setIsTyping(false)
@@ -374,7 +482,10 @@ export function ChatProvider({ children }: { children: ReactNode }) {
           })),
         )
       } else {
-        setMessages(buildInitialMessages(uiRef.current))
+        const switchSlot = getTimeSlot()
+        const switchGreetingText = getGreetingForSlot(uiRef.current, switchSlot)
+        displayedGreetingRef.current = { slot: switchSlot, text: switchGreetingText }
+        setMessages(buildInitialMessages(switchGreetingText))
       }
     } catch (e) {
       const isAbort = (e as { name?: string })?.name === 'AbortError' || (e as { code?: string })?.code === 'ERR_CANCELED'
@@ -411,6 +522,12 @@ export function ChatProvider({ children }: { children: ReactNode }) {
   const handleSend = useCallback(async () => {
     const text = inputRef.current.trim()
     if (!text || isGeneratingRef.current) return
+    // Voice mode: wake the AudioContext NOW, while this is still the click (or
+    // Enter) that sent the message. The reply's audio lands seconds later, far
+    // outside any user gesture; a context started here stays running, so the
+    // first chunk plays the moment it arrives. Safari honours this only inside
+    // the gesture itself, which is why it cannot wait for speech_start.
+    if (voiceReply) unlockSpeechAudio()
 
     const userMsg: Message = {
       id: crypto.randomUUID(),
@@ -440,22 +557,61 @@ export function ChatProvider({ children }: { children: ReactNode }) {
     void transitionTo('thinking_intro')
 
     const assistantMsgId = crypto.randomUUID()
+    /* The character answering, resolved once. It goes to /chat, onto the
+     * message (so a replay asks POST /tts for the same voice) and into the
+     * cache key — three places that must agree. */
+    const persona = selectedVrmId || DEFAULT_PERSONA_ID
+    /* Voice mode: the clip exists from the start, empty, so the speaker shows
+     * "audio coming" rather than an idle button — which, clicked, would start a
+     * second synthesis of the same answer. */
+    const speech = voiceReply ? new SpeechClip() : undefined
+    /** The answer as streamed: what the cache is keyed by, and exactly the
+     *  text the speaker button will look up on a replay. */
+    let answer = ''
     setMessages((prev) => [
       ...prev,
-      { id: assistantMsgId, role: 'assistant', content: '', timestamp: new Date() },
+      { id: assistantMsgId, role: 'assistant', content: '', timestamp: new Date(), speech, personaId: persona },
     ])
 
     const controller = new AbortController()
     abortControllerRef.current = controller
     /** True while this stream is still the newest one.
      *
-     *  With voice on, the backend keeps the stream open long after the text is
-     *  done, and we release the composing UI at `speech_pending` — so the user
-     *  can send a second message while this one is still streaming. Without this
-     *  check the old stream's `done` would clear `isGenerating` for the NEW
-     *  reply. Message updates are exempt: they target their own `assistantMsgId`
-     *  and stay correct however late they land. */
+     *  The backend keeps the stream open after the text is done (saving the
+     *  turn, a summarizer check, then the voice), and we release the composing
+     *  UI as soon as the turn is saved — so the user can send a second message
+     *  while this one is still streaming. Without this check the old stream's
+     *  `done` would clear `isGenerating` for the NEW reply. Message updates are
+     *  exempt: they target their own `assistantMsgId` and stay correct however
+     *  late they land. */
     const isCurrent = () => abortControllerRef.current === controller
+
+    /* session_persisted, speech_* and done: when the composer is handed back
+     * (at session_persisted, with speech_start and done as fallbacks) and where
+     * the reply's voice goes. The ordering rules and their tests live in
+     * lib/turnLifecycle.ts; these are just the effects. */
+    const lifecycle = createTurnLifecycle(speech, {
+      isCurrent,
+      releaseComposing: () => {
+        if (stageTimeoutRef.current) clearTimeout(stageTimeoutRef.current)
+        setStageLabel(null)
+        setIsGenerating(false)
+        endThinking()
+      },
+      markSessionsDirty: () => setSessionsDirty(true),
+      // `answer` is read per event, not captured here: speech events come
+      // after the last token, so by then it holds the whole reply — the text
+      // the cache is keyed by. A failure is a console line, never an error
+      // bubble: the text is there and readable.
+      routeSpeech: (clip, type, data) => {
+        routeSpeechEvent(clip, type, data, { text: answer, persona })
+      },
+      // If the browser will not start audio yet, play() says so and the audio
+      // waits in the clip for the speaker button.
+      playSpeech: (clip) => {
+        void speechPlayer.play(clip, avatarRef.current)
+      },
+    })
 
     /* Captured once per send rather than read per event: switching character
      * mid-stream must not swap the label under a reply already being written,
@@ -476,7 +632,7 @@ export function ChatProvider({ children }: { children: ReactNode }) {
           // backend caches personas under, and ChatRequest.persona_id already
           // accepts exactly this shape. Picking an avatar changes how the
           // assistant speaks, which until now it did not.
-          personaId: selectedVrmId || undefined,
+          personaId: persona,
           previousPersonaId: consumePreviousAvatar(),
           // Same locale that renders this page. It selects the character's voice
           // and any safety warning the backend inserts — both are text a person
@@ -484,6 +640,7 @@ export function ChatProvider({ children }: { children: ReactNode }) {
           locale,
         },
         (type, data) => {
+          if (lifecycle(type, data)) return
           if (type === 'stage') {
             const { node, status } = data as { node: string; status: string }
             if (node === 'planner' && status === 'complete') {
@@ -503,47 +660,10 @@ export function ChatProvider({ children }: { children: ReactNode }) {
             setIsTyping(false)
             endThinking()
             const content = (data as { content: string }).content
+            answer += content
             setMessages((prev) =>
               prev.map((msg) =>
                 msg.id === assistantMsgId ? { ...msg, content: msg.content + content } : msg
-              )
-            )
-          } else if (type === 'speech_pending') {
-            // Spin the speaker on this message. Without it the toggle has no
-            // visible effect at all during the 30-45s wait, which reads exactly
-            // like it is broken.
-            setMessages((prev) =>
-              prev.map((msg) =>
-                msg.id === assistantMsgId ? { ...msg, speechPending: true } : msg
-              )
-            )
-            // The answer text is already complete here — the backend only holds
-            // the stream open to poll Redis for the audio (up to 130s). Release
-            // the composing UI now, otherwise the stop button lingers for two
-            // minutes after the reply is fully readable.
-            if (!isCurrent()) return
-            setStageLabel(null)
-            setIsGenerating(false)
-            endThinking()
-          } else if (type === 'speech_ready') {
-            const { url } = data as { url?: string }
-            setMessages((prev) =>
-              prev.map((msg) =>
-                msg.id === assistantMsgId
-                  // `autoplay` is what makes voice mode audible. Setting only
-                  // `audioUrl` attaches a file nobody plays, which is why the
-                  // toggle looked identical whether it was on or off.
-                  ? { ...msg, audioUrl: url, speechPending: false, autoplay: !!url }
-                  : msg
-              )
-            )
-          } else if (type === 'speech_failed') {
-            // Text is still there and readable — a missing voice is not worth
-            // an error bubble. Surface it in the console for diagnosis only.
-            console.warn('[TTS]', (data as { error?: string }).error ?? 'speech failed')
-            setMessages((prev) =>
-              prev.map((msg) =>
-                msg.id === assistantMsgId ? { ...msg, speechPending: false } : msg
               )
             )
           } else if (type === 'motion') {
@@ -599,12 +719,6 @@ export function ChatProvider({ children }: { children: ReactNode }) {
                 }
               })()
             }
-          } else if (type === 'done') {
-            if (stageTimeoutRef.current) clearTimeout(stageTimeoutRef.current)
-            if (!isCurrent()) return
-            setStageLabel(null)
-            setIsGenerating(false)
-            setSessionsDirty(true)
           }
         },
         controller.signal,
@@ -620,6 +734,12 @@ export function ChatProvider({ children }: { children: ReactNode }) {
         )
       }
     } finally {
+      // A clip still unfinished when the stream is over never will be: it was
+      // aborted (stop, new chat, another conversation), cut off, or the backend
+      // had nothing to voice. Failing it stops a half-heard reply, stops the
+      // speaker spinning, and lets a click fall back to cache/POST /tts.
+      // A no-op for a clip that completed.
+      speech?.fail(CLIP_ABORTED)
       // Same reason as `done`: a superseded stream must not reset the UI that
       // now belongs to a newer message.
       if (isCurrent()) {
@@ -633,7 +753,7 @@ export function ChatProvider({ children }: { children: ReactNode }) {
     // request. Without it the closure keeps whichever locale was active when the
     // callback was created, and the backend would keep serving the old
     // character voice and the old safety-warning language.
-  }, [webSearch, voiceReply, selectedVrmId, locale, transitionTo, endThinking, playMotionFile, ensureSessionId])
+  }, [webSearch, voiceReply, selectedVrmId, locale, transitionTo, endThinking, playMotionFile, ensureSessionId, avatarRef])
 
   useEffect(() => {
     return () => {

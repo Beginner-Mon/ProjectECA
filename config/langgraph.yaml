@@ -6,7 +6,13 @@ langgraph:
   # Set DEEPSEEK_MODEL / DEEPSEEK_BASE_URL env vars to override.
 
   memory:
-    redis_url: "redis://localhost:6379"   # DB 0 (STM + task_result)
+    # Unused — nodes/memory.py reads REDIS_URL from the environment instead
+    # (a URL in a committed YAML file cannot differ per deployment). TTS no
+    # longer has a Redis key of its own either (feature/tts-streaming removed
+    # task_result:{id} along with the background task that wrote it) — see
+    # api/main.py::_get_health_redis for the one Redis client left in the
+    # service, used only by GET /health/detailed's readiness probe.
+    redis_url: "redis://localhost:6379"
     stm_session_ttl: 7200                 # 2h
     ltm_top_k: 5
 
@@ -19,10 +25,25 @@ langgraph:
     vieneu_tts:
       url: "http://localhost:5000"
       endpoint: "/synthesize"
-      # Measured on this box (VieNeu turbo, CPU): ~18ms per character —
-      # 13 chars 0.4s / 186 chars 3.1s / 558 chars 10.2s. A clinical answer runs
-      # 1500-2500 chars = 28-46s, so the old value of 15 timed out on every real
-      # reply and the UI only ever saw speech_failed.
+      # NDJSON streaming endpoint (feature/tts-streaming) — one JSON line per
+      # start/chunk/end/error event, forwarded live into the /chat SSE stream
+      # instead of the old synthesize()-then-poll-Redis path. See
+      # services/vieneu_tts/client.py::synthesize_stream.
+      stream_endpoint: "/synthesize/stream"
+      # Timeout for the non-streaming /synthesize call only (synthesize_stream
+      # below uses its own per-read timeout instead — see client.py — because
+      # a stream legitimately stays open far longer than any one blanket
+      # value should allow).
+      #
+      # Rate on this box (VieNeu turbo, CPU) was ~18ms/character when this
+      # value was first set (05-08); re-measured 11-09 on the `tts` conda env
+      # (vieneu==3.6.4, v3turbo) at ~25.6ms/character — see SpeechLLm's own
+      # benchmarking for that slice's numbers, not reproduced here since this
+      # module never re-ran them. Even at the higher rate a clinical answer
+      # (1500-2500 chars) is ~38-64s end-to-end, comfortably inside 120s. The
+      # timeout this replaced (15s) covered under 600 chars and timed out on
+      # every real clinical reply, which is what motivated raising it in the
+      # first place.
       timeout: 120
       circuit_breaker:
         failure_threshold: 3

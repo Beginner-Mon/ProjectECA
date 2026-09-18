@@ -1351,14 +1351,26 @@
                     updateAssistantMessage({ text: streamedText, isStreamingText: true });
                     setClinicalAdvice(streamedText);
                     break;
-                  case "speech_ready":
-                    if (data.url) {
-                      const resolvedUrl = data.url.startsWith('/') ? API_BASE_URL + data.url : data.url;
-                      updateAssistantMessage({ audioUrl: resolvedUrl, autoPlay: true });
-                    }
+                  case "speech_start":
+                    // {voice_version, codec, sample_rate, lang} — chunks stream next.
+                    // Harness only logs; it does not decode/play audio (see speech_chunk).
+                    console.log("[TTS] speech_start", data);
+                    break;
+                  case "speech_chunk":
+                    // {seq, codec, audio} — audio is base64 of a self-standing OGG/Opus or
+                    // WAV file per chunk. Not wired to playback here — this harness only
+                    // needs to show the events arrived, not reproduce the app's gapless
+                    // Web Audio player.
+                    console.log("[TTS] speech_chunk seq=", data.seq, "codec=", data.codec);
+                    break;
+                  case "speech_end":
+                    console.log("[TTS] speech_end, chunks=", data.chunks);
                     break;
                   case "speech_failed":
                     console.warn("TTS failed:", data.error);
+                    break;
+                  case "speech_disabled":
+                    console.log("[TTS] speech_disabled:", data.reason);
                     break;
                   case "session_persisted":
                     // Refresh session list in background

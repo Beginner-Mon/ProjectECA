@@ -4,7 +4,7 @@
 For each model in ECA_UI/frontend/src/asset/models/*.vrm:
 
     1. parse the GLB for humanoid + blendShape metadata
-    2. upload to s3://<bucket>/characters/{slug}/{sha256[:8]}.vrm
+    2. upload to s3://<bucket>/characters/{slug}/{sha256[:8]}.vrm  (models/ prefix, not characters/)
     3. read personas/{slug}.md via the backend's own parser
     4. read the avatar profile via the frontend's own module graph
     5. UPSERT one row into characters
@@ -23,14 +23,32 @@ credentials exist.
 Requires VVA_PG_DSN for the real run — the same variable the backend and
 Alembic read, so there is no way to seed one database while the app reads
 another.
+
+D5e — voices + static audio (2026-09):
+    Voices (reference .wav for cloning) go to a PRIVATE bucket with NO
+    CloudFront behavior. Keys are content-hashed so re-running is idempotent:
+        voices/{slug}_{lang}_{sha256[:8]}.wav  (or characters/{slug}/voice/{hash}.wav)
+    Stored in characters.voice_vi_key / voice_en_key (S3 keys, not URLs).
+
+    Static audio (T6: greeting.morning/afternoon/evening/night x vi/en) is
+    pre-rendered once per slot per language by calling SpeechLLm with the
+    EXACT ui_strings text, then uploaded to the ASSET bucket at:
+        characters/{slug}/audio/{sha256[:8]}.ogg
+    Stored in characters.static_audio JSONB per contract C
+    ({clip: {lang: {key, sha256, text_sha256}}}), signed at read time
+    (characters/*/audio/* via CloudFront trusted key group, same as motions/*).
+    Regenerating a clip with unchanged text+voice produces the same hash and
+    does not create a new object. No safety_warning (pending decision).
 """
 
 from __future__ import annotations
 
 import argparse
 import asyncio
+import base64
 import hashlib
 import json
+import os
 import struct
 import subprocess
 import sys
@@ -41,10 +59,11 @@ REPO_ROOT = Path(__file__).resolve().parents[1]
 MODELS_DIR = REPO_ROOT / "ECA_UI" / "frontend" / "src" / "asset" / "models"
 PROFILE_EXPORTER = REPO_ROOT / "ECA_UI" / "frontend" / "scripts" / "export-avatar-profiles.mjs"
 MANIFEST_PATH = Path(__file__).resolve().parent / "characters.seed.json"
+VOICES_DIR = REPO_ROOT / "SpeechLLm" / "voices"
 
 sys.path.insert(0, str(REPO_ROOT / "agenticRAG"))
 
-# ── VRM 0.x preset categories ───────────────────────────────────────
+# ── VRM 0.x preset categories ──────────────────────────────────────────────
 # Kept identical to ECA_UI/frontend/scripts/extract-vrm-meta.mjs so the numbers
 # this script writes to the DB match the manifest the frontend already ships.
 
@@ -59,6 +78,67 @@ LOOKAT_PRESETS = {"lookup", "lookdown", "lookleft", "lookright"}
 SPINE_CHAIN = ("hips", "spine", "chest", "upperChest")
 
 GLB_MAGIC = 0x46546C67  # "glTF"
+
+# ── Static audio clips (T6) ─────────────────────────────────────────────
+# No hardcoded phrases anymore (STATIC_PHRASES is deleted): every clip's text
+# comes from ui_strings.greeting.{morning,afternoon,evening,night} for vi/en —
+# the SAME projection the catalog serves, read off the record's own persona
+# dict (which is what sync_personas_to_db writes into the ui_strings column).
+# That is what keeps the rendered audio byte-identical in words to the text
+# the frontend displays (T7 compares text_sha256 before playing).
+#
+# A slot with no text is SKIPPED with a warning, never filled from the
+# frontend's FALLBACK_UI_STRINGS: copying that bundle into Python would fork
+# it, and the two copies would drift until clips mismatch their captions.
+# The client already treats a missing clip as text-only, and T7's text_sha256
+# check refuses to play a wrong one — so a gap stays visible instead of
+# going wrong silently.
+#
+# safety_warning is NOT built here — pending the open decision (where it
+# plays, and which language source it follows).
+
+_GREETING_SLOTS = ("morning", "afternoon", "evening", "night")
+_CLIP_LANGS = ("vi", "en")
+
+
+def _ui_strings_for(persona: dict) -> dict:
+    """{lang: ui_strings} via sync_personas_to_db's own projection.
+
+    Imported, not reimplemented, so the clip text cannot drift from the
+    column the catalog serves: same input dict, same function, same output.
+    """
+    sys.path.insert(0, str(Path(__file__).resolve().parent))
+    from sync_personas_to_db import _public_ui_strings
+    return _public_ui_strings(persona)
+
+
+def _greeting_texts(persona: dict) -> dict[str, dict[str, str]]:
+    """slot -> {lang: text} for every authored greeting slot.
+
+    Only non-blank strings survive; a missing slot or language is simply
+    absent (the caller warns per skip). At most 4 slots x 2 langs = 8 clips
+    per character.
+    """
+    ui_by_lang = _ui_strings_for(persona) or {}
+    out: dict[str, dict[str, str]] = {}
+    for slot in _GREETING_SLOTS:
+        per_lang: dict[str, str] = {}
+        for lang in _CLIP_LANGS:
+            greeting = (ui_by_lang.get(lang) or {}).get("greeting") or {}
+            text = greeting.get(slot) if isinstance(greeting, dict) else None
+            if isinstance(text, str) and text.strip():
+                per_lang[lang] = text
+        if per_lang:
+            out[slot] = per_lang
+    return out
+
+
+def _text_sha256(text: str) -> str:
+    """Contract E: sha256 hex of the UTF-8 bytes of EXACTLY this string —
+    no trim, no Unicode normalisation. Python and the browser
+    (crypto.subtle) must agree, so this hashes what is SENT to SpeechLLm,
+    character for character."""
+    return hashlib.sha256(text.encode("utf-8")).hexdigest()
 
 
 def classify(preset_name: str | None) -> str:
@@ -302,19 +382,241 @@ def upload(records: list[dict], bucket: str) -> None:
         )
 
 
-async def upsert(records: list[dict]) -> None:
+# ── D5e: voices + static audio ─────────────────────────────────────────────
+
+def _hash_file(path: Path) -> str:
+    return hashlib.sha256(path.read_bytes()).hexdigest()[:8]
+
+
+def upload_voices(records: list[dict], voice_bucket: str) -> dict[str, dict[str, str]]:
+    """Upload reference voices to the private voice bucket.
+
+    For each character and each language vi/en, looks for
+    SpeechLLm/voices/{slug}_{lang}.wav locally. If present, hashes content,
+    uploads to s3://voice_bucket/voices/{slug}_{lang}_{hash}.wav (content-
+    addressed, re-runnable) and returns a map slug -> {lang: s3_key}.
+
+    Keys are returned even on --dry-run (as would-be keys) so the DB upsert
+    can be previewed. Actual S3 upload is skipped on dry-run.
+    """
+    import boto3
+
+    s3 = boto3.client("s3") if voice_bucket else None
+    voice_keys: dict[str, dict[str, str]] = {}
+
+    for rec in records:
+        slug = rec["slug"]
+        keys: dict[str, str] = {}
+        for lang in ("vi", "en"):
+            local = VOICES_DIR / f"{slug}_{lang}.wav"
+            # Fallback: legacy single file without lang suffix (e.g. anne_vi.mp3)
+            # Only .wav is used for cloning; mp3 is ignored.
+            if not local.is_file():
+                # Try alternative naming: {slug}_{lang}.wav only
+                continue
+            h = _hash_file(local)
+            # Chose voices/{slug}_{lang}_{hash}.wav over characters/... to keep
+            # voice keys visually distinct from audio clips (characters/*/audio/*)
+            s3_key = f"voices/{slug}_{lang}_{h}.wav"
+            keys[lang] = s3_key
+            if voice_bucket:
+                # Check if already exists (idempotent)
+                try:
+                    s3.head_object(Bucket=voice_bucket, Key=s3_key)
+                    print(f"  voice exists {slug}_{lang} -> s3://{voice_bucket}/{s3_key} (skip)")
+                except Exception:
+                    print(f"  uploading voice {local.name} -> s3://{voice_bucket}/{s3_key}")
+                    s3.upload_file(
+                        str(local), voice_bucket, s3_key,
+                        ExtraArgs={
+                            "ContentType": "audio/wav",
+                            "CacheControl": "private, max-age=31536000, immutable",
+                        },
+                    )
+            else:
+                print(f"  [dry-run] voice {local.name} -> {s3_key}")
+        if keys:
+            voice_keys[slug] = keys
+        else:
+            print(f"  no voice file for {slug} (looked in {VOICES_DIR})")
+    return voice_keys
+
+
+def _collect_speechllm_audio(text: str, voice_path: str, language: str, speechllm_url: str) -> bytes:
+    """Call SpeechLLm /synthesize/stream and return concatenated PCM as single OGG bytes.
+
+    SpeechLLm streams NDJSON lines: start, chunk (base64 FLAC), end. Each chunk's
+    audio is a complete FLAC file (see vieneu_client._encode_chunk). We decode
+    each chunk to PCM, concatenate, and re-encode once to OGG/Opus for the static
+    clip. Using httpx streaming keeps first-chunk latency low even here, but the
+    clip is only 2-5s so re-encoding is cheap.
+    """
+    import httpx
+    import soundfile as sf
+
+    url = speechllm_url.rstrip("/") + "/synthesize/stream"
+    payload = {"text": text, "voice_path": voice_path, "language": language}
+    # Use stream to avoid holding 78s for long answers — static phrases are short
+    # but we reuse the same path the agent uses.
+    pcm_parts = []
+    sr = None
+    with httpx.Client(timeout=60) as client:
+        with client.stream("POST", url, json=payload) as resp:
+            resp.raise_for_status()
+            for line in resp.iter_lines():
+                if not line.strip():
+                    continue
+                evt = json.loads(line)
+                if evt.get("type") == "chunk":
+                    audio_b64 = evt.get("audio", "")
+                    if not audio_b64:
+                        continue
+                    audio_bytes = base64.b64decode(audio_b64)
+                    # Each chunk is a FLAC file; decode to PCM
+                    try:
+                        import io as _io
+                        data, _sr = sf.read(_io.BytesIO(audio_bytes), dtype="float32")
+                        if sr is None:
+                            sr = _sr
+                        pcm_parts.append(data)
+                    except Exception as e:
+                        raise RuntimeError(f"failed to decode chunk audio: {e}") from e
+                elif evt.get("type") == "error":
+                    raise RuntimeError(f"SpeechLLm error: {evt.get('message')}")
+                elif evt.get("type") == "end":
+                    break
+    if not pcm_parts:
+        raise RuntimeError(f"no audio chunks for text={text[:30]!r}")
+    import numpy as np
+    pcm = pcm_parts[0] if len(pcm_parts) == 1 else np.concatenate(pcm_parts)
+    # Encode once to OGG/Opus for the static clip (small, browser-playable)
+    out = io.BytesIO()
+    # Use 48k as SpeechLLm's native rate; sr from first chunk should already be 48000
+    out_sr = sr or 48000
+    sf.write(out, pcm, out_sr, format="OGG", subtype="OPUS", compression_level=0.5)
+    return out.getvalue()
+
+
+def _hash_bytes(data: bytes) -> str:
+    return hashlib.sha256(data).hexdigest()[:8]
+
+
+def build_static_audio(
+    records: list[dict],
+    voice_keys: dict[str, dict[str, str]],
+    asset_bucket: str | None,
+    speechllm_url: str,
+    dry_run: bool = False,
+) -> dict[str, dict]:
+    """Render greeting clips for each slot+language with text AND voice.
+
+    Returns slug -> {clip: {lang: {key, sha256, text_sha256}}} per contract C
+    for DB upsert. Uploads to s3://asset_bucket/characters/{slug}/audio/{hash}.ogg
+    when not dry-run (content hash = rerunnable: unchanged text+voice reuses
+    the same object). A slot with no ui_strings text, or a language with no
+    uploaded voice, is skipped with a warning — never synthesised from a
+    fallback, never silenced.
+    """
+    import boto3
+
+    s3 = boto3.client("s3") if asset_bucket and not dry_run else None
+    static_map: dict[str, dict] = {}
+
+    for rec in records:
+        slug = rec["slug"]
+        langs = voice_keys.get(slug, {})
+        if not langs:
+            print(f"  skip {slug}: no uploaded voices — every clip needs a voice per language")
+            continue
+        texts = _greeting_texts(rec.get("persona") or {})
+        clip_map: dict[str, dict[str, dict]] = {}
+        for slot in _GREETING_SLOTS:
+            kind = f"greeting.{slot}"
+            slot_texts = texts.get(slot)
+            if not slot_texts:
+                print(f"  skip {slug}/{kind}: no text in ui_strings.greeting.{slot} (no fallback used)")
+                continue
+            lang_entries: dict[str, dict] = {}
+            for lang in _CLIP_LANGS:
+                text = slot_texts.get(lang)
+                if text is None:
+                    continue
+                voice_key = langs.get(lang)
+                if not voice_key:
+                    print(f"  skip {slug}/{kind}/{lang}: text exists but no uploaded voice")
+                    continue
+                # The voice_path SpeechLLm expects is the S3 key itself (D5d).
+                voice_path = voice_key
+                entry_text_sha256 = _text_sha256(text)
+                if dry_run:
+                    # No audio rendered: key previews from the text hash, the
+                    # text hash itself is REAL (it is what T7 will compare),
+                    # audio sha256 stays None until a real render fills it.
+                    h = hashlib.sha256(f"{voice_path}:{text}".encode()).hexdigest()[:8]
+                    s3_key = f"characters/{slug}/audio/{h}.ogg"
+                    lang_entries[lang] = {
+                        "key": s3_key,
+                        "sha256": None,
+                        "text_sha256": entry_text_sha256,
+                    }
+                    print(f"  [dry-run] static {slug}/{kind}/{lang} -> {s3_key} text={text[:40]!r}")
+                    continue
+                # Real render
+                print(f"  rendering {slug}/{kind}/{lang} voice={voice_path} text={text[:40]!r} ...", end=" ", flush=True)
+                try:
+                    audio_bytes = _collect_speechllm_audio(text, voice_path, lang, speechllm_url)
+                except Exception as e:
+                    print(f"FAILED: {e}")
+                    continue
+                h = _hash_bytes(audio_bytes)
+                s3_key = f"characters/{slug}/audio/{h}.ogg"
+                # Check existence
+                try:
+                    s3.head_object(Bucket=asset_bucket, Key=s3_key)
+                    print(f"exists -> s3://{asset_bucket}/{s3_key}")
+                except Exception:
+                    print(f"uploading -> s3://{asset_bucket}/{s3_key} ({len(audio_bytes)/1024:.1f} KB)")
+                    s3.put_object(
+                        Bucket=asset_bucket,
+                        Key=s3_key,
+                        Body=audio_bytes,
+                        ContentType="audio/ogg",
+                        CacheControl="public, max-age=31536000, immutable",
+                    )
+                lang_entries[lang] = {
+                    "key": s3_key,
+                    "sha256": _hash_bytes(audio_bytes),
+                    "text_sha256": entry_text_sha256,
+                }
+            if lang_entries:
+                clip_map[kind] = lang_entries
+        if clip_map:
+            static_map[slug] = clip_map
+    return static_map
+
+
+async def upsert(records: list[dict], voice_keys: dict[str, dict[str, str]] | None = None, static_audio_map: dict[str, dict] | None = None) -> None:
     from langgraph_agents.shared import get_pg_client
 
     pg = get_pg_client()
     await pg.connect()
     for rec in records:
+        slug = rec["slug"]
+        vk = (voice_keys or {}).get(slug, {})
+        sa = (static_audio_map or {}).get(slug, {})
+        # Merge with any existing static_audio in DB? For re-run, keep old keys
+        # not in this batch — but static clip set only grows, so overwrite is fine.
+        # If the script is used to ADD a new clip kind, old kinds stay unless we
+        # fetch and merge. Simpler: overwrite with what we just built for this slug.
+        # If dry-run built nothing, keep empty dict so INSERT doesn't null it.
         await pg.execute(
             """
             INSERT INTO characters (
                 slug, display_name, description, vrm_url, vrm_metadata,
-                avatar_profile, persona, voice_language, sort_order
+                avatar_profile, persona, voice_language, sort_order,
+                voice_vi_key, voice_en_key, static_audio
             )
-            VALUES ($1, $2, $3, $4, $5::jsonb, $6::jsonb, $7::jsonb, $8, $9)
+            VALUES ($1, $2, $3, $4, $5::jsonb, $6::jsonb, $7::jsonb, $8, $9, $10, $11, $12::jsonb)
             ON CONFLICT (slug) DO UPDATE SET
                 display_name   = EXCLUDED.display_name,
                 vrm_url        = EXCLUDED.vrm_url,
@@ -323,22 +625,39 @@ async def upsert(records: list[dict]) -> None:
                 persona        = EXCLUDED.persona,
                 voice_language = EXCLUDED.voice_language,
                 sort_order     = EXCLUDED.sort_order,
+                voice_vi_key   = COALESCE(EXCLUDED.voice_vi_key, characters.voice_vi_key),
+                voice_en_key   = COALESCE(EXCLUDED.voice_en_key, characters.voice_en_key),
+                static_audio   = CASE
+                    WHEN EXCLUDED.static_audio::text = '{}' THEN characters.static_audio
+                    ELSE EXCLUDED.static_audio
+                END,
                 updated_at     = now()
             """,
             rec["slug"], rec["display_name"], rec["description"], rec["vrm_url"],
             json.dumps(rec["vrm_metadata"]), json.dumps(rec["avatar_profile"]),
             json.dumps(rec["persona"]), rec["voice_language"], rec["sort_order"],
+            vk.get("vi"), vk.get("en"), json.dumps(sa),
         )
-        print(f"  upserted {rec['slug']}")
+        extra = ""
+        if vk:
+            extra += f" voices={vk}"
+        if sa:
+            extra += f" static_audio={list(sa.keys())}"
+        print(f"  upserted {rec['slug']}{extra}")
 
 
 def main() -> None:
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument("--bucket", help="S3 bucket (AssetStack output AssetBucketName)")
+    ap.add_argument("--voice-bucket", help="S3 bucket for voices (AssetStack output VoiceBucketName)")
     ap.add_argument("--cdn", default="", help="CloudFront base URL (AssetStack output AssetBaseUrl)")
+    ap.add_argument("--speechllm-url", default=os.getenv("VIENEU_TTS_URL", "http://localhost:5000"),
+                    help="SpeechLLm URL for static clip rendering (D5e)")
     ap.add_argument("--dry-run", action="store_true", help="extract and print only; no AWS, no DB")
     ap.add_argument("--write-manifest", action="store_true",
                     help="refresh characters.seed.json from the local .vrm files, then exit")
+    ap.add_argument("--skip-voices", action="store_true", help="skip voice upload (D5e)")
+    ap.add_argument("--skip-audio", action="store_true", help="skip static audio rendering (D5e)")
     args = ap.parse_args()
 
     if args.write_manifest:
@@ -375,16 +694,65 @@ def main() -> None:
               f"L{bs['look_ats']} C{bs['customs']})  {warn}")
         print(f"  {'':14s} {rec['vrm_url']}")
 
+    # ── D5e: voices ─────────────────────────────────────────────────────
+    voice_keys: dict[str, dict[str, str]] = {}
+    if not args.skip_voices:
+        print(f"\nVoices from {VOICES_DIR} "
+              f"-> {'s3://'+args.voice_bucket if args.voice_bucket else '[dry-run, no bucket]'}")
+        # In dry-run without voice_bucket, still compute would-be keys
+        vb = args.voice_bucket if not args.dry_run else None
+        # If dry-run and no --voice-bucket given, pass None to compute keys without upload
+        # upload_voices handles dry-run internally (prints would-be keys)
+        # For real dry-run with --voice-bucket we still want to not upload, so force None
+        if args.dry_run:
+            vb = None
+        voice_keys = upload_voices(records, vb)
+        if voice_keys:
+            print(f"  voice keys: {voice_keys}")
+        else:
+            print("  (no voice keys)")
+
+    # ── D5e: static audio ───────────────────────────────────────────────
+    static_map: dict[str, dict] = {}
+    if not args.skip_audio:
+        if not args.skip_voices and not voice_keys:
+            print("\nSkipping static audio — no voice keys available")
+        else:
+            print(f"\nStatic audio via {args.speechllm_url} "
+                  f"-> {'s3://'+args.bucket if args.bucket else '[dry-run]'}")
+            # If dry-run, build_static_audio will hash text rather than call TTS
+            sb = args.bucket if not args.dry_run else None
+            static_map = build_static_audio(
+                records, voice_keys, sb, args.speechllm_url, dry_run=args.dry_run,
+            )
+            if static_map:
+                print(f"  static_audio map: {json.dumps(static_map, ensure_ascii=False)}")
+            else:
+                print("  (no static audio)")
+
     if args.dry_run:
-        print("\n--dry-run: nothing uploaded, nothing written.")
+        print("\n--dry-run: nothing uploaded, nothing written. Preview:")
+        for rec in records:
+            slug = rec["slug"]
+            vk = voice_keys.get(slug, {})
+            sa = static_map.get(slug, {})
+            print(f"  {slug}: voice_vi_key={vk.get('vi')} voice_en_key={vk.get('en')} static_audio={sa}")
         return
 
-    print(f"\nUploading to s3://{args.bucket} ...")
+    print(f"\nUploading VRM to s3://{args.bucket} ...")
     upload(records, args.bucket)
 
+    if not args.skip_voices and voice_keys and args.voice_bucket:
+        # upload_voices already uploaded when bucket given; just log
+        pass
+
+    # static audio already uploaded in build_static_audio when not dry-run
+
     print("\nSeeding characters ...")
-    asyncio.run(upsert(records))
-    print("\nDone.")
+    asyncio.run(upsert(records, voice_keys, static_map))
+    print("\nDone. Voices and static audio are now data, not derived from persona_id.")
+    print("Add a new voice: upload + one UPDATE characters SET voice_vi_key=... .")
+    print("Add clips: author ui_strings.greeting slots in the persona, sync, re-run.")
 
 
 if __name__ == "__main__":

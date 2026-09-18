@@ -98,7 +98,8 @@
 
 ### K viết spec sau phiên "bàn lại Phase 7" với Owner (PHASE-7.x.md series — ON HOLD)
 
-4. CDK project `infra/` (TypeScript): VPC → RDS+Proxy → ElastiCache → ECS Fargate (/chat qua ALB, KHÔNG API Gateway — timeout 29s) → Lambda CRUD → SQS+TTS worker (reactivate celery_app, broker SQS) → CloudFront → DNS/SSL.
+4. CDK project `infra/` (Python CDK — app.py): VPC (no NAT, isolated subnets) → Neon (us-east-1, pooled DSN via SSM) → Lambda CRUD (zip+LWA, `vva-crud-api`) → Lambda Agent (container `vva-agent`, ResponseTransferMode STREAM) → **Lambda SpeechLLm (container `vva-speechllm`, Function URL AWS_IAM + RESPONSE_STREAM, SigV4, bake weights, VOICE_BUCKET private S3, audio via CloudFront signed `characters/*/audio/*`)** → ECS Kimodo (GPU, motions/* signed) → CloudFront (VRM public + audio/motion signed, PRICE_CLASS_200) → REST API Gateway (single front door, Cognito authorizer, stage throttle) → S3 (assets: VRM public, voices private).
+   > **Cập nhật 13-09-2026 (D5):** SQS+TTS worker + Celery (`celery_app`) đã **bị đảo ngược từ v2.4.1** — `celery_app = None`, không có trong requirements. TTS không còn SQS/Celery/ECS Fargate; nó là Lambda container như trên. ECS chỉ còn Kimodo. `infra/` là Python CDK, không phải TypeScript, và `/chat` đi qua API Gateway STREAM (11 events/4.953s, byte đầu 2.812s — spike 21/08), không phải ALB.
 5. **Secrets management** (I1): SSM/Secrets Manager layout + rotation.
 6. **RLS revisit (D19)**: khi Lambda + analytics = nhiều đường vào DB → bật RLS → thêm lại `user_id` lên summaries. Đã hẹn trước trong M.4.
 7. **Logging/PII policy** (I6): redaction + retention + nơi chứa (CloudWatch?).

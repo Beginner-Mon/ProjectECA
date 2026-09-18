@@ -22,3 +22,6 @@ soundfile==0.14.0
 # listed here so a developer can reproduce the suite with one command.
 pytest
 httpx
+# pytest.ini declares asyncio_mode / asyncio_default_fixture_loop_scope under
+# --strict-config — the suite cannot even collect without pytest-asyncio installed.
+pytest-asyncio

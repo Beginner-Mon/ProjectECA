@@ -116,7 +116,7 @@ jobs:
         run: |
           python -m pip install --upgrade pip
           pip install -r SpeechLLm/requirements.txt
-          pip install pytest httpx pyyaml
+          pip install pytest httpx pyyaml pytest-asyncio
 
       - name: Run SpeechLLm unit tests
         run: PYTHONPATH=SpeechLLm pytest tests/SpeechLLm -q

@@ -319,16 +319,17 @@ class SpeechllmStack(Stack):
                 "-c agent_role_arn=<ARN role thuc thi cua vva-agent>"
             )
         else:
-            # CfnResourcePolicy takes a JSON STRING + resource ARN (NOT
-            # function_name + dict) — to_json_string keeps the Fn::GetAtt
-            # tokens for function_arn / warmer role intact inside it.
+            # CfnResourcePolicy.policy_document must be a JSON OBJECT, not a
+            # string — CloudFormation's schema requires an object despite the
+            # CDK docstring. A dict here resolves CDK tokens (Fn::GetAtt for
+            # function_arn, warmer role ARN) fine without stringifying.
             # Requires aws-cdk-lib>=2.269 (CfnResourcePolicy does not exist
             # in 2.254): see infra/requirements.txt.
             fn_arn = self.fn.function_arn
             lambda_.CfnResourcePolicy(
                 self, "SpeechllmResourcePolicy",
                 resource_arn=fn_arn,
-                policy_document=self.to_json_string({
+                policy_document={
                     "Version": "2012-10-17",
                     "Statement": [
                         {
@@ -379,7 +380,7 @@ class SpeechllmStack(Stack):
                             },
                         },
                     ],
-                }),
+                },
             )
 
     def _add_warmer(self) -> str:

@@ -710,7 +710,19 @@ export function ChatProvider({ children }: { children: ReactNode }) {
                   // and re-retarget the same clip each replay.
                   // `text` is what the user typed, so the motion picker lists
                   // "động tác squat" rather than a hash nobody can read.
-                  await playMotionFile(url, jobId, text)
+                  // `false` is a real failure, not a soft "nothing to do":
+                  // the avatar has no controller (WebGL off, VRM never
+                  // attached), the clip failed to fetch or retarget (the
+                  // registry catches and returns null), or the transition was
+                  // refused. Dropping it here cleared the notice as if the
+                  // clip had played, so a tester whose laptop could not play
+                  // motion saw "Building the movement..." and then nothing.
+                  const played = await playMotionFile(url, jobId, text)
+                  if (!played) {
+                    console.warn('[motion] avatar could not play clip', { jobId })
+                    notice(copy.motion_failed)
+                    return
+                  }
                   notice(undefined)
                 } catch (e) {
                   if ((e as Error).name === 'AbortError') return

@@ -28,7 +28,12 @@ export type CharState =
   | 'exercise' //        One-shot generated motion → idle (wide camera + cooldown)
   | 'gesture' //         One-shot per-character animation → idle (clip at runtime)
 
-export type CameraMode = 'head' | 'hips' | 'manual'
+/**
+ * `face` is a LOCKED close-up: the FSM state that asks for it owns the camera
+ * outright — orbit input is disabled and a manual override is suspended, not
+ * honoured — until the state ends. Today only `gesture` asks for it.
+ */
+export type CameraMode = 'head' | 'hips' | 'face' | 'manual'
 
 export interface SubclipRange {
   name: string
@@ -188,7 +193,10 @@ export const STATES: Record<CharState, StateDef> = {
     loop: 'once',
     onFinished: 'idle',
     reach: 'from-idle',
-    camera: 'head',
+    // Locked close-up for the whole clip: the kiss reads at the face, and a
+    // user mid-orbit would otherwise watch it from the back of the head.
+    // CameraController restores whatever mode was in force when it ends.
+    camera: 'face',
     facial: { wander: false, hold: 'happy' },
     blendSec: 0.5,
   },

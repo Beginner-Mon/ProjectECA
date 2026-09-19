@@ -74,6 +74,13 @@ for _stream in (sys.stdout, sys.stderr):
 # If this list changes, check whether those two need the same change.
 BACKEND_PYTHONPATH = ["agenticRAG", "text-to-motion/kimodo"]
 
+# The backend's conda env is a per-machine fact, not a repo fact: the docs say
+# `firstconda`, but another checkout has it as `ECA`, and a name that does not
+# exist makes `conda activate` fail quietly and `python` resolve to base — which
+# has no boto3, so uvicorn dies on the first AWS import. Override without
+# editing this file:  $env:VVA_BACKEND_CONDA_ENV = "ECA"
+BACKEND_CONDA_ENV = os.environ.get("VVA_BACKEND_CONDA_ENV", "firstconda")
+
 # ── Service registry ─────────────────────────────────────────────────────────
 # Each service: a shell command to run inside a fresh PowerShell window.
 #   cwd        : working dir (relative to repo root)
@@ -106,7 +113,7 @@ SERVICES: dict[str, dict] = {
     },
     "backend": {
         "cwd": "agenticRAG",
-        "conda_env": "firstconda",
+        "conda_env": BACKEND_CONDA_ENV,
         "pythonpath": BACKEND_PYTHONPATH,
         # Port 8000, matching VITE_API_GATEWAY_URL in ECA_UI/frontend/.env.local.
         # It said 8080 until 04/09, so the frontend called a port nothing served

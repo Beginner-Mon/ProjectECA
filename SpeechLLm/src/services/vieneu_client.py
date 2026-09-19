@@ -201,6 +201,44 @@ class VieNeuClient:
             src += f", voice_bucket={bucket}"
         print(f"[VieNeu] Initialized (mode={self.mode}, device={self.device}, "
               f"model={src}).")
+        self._log_cache_env()
+
+    def _log_cache_env(self) -> None:
+        """One diagnostic line about the HF cache this process will actually see.
+
+        Root cause of the 19/09 outage (OfflineModeIsEnabled at model load):
+        the Dockerfile baked weights under the default cache path
+        (/root/.cache/huggingface/hub) but Lambda does not run the container
+        process as root, so that path resolved somewhere else — or was
+        unreadable — at runtime, HF_HUB_OFFLINE=1 then forbade the fallback
+        download, and the failure only showed up as an opaque
+        huggingface_hub traceback ~15-25s into cold start. Logging the
+        effective UID/HOME/HF_HOME/resolved cache dir up front means the
+        NEXT time this mismatches, it is legible from the first log line
+        instead of requiring a repeat of that investigation. Guarded head to
+        toe: this must never be the thing that takes the process down.
+        """
+        try:
+            try:
+                uid = os.getuid()  # type: ignore[attr-defined]
+            except AttributeError:
+                uid = "n/a"  # os.getuid() does not exist on Windows
+            home = os.environ.get("HOME", "<unset>")
+            hf_home = os.environ.get("HF_HOME", "<unset>")
+            try:
+                from huggingface_hub.constants import HF_HUB_CACHE
+                cache_dir = str(HF_HUB_CACHE)
+                exists = os.path.isdir(cache_dir)
+                readable = os.access(cache_dir, os.R_OK) if exists else False
+            except Exception as e:
+                cache_dir = f"<unavailable: {e}>"
+                exists = False
+                readable = False
+            print(f"[VieNeu] Cache env: uid={uid}, HOME={home}, HF_HOME={hf_home}, "
+                  f"hf_hub_cache={cache_dir}, exists={exists}, readable={readable}")
+        except Exception:
+            # Never let diagnostics break startup.
+            pass
 
     def _load_model(self):
         if self._tts is not None:

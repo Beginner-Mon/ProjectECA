@@ -1,5 +1,6 @@
 import json
 import logging
+import os
 import re
 import threading
 from contextlib import asynccontextmanager
@@ -42,6 +43,12 @@ _MODULE_DIR = Path(__file__).resolve().parent
 _MODEL_STATE = {"status": "loading", "error": None}  # "loading" | "ready" | "error"
 
 
+def _terminate_process(code: int) -> None:
+    """Thin wrapper around `os._exit` so tests can monkeypatch termination
+    instead of actually killing the test process. See `_warm_up_model`."""
+    os._exit(code)
+
+
 def _warm_up_model():
     """Load the model AND pre-enrol every known voice, in the background.
 
@@ -67,6 +74,20 @@ def _warm_up_model():
         logger.exception("Model warm-up failed")
         _MODEL_STATE["status"] = "error"
         _MODEL_STATE["error"] = str(e)
+
+        # Under Lambda Web Adapter, a stuck-loading/error /health means LWA
+        # keeps waiting for readiness until the function's own 300s timeout
+        # (AWS_LWA_ASYNC_INIT lets that wait bleed past the 10s INIT budget
+        # into the first invocation) — so a broken image burns a full 300s
+        # AND a concurrency slot on every single invoke instead of failing
+        # fast (CloudWatch, image 10d0dbe5: 300000ms REPORT, Status: timeout).
+        # Fail fast instead: flush logs, then hard-exit so Lambda fails the
+        # invocation immediately. Only under Lambda (AWS_LAMBDA_FUNCTION_NAME
+        # set) — locally keep serving 503 from /health so a broken warm-up
+        # stays inspectable instead of killing the dev process.
+        if os.environ.get("AWS_LAMBDA_FUNCTION_NAME"):
+            logging.shutdown()
+            _terminate_process(1)
 
 
 @asynccontextmanager

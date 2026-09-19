@@ -145,3 +145,54 @@ class TestHealthEndpoint:
             body = response.json()
             assert body["status"] == "error"
             assert "model weights corrupted" in body["message"]
+
+    def test_warmup_failure_exits_process_under_lambda(self, monkeypatch):
+        """On Lambda, a warm-up failure must terminate the process instead of
+        leaving a zombie serving 503 for the full 300s function timeout
+        (LWA keeps waiting for /health readiness until then — see
+        `_warm_up_model`'s comment). Calls `_warm_up_model()` directly
+        (not via the lifespan thread) and monkeypatches `_terminate_process`
+        rather than `os._exit` so this stays a normal, non-exiting test.
+        """
+        import api_server
+
+        monkeypatch.setenv("AWS_LAMBDA_FUNCTION_NAME", "vva-speechllm")
+
+        def failing_load_model():
+            raise RuntimeError("model weights corrupted")
+
+        monkeypatch.setattr(api_server.vieneu_client, "_load_model", failing_load_model)
+        monkeypatch.setitem(api_server._MODEL_STATE, "status", "loading")
+        monkeypatch.setitem(api_server._MODEL_STATE, "error", None)
+
+        exit_calls = []
+        monkeypatch.setattr(api_server, "_terminate_process", exit_calls.append)
+
+        api_server._warm_up_model()
+
+        assert api_server._MODEL_STATE["status"] == "error"
+        assert "model weights corrupted" in api_server._MODEL_STATE["error"]
+        assert exit_calls == [1]
+
+    def test_warmup_failure_stays_up_locally(self, monkeypatch):
+        """Without AWS_LAMBDA_FUNCTION_NAME (local dev), a warm-up failure
+        must NOT terminate the process — /health keeps answering 503 so the
+        failure stays inspectable."""
+        import api_server
+
+        monkeypatch.delenv("AWS_LAMBDA_FUNCTION_NAME", raising=False)
+
+        def failing_load_model():
+            raise RuntimeError("model weights corrupted")
+
+        monkeypatch.setattr(api_server.vieneu_client, "_load_model", failing_load_model)
+        monkeypatch.setitem(api_server._MODEL_STATE, "status", "loading")
+        monkeypatch.setitem(api_server._MODEL_STATE, "error", None)
+
+        exit_calls = []
+        monkeypatch.setattr(api_server, "_terminate_process", exit_calls.append)
+
+        api_server._warm_up_model()
+
+        assert api_server._MODEL_STATE["status"] == "error"
+        assert exit_calls == []

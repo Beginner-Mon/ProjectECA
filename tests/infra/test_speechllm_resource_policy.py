@@ -10,6 +10,8 @@ against mixing the two on one function; grant_invoke would mint one).
 
 from __future__ import annotations
 
+import json
+
 import aws_cdk as cdk
 import pytest
 from aws_cdk.assertions import Template
@@ -50,16 +52,22 @@ def _policies(speech_template) -> list[dict]:
     ]
 
 
-def _policy_text_and_tokens(props: dict) -> tuple[str, list[dict]]:
-    """Split a to_json_string PolicyDocument (Fn::Join) into its literal
-    text and its live token dicts (function ARN, warmer role GetAtt)."""
+def _policy_object_and_tokens(props: dict) -> tuple[dict, list[dict]]:
+    """CloudFormation's schema for AWS::Lambda::ResourcePolicy.PolicyDocument
+    requires a JSON OBJECT (despite the CDK docstring saying "formatted as a
+    JSON string") — assert it is one, not a string / Fn::Join, then collect
+    the live token dicts (function ARN, warmer role GetAtt) nested inside."""
     doc = props["PolicyDocument"]
-    assert isinstance(doc, dict) and "Fn::Join" in doc, (
-        f"expected PolicyDocument as Fn::Join JSON string, got: {str(doc)[:200]}"
+    assert isinstance(doc, dict), (
+        f"expected PolicyDocument as a JSON object, got: {type(doc)}: {str(doc)[:200]}"
     )
-    text = "".join(p for p in doc["Fn::Join"][1] if isinstance(p, str))
-    tokens = [p for p in doc["Fn::Join"][1] if isinstance(p, dict)]
-    return text, tokens
+    assert "Fn::Join" not in doc, (
+        f"PolicyDocument must not be a stringified Fn::Join: {str(doc)[:200]}"
+    )
+    assert doc.get("Version") == "2012-10-17"
+    assert isinstance(doc.get("Statement"), list), "PolicyDocument.Statement must be a list"
+    tokens = [n for n in _walk(doc) if isinstance(n, dict) and "Fn::GetAtt" in n]
+    return doc, tokens
 
 
 @pytest.mark.unit
@@ -92,36 +100,78 @@ def test_no_lambda_permission_targets_speechllm(speech_template):
 
 @pytest.mark.unit
 def test_deny_everyone_else_with_two_arn_exceptions(speech_template):
-    text, tokens = _policy_text_and_tokens(_policies(speech_template)[0])
+    doc, tokens = _policy_object_and_tokens(_policies(speech_template)[0])
+    statements = {s["Sid"]: s for s in doc["Statement"]}
 
-    # All four statements, both actions, both conditions, the Deny shape.
+    # All four statements present, with their actions/effects.
     for sid in (
         "AllowAgentInvokeFunctionUrl",
         "AllowAgentInvokeFunction",
         "AllowWarmerInvokeFunction",
         "DenyEveryoneElse",
     ):
-        assert sid in text, f"missing statement {sid}"
-    for fragment in (
-        "lambda:InvokeFunctionUrl",
-        "lambda:InvokeFunction",
-        "lambda:FunctionUrlAuthType",
-        "lambda:InvokedViaFunctionUrl",
-        "aws:PrincipalArn",
-        "StringNotEquals",
-        '"AWS":"*"',
-        '"Effect":"Deny"',
-    ):
-        assert fragment in text, f"missing policy fragment: {fragment}"
+        assert sid in statements, f"missing statement {sid}"
+
+    allow_url = statements["AllowAgentInvokeFunctionUrl"]
+    assert allow_url["Effect"] == "Allow"
+    assert allow_url["Action"] == "lambda:InvokeFunctionUrl"
+    assert allow_url["Principal"] == {"AWS": _AGENT_ROLE}
+    assert allow_url["Condition"]["StringEquals"]["lambda:FunctionUrlAuthType"] == "AWS_IAM"
+
+    allow_fn = statements["AllowAgentInvokeFunction"]
+    assert allow_fn["Effect"] == "Allow"
+    assert allow_fn["Action"] == "lambda:InvokeFunction"
+    assert allow_fn["Principal"] == {"AWS": _AGENT_ROLE}
+    assert allow_fn["Condition"]["Bool"]["lambda:InvokedViaFunctionUrl"] is True
+
+    allow_warmer = statements["AllowWarmerInvokeFunction"]
+    assert allow_warmer["Effect"] == "Allow"
+    assert allow_warmer["Action"] == "lambda:InvokeFunction"
+
+    deny = statements["DenyEveryoneElse"]
+    assert deny["Effect"] == "Deny"
+    assert deny["Principal"] == {"AWS": "*"}
+    assert set(deny["Action"]) == {"lambda:InvokeFunctionUrl", "lambda:InvokeFunction"}
+    not_equals = deny["Condition"]["StringNotEquals"]["aws:PrincipalArn"]
+    assert _AGENT_ROLE in not_equals
+    assert len(not_equals) == 2, f"expected exactly two exempt ARNs: {not_equals}"
 
     # The agent ARN is a literal (three mentions: two Allows + the Deny
     # exception list); the function ARN and the warmer role survive only as
-    # GetAtt tokens that resolve at deploy. The Deny exception list is
-    # therefore one literal plus one token — presence of both is the point.
-    assert text.count(_AGENT_ROLE) == 3
-    targets = {tuple(t["Fn::GetAtt"]) for t in tokens if "Fn::GetAtt" in t}
+    # GetAtt tokens that resolve at deploy.
+    doc_text = json.dumps(doc)
+    assert doc_text.count(_AGENT_ROLE) == 3
+    targets = {tuple(t["Fn::GetAtt"]) for t in tokens}
     assert len(targets) == 2, f"expected function + warmer-role tokens: {tokens}"
     assert any(t[0].startswith("WarmerServiceRole") and t[1] == "Arn" for t in targets)
+
+
+@pytest.mark.unit
+def test_warmer_schedule_has_zero_retries_and_120s_timeout(speech_template):
+    """A missed warm ping is harmless (the next ping 5 minutes later covers
+    it); retrying a timed-out warmer only multiplies stuck 300s SpeechLLm
+    invocations against the account's Lambda concurrency quota. Also pins
+    the warmer's own timeout at >= 120s so a slow cold start (INIT ~10s +
+    model load + voice enrolment) does not time the warmer out in the first
+    place."""
+    body = speech_template.to_json()
+
+    schedules = [
+        r["Properties"] for r in body["Resources"].values()
+        if r["Type"] == "AWS::Scheduler::Schedule"
+    ]
+    assert len(schedules) == 1
+    retry_policy = schedules[0]["Target"]["RetryPolicy"]
+    assert retry_policy["MaximumRetryAttempts"] == 0
+    assert 60 <= retry_policy["MaximumEventAgeInSeconds"] <= 86400
+
+    warmer_fns = [
+        r["Properties"] for r in body["Resources"].values()
+        if r["Type"] == "AWS::Lambda::Function"
+        and r["Properties"].get("FunctionName") == "vva-speechllm-warmer"
+    ]
+    assert len(warmer_fns) == 1
+    assert warmer_fns[0]["Timeout"] >= 120
 
 
 @pytest.mark.unit

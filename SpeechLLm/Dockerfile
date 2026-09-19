@@ -21,8 +21,15 @@
 # — được ở local, hỏng ở production vì Lambda ngoài VPC không có đường ra
 # internet đảm bảo. Nướng sẵn hai repo vào HF cache của image (pnnbao-ump/
 # VieNeu-TTS-v3-Turbo + OpenMOSS-Team/MOSS-Audio-Tokenizer-Nano-ONNX) để runtime
-# với HF_HUB_OFFLINE=1 vẫn load được từ cache, không cần network. Đã kiểm:
-# HF_HUB_OFFLINE=1 với cache có sẵn load onnx backend thành công.
+# với HF_HUB_OFFLINE=1 vẫn load được từ cache, không cần network. QUAN TRỌNG:
+# HF_HOME phải là một đường dẫn CỐ ĐỊNH, ngoài /root — build chạy như root nên
+# default cache (/root/.cache/huggingface/hub) load được lúc build, nhưng
+# Lambda KHÔNG chạy container process bằng root, nên /root không đọc được ở
+# runtime -> cache miss -> HF_HUB_OFFLINE=1 chặn download -> load fail
+# (CloudWatch 19/09: OfflineModeIsEnabled ngay ở bước load model, không phải
+# chậm). Note cũ "đã kiểm: load thành công" chỉ verify trên máy local (root
+# thật), chưa bao giờ verify dưới runtime user của Lambda — đó là đúng chỗ nó
+# fail.
 #
 # ── 3. Lambda Web Adapter (LWA) là runtime interface ───────────────────────
 # Base là python:3.12-slim thường, KHÔNG phải public.ecr.aws/lambda/python.
@@ -72,16 +79,21 @@ RUN pip install --no-cache-dir -r requirements.txt
 # Hai repo mà OnnxV3LiteEngine sẽ tải lúc runtime nếu chưa có:
 #   pnnbao-ump/VieNeu-TTS-v3-Turbo  (~521 MB, gồm onnx_update/* + denoiser + speaker_encoder)
 #   OpenMOSS-Team/MOSS-Audio-Tokenizer-Nano-ONNX (~86 MB, codec)
-# snapshot_download với cache mặc định (/root/.cache/huggingface/hub) — runtime
-# với HF_HUB_OFFLINE=1 sẽ tìm thấy và không cần network. Không đặt
-# HF_HUB_OFFLINE ở bước này: download cần network.
+# HF_HOME set TRƯỚC bước download này, thành một đường dẫn cố định ngoài
+# /root (/opt/hf-cache) — không phải vì build cần nó (build chạy root, /root
+# vẫn đọc/ghi được), mà vì RUNTIME (Lambda) không chạy bằng root và không đọc
+# được /root/.cache. Đặt HF_HOME ở đây để download và runtime lookup trỏ
+# CÙNG một chỗ; chmod a+rX bên dưới để UID bất kỳ ở runtime đọc được nó. Không
+# đặt HF_HUB_OFFLINE ở bước này: download cần network.
 # huggingface_hub đã có transitively qua `vieneu`, nhưng khai rõ để không phụ
 # thuộc transitively.
+ENV HF_HOME=/opt/hf-cache
 RUN pip install --no-cache-dir huggingface_hub \
     && python -c "from huggingface_hub import snapshot_download; \
         snapshot_download(repo_id='pnnbao-ump/VieNeu-TTS-v3-Turbo', max_workers=4); \
         snapshot_download(repo_id='OpenMOSS-Team/MOSS-Audio-Tokenizer-Nano-ONNX', max_workers=4); \
-        print('weights baked')"
+        print('weights baked')" \
+    && chmod -R a+rX /opt/hf-cache
 
 # ── App code ─────────────────────────────────────────────────────────────────
 # LAYOUT: api_server.py ở WORKDIR để _MODULE_DIR = /var/task và
@@ -98,8 +110,12 @@ COPY configs ./configs
 # download sẽ fail vì offline.
 ENV HF_HUB_OFFLINE=1
 ENV TRANSFORMERS_OFFLINE=1
-# Không có HF_HOME riêng — dùng mặc định /root/.cache/huggingface mà bước
-# snapshot_download ở trên đã populate.
+# HF_HOME=/opt/hf-cache vẫn giữ nguyên từ bước download ở trên (ENV kế thừa
+# xuống runtime) — đây LÀ điểm sửa của lần này. Trước đây không đặt HF_HOME
+# riêng, dựa vào mặc định /root/.cache/huggingface: đúng lúc build (root),
+# sai lúc chạy trên Lambda (không phải root, /root không đọc được) -> cache
+# miss -> OfflineModeIsEnabled. Một đường dẫn cố định, world-readable, dùng
+# chung cho cả build và runtime mới đóng được khoảng lệch UID đó.
 
 ENV PYTHONUNBUFFERED=1
 ENV PORT=8080

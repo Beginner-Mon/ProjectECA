@@ -93,6 +93,19 @@ RUN pip install --no-cache-dir huggingface_hub \
         snapshot_download(repo_id='pnnbao-ump/VieNeu-TTS-v3-Turbo', max_workers=4); \
         snapshot_download(repo_id='OpenMOSS-Team/MOSS-Audio-Tokenizer-Nano-ONNX', max_workers=4); \
         print('weights baked')" \
+    # De-symlink the cache: HF stores snapshot files as SYMLINKS into
+    # hub/models--*/blobs/<hash>. onnxruntime validates that a model's
+    # external-data files stay inside its own directory, so following the
+    # symlink to blobs/ fails that check ("External data path escapes model
+    # directory" — CloudWatch, image 10d0dbe5). Replace each snapshot
+    # symlink with a real copy of its target, verify none remain (fail the
+    # build otherwise), then drop the now-unreferenced blobs/ dirs so the
+    # image does not carry the weights twice. Windows dev machines never hit
+    # this because their HF cache copies real files instead of symlinking.
+    && find /opt/hf-cache/hub -type l -path '*/snapshots/*' -exec sh -c \
+        'cp --remove-destination "$(readlink -f "$1")" "$1"' _ {} \; \
+    && test -z "$(find /opt/hf-cache/hub -type l -path '*/snapshots/*')" \
+    && find /opt/hf-cache/hub -type d -name blobs -exec rm -rf {} + \
     && chmod -R a+rX /opt/hf-cache
 
 # ── App code ─────────────────────────────────────────────────────────────────

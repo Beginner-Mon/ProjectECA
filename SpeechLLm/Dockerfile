@@ -1,9 +1,12 @@
 # SpeechLLm — VieNeu-TTS v3 Turbo on Lambda (container, response_stream)
 #
 # Built in CI, never locally (ràng buộc cứng #5 — hết RAM/ổ C:, đã có tiền lệ).
-# Context = REPO ROOT, như agenticRAG/Dockerfile:
+# Context = SpeechLLm/, its OWN directory — unlike agenticRAG/Dockerfile,
+# which shares the repo root with config/. SpeechLLm has no such sibling
+# dependency, so it gets its own build context and SpeechLLm/.dockerignore
+# applies as written:
 #
-#   docker build -f SpeechLLm/Dockerfile -t vva-speechllm .
+#   docker build -f SpeechLLm/Dockerfile -t vva-speechllm SpeechLLm
 #
 # Four decisions here are load-bearing, và đều fail vào lúc deploy/Cold start
 # nếu làm sai — chỉ hiện trong CloudWatch, trên vòng lặp CI 10 phút.
@@ -61,8 +64,8 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && rm -rf /var/lib/apt/lists/*
 
 # ── Python deps ─────────────────────────────────────────────────────────────
-# Context là gốc repo nên đường dẫn này đúng cả khi build từ gốc.
-COPY SpeechLLm/requirements.txt ./requirements.txt
+# Context là SpeechLLm/ nên đường dẫn này là tương đối trong thư mục đó.
+COPY requirements.txt ./requirements.txt
 RUN pip install --no-cache-dir -r requirements.txt
 
 # ── Bake weights vào HF cache ───────────────────────────────────────────────
@@ -87,9 +90,9 @@ RUN pip install --no-cache-dir huggingface_hub \
 # *.wav/*.ogg/*.mp3 là mẫu thử, __pycache__ không cần. .dockerignore đã loại
 # chúng khỏi context, nhưng COPY liệt kê tường minh để không vô tình lọt khi
 # .dockerignore bị quên.
-COPY SpeechLLm/api_server.py ./api_server.py
-COPY SpeechLLm/src ./src
-COPY SpeechLLm/configs ./configs
+COPY api_server.py ./api_server.py
+COPY src ./src
+COPY configs ./configs
 
 # Bake offline flags sau khi đã tải xong. Nếu để trước bước RUN download,
 # download sẽ fail vì offline.

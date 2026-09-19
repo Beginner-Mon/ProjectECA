@@ -26,17 +26,34 @@ from pathlib import Path
 import pytest
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
-DOCKERIGNORE = REPO_ROOT / ".dockerignore"
 
 # (dockerfile, build context) pairs, matching the workflows that build them:
 # .github/workflows/deploy-agent.yml uses `context: .`
-DOCKERFILES = [(REPO_ROOT / "agenticRAG" / "Dockerfile", REPO_ROOT)]
+# .github/workflows/deploy-speechllm.yml uses `context: SpeechLLm` — its own
+# directory, not the repo root (see that Dockerfile's header comment for why
+# the context change happened: the repo-root .dockerignore excludes
+# `SpeechLLm/` wholesale, written for the agent image build, so every COPY in
+# SpeechLLm/Dockerfile failed with "failed to compute cache key: not found"
+# when it shared the agent's root context).
+DOCKERFILES = [
+    (REPO_ROOT / "agenticRAG" / "Dockerfile", REPO_ROOT),
+    (REPO_ROOT / "SpeechLLm" / "Dockerfile", REPO_ROOT / "SpeechLLm"),
+]
 
 
-def _patterns() -> list[tuple[str, bool]]:
-    """(pattern, negated) in file order. Later entries win, as Docker does."""
+def _patterns(context: Path) -> list[tuple[str, bool]]:
+    """(pattern, negated) in file order. Later entries win, as Docker does.
+
+    A dockerignore is resolved at the CONTEXT root, not next to the
+    Dockerfile — Docker only ever reads `<context>/.dockerignore`. Each
+    dockerfile/context pair here is checked against the ignore file that
+    Docker would actually use for that build, not always the repo-root one.
+    """
+    dockerignore = context / ".dockerignore"
+    if not dockerignore.exists():
+        return []
     out: list[tuple[str, bool]] = []
-    for raw in DOCKERIGNORE.read_text(encoding="utf-8").splitlines():
+    for raw in dockerignore.read_text(encoding="utf-8").splitlines():
         line = raw.strip()
         if not line or line.startswith("#"):
             continue
@@ -58,8 +75,9 @@ def _is_excluded(path: str, patterns: list[tuple[str, bool]]) -> bool:
 
 
 def _copied_paths(dockerfile: Path) -> list[str]:
-    """Repo-relative COPY sources. Skips --from= stage copies (they come from
-    another image, not the context) and absolute or bare-flag arguments."""
+    """Context-relative COPY sources. Skips --from= stage copies (they come
+    from another image, not the context) and absolute or bare-flag
+    arguments."""
     paths: list[str] = []
     for raw in dockerfile.read_text(encoding="utf-8").splitlines():
         line = raw.strip()
@@ -78,15 +96,15 @@ def _copied_paths(dockerfile: Path) -> list[str]:
 @pytest.mark.unit
 @pytest.mark.parametrize("dockerfile,context", DOCKERFILES, ids=lambda v: getattr(v, "name", ""))
 def test_no_copied_path_is_ignored(dockerfile, context):
-    patterns = _patterns()
+    patterns = _patterns(context)
     blocked = [
         src for src in _copied_paths(dockerfile)
         if (context / src).exists() and _is_excluded(src, patterns)
     ]
     assert not blocked, (
-        f"{dockerfile.relative_to(REPO_ROOT)} COPYs "
+        f"{dockerfile.relative_to(REPO_ROOT)} (context {context.relative_to(REPO_ROOT) if context != REPO_ROOT else '.'}) COPYs "
         + ", ".join(blocked)
-        + " but .dockerignore excludes it, so the build fails with "
+        + " but its context's .dockerignore excludes it, so the build fails with "
         '"failed to compute cache key: not found". Add a `!` negation for the '
         "exact subpath — do not widen the exclusion."
     )

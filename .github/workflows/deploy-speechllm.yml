@@ -137,15 +137,23 @@ jobs:
 
       - uses: docker/setup-buildx-action@v3
 
-      # Context is REPOSITORY ROOT, not SpeechLLm/. The Dockerfile copies
-      # SpeechLLm/api_server.py, SpeechLLm/src, SpeechLLm/configs and bakes
+      # Context is SpeechLLm/, not the repo root. The Dockerfile COPYs are
+      # relative to that context (api_server.py, src, configs) and bakes
       # weights from HuggingFace (pnnbao-ump/VieNeu-TTS-v3-Turbo + MOSS codec)
       # into the HF cache at /root/.cache/huggingface. That bake is what lets
       # HF_HUB_OFFLINE=1 work without a network at cold start.
+      #
+      # Root context was tried first and reverted: the repo-root .dockerignore
+      # excludes `SpeechLLm/` wholesale (written for the agent image build),
+      # so every COPY failed with "failed to compute cache key: not found".
+      # A dockerignore is resolved at the context root, not next to the
+      # Dockerfile, so SpeechLLm/.dockerignore was never read under that
+      # setup. With context: SpeechLLm, SpeechLLm/.dockerignore is now the
+      # real context-root ignore file and is honoured as written.
       - name: Build (no push, no credentials)
         uses: docker/build-push-action@v5
         with:
-          context: .
+          context: SpeechLLm
           file: SpeechLLm/Dockerfile
           push: false
           # LAMBDA CANNOT READ AN IMAGE INDEX. buildx adds provenance
@@ -208,7 +216,7 @@ jobs:
         if: steps.exists.outputs.already == 'false'
         uses: docker/build-push-action@v5
         with:
-          context: .
+          context: SpeechLLm
           file: SpeechLLm/Dockerfile
           push: true
           tags: ${{ steps.meta.outputs.image-uri }}

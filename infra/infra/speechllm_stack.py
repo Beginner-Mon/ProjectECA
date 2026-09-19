@@ -429,7 +429,11 @@ class SpeechllmStack(Stack):
                 "TARGET_FN": self.fn.function_name,
             },
             memory_size=128,
-            timeout=Duration.seconds(30),
+            # 120s, not 30s. A cold start (INIT ~10s + model load + voice
+            # enrolment) can run past 30s, and the warmer timing out on every
+            # cold start is exactly what fed the retry storm this timeout
+            # bump (and the retry policy below) fixes.
+            timeout=Duration.seconds(120),
             description="Keeps vva-speechllm warm (model + pre-enrol) via /health ping",
         )
         # KHONG grant_invoke warmer o day: quyen InvokeFunction cua warmer
@@ -455,6 +459,20 @@ class SpeechllmStack(Stack):
             target=scheduler.CfnSchedule.TargetProperty(
                 arn=warmer.function_arn,
                 role_arn=scheduler_role.role_arn,
+                # A missed warm ping is harmless — the NEXT scheduled ping 5
+                # minutes later covers it. Retrying it is actively harmful:
+                # the warmer invokes vva-speechllm RequestResponse, so every
+                # retry of a warmer that timed out (previously 30s, a cold
+                # start can exceed that) spawns another stuck 300s SpeechLLm
+                # invocation, and this target's old MaximumRetryAttempts=185
+                # default is how 4-5 concurrent stuck invocations piled up
+                # against the account's 10-execution Lambda concurrency
+                # quota. maximum_event_age_in_seconds must stay in
+                # Scheduler's valid 60-86400s range even at zero retries.
+                retry_policy=scheduler.CfnSchedule.RetryPolicyProperty(
+                    maximum_retry_attempts=0,
+                    maximum_event_age_in_seconds=60,
+                ),
             ),
             description="Ping vva-speechllm /health every 5m to avoid 25s cold start",
         )

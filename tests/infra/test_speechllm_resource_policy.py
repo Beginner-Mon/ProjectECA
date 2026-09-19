@@ -147,6 +147,34 @@ def test_deny_everyone_else_with_two_arn_exceptions(speech_template):
 
 
 @pytest.mark.unit
+def test_warmer_schedule_has_zero_retries_and_120s_timeout(speech_template):
+    """A missed warm ping is harmless (the next ping 5 minutes later covers
+    it); retrying a timed-out warmer only multiplies stuck 300s SpeechLLm
+    invocations against the account's Lambda concurrency quota. Also pins
+    the warmer's own timeout at >= 120s so a slow cold start (INIT ~10s +
+    model load + voice enrolment) does not time the warmer out in the first
+    place."""
+    body = speech_template.to_json()
+
+    schedules = [
+        r["Properties"] for r in body["Resources"].values()
+        if r["Type"] == "AWS::Scheduler::Schedule"
+    ]
+    assert len(schedules) == 1
+    retry_policy = schedules[0]["Target"]["RetryPolicy"]
+    assert retry_policy["MaximumRetryAttempts"] == 0
+    assert 60 <= retry_policy["MaximumEventAgeInSeconds"] <= 86400
+
+    warmer_fns = [
+        r["Properties"] for r in body["Resources"].values()
+        if r["Type"] == "AWS::Lambda::Function"
+        and r["Properties"].get("FunctionName") == "vva-speechllm-warmer"
+    ]
+    assert len(warmer_fns) == 1
+    assert warmer_fns[0]["Timeout"] >= 120
+
+
+@pytest.mark.unit
 def test_missing_agent_role_arn_is_still_an_error():
     """T9 keeps the gate: image tag without the agent ARN blocks this stack
     (add_error, scoped to VvaSpeechllmStack — other stacks unaffected)."""

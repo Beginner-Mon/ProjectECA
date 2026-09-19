@@ -2,7 +2,8 @@
 
     ECR repo `vva-speechllm`  <-- CI pushes  vva-speechllm:<git-sha>
               |
-              +-- Lambda `vva-speechllm` (3538 MB ~ 2 vCPU, 300s, response_stream)
+              +-- Lambda `vva-speechllm` (3008 MB — account's Lambda memory quota
+                  ceiling, not the 2-vCPU 3538 MB originally planned, 300s, response_stream)
                        |-- no VPC, no NAT (nhu vva-agent, agent_stack.py:8-14)
                        +-- Function URL, AuthType=AWS_IAM, InvokeMode=RESPONSE_STREAM
                        +-- EventBridge ping /health every 5m (~$0.03/mo, nhu Kimodo)
@@ -57,11 +58,13 @@
     COLD START 25s (model 13s + pre-enrol) => EventBridge ping /health moi 5 phut
     thay vi Provisioned Concurrency ($30-37/mo, gap hon nghin lan).
 
-    D6 GATE: memory 3538 MB ~ 2 vCPU la TAM. D6 do 1769/3538/5308 MB x 3 lan/muc,
-    Max Memory Used, arm64 vs x86_64, va tong hop co nhanh bang realtime khong
-    (78s cho 84.5s audio local). Ket qua quay lai sua memory/kien truc o day
-    va timeout o agent_stack. Neu cham hon realtime: DUNG, tinh lai, dung bat
-    cho user.
+    D6 GATE: memory 3008 MB la TAM PROVISIONAL (tran quota Lambda memory cua
+    tai khoan nay — xem _DEFAULT_MEMORY_MB o duoi; 3538 la muc 2-vCPU ly
+    tuong ban dau nhung khong deploy duoc tren tai khoan nay, va 5308 cang
+    khong). D6 do 1769/3008 MB x 3 lan/muc, Max Memory Used, arm64 vs x86_64,
+    va tong hop co nhanh bang realtime khong (78s cho 84.5s audio local). Ket
+    qua quay lai sua memory/kien truc o day va timeout o agent_stack. Neu
+    cham hon realtime: DUNG, tinh lai, dung bat cho user.
 """
 
 from __future__ import annotations
@@ -81,9 +84,12 @@ from constructs import Construct
 
 _REPOSITORY_NAME = "vva-speechllm"
 
-# Default memory TAM — D6 chot. Lambda cap CPU theo RAM: 1769 MB = 1 vCPU,
-# 3538 MB = 2 vCPU. De tham so CDK de D6 chinh khong hardcode.
-_DEFAULT_MEMORY_MB = 3538
+# Default memory TAM PROVISIONAL — D6 chot. Lambda cap CPU theo RAM: 1769 MB
+# = 1 vCPU, 3538 MB = 2 vCPU (diem 2-vCPU ly tuong ban dau). Nhung quota
+# Lambda memory cua TAI KHOAN NAY gioi han ham toi da 3008 MB — do la tran
+# hien co (chua xin tang quota), nen 3008 la default thuc te, khong phai
+# 3538. De tham so CDK de D6 chinh khong hardcode.
+_DEFAULT_MEMORY_MB = 3008
 
 # Timeout 300s: cau dai nhat do duoc ton 78s tong hop, + graph 5-10s = ~90s,
 # de du phong va khop agent timeout (D3 nang agent tu 120s len 300s).
@@ -105,8 +111,10 @@ class SpeechllmStack(Stack):
         image_tag = ctx("speechllm_image_tag")
         bootstrap = str(ctx("speechllm_bootstrap") or "").strip() in ("1", "true", "yes")
 
-        # Memory la tham so CDK, mac dinh 3538 — D6 se chinh, dung hardcode.
-        # Cho phep -c speechllm_memory=1769 / 3538 / 5308 de do.
+        # Memory la tham so CDK, mac dinh 3008 (tran quota Lambda memory cua
+        # tai khoan, xem _DEFAULT_MEMORY_MB) — D6 se chinh trong pham vi
+        # kha dung, dung hardcode.
+        # Cho phep -c speechllm_memory=1769 / 3008 de do.
         try:
             memory_mb = int(ctx("speechllm_memory") or _DEFAULT_MEMORY_MB)
         except (ValueError, TypeError):
@@ -213,8 +221,9 @@ class SpeechllmStack(Stack):
                 self.repository, tag_or_digest=image_tag,
             ),
             architecture=architecture,
-            # Memory la tham so CDK — D6 se do 1769/3538/5308 va chot muc nho
-            # nhat khong cham hon. Dung hardcode.
+            # Memory la tham so CDK — D6 se do 1769/3008 (tran quota Lambda
+            # memory cua tai khoan) va chot muc nho nhat khong cham hon.
+            # Dung hardcode.
             memory_size=memory_mb,
             timeout=Duration.seconds(_DEFAULT_TIMEOUT_S),
             environment=env_vars,

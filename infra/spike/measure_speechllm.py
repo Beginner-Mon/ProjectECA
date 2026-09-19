@@ -293,7 +293,7 @@ def main() -> int:
 
     if slower_than_realtime:
         print()
-        print("⛔ D6 GATE: Slower than realtime — DO NOT enable for users. Recalc cost table (x ratio) and consider larger memory (5308 MB) or x86 vs arm64.", file=sys.stderr)
+        print("⛔ D6 GATE: Slower than realtime — DO NOT enable for users. Recalc cost table (x ratio); 3008 MB is the account's Lambda memory quota ceiling (not yet raised) so a larger size isn't available — try x86_64 vs arm64, or request a quota increase first.", file=sys.stderr)
 
     result = {
         "url": args.url,

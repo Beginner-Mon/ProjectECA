@@ -131,10 +131,11 @@ agent_stack = AgentStack(
 #     cdk deploy VvaSpeechllmStack -c speechllm_image_tag=<sha>      # every time after
 #     cdk deploy VvaSpeechllmStack -c speechllm_image_tag=<sha> \
 #         -c agent_role_arn=<ARN of vva-agent role>                 # to lock Function URL
-#         -c speechllm_memory=3538 -c speechllm_arch=arm64          # D6 chot
+#         -c speechllm_memory=3008 -c speechllm_arch=arm64          # D6 chot (tran quota)
 #
 # Two-step bootstrap giong VvaAgentStack: repo truoc, image sau.
-# Memory la tham so CDK, mac dinh 3538 MB ~ 2 vCPU — D6 se do 1769/3538/5308
+# Memory la tham so CDK, mac dinh 3008 MB — tran quota Lambda memory cua tai
+# khoan (khong phai 3538 ~ 2 vCPU nhu ke hoach ban dau). D6 se do 1769/3008
 # va chot muc nho nhat khong cham hon. Dung hardcode.
 speechllm_stack = SpeechllmStack(
     app, "VvaSpeechllmStack",

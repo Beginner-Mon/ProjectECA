@@ -8,7 +8,8 @@
 #     so `latest` is not possible. Same reason as deploy-agent.
 #   * CDK OWNS THE SHAPE, CI OWNS THE CODE. This workflow never runs `cdk deploy`:
 #     it pushes an image and calls update-function-code. Changing memory (D6 chot
-#     1769/3538/5308), arch, timeout or env is a CDK deploy a human runs.
+#     1769/3008 — 3008 is the account's Lambda memory quota ceiling, not the
+#     3538 originally planned), arch, timeout or env is a CDK deploy a human runs.
 #
 # Docker lives here and nowhere else — no developer machine needs a daemon
 # (rang buoc #5: het RAM/o C:, da co tien le).

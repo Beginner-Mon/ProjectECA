@@ -10,8 +10,21 @@
   <img src="https://img.shields.io/badge/FastAPI-SSE_streaming-009688?style=flat-square">
   <img src="https://img.shields.io/badge/PostgreSQL-pgvector-4169E1?style=flat-square">
   <img src="https://img.shields.io/badge/React_19-Vite_·_TS-61DAFB?style=flat-square">
-  <img src="https://img.shields.io/badge/tests-312-success?style=flat-square">
+  <img src="https://img.shields.io/badge/tests-750%2B-success?style=flat-square">
 </p>
+
+<p align="center">
+  <a href="https://release.d32nf9wwqqt016.amplifyapp.com/"><strong>🌐 Try the live demo &rarr;</strong></a>
+</p>
+
+> **Before you judge the demo by what moves.** The 3D **motion synthesis** runs on a GPU
+> worker started **on demand**, not around the clock — idling it costs about a dollar an
+> hour, which a public demo does not justify. When it is down the avatar simply stands
+> there and no exercise is demonstrated: that is the cost decision, not a broken build.
+> **Vietnamese speech** is likewise not enabled on the hosted build yet.
+>
+> Everything else runs continuously — chat, retrieval, token streaming, persona styling,
+> and the clinical safety gate.
 
 ---
 
@@ -102,13 +115,13 @@ flowchart LR
 | | |
 |---|---|
 | **LangGraph nodes** | 8 (memory → planner → retriever⇄tools → kimodo → synthesizer → grader → error_handler) |
-| **Test cases** | 312 (275 unit + 37 integration; circuit-breaker, routing, memory-regression, GDPR, auth) |
-| **Backend** | ~7,800 LOC Python |
-| **Frontend** | ~4,200 LOC TypeScript/React |
-| **Data model** | 7 Postgres tables (`users`, `conversations`, `messages`, `summaries`, `user_memory`, `documents`, `kb_embeddings`) |
+| **Test cases** | **750+** across 60 files — routing, circuit-breaker, memory, RLS/user-scope, GDPR, auth, TTS streaming, language detection |
+| **Backend** | ~12,800 LOC Python (excl. migrations and tests) |
+| **Frontend** | ~23,900 LOC TypeScript/React |
+| **Data model** | 10 Postgres tables (`users`, `conversations`, `messages`, `summaries`, `user_memory`, `characters`, `documents`, `kb_embeddings`, `billing_accounts`, `billing_webhook_events`) — Alembic at `011`, row-level security on the six user-owned ones |
 | **Architecture decisions** | 33 recorded (D1–D33) in [docs/plans/reupdate-plan.md](docs/plans/reupdate-plan.md) |
 | **Languages** | Vietnamese + English (multilingual embeddings & prompts) |
-| **Personas** | 3 (default / friendly / clinical) as editable Markdown |
+| **Personas** | 4 characters (anne · bronya · miki · hatsune-miku), each a directory of `_core.md` + `en.md` + `vi.md` |
 
 ---
 
@@ -150,7 +163,7 @@ python scripts/ingest_kb_pgvector.py --reset              # ~2918 exercises
 cd ECA_UI/frontend && npm install && npm run dev
 ```
 
-Open **http://localhost:5173** (demo mode: no login required). Backend URL is read from `ECA_UI/frontend/.env.local` (`VITE_API_BASE_URL`, default `http://localhost:8000`).
+Open **http://localhost:5173** and sign in — Cognito verification is mandatory in every environment (see the Auth row above), so set the `COGNITO_*` values in `agenticRAG/.env` first (template: `agenticRAG/.env.example`). Backend URL is read from `ECA_UI/frontend/.env.local` (`VITE_API_BASE_URL`, default `http://localhost:8000`).
 
 **Verify:**
 
@@ -168,18 +181,23 @@ python -m pytest tests/langgraph_agents/ -m unit -q   # unit suite (no live serv
 | Endpoint | Method | Purpose |
 |---|---|---|
 | `/chat` | POST | Submit a query, stream SSE (`stage` → `token` → `done`) |
-| `/sessions?user_id=` | GET | List a user's sessions (with first-message preview) |
-| `/sessions/{id}` | GET | Load a session's messages (resume) |
-| `/users/{id}/memory` | GET · POST · DELETE | User long-term facts (GDPR-aware) |
+| `/tts` | POST | Synthesize speech for a turn, streamed like `/chat` |
+| `/sessions` | GET | List your sessions (with first-message preview) |
+| `/sessions/{id}` | GET · DELETE | Load a session's messages (resume) · delete it |
+| `/me/memory` · `/me/memory/{fact_id}` | GET · POST · DELETE | Your long-term facts (GDPR-aware) |
 | `/health` · `/health/detailed` | GET | Liveness · readiness (dependency + breaker states) |
+
+**No endpoint takes a user id.** Identity is derived from the verified Bearer token
+(`Depends(current_user_id)`) and never from a path, query or body value — a path parameter
+is input, not identity. `/me/...` is spelled that way for the same reason.
 
 <details>
 <summary><code>POST /chat</code> body & SSE events</summary>
 
 ```jsonc
 // request
-{ "query": "Bài tập cho đau lưng", "user_id": "…", "session_id": "…",
-  "persona_id": "eca_default", "output_mode": "text", "web_search": false }
+{ "query": "Bài tập cho đau lưng", "session_id": "…",
+  "persona_id": "anne", "locale": "vi", "output_mode": "text", "web_search": false }
 ```
 ```
 event: stage   data: {"node":"planner","status":"complete"}
@@ -199,13 +217,13 @@ agenticRAG/langgraph_agents/
 ├── tools/         # in-process @tool wrappers (kb_search, …)
 ├── mcp/           # MCP servers (web search, kimodo) + client w/ circuit breaker
 ├── shared/        # embeddings (offline e5) · structured logging
-├── db/ · alembic/ # asyncpg client · session store · migrations (7 tables)
-├── personas/      # eca_default / eca_friendly / eca_clinical (Markdown)
+├── db/ · alembic/ # asyncpg client · session store · migrations (011, 10 tables + RLS)
+├── personas/      # anne / bronya / miki / hatsune-miku — one dir each: _core.md + en.md + vi.md
 ├── graph.py · routing.py · state.py · llm.py
 ECA_UI/frontend/   # React 19 + Vite + TS + Tailwind · lib/api.ts (axios + SSE)
 ├── src/avatar/    # facial-animation system: mixer · expression/blink/eye/idle/lipsync controllers · VRM adapter
 docs/              # architecture/ · ops/ · plans/ · phases/ · fixes/
-tests/langgraph_agents/   # 312 tests (275 unit + 37 integration)
+tests/                    # 750+ cases across 60 files (langgraph_agents · SpeechLLm · text-to-motion)
 ```
 
 ---

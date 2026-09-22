@@ -89,7 +89,7 @@ flowchart TD
 flowchart LR
     FE["React 19 + Vite + TS<br/>VRM 3D avatar · :5173"] -->|SSE + REST · Cognito JWT| API["FastAPI<br/>:8000"]
     API --> GRAPH["LangGraph<br/>8-node state machine"]
-    GRAPH --> PG[("PostgreSQL 16<br/>+ pgvector · :5433")]
+    GRAPH --> PG[("Neon Postgres 18<br/>+ pgvector · us-east-1")]
     GRAPH --> RD[("Redis 7<br/>STM · :6379")]
     GRAPH -->|MCP| SX["SearXNG<br/>web search · :6666"]
     GRAPH -->|MCP| KM["Kimodo<br/>3D motion · GPU"]
@@ -101,12 +101,12 @@ flowchart LR
 |---|---|
 | **Orchestration** | LangGraph state machine (pure-async nodes), MCP tool servers, per-role circuit breakers |
 | **LLM** | DeepSeek (OpenAI-compatible) — fast model for planner/retriever, heavy model for synthesizer |
-| **Retrieval** | PostgreSQL 16 + **pgvector** (HNSW, 384-dim), `intfloat/multilingual-e5-small` (query:/passage: prefixes), SearXNG metasearch |
+| **Retrieval** | Neon Postgres 18.4 + **pgvector** 0.8.6 (HNSW, 384-dim), `intfloat/multilingual-e5-small` (query:/passage: prefixes), SearXNG metasearch |
 | **Memory** | Redis STM + Postgres/pgvector LTM, background summarizer, GDPR delete + re-summarize |
 | **API** | FastAPI, Server-Sent Events (token streaming), Pydantic schemas |
 | **Auth** | AWS Cognito ID-token verification (JWKS · RS256 · audience · issuer). Mandatory in every environment — no flag relaxes it; dev and production differ only in which pool they trust |
 | **Frontend** | React 19, Vite, TypeScript, Tailwind/shadcn, three.js + `@pixiv/three-vrm` avatar with a channel-based **facial-animation** system (R3F-native), axios (REST) + fetch (SSE stream) |
-| **Infra** | Docker Compose (Postgres · Redis · SearXNG), Alembic migrations |
+| **Infra** | AWS CDK — Lambda (container images), API Gateway, CloudFront + signed URLs, Cognito, S3, ECS/GPU for motion, SSM Parameter Store. Docker Compose (Redis · SearXNG) and Alembic for local work |
 
 ---
 
@@ -245,13 +245,18 @@ tests/                    # 750+ cases across 60 files (langgraph_agents · Spee
 
 ## 🧭 Status & roadmap
 
+**Running on AWS** — Cognito auth · Lambda (agent · CRUD · characters · SpeechLLm) ·
+API Gateway throttling · CloudFront signed assets · Neon Postgres · ECS GPU worker for 3D motion.
+
 - ✅ Core pipeline (8-node graph), memory, RAG, personas, live SSE token streaming, session resume
-- ✅ Auth mechanism (Cognito JWT), GDPR memory ops, circuit breakers, health checks
+- ✅ Auth (Cognito JWT) — mandatory in every environment, GDPR memory ops, circuit breakers, health checks
 - ✅ Web-search user-toggle enforcement · offline embeddings · retriever loop cap
-- ✅ Avatar facial-animation system (expressions · blink · gaze · lip-sync), decoupled from body motion
-- 🔜 **Knowledge-base ingest** into pgvector (populate `documents`/`kb_embeddings`)
-- 🔜 **Backend emotion events** to drive avatar expressions (Conversation node → `avatar.emotion` SSE)
-- 🔜 **Pre-cloud hardening** — enable auth, rate limiting, secret management
-- 🔜 **Phase 7** — hybrid edge-cloud (cloud API + edge GPU worker for 3D motion / Kimodo)
+- ✅ Knowledge base ingested into pgvector — 2,918 chunks · HNSW · 384-dim
+- ✅ Row-level security on the six user-owned tables; the service connects as a least-privilege role
+- ✅ Gateway rate limiting (50 req/s sustained · 100 burst) · secrets in SSM Parameter Store
+- ✅ 3D motion through a queued GPU worker · avatar facial animation (expressions · blink · gaze · lip-sync)
+- 🟡 Streaming TTS with per-character cloned voices — built and deployed, **not switched on for the hosted demo yet**
+- 🔜 **Backend emotion events** (`avatar.emotion` SSE) — the avatar side is ready; the backend does not emit them yet
+- 🔜 **Security review** — an ASVS 5.0 pass is under way
 
 <p align="center"><sub>LangGraph · FastAPI · DeepSeek · PostgreSQL/pgvector · Redis · MCP · React · three.js/VRM · SSE</sub></p>

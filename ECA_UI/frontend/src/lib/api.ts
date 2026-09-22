@@ -37,6 +37,13 @@ import { fetchAuthSession } from 'aws-amplify/auth'
 import { API_GATEWAY } from './apiBase'
 import type { MotionStatus } from './motionJob'
 
+/**
+ * The character used when none is chosen — the backend's own default for
+ * `persona_id`. Named here because the cache key and POST /tts must spell out
+ * the character /chat actually used, and "absent" would not match "anne".
+ */
+export const DEFAULT_PERSONA_ID = 'anne'
+
 
 // ── Auth helpers ──────────────────────────────────────────────────────────────
 
@@ -49,7 +56,7 @@ import type { MotionStatus } from './motionJob'
  * so this returned {} for every request and the API was called with no
  * credentials at all. Nothing failed loudly; requests just went out anonymous.
  */
-async function authHeader(): Promise<Record<string, string>> {
+export async function authHeader(): Promise<Record<string, string>> {
   try {
     const session = await fetchAuthSession()
     const token = session.tokens?.idToken?.toString()
@@ -116,13 +123,8 @@ export function wakeCrudApi(): void {
  * the bug this comment exists to prevent.
  */
 export async function currentUserId(): Promise<string> {
-  try {
-    const session = await fetchAuthSession()
-    const sub = session.tokens?.idToken?.payload?.sub
-    if (sub && typeof sub === 'string') return sub
-  } catch {
-    // not signed in — fall through to demo id
-  }
+  const sub = await cognitoSub()
+  if (sub) return sub
 
   const DEMO_KEY = 'vva_demo_user'
   let demoId = localStorage.getItem(DEMO_KEY)
@@ -133,9 +135,26 @@ export async function currentUserId(): Promise<string> {
   return demoId
 }
 
+/**
+ * The signed-in user's Cognito sub, or null — with NO demo fallback.
+ *
+ * For anything that must only exist for a real account: the TTS cache is
+ * namespaced by this, and a null is what keeps demo mode from caching at all.
+ * The sub, not the email: an email can be changed or reassigned, a sub cannot.
+ */
+export async function cognitoSub(): Promise<string | null> {
+  try {
+    const session = await fetchAuthSession()
+    const sub = session.tokens?.idToken?.payload?.sub
+    return typeof sub === 'string' && sub ? sub : null
+  } catch {
+    return null // not signed in, or Amplify not configured (demo mode)
+  }
+}
+
 // ── SSE parser (ported from test-ui/sse-test/api.js _parseSSEBlocks) ─────────
 
-type SSEEventCallback = (eventType: string, data: unknown) => void
+export type SSEEventCallback = (eventType: string, data: unknown) => void
 
 function _parseSSEBlocks(text: string, emit: SSEEventCallback): void {
   for (const block of text.split(/\r?\n\r?\n/)) {
@@ -190,7 +209,7 @@ export async function streamChat(
   const {
     query,
     sessionId,
-    personaId = 'anne',
+    personaId = DEFAULT_PERSONA_ID,
     previousPersonaId,
     outputMode = 'text',
     webSearch = false,
@@ -224,6 +243,18 @@ export async function streamChat(
     throw new Error(`HTTP ${resp.status}: ${await resp.text()}`)
   }
 
+  await consumeSSE(resp, onEvent)
+}
+
+/**
+ * Read an SSE response to its end, calling `onEvent` per event.
+ *
+ * Shared by /chat and POST /tts. The backend emits the speech events for both
+ * from one helper, and reading them through one function here keeps the two
+ * ends symmetrical — including the buffered-proxy fallback, which a speech
+ * stream needs just as much as a chat one.
+ */
+async function consumeSSE(resp: Response, onEvent: SSEEventCallback): Promise<void> {
   // Clone so fallback text() path can still read the body
   const respClone = resp.clone()
 
@@ -323,39 +354,45 @@ export interface SessionMessage {
 }
 
 /**
- * Speak a message the user asked to hear. Resolves with a playable audio URL.
+ * Read a message aloud on demand — the speaker button, for a message whose
+ * audio is neither in memory nor in this browser's cache (lib/speechSource.ts
+ * checks those first).
  *
- * Two hops on purpose. VieNeu is CPU-only at roughly 18ms per character, so a
- * full answer takes 30-45s — far too long to hold a request open. POST /tts
- * returns a task id straight away and the result lands in Redis, which is the
- * same path /chat already uses for its automatic voicing.
+ * POST /tts answers with an SSE stream of the same events /chat sends in voice
+ * mode: `speech_start`, one `speech_chunk` per self-standing Opus (or WAV)
+ * file, then `speech_end` — or `speech_failed`. The first chunk lands about
+ * half a second after synthesis starts and the rest arrive faster than they
+ * play, so the caller plays as it goes instead of waiting for the whole answer.
+ *
+ * fetch, not the axios client: axios is XHR and cannot deliver a stream
+ * progressively. This used to be a task id plus a one-second poll through
+ * Redis, and the user waited for the entire synthesis before hearing anything.
+ *
+ * Throws before the stream opens on a non-2xx — 503 is the normal answer where
+ * TTS is not configured.
  */
 export async function speakText(
   text: string,
-  opts: { signal?: AbortSignal; pollMs?: number; timeoutMs?: number } = {},
-): Promise<string> {
-  const { signal, pollMs = 1000, timeoutMs = 180_000 } = opts
-
-  const { data } = await http.post('/tts', { text }, { signal })
-  const taskId = (data as { task_id: string }).task_id
-
-  const deadline = Date.now() + timeoutMs
-  while (Date.now() < deadline) {
-    if (signal?.aborted) throw new DOMException('aborted', 'AbortError')
-    await new Promise((r) => setTimeout(r, pollMs))
-    try {
-      const res = await http.get(`/tts/${encodeURIComponent(taskId)}/result`, { signal })
-      const payload = res.data as { event?: string; url?: string; error?: string }
-      if (payload.event === 'speech_ready' && payload.url) return payload.url
-      if (payload.event === 'speech_failed') throw new Error(payload.error ?? 'TTS failed')
-    } catch (e) {
-      // 404 just means "not ready yet" — that is the documented contract of
-      // GET /tts/{id}/result, so it must not abort the poll.
-      const status = (e as { response?: { status?: number } }).response?.status
-      if (status !== 404) throw e
-    }
+  personaId: string,
+  onEvent: SSEEventCallback,
+  signal?: AbortSignal,
+): Promise<void> {
+  const resp = await fetch(`${API_GATEWAY}/tts`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      Accept: 'text/event-stream',
+      ...(await authHeader()),
+    },
+    // persona_id picks the voice. It was never sent before, so every replay
+    // came out in the backend's default character's voice.
+    body: JSON.stringify({ text, persona_id: personaId }),
+    signal,
+  })
+  if (!resp.ok) {
+    throw new Error(`TTS HTTP ${resp.status}: ${await resp.text()}`)
   }
-  throw new Error(`TTS timed out after ${Math.round(timeoutMs / 1000)}s`)
+  await consumeSSE(resp, onEvent)
 }
 
 // ── Motion renders ─────────────────────────────────────────────────────────────
@@ -381,10 +418,10 @@ export async function fetchMotionStatus(
     return res.data as MotionStatus
   } catch (e) {
     const status = (e as { response?: { status?: number } }).response?.status
-    // THE OPPOSITE OF speakText ABOVE. There, 404 means "not ready, keep
-    // polling". Here the row either never existed or has aged out of DynamoDB
-    // (24h TTL) and no amount of waiting will produce it, so it is normalised
-    // into the terminal `not_found` status rather than swallowed as "pending".
+    // A 404 is terminal, not "not ready yet": the row either never existed or
+    // has aged out of DynamoDB (24h TTL) and no amount of waiting will produce
+    // it, so it is normalised into the terminal `not_found` status rather than
+    // swallowed as "pending".
     if (status === 404) return { status: 'not_found' }
     throw e
   }

@@ -22,7 +22,60 @@ class CheckResult:
     detail: str | None = None
 
 
+def _stm_backend() -> str:
+    """Same parsing as shared/stm.py::_build_store, duplicated rather than
+    imported. shared/stm.py has no reason to depend on api/health.py, and it
+    doesn't export a standalone "which backend" accessor — only "build me a
+    store" — so this is one line copied, not a shared helper. If
+    shared/stm.py's default or parsing ever changes, this must change with it.
+    """
+    return os.getenv("STM_BACKEND", "redis").strip().lower()
+
+
+def redis_in_use() -> bool:
+    """Whether this deployment's STM backend is actually Redis.
+
+    feature/tts-streaming removed TTS's Redis usage entirely (chunks forward
+    straight through the open SSE stream now — see api/main.py::_stream_speech
+    and services/vieneu_tts/client.py::synthesize_stream). That leaves exactly
+    one Redis consumer anywhere in this service: shared/stm.py's RedisStore,
+    and only when STM_BACKEND=redis. Exported so api/main.py's
+    /health/detailed handler can skip building a Redis client at all
+    (_get_health_redis) when nothing would ever ping it — STM_BACKEND=dynamodb
+    (deployed) or STM_BACKEND=none (a developer machine with no Redis running)
+    both have no Redis client to build in the first place.
+    """
+    return _stm_backend() == "redis"
+
+
 async def check_redis(redis_client, timeout: float = 2.0) -> CheckResult:
+    """Ping Redis — but only when something in this deployment uses it.
+
+    Before this, "redis" was pinged and treated as CRITICAL unconditionally,
+    which made /health/detailed return 503 on every machine that doesn't run
+    Redis at all: STM_BACKEND=none locally, and STM_BACKEND=dynamodb on the
+    deployed service (shared/stm.py — no VPC, so no Redis reachable from
+    there full stop). That second case was a pre-existing bug in production
+    readiness, not something feature/tts-streaming introduced — removing
+    TTS's Redis usage just removed the one thing that had been keeping a real
+    Redis reachable in every environment that happened to run one anyway,
+    which is what surfaced it.
+
+    Mirrors check_llm below: "redis" stays in CRITICAL_CHECKS (so a genuinely
+    down Redis, when STM_BACKEND=redis, still 503s and pulls the instance out
+    of rotation — this check does not touch that list), but the check itself
+    reports ok=True with an explanatory detail instead of pinging anything
+    when the thing it checks is not in use. Reporting "not used" rather than
+    omitting the "redis" key keeps /health/detailed's response shape constant
+    across STM_BACKEND values — a caller can always find the same keys, and
+    can tell "not configured" apart from "configured and healthy" by `detail`.
+    """
+    backend = _stm_backend()
+    if backend != "redis":
+        return CheckResult(
+            name="redis", ok=True, latency_ms=0.0,
+            detail=f"not used (STM_BACKEND={backend})",
+        )
     t0 = time.perf_counter()
     try:
         await asyncio.wait_for(redis_client.ping(), timeout=timeout)
@@ -111,8 +164,24 @@ async def check_mcp(timeout: float = 3.0) -> CheckResult:
 
 
 async def check_speechllm(timeout: float = 2.0) -> CheckResult:
-    """Check VieNeu TTS service at VIENEU_URL/health."""
-    base = os.getenv("VIENEU_URL", "http://localhost:5000").rstrip("/")
+    """Check VieNeu TTS service at {base}/health.
+
+    VIENEU_TTS_URL first, VIENEU_URL as a fallback — VIENEU_TTS_URL is the one
+    variable every other piece of TTS code reads (api.main.tts_enabled() gates
+    on it, and services.vieneu_tts.client builds its base URL from it), and
+    this check used to read VIENEU_URL, a second, independent variable that
+    happened to share nobody else's default. A developer locally who set only
+    VIENEU_URL got a green /health/detailed next to a /chat that silently never
+    emitted speech_start — the health check said yes, tts_enabled() said no.
+    Falling back to VIENEU_URL rather than deleting it keeps any environment
+    that only ever set the old name from going health-check-blind on this one
+    optional check.
+    """
+    base = (
+        os.getenv("VIENEU_TTS_URL", "").strip()
+        or os.getenv("VIENEU_URL", "").strip()
+        or "http://localhost:5000"
+    ).rstrip("/")
     t0 = time.perf_counter()
     try:
         import httpx

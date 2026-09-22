@@ -16,3 +16,10 @@ moto[dynamodb]==5.2.3
 # off 007_rls and that upgrade/downgrade really add and drop the column.
 # Same floor as requirements-langgraph.txt, which is what runs the migration.
 alembic>=1.13.0
+# test_characters_signing.py imports rsa directly to exercise the shared
+# Lambda layer's pure-Python CloudFront signer (infra/lambda/layer/shared/
+# signing.py) — same reason that layer picked rsa over cryptography (see
+# infra/lambda/layer/requirements.txt): the layer bundles with a plain
+# host-side `pip install`, and a compiled `cryptography` wheel built on
+# Windows would land in a Linux layer. Pinned to match that file's floor.
+rsa>=4.9

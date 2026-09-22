@@ -16,6 +16,7 @@
  * file does not build it.
  */
 
+import { authHeader } from './api'
 import { API_GATEWAY, ASSET_BASE } from './apiBase'
 
 export { ASSET_BASE }
@@ -57,6 +58,9 @@ export interface Character extends CharacterLite {
   sort_order: number
   /** Chat-surface copy — greeting, stage labels, error line, input placeholder. */
   ui_strings?: Record<string, unknown>
+  /** Contract D: hash of the static_audio map, or null when there are no
+   * clips. The map itself is NEVER served (T1) — this is the cache key. */
+  audio_version: string | null
 }
 
 
@@ -86,7 +90,12 @@ export async function fetchCharacters(signal?: AbortSignal): Promise<CharacterLi
 }
 
 export async function fetchCharacter(slug: string, signal?: AbortSignal): Promise<Character> {
-  const res = await fetch(`${API_GATEWAY}/characters/${encodeURIComponent(slug)}`, { signal })
+  // T2: detail sits behind Cognito (contract A) — the token comes from the
+  // one authHeader() in lib/api.ts, not a second copy here.
+  const res = await fetch(`${API_GATEWAY}/characters/${encodeURIComponent(slug)}`, {
+    signal,
+    headers: await authHeader(),
+  })
   if (!res.ok) throw new Error(`GET /characters/${slug} failed: ${res.status}`)
   return (await res.json()) as Character
 }
@@ -95,7 +104,45 @@ export async function fetchAvatarProfile(
   slug: string,
   signal?: AbortSignal
 ): Promise<unknown> {
-  const res = await fetch(`${API_GATEWAY}/characters/${slug}/avatar-profile`, { signal })
+  const res = await fetch(`${API_GATEWAY}/characters/${slug}/avatar-profile`, {
+    signal,
+    headers: await authHeader(),
+  })
   if (!res.ok) throw new Error(`GET /characters/${slug}/avatar-profile failed: ${res.status}`)
   return res.json()
+}
+
+// ── Pre-rendered audio clips (T7, contract B) ─────────────────────────────
+
+export interface AudioClipEntry {
+  url: string
+  expires_at: string
+  sha256: string | null
+  text_sha256: string | null
+}
+
+/**
+ * Signed clip URLs for one character, without calling TTS.
+ *
+ * GET /characters/{slug}/audio?clip=…&lang=… (Cognito, no-store). Bytes come
+ * straight from CloudFront — no request reaches SpeechLLm, so a greeting
+ * costs no synthesis. A clip the character does not have arrives as null
+ * with the whole response still 200.
+ */
+export async function fetchClips(
+  slug: string,
+  clips: string[],
+  lang: string,
+  signal?: AbortSignal,
+): Promise<Record<string, AudioClipEntry | null>> {
+  const params = new URLSearchParams()
+  for (const clip of clips) params.append('clip', clip)
+  params.set('lang', lang)
+  const res = await fetch(
+    `${API_GATEWAY}/characters/${encodeURIComponent(slug)}/audio?${params}`,
+    { signal, headers: await authHeader() },
+  )
+  if (!res.ok) throw new Error(`GET /characters/${slug}/audio failed: ${res.status}`)
+  const data = (await res.json()) as { clips: Record<string, AudioClipEntry | null> }
+  return data.clips ?? {}
 }

@@ -296,7 +296,8 @@ function stopChat() {
 function addEventBadge(container, eventType, payload) {
     const colors = {
         stage: '#7c80ff', tool_executing: '#f59e0b', tool_output: '#10b981',
-        speech_pending: '#a78bfa', speech_ready: '#34d399', speech_failed: '#ef4444',
+        speech_start: '#a78bfa', speech_chunk: '#818cf8', speech_end: '#34d399',
+        speech_failed: '#ef4444', speech_disabled: '#6b7280',
         session_persisted: '#6b7280', done: '#22c55e', error: '#ef4444',
     };
     const color = colors[eventType] || '#888';
@@ -308,7 +309,10 @@ function addEventBadge(container, eventType, payload) {
     if (eventType === 'stage')    label = `${payload.node} ${payload.status}`;
     if (eventType === 'done')     label = `done · ${payload.total_tokens ?? 0} tok · ${(payload.required_outputs ?? []).join(', ')}`;
     if (eventType === 'error')    label = `error: ${payload.message ?? ''}`;
-    if (eventType === 'speech_ready') label = `🔊 speech_ready`;
+    if (eventType === 'speech_start')    label = `🔊 speech_start (${payload.codec ?? '?'})`;
+    if (eventType === 'speech_chunk')    label = `🔊 chunk #${payload.seq ?? '?'}`;
+    if (eventType === 'speech_end')      label = `🔊 speech_end · ${payload.chunks ?? 0} chunks`;
+    if (eventType === 'speech_disabled') label = `🔇 speech_disabled`;
 
     span.textContent = label;
     container.appendChild(span);

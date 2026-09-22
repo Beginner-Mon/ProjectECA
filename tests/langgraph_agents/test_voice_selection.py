@@ -49,8 +49,11 @@ def test_persona_language_is_the_last_resort():
 ])
 def test_unsafe_persona_id_yields_no_path(bad):
     """persona_id arrives in a request body and is about to become part of a
-    path on another host. A rejected id must still return a usable language, so
-    the caller degrades to the preset voice instead of failing the turn."""
+    path on another host. A rejected id must still return a usable language —
+    what SpeechLLm does with a None voice_path is that service's concern, not
+    this function's, and since the preset-voice fallback was removed it now
+    fails the turn loudly (VoiceResolutionError) rather than degrading to a
+    preset voice."""
     path, lang = resolve_voice(bad, VI)
     assert path is None
     assert lang in ("vi", "en")

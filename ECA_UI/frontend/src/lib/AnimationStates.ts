@@ -28,7 +28,12 @@ export type CharState =
   | 'exercise' //        One-shot generated motion → idle (wide camera + cooldown)
   | 'gesture' //         One-shot per-character animation → idle (clip at runtime)
 
-export type CameraMode = 'head' | 'hips'
+/**
+ * `face` is a LOCKED close-up: the FSM state that asks for it owns the camera
+ * outright — orbit input is disabled and a manual override is suspended, not
+ * honoured — until the state ends. Today only `gesture` asks for it.
+ */
+export type CameraMode = 'head' | 'hips' | 'face' | 'manual'
 
 export interface SubclipRange {
   name: string
@@ -65,7 +70,7 @@ interface StateBase {
   /** `'dynamic'` = supplied at runtime via `registry.update()` (generated motion). */
   source: StaticSource | 'dynamic'
   reach: Reach
-  camera: CameraMode
+  camera: Exclude<CameraMode, 'manual'>
   /** Facial policy for this body state (plan §9.4): may the face idle-wander? */
   facial: { wander: boolean; hold?: CanonicalEmotion }
   /** Present ⇒ selectable in the debug state dropdown. Absent ⇒ not manual. */
@@ -188,7 +193,10 @@ export const STATES: Record<CharState, StateDef> = {
     loop: 'once',
     onFinished: 'idle',
     reach: 'from-idle',
-    camera: 'head',
+    // Locked close-up for the whole clip: the kiss reads at the face, and a
+    // user mid-orbit would otherwise watch it from the back of the head.
+    // CameraController restores whatever mode was in force when it ends.
+    camera: 'face',
     facial: { wander: false, hold: 'happy' },
     blendSec: 0.5,
   },

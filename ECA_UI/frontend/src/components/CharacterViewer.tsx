@@ -33,10 +33,61 @@ import ThinkingBubble from './scene/ThinkingBubble'
 import { GraphicsProvider } from '../contexts/GraphicsContext'
 import { useGraphics } from '../hooks/useGraphics'
 
-const CAMERA_MODES: Record<CameraMode, { boneName: VRMHumanBoneName }> = {
+/** Keeps the debug axis labels under the chat/sidebar (see ThinkingBubble). */
+const AXIS_LABEL_Z: [number, number] = [100, 0]
+
+interface CameraModeDef {
+  /** Bone the camera parks in front of. Also the look-at anchor. */
+  boneName: VRMHumanBoneName
+  /**
+   * Optional second bone the look-at target rides toward, weighted by
+   * `trackWeight` (0 = anchor only, 1 = track bone only). The camera's
+   * POSITION never follows this bone — only where it looks.
+   */
+  trackBone?: VRMHumanBoneName
+  trackWeight?: number
+  /**
+   * Look-at only. The entry transition parks the camera in front of
+   * `boneName`; after that the position is held and only the target moves.
+   * Without this, the follow loop translates the camera with the target,
+   * so a hand coming toward the lens would push the camera away from it.
+   */
+  holdPosition?: boolean
+}
+
+const CAMERA_MODES: Record<CameraMode, CameraModeDef> = {
   head: { boneName: VRMHumanBoneName.Head },
   hips: { boneName: VRMHumanBoneName.Head },
+  // Kiss.fbx (the only gesture today) is LEFT-handed: measured through the
+  // clip, the left hand closes from 76 cm to 31 cm of the head while the
+  // right barely moves. 0.4 keeps the face in frame while the hand leads.
+  face: {
+    boneName: VRMHumanBoneName.Head,
+    trackBone: VRMHumanBoneName.LeftHand,
+    trackWeight: 0.4,
+    holdPosition: true,
+  },
+  manual: { boneName: VRMHumanBoneName.Head },
 }
+
+/**
+ * Orbit min-distance while the camera is locked to the face. The user's
+ * configured minimum (1 m by default) is what keeps a free orbit from clipping
+ * into the model; the locked close-up sits inside it on purpose, and controls
+ * are disabled for the duration so nothing can orbit through the mesh. Low
+ * enough that the blended look-at point can come toward the lens (the blown
+ * kiss) without OrbitControls' radius clamp shoving the camera back.
+ */
+const FACE_LOCK_MIN_DISTANCE = 0.15
+
+/**
+ * Per-second rate at which the held camera's look-at target closes on the
+ * tracked point: 1 - e^(-8 * dt) is ~12 % per frame at 60 fps, settling in
+ * about half a second. Raw bone-following jitters on the fast part of a
+ * gesture; this is the same damping the follow loop uses, made frame-rate
+ * independent.
+ */
+const TRACK_DAMPING = 8
 
 /** Responsive presets per camera mode. wideFraming = current desktop-tuned offsets;
  *  narrowFraming = mobile-portrait offsets (increase Y to push back, Z stays at eye level).
@@ -52,6 +103,19 @@ const CAMERA_RESPONSIVE_PRESETS: Record<CameraMode, CameraResponsivePreset> = {
     wideFraming: [1.5, 3.8, 1.5],
     narrowFraming: [1.5, 4.5, 1.5],
     narrowTargetZ: -0.4,
+  },
+  face: {
+    // Straight in front of the head bone, tighter than `head` and lifted a
+    // little so the eyes/mouth sit in the middle of the frame. Tune here.
+    wideFraming: [0, 0.45, 0.04],
+    narrowFraming: [0, 0.9, 0.04],
+    narrowTargetZ: -0.3,
+  },
+  manual: {
+    // Not used while manual (follow is disabled), but keep a valid entry
+    wideFraming: [0, 0.5, 0],
+    narrowFraming: [0, 2.0, 0],
+    narrowTargetZ: -0.6,
   },
 }
 
@@ -417,9 +481,12 @@ interface SceneProps {
 
 function Scene({ theme, vrmUrl, modelId, onReady, avatarRef }: SceneProps) {
   // Camera mode is owned by CameraController and driven by FSM state
-  // (exercise → wide + 3s cooldown). The old URL-substring heuristic is gone.
-  const { cameraMode, cameraConfig } = useMotion()
+  // (exercise → wide + 3s cooldown), plus manual override when user drags.
+  const { cameraMode, cameraConfig, notifyManualInteraction } = useMotion()
   const { settings: gfx } = useGraphics()
+  // `face` is an FSM-granted lock (see CameraMode): no orbit, no zoom, no pan
+  // until the state that asked for it ends.
+  const cameraLocked = cameraMode === 'face'
   // eslint-disable-next-line @typescript-eslint/no-explicit-any -- drei OrbitControls ref is an untyped Three.js controls instance
   const controlsRef = useRef<any>(null)
   const vrmRef = useRef<VRM | null>(null)
@@ -436,6 +503,11 @@ function Scene({ theme, vrmUrl, modelId, onReady, avatarRef }: SceneProps) {
   const responsiveDisplayRef = useRef(new THREE.Vector3(0, 0.5, 0))
 
   const TRANSITION_DURATION = 0.6
+  // Manual: rotate never counts, only zoom/pan far enough counts.
+  const MANUAL_THRESHOLD_PAN = 0.3
+  const MANUAL_THRESHOLD_ZOOM = 0.2
+  const manualStartTargetRef = useRef<THREE.Vector3 | null>(null)
+  const manualStartDistRef = useRef<number | null>(null)
 
   useEffect(() => {
     camera.up.set(0, 0, 1)
@@ -468,6 +540,9 @@ function Scene({ theme, vrmUrl, modelId, onReady, avatarRef }: SceneProps) {
 
   // Reusable vectors to avoid GC pressure
   const followPos = useMemo(() => new THREE.Vector3(), [])
+  /** Where the camera looks: `followPos`, pulled toward `trackBone` if set. */
+  const lookPos = useMemo(() => new THREE.Vector3(), [])
+  const trackPos = useMemo(() => new THREE.Vector3(), [])
   const deltaVec = useMemo(() => new THREE.Vector3(), [])
   const offsetDeltaVec = useMemo(() => new THREE.Vector3(), [])
   const lastAppliedOffsetRef = useRef(new THREE.Vector3(0, 0.5, 0))
@@ -485,7 +560,9 @@ function Scene({ theme, vrmUrl, modelId, onReady, avatarRef }: SceneProps) {
   // Every frame: make the camera orbit target follow the selected bone.
   // We also shift the camera position by the same delta so the orbital
   // offset (angle + distance) is preserved while the rig moves.
+  // In manual mode the camera is fully user-owned — do not follow.
   useFrame((_state, delta) => {
+    if (cameraMode === 'manual') return
     if (!vrmRef.current || !controlsRef.current) return
 
     // Compute t from canvas width: desktop (>768px) → t=0 (wideFraming only),
@@ -520,6 +597,18 @@ function Scene({ theme, vrmUrl, modelId, onReady, avatarRef }: SceneProps) {
 
     bone.getWorldPosition(followPos)
 
+    // The look-at point. Same as the anchor unless the mode tracks a second
+    // bone, in which case it sits `trackWeight` of the way toward it. The
+    // camera's own position is always placed relative to the anchor.
+    lookPos.copy(followPos)
+    const trackBone = mode.trackBone
+      ? vrmRef.current.humanoid.getNormalizedBoneNode(mode.trackBone)
+      : null
+    if (trackBone) {
+      trackBone.getWorldPosition(trackPos)
+      lookPos.lerp(trackPos, mode.trackWeight ?? 0)
+    }
+
     if (cameraTransitionRef.current) {
       const t = cameraTransitionRef.current
       t.elapsed += delta
@@ -527,7 +616,7 @@ function Scene({ theme, vrmUrl, modelId, onReady, avatarRef }: SceneProps) {
       const eased = 1 - Math.pow(1 - progress, 3)
 
       const currentCustomOffset = new THREE.Vector3(cameraConfig.offsetX, cameraConfig.offsetY, cameraConfig.offsetZ)
-      const endTarget = followPos.clone().add(currentCustomOffset)
+      const endTarget = lookPos.clone().add(currentCustomOffset)
       endTarget.z += targetZRef.current
       const endPos = followPos.clone().add(responsiveDisplayRef.current).add(currentCustomOffset)
 
@@ -543,7 +632,7 @@ function Scene({ theme, vrmUrl, modelId, onReady, avatarRef }: SceneProps) {
     }
 
     const currentCustomOffset = new THREE.Vector3(cameraConfig.offsetX, cameraConfig.offsetY, cameraConfig.offsetZ)
-    const targetPos = followPos.clone().add(currentCustomOffset)
+    const targetPos = lookPos.clone().add(currentCustomOffset)
     targetPos.z += targetZRef.current
 
     if (!cameraInitializedRef.current) {
@@ -553,6 +642,20 @@ function Scene({ theme, vrmUrl, modelId, onReady, avatarRef }: SceneProps) {
       camera.lookAt(targetPos)
       controlsRef.current.update()
       cameraInitializedRef.current = true
+      return
+    }
+
+    if (mode.holdPosition) {
+      // Track: the camera stays where the entry transition parked it and only
+      // the look-at target moves, damped, toward the blended point. Deliberately
+      // ahead of the `followTarget` check — an FSM-granted lock owns the camera
+      // and must track even if the user has switched auto-follow off.
+      // OrbitControls.update() re-aims the camera at the new target; with no
+      // input pending it leaves the position alone (bar the radius clamp,
+      // which FACE_LOCK_MIN_DISTANCE keeps out of the way).
+      controlsRef.current.target.lerp(targetPos, 1 - Math.exp(-TRACK_DAMPING * delta))
+      lastAppliedOffsetRef.current.copy(responsiveDisplayRef.current)
+      controlsRef.current.update()
       return
     }
 
@@ -654,13 +757,17 @@ return (
       {gfx.showAxes && (
         <>
           <primitive object={axesHelper} />
-          <Html position={[3.2, 0, 0]}>
+          {/* These labels are DOM nodes, not WebGL. drei's default zIndexRange
+              starts at 16,777,271, which put them on top of the chat box and
+              sidebar (z-index 9999/9998). Cap them the same way ThinkingBubble
+              does so they stay under the UI. */}
+          <Html position={[3.2, 0, 0]} zIndexRange={AXIS_LABEL_Z}>
             <span style={{ color: 'red', fontWeight: 'bold', fontSize: 14 }}>X</span>
           </Html>
-          <Html position={[0, 3.2, 0]}>
+          <Html position={[0, 3.2, 0]} zIndexRange={AXIS_LABEL_Z}>
             <span style={{ color: 'green', fontWeight: 'bold', fontSize: 14 }}>Y</span>
           </Html>
-          <Html position={[0, 0, 3.2]}>
+          <Html position={[0, 0, 3.2]} zIndexRange={AXIS_LABEL_Z}>
             <span style={{ color: 'blue', fontWeight: 'bold', fontSize: 14 }}>Z</span>
           </Html>
         </>
@@ -669,11 +776,35 @@ return (
       {/* Orbital camera: follows hips, enforces minimum distance (radius) */}
       <OrbitControls
         ref={controlsRef}
+        enabled={!cameraLocked}
         enablePan={cameraConfig.enablePan}
         enableZoom={cameraConfig.enableZoom}
-        minDistance={cameraConfig.minDistance}
+        minDistance={cameraLocked ? FACE_LOCK_MIN_DISTANCE : cameraConfig.minDistance}
         maxDistance={cameraConfig.maxDistance}
         target={[0, 0, 0]}
+        onStart={() => {
+          if (controlsRef.current) {
+            manualStartTargetRef.current = controlsRef.current.target.clone()
+            manualStartDistRef.current = camera.position.distanceTo(controlsRef.current.target as THREE.Vector3)
+          }
+        }}
+        onEnd={() => {
+          const startTarget = manualStartTargetRef.current
+          const startDist = manualStartDistRef.current
+          manualStartTargetRef.current = null
+          manualStartDistRef.current = null
+          if (!startTarget || startDist === null || !controlsRef.current) return
+          const targetDelta = (controlsRef.current.target as THREE.Vector3).distanceTo(startTarget)
+          const endDist = camera.position.distanceTo(controlsRef.current.target as THREE.Vector3)
+          const distDelta = Math.abs(endDist - startDist)
+          const hasPanned = targetDelta > MANUAL_THRESHOLD_PAN
+          const hasZoomed = distDelta > MANUAL_THRESHOLD_ZOOM
+          const shouldManual = hasPanned || hasZoomed
+          console.log('[manual-check]', { target: targetDelta.toFixed(3), dist: distDelta.toFixed(3), hasPanned, hasZoomed, shouldManual, from: cameraMode })
+          if (shouldManual) {
+            notifyManualInteraction()
+          }
+        }}
       />
       <BodyPartClickLogger vrmRef={vrmRef} />
     </>

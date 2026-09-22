@@ -12,7 +12,10 @@ export const ENV_CONFIG = {
   // ── Debug ─────────────────────────────────────────────────────────────
   debug: {
     showGrid: true,
-    showAxes: true,
+    // Off by default: the axis labels are DOM overlays and were shipping to
+    // production users, who then had to find the Graphics toggle to hide them.
+    // The setting persists per browser, so a developer turns it on once.
+    showAxes: false,
   },
 
   // ── Renderer & Color Pipeline ─────────────────────────────────────────

@@ -30,6 +30,7 @@ import { useTranslation } from 'react-i18next'
 import { useMediaQuery } from '../lib/use-media-query'
 import { useAvatarBg } from '../hooks/useAvatarBg'
 import { useMotion } from '../hooks/useMotion'
+import { PANEL_BG, PANEL_BORDER } from '../lib/utils'
 import ChatPanel from './ChatPanel'
 import ChatSessionsPanel from './panels/ChatSessionsPanel'
 import AvatarsPanel from './panels/AvatarsPanel'
@@ -184,7 +185,7 @@ function DraggableBar({
         floating-nav-bar
         flex ${isHorizontal ? 'flex-row' : 'flex-col'} items-center gap-1
         p-1.5 rounded-2xl
-        bg-card/70 backdrop-blur-2xl
+        bg-card
         border border-border/50
         shadow-[0_8px_40px_rgba(0,0,0,0.3),0_0_0_1px_rgba(255,255,255,0.05)_inset]
       `}
@@ -551,8 +552,8 @@ export default function FloatingNavBar() {
               floating-panel
               ${panelDimensionsClass}
               rounded-2xl overflow-hidden
-              bg-card/80 backdrop-blur-2xl
-              border border-border/50
+              ${PANEL_BG}
+              border ${PANEL_BORDER}
               shadow-[0_16px_64px_rgba(0,0,0,0.4),0_0_0_1px_rgba(255,255,255,0.05)_inset]
               ${isPositioned ? 'animate-panel-in' : ''}
             `}
@@ -598,15 +599,15 @@ export default function FloatingNavBar() {
           }}
         >
           <div
-            className="
+            className={`
               floating-panel
               min-w-[200px]
               rounded-2xl overflow-hidden
-              bg-card/80 backdrop-blur-2xl
-              border border-border/50
+              ${PANEL_BG}
+              border ${PANEL_BORDER}
               shadow-[0_16px_64px_rgba(0,0,0,0.4),0_0_0_1px_rgba(255,255,255,0.05)_inset]
               animate-panel-in
-            "
+            `}
           >
             <PanelContent
               panelId="settings"

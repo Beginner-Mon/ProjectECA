@@ -315,23 +315,25 @@ class AgentStack(Stack):
                 "MOTION_KEY_PAIR_ID": motion_key_pair_id,
                 "ASSET_BASE_URL": asset_base_url or "",
             },
-            # 1024 MB, and lower than it looks like it should be. CPU scales
-            # with memory (1 vCPU at 1769 MB), so this buys ~0.58 vCPU and makes
-            # embedding roughly twice as slow — ~200 ms instead of ~100 ms. That
-            # is the right trade because the turn is ~20 SECONDS of waiting on
-            # DeepSeek, and Lambda bills memory x wall-clock: halving the memory
-            # halves the cost of every second spent waiting. The docs' advice
-            # that "over-provisioning memory often lowers cost" is true of
-            # CPU-bound work and false of sitting on a socket.
-            # Re-measure from the INIT_DURATION line before changing it.
-            memory_size=1024,
-            # 120s is a COST CEILING, not a safety net. AWS documents that a
-            # streaming invocation is billed for its full duration and is NOT
-            # stopped when the client disconnects — so main.py's
-            # request.is_disconnected() cannot save money here. A real turn is
-            # 10-30s; 120s is four times the bad case, and a hung DeepSeek costs
-            # 120s x 1 GB rather than the 300s an intuitive value would.
-            timeout=Duration.seconds(120),
+            # 2048 MB — bumped 14/09/2026 after measured OOM on every
+            # retrieval turn (see docs/worklogs/14-09-2026.md, defect #1).
+            # 1024 bought ~0.58 vCPU and was sized for "just waiting on DeepSeek"
+            # — that assumption broke once the ONNX embedding model (470 MB + 50 MB
+            # runtime) is held in memory alongside kb_search results. Cold start
+            # Max Memory Used hit 1024/1024 on all needs_retrieval=true turns.
+            # 2048 buys ~1.15 vCPU and headroom for 2-3 tool results; re-measure
+            # Max Memory Used after fix and consider 1536 if headroom is large.
+            # Cost is still ~$0.0006/turn extra vs 1024 (20s * 1GB * $0.0000167).
+            memory_size=2048,
+            # 300s to match vva-speechllm (D3): a turn with voice = graph
+            # (5-10s) + synthesis (up to 78s measured) ~90s, near the old 120s
+            # ceiling; hitting it mid-stream kills the agent and the browser
+            # loses speech_end. Cost ceiling still matters — streaming is billed
+            # for full duration even after client disconnect — but 120s was four
+            # times the text-only bad case, not the voice bad case. 300s is the
+            # speech case's equivalent, and matches speechllm's own 300s so the
+            # caller does not die before the callee.
+            timeout=Duration.seconds(300),
             # No reserved concurrency: AWS refuses any reservation that leaves
             # the account under 100 unreserved units, and this account's whole
             # limit is 10. Set one and the deploy fails outright. That limit is
@@ -382,6 +384,23 @@ class AgentStack(Stack):
         self.fn.add_to_role_policy(iam.PolicyStatement(
             actions=["dynamodb:GetItem", "dynamodb:PutItem", "dynamodb:Query"],
             resources=[motion_table_arn, f"{motion_table_arn}/index/*"],
+        ))
+
+        # ── IAM: invoke SpeechLLm Function URL (D3, D2 Security) ──────────
+        #
+        # vva-speechllm's Function URL is AuthType=AWS_IAM with resource policy
+        # requiring BOTH lambda:InvokeFunctionUrl and lambda:InvokeFunction
+        # (10/2025, missing one fails silently). This IAM grant is the caller
+        # side; the resource policy on vva-speechllm (speechllm_stack.py) is
+        # the callee side. Both must exist or the call 403s before the function
+        # runs (no invoke cost). Fixed ARN by name — speechllm_stack is built
+        # AFTER this one in app.py (like the motion table), so no construct
+        # reference is possible without reordering. Name is hard-coded in both
+        # stacks: speechllm_stack.py's function_name == "vva-speechllm".
+        speechllm_fn_arn = f"arn:aws:lambda:{self.region}:{self.account}:function:vva-speechllm"
+        self.fn.add_to_role_policy(iam.PolicyStatement(
+            actions=["lambda:InvokeFunctionUrl", "lambda:InvokeFunction"],
+            resources=[speechllm_fn_arn, f"{speechllm_fn_arn}:*"],
         ))
 
         CfnOutput(self, "AgentFunctionName", value=self.fn.function_name)

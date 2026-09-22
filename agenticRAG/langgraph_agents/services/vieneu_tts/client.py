@@ -2,8 +2,12 @@
 
 from __future__ import annotations
 
+import asyncio
+import json
+import os
+import re
 from pathlib import Path
-from typing import Optional
+from typing import AsyncIterator, Optional
 
 import httpx
 
@@ -20,6 +24,137 @@ def _load_vieneu_config() -> dict:
     return {}
 
 
+async def _client_error_reason(exc: httpx.HTTPStatusError) -> str:
+    """Build a diagnostic message for a 4xx response, carrying SpeechLLm's own
+    `detail` through when the body can be read.
+
+    `httpx.HTTPStatusError.__str__` is a fixed template — status code and URL
+    only (confirmed against httpx 0.28.1's `Response.raise_for_status`, which
+    builds the message with no reference to the body at all) — so used alone
+    it throws away exactly the message `VoiceResolutionError` goes to the
+    trouble of putting an absolute path into (see
+    `SpeechLLm/src/services/vieneu_client.py`). This is what actually carries
+    that message through to `_stream_speech`'s `speech_failed` event and the
+    log, instead of a failure that is equally silent about why.
+
+    Guarded end to end: this runs on a request that is already failing, and
+    must never itself raise a second exception on that path — an empty or
+    unreadable body (a mangled proxy response, a truncated write) still has
+    to produce a sensible message.
+    """
+    base = f"{type(exc).__name__}: {exc}"
+    resp = exc.response
+    try:
+        # A client.stream()-mode response has not read its body yet at this
+        # point; a client.post()-mode one already has, and aread() on an
+        # already-read response just returns the cached content — safe
+        # either way.
+        await resp.aread()
+    except Exception:
+        return base
+    detail = None
+    try:
+        detail = resp.json().get("detail")
+    except Exception:
+        pass
+    if not detail:
+        try:
+            detail = resp.text.strip() or None
+        except Exception:
+            detail = None
+    return f"{base} — {detail}" if detail else base
+
+
+# ── SigV4 helpers ─────────────────────────────────────────────────────────
+# Signing only when VIENEU_TTS_URL points at a Lambda Function URL
+# (https://xxx.lambda-url.<region>.on.aws). Local dev keeps plain HTTP
+# (no AWS in the path), so we must NOT sign localhost — it has no credentials
+# and the signature would be rejected. Tests use http://speechllm.test which
+# is also unsigned; only lambda-url/.on.aws triggers signing.
+
+_LAMBDA_URL_RE = re.compile(r"lambda-url\.([^.]+)\.on\.aws", re.IGNORECASE)
+
+
+def _is_lambda_url(url: str) -> bool:
+    """True if url looks like a Lambda Function URL and should be SigV4-signed."""
+    low = url.lower()
+    if "localhost" in low or "127.0.0.1" in low:
+        return False
+    # Function URLs are always https://<id>.lambda-url.<region>.on.aws/
+    # Also handle any *.on.aws or explicit lambda-url marker
+    return "lambda-url" in low or ".on.aws" in low
+
+
+def _extract_region(url: str) -> Optional[str]:
+    m = _LAMBDA_URL_RE.search(url)
+    if m:
+        return m.group(1)
+    # Fallback to env — agent runs in us-east-1 per plan, same as speechllm
+    return os.getenv("AWS_REGION") or os.getenv("AWS_DEFAULT_REGION") or "us-east-1"
+
+
+def _get_aws_credentials():
+    """Return botocore credentials or None. Lazy import so tests without AWS still import."""
+    try:
+        import boto3
+        session = boto3.Session()
+        creds = session.get_credentials()
+        if creds is not None:
+            return creds
+    except Exception:
+        pass
+    try:
+        import botocore.session
+        session = botocore.session.Session()
+        creds = session.get_credentials()
+        return creds
+    except Exception:
+        return None
+
+
+def _sigv4_headers(method: str, url: str, body_bytes: bytes, extra_headers: dict | None = None) -> dict:
+    """Build SigV4-signed headers for a Lambda Function URL request.
+
+    Returns a dict to merge into the httpx request headers. If credentials
+    are unavailable, returns extra_headers unchanged (caller will send unsigned
+    and Lambda will 403 — visible, not silent). Uses botocore's SigV4Auth
+    which is the same library boto3 uses.
+    """
+    headers = dict(extra_headers or {})
+    # botocore needs Host header present before signing
+    from urllib.parse import urlparse
+    parsed = urlparse(url)
+    if "host" not in {k.lower() for k in headers}:
+        headers["host"] = parsed.netloc
+    if body_bytes:
+        headers.setdefault("content-type", "application/json")
+    # x-amz-content-sha256 is required for Lambda Function URL SigV4
+    # SigV4Auth will add it, but we ensure body is passed as data
+    try:
+        import botocore.auth
+        import botocore.awsrequest
+        creds = _get_aws_credentials()
+        if creds is None:
+            return headers
+        # botocore expects credentials with access_key/secret_key/token
+        # boto3's credentials may be RefreshableCredentials with get_frozen_credentials()
+        frozen = creds.get_frozen_credentials() if hasattr(creds, "get_frozen_credentials") else creds
+        region = _extract_region(url) or "us-east-1"
+        request = botocore.awsrequest.AWSRequest(
+            method=method,
+            url=url,
+            data=body_bytes,
+            headers=headers,
+        )
+        botocore.auth.SigV4Auth(frozen, "lambda", region).add_auth(request)
+        # AWSRequest stores headers case-preserved; convert to plain dict
+        return dict(request.headers)
+    except Exception:
+        # Signing must never crash the request path — fall back to unsigned
+        # and let the caller see the 403 if signing was truly required
+        return headers
+
+
 class VieNeuTTSClient:
     """Async HTTP client for VieNeu-TTS speech synthesis REST API."""
 
@@ -27,12 +162,24 @@ class VieNeuTTSClient:
         self,
         base_url: str = "http://localhost:5000",
         endpoint: str = "/synthesize",
+        stream_endpoint: str = "/synthesize/stream",
         timeout: float = 60,  # CPU TTS for ~1500 chars Vietnamese takes 10-20s
         circuit_breaker_cfg: dict = None,
+        stream_connect_timeout: float = 10.0,
+        # Two separate read budgets (D3): "cho byte dau" includes the 25s cold
+        # start (model 13s + pre-enrol), while gap between two NDJSON lines is
+        # a liveness signal. One number for both either times out a cold start
+        # or hides a hung stream for 15s. See synthesize_stream().
+        stream_first_byte_timeout: float = 45.0,
+        stream_read_timeout: float = 30.0,
     ):
         self.base_url = base_url.rstrip("/")
         self.endpoint = endpoint
+        self.stream_endpoint = stream_endpoint
         self.timeout = timeout
+        self._stream_connect_timeout = stream_connect_timeout
+        self._stream_first_byte_timeout = stream_first_byte_timeout
+        self._stream_read_timeout = stream_read_timeout
         breaker_cfg = circuit_breaker_cfg or {}
         self._breaker = CircuitBreaker(
             name="vieneu_tts",
@@ -46,6 +193,16 @@ class VieNeuTTSClient:
     @property
     def circuit_state(self) -> str:
         return self._breaker.state
+
+    def _should_sign(self) -> bool:
+        return _is_lambda_url(self.base_url)
+
+    def _signed_headers_for(self, method: str, url: str, payload: dict) -> dict | None:
+        """Return signed headers dict if signing is needed, else None to use plain httpx json=."""
+        if not self._should_sign():
+            return None
+        body_bytes = json.dumps(payload).encode("utf-8")
+        return _sigv4_headers(method, url, body_bytes, extra_headers={})
 
     async def synthesize(self, text: str, voice_path: str = None,
                          language: str = None) -> dict:
@@ -62,16 +219,276 @@ class VieNeuTTSClient:
         url = f"{self.base_url}{self.endpoint}"
         payload = self._payload(text, voice_path, language)
 
+        # Use SigV4 when targeting a Function URL, plain HTTP for localhost
+        signed_headers = self._signed_headers_for("POST", url, payload)
+
         try:
-            async with httpx.AsyncClient(timeout=self.timeout) as client:
-                resp = await client.post(url, json=payload)
-                resp.raise_for_status()
-                data = resp.json()
-                self._breaker.record_success()
-                return data
-        except (httpx.TimeoutException, httpx.ConnectError, httpx.HTTPStatusError) as exc:
+            if signed_headers is not None:
+                body_bytes = json.dumps(payload).encode("utf-8")
+                headers = {**signed_headers, "content-type": "application/json"}
+                async with httpx.AsyncClient(timeout=self.timeout) as client:
+                    resp = await client.post(url, content=body_bytes, headers=headers)
+            else:
+                async with httpx.AsyncClient(timeout=self.timeout) as client:
+                    resp = await client.post(url, json=payload)
+            resp.raise_for_status()
+            data = resp.json()
+            self._breaker.record_success()
+            return data
+        except httpx.HTTPStatusError as exc:
+            # A 4xx is SpeechLLm rejecting THIS request — e.g. VoiceResolutionError
+            # for a character with no reference recording yet. That is a
+            # service-level outcome, not a transport one: retrying cannot fix
+            # it, and it says nothing about SpeechLLm's own health, so unlike a
+            # 5xx or a real transport failure it must not count towards
+            # tripping the breaker for every other character/request. See the
+            # identical split in synthesize_stream() below.
+            if exc.response.status_code >= 500:
+                self._breaker.record_failure()
+                reason = f"{type(exc).__name__}: {exc}" if str(exc) else type(exc).__name__
+            else:
+                reason = await _client_error_reason(exc)
+            raise ServiceUnavailableError("vieneu_tts", reason) from exc
+        except (httpx.TimeoutException, httpx.ConnectError) as exc:
             self._breaker.record_failure()
             # Some httpx exceptions have empty str repr — include class name for diagnostics.
+            reason = f"{type(exc).__name__}: {exc}" if str(exc) else type(exc).__name__
+            raise ServiceUnavailableError("vieneu_tts", reason) from exc
+        except Exception as exc:
+            self._breaker.record_failure()
+            reason = f"{type(exc).__name__}: {exc}" if str(exc) else type(exc).__name__
+            raise ServiceUnavailableError("vieneu_tts", reason) from exc
+
+    async def synthesize_stream(
+        self, text: str, voice_path: str = None, language: str = None,
+    ) -> AsyncIterator[dict]:
+        """POST /synthesize/stream and yield each parsed NDJSON line as it arrives.
+
+        Replaces the old synthesize()-then-poll-Redis path: SpeechLLm now
+        streams `{"type": "start"|"chunk"|"end"|"error", ...}` lines
+        (`application/x-ndjson`, one JSON object per line) as it generates
+        audio instead of holding the connection open for ~38-78s and handing
+        back one complete wav. The caller (api/main.py) forwards each parsed
+        line as an SSE event the moment it shows up — this method does no
+        buffering of its own.
+
+        TWO timeouts, not one (D3): a long clinical answer legitimately keeps
+        this connection open for over a minute (measured: 78s for a full reply)
+        — a single total timeout would kill a stream that was working fine the
+        whole time. What needs bounding are two different silences:
+
+        * "cho byte dau" — time from request send to first NDJSON line (start).
+          Cold start is 25s (model 13s + pre-enrol), so this is ~45s, not 30s.
+        * "giua hai chunk" — gap between two NDJSON lines mid-stream. If
+          SpeechLLm hangs or the model process dies mid-stream, the caller
+          should find out in 30s of silence, not however long the browser's
+          own patience is.
+
+        httpx's `read` timeout is the max time between two socket reads, reset
+        on every byte received — paired with a short, separate `connect` timeout
+        for "SpeechLLm never picked up at all". `client.stream()` itself awaits
+        the RESPONSE HEADERS before any line can be read, so that wait needs a
+        bound distinct from "no request in flight yet" (connect) and from
+        "gap between NDJSON lines" (below): httpx read= is set to the
+        first-byte budget so a connection that is accepted but never gets
+        headers (model load wedged, Lambda stuck in INIT) cannot hang this
+        method forever. We ALSO wrap entering the stream in `asyncio.wait_for`
+        with the same budget — belt and suspenders, and the only one of the
+        two that a mocked transport (tests) actually honours, since
+        `httpx.MockTransport` does not run the real httpcore timeout machinery.
+        Once headers are in, first line and every later line each go through
+        `asyncio.wait_for` around `aiter_lines().__anext__()`: first line uses
+        45s (covers the 25s cold start), every later line uses 30s. Cold start
+        no longer eats the liveness budget.
+
+        Circuit breaker: a connect/timeout failure, a 5xx response, or the
+        stream dropping/sending unparseable NDJSON mid-flight all record a
+        breaker failure, exactly like `synthesize()`. Reaching the terminal
+        `end` line records success. Two outcomes are SERVICE-level rather than
+        transport-level and touch neither side of the breaker: a well-formed
+        `{"type": "error", ...}` line (SpeechLLm reporting it could not
+        synthesize this text) and, since 12-09-2026, a 4xx response (SpeechLLm
+        rejecting THIS request before the stream even opened — e.g.
+        VoiceResolutionError for a character with no reference recording yet).
+        A 4xx used to be lumped in with connect/timeout failures here, which
+        meant three chats with a character that simply has no recording
+        tripped the breaker and silenced speech for every character — a
+        condition that never changes with time, so the breaker would open,
+        cool down, and immediately trip again, forever. One bad request — of
+        either shape — must not start counting towards tripping it for every
+        other request in flight.
+
+        Two things an earlier version of this method got wrong, both only
+        visible when the caller does what api/main.py's _stream_speech
+        actually does — `return` immediately after handling the "end" line,
+        never resuming this generator again — rather than draining it to
+        exhaustion the way a naive test does:
+
+        1. `record_success()` must run BEFORE `yield`ing the "end" event, not
+           after. Code placed after a `yield` only runs once the caller asks
+           for the NEXT item (`__anext__`/`asend`) — and a caller that returns
+           right after "end" never does, so this generator is torn down via
+           GeneratorExit and that line never executes. Recorded first, then
+           yielded, it runs unconditionally.
+        2. A stream that closes WITHOUT ever sending "end" or "error" (a
+           dropped connection, a crashed SpeechLLm process mid-utterance) must
+           not end silently. Silence here means _stream_speech's `async for`
+           loop simply finishes with no speech_end and no speech_failed — the
+           browser is left assuming the turn is still in progress forever, for
+           the very outage this breaker exists to catch. So: falling out of
+           the line loop without having seen a terminal line is itself treated
+           as a stream failure.
+
+        Raises:
+            ServiceUnavailableError: breaker open, connect/timeout failure, a
+                4xx or 5xx response, the stream dropping/sending unparseable
+                NDJSON mid-flight, or the stream closing without a terminal
+                "end"/"error" line. Only a 4xx leaves the breaker untouched;
+                everything else on this list records a failure.
+        """
+        if not self._breaker.allow():
+            raise ServiceUnavailableError("vieneu_tts", "circuit breaker open")
+
+        url = f"{self.base_url}{self.stream_endpoint}"
+        payload = self._payload(text, voice_path, language)
+        signed_headers = self._signed_headers_for("POST", url, payload)
+        # httpx Timeout: connect/write/pool share the connect budget — neither
+        # is the axis we care about here, they just need *a* bound so httpx
+        # does not fall back to its own (longer) default. `read` bounds the
+        # wait for RESPONSE HEADERS inside `client.stream()` below — that
+        # await happens before any line has been read, so it is not covered
+        # by the asyncio.wait_for() around aiter_lines() further down. It
+        # used to be None (unbounded): a SpeechLLm that accepts the TCP
+        # connection but never sends headers — model load wedged, Lambda
+        # stuck in INIT — hung this method forever, with no breaker failure
+        # and no speech_failed, which is exactly the failure this method's
+        # docstring says must not happen. Set to the first-byte budget (45s,
+        # which already covers the 25s cold start) so the header wait is
+        # bounded by the same number that governs the first NDJSON line;
+        # asyncio.wait_for still enforces the tighter 30s gap budget once
+        # lines start arriving, so the two budgets stay distinct.
+        stream_timeout = httpx.Timeout(
+            connect=self._stream_connect_timeout,
+            read=self._stream_first_byte_timeout,
+            write=self._stream_connect_timeout,
+            pool=self._stream_connect_timeout,
+        )
+
+        # Prepare request kwargs: signed Function URL needs content + headers,
+        # localhost keeps plain json= for dev (no AWS in path)
+        if signed_headers is not None:
+            body_bytes = json.dumps(payload).encode("utf-8")
+            # signed_headers already contains Authorization, X-Amz-Date, Host, etc.
+            # Ensure content-type is present
+            signed_headers = dict(signed_headers)
+            signed_headers.setdefault("content-type", "application/json")
+            request_kwargs = {"content": body_bytes, "headers": signed_headers}
+        else:
+            request_kwargs = {"json": payload}
+
+        try:
+            async with httpx.AsyncClient(timeout=stream_timeout) as client:
+                stream_cm = client.stream("POST", url, **request_kwargs)
+                # `stream_cm.__aenter__()` is where response HEADERS are
+                # awaited (it runs `AsyncClient.send()` internally, then
+                # yields). httpx's own `read=` timeout (set above) bounds this
+                # on a real connection; `asyncio.wait_for` here bounds it too,
+                # independent of transport — the only one of the two a
+                # MockTransport in tests actually enforces, and cheap
+                # insurance against a stuck-INIT Lambda in production. Same
+                # first-byte budget as the first NDJSON line, since this wait
+                # is a prerequisite for that line ever arriving.
+                try:
+                    resp = await asyncio.wait_for(
+                        stream_cm.__aenter__(), timeout=self._stream_first_byte_timeout,
+                    )
+                except asyncio.TimeoutError as exc:
+                    self._breaker.record_failure()
+                    raise ServiceUnavailableError(
+                        "vieneu_tts",
+                        f"stream first_byte timeout after {self._stream_first_byte_timeout}s "
+                        "waiting for response headers",
+                    ) from exc
+                try:
+                    try:
+                        resp.raise_for_status()
+                    except httpx.HTTPStatusError as exc:
+                        # Same split as synthesize() above, and for the same
+                        # reason: a 4xx is SpeechLLm rejecting THIS request
+                        # (e.g. VoiceResolutionError for a missing reference),
+                        # not a sign the service itself is unhealthy. Handled
+                        # here, still inside the stream context, so
+                        # `_client_error_reason` can still read the body — once
+                        # the stream is closed the body is gone.
+                        if resp.status_code >= 500:
+                            self._breaker.record_failure()
+                            reason = (f"{type(exc).__name__}: {exc}"
+                                      if str(exc) else type(exc).__name__)
+                        else:
+                            reason = await _client_error_reason(exc)
+                        raise ServiceUnavailableError("vieneu_tts", reason) from exc
+                    saw_terminal_line = False  # set on "end" or "error"
+                    saw_first_line = False
+                    aiter = resp.aiter_lines()
+                    while True:
+                        # First line uses first-byte budget (45s, covers 25s cold start),
+                        # every later line uses gap budget (30s)
+                        timeout = self._stream_first_byte_timeout if not saw_first_line else self._stream_read_timeout
+                        try:
+                            line = await asyncio.wait_for(aiter.__anext__(), timeout=timeout)
+                        except StopAsyncIteration:
+                            break
+                        except asyncio.TimeoutError as exc:
+                            self._breaker.record_failure()
+                            # Include which budget timed out for diagnostics
+                            budget = "first_byte" if not saw_first_line else "gap"
+                            raise ServiceUnavailableError(
+                                "vieneu_tts",
+                                f"stream {budget} timeout after {timeout}s without data",
+                            ) from exc
+                        saw_first_line = True
+                        if not line.strip():
+                            continue  # NDJSON framing: blank lines carry nothing
+                        try:
+                            event = json.loads(line)
+                        except json.JSONDecodeError as exc:
+                            # Malformed output from SpeechLLm is a stream-shaped
+                            # failure, not a "skip this line and hope" one — the
+                            # rest of the line-by-line framing can no longer be
+                            # trusted, so this trips the breaker like a dropped
+                            # connection would.
+                            self._breaker.record_failure()
+                            raise ServiceUnavailableError(
+                                "vieneu_tts", f"malformed NDJSON line: {exc}",
+                            ) from exc
+                        event_type = event.get("type")
+                        if event_type in ("end", "error"):
+                            saw_terminal_line = True
+                            if event_type == "end":
+                                # BEFORE yield — see the docstring above.
+                                self._breaker.record_success()
+                        yield event
+                    if not saw_terminal_line:
+                        # The connection closed clean (no exception from
+                        # aiter_lines/httpx) but SpeechLLm never said it was
+                        # done. Treat that the same as any other transport
+                        # failure: it is one, just a quieter one.
+                        self._breaker.record_failure()
+                        raise ServiceUnavailableError(
+                            "vieneu_tts", "stream ended without end/error line",
+                        )
+                finally:
+                    # Mirrors `async with client.stream(...)`'s own cleanup
+                    # (`response.aclose()`). __aenter__ already succeeded at
+                    # this point, so this always has a response to release.
+                    await stream_cm.__aexit__(None, None, None)
+        except ServiceUnavailableError:
+            raise
+        except (httpx.TimeoutException, httpx.ConnectError) as exc:
+            # httpx.HTTPStatusError is deliberately not caught here any more —
+            # it is fully handled above, inside the client.stream() block,
+            # where the response body is still readable.
+            self._breaker.record_failure()
             reason = f"{type(exc).__name__}: {exc}" if str(exc) else type(exc).__name__
             raise ServiceUnavailableError("vieneu_tts", reason) from exc
         except Exception as exc:
@@ -98,8 +515,16 @@ class VieNeuTTSClient:
         url = f"{self.base_url}{self.endpoint}"
         payload = self._payload(text, voice_path, language)
 
+        # Sync path also signs when targeting Function URL (parity with async)
+        # but keeps plain json= for localhost
+        signed_headers = self._signed_headers_for("POST", url, payload) if hasattr(self, "_signed_headers_for") else None
         try:
-            resp = httpx.post(url, json=payload, timeout=self.timeout)
+            if signed_headers is not None:
+                body_bytes = json.dumps(payload).encode("utf-8")
+                headers = {**signed_headers, "content-type": "application/json"}
+                resp = httpx.post(url, content=body_bytes, headers=headers, timeout=self.timeout)
+            else:
+                resp = httpx.post(url, json=payload, timeout=self.timeout)
             resp.raise_for_status()
             data = resp.json()
             self._breaker.record_success()
@@ -120,10 +545,28 @@ def get_vieneu_tts_client() -> VieNeuTTSClient:
     global _client
     if _client is None:
         cfg = _load_vieneu_config()
+        # Single source of truth for "where is SpeechLLm": VIENEU_TTS_URL wins,
+        # the config file's `url` is only the fallback for a machine that never
+        # set the env var. Before this, three different places disagreed —
+        # api/main.py::tts_enabled() gated on VIENEU_TTS_URL, THIS client read
+        # config/langgraph.yaml's `services.vieneu_tts.url`, and
+        # api/health.py::check_speechllm read a third variable, VIENEU_URL. A
+        # developer who set only VIENEU_TTS_URL (the "is TTS on" switch) but
+        # left the config file's localhost default in place got a client that
+        # dialed the wrong place while tts_enabled() confidently said yes.
+        base_url = (
+            os.getenv("VIENEU_TTS_URL", "").strip()
+            or cfg.get("url", "http://localhost:5000")
+        )
+        # D3: two read budgets — first_byte (45s covers 25s cold start) vs gap (30s)
         _client = VieNeuTTSClient(
-            base_url=cfg.get("url", "http://localhost:5000"),
+            base_url=base_url,
             endpoint=cfg.get("endpoint", "/synthesize"),
-            timeout=cfg.get("timeout", 15),
+            stream_endpoint=cfg.get("stream_endpoint", "/synthesize/stream"),
+            timeout=cfg.get("timeout", 120),
             circuit_breaker_cfg=cfg.get("circuit_breaker", {}),
+            stream_connect_timeout=cfg.get("stream_connect_timeout", 10.0),
+            stream_first_byte_timeout=cfg.get("stream_first_byte_timeout", 45.0),
+            stream_read_timeout=cfg.get("stream_read_timeout", 30.0),
         )
     return _client

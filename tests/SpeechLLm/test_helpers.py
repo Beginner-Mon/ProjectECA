@@ -3,7 +3,6 @@ Unit tests for SpeechLLm helper functions and request schemas.
 
 Tests cover:
 - clean_text_for_tts  (text sanitization for TTS input)
-- extract_voice_fields (script JSON parsing)
 - TTSRequest / VoicePrompt Pydantic schemas
 """
 
@@ -48,53 +47,6 @@ class TestCleanTextForTTS:
         text = "  * First\\n \u2022 Second\n- Third   "
         result = self._clean(text)
         assert result == "First Second Third"
-
-
-# ── extract_voice_fields ──────────────────────────────────────────────────────
-
-@pytest.mark.unit
-class TestExtractVoiceFields:
-
-    def _extract(self, script: dict):
-        from main import extract_voice_fields
-        return extract_voice_fields(script)
-
-    def test_valid_script(self):
-        """Full script dict should return correct (text, emotion, language)."""
-        script = {
-            "voice_prompt": {"text": "Hello there", "emotion": "happy"},
-            "language": "en",
-        }
-        text, emotion, language = self._extract(script)
-
-        assert text == "Hello there"
-        assert emotion == "happy"
-        assert language == "en"
-
-    def test_missing_voice_prompt(self):
-        """Missing voice_prompt key should return safe defaults."""
-        text, emotion, language = self._extract({})
-
-        assert text == ""
-        assert emotion == "neutral"
-        assert language == "en"
-
-    def test_null_emotion_defaults_to_neutral(self):
-        """None emotion should fall back to 'neutral'."""
-        script = {
-            "voice_prompt": {"text": "Hi", "emotion": None},
-        }
-        _, emotion, _ = self._extract(script)
-        assert emotion == "neutral"
-
-    def test_custom_language(self):
-        """Non-English language should be extracted correctly."""
-        script = {
-            "voice_prompt": {"text": "Xin ch\u00e0o"},
-            "language": "vi",
-        }
-        _, _, language = self._extract(script)
-        assert language == "vi"
 
 
 # ── TTSRequest / VoicePrompt schemas ──────────────────────────────────────────

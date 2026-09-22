@@ -109,9 +109,40 @@ export function getTimeSlot(date = new Date()): TimeSlot {
   return 'night'
 }
 
-export function getGreeting(ui: UiStrings, now = new Date()): string {
-  const slot = getTimeSlot(now)
+/**
+ * The greeting text for an ALREADY-KNOWN slot.
+ *
+ * Split out of `getGreeting` so a caller that needs to freeze a slot
+ * alongside the text it produced (ChatContext's greeting bubble, and the
+ * voice clip played for it) can read the clock exactly once and hand the
+ * same `slot` to both this function and `buildGreetingKey` — rather than
+ * each call re-reading `new Date()` and risking two different answers either
+ * side of an hour boundary.
+ */
+export function getGreetingForSlot(ui: UiStrings, slot: TimeSlot): string {
   return ui.greeting[slot] ?? FALLBACK_UI_STRINGS[DEFAULT_LOCALE].greeting[slot]
+}
+
+export function getGreeting(ui: UiStrings, now = new Date()): string {
+  return getGreetingForSlot(ui, getTimeSlot(now))
+}
+
+/**
+ * Which greeting opening this is (fix #1). A plain string over stable
+ * PRIMITIVES — slug, audio_version, locale, slot — so a catalog reload that
+ * rebuilds the vrmOptions array with fresh object identities still yields
+ * the SAME key, and the ChatContext guard (already greeted for this key?)
+ * stays shut. Any real change (avatar, language, hour slot, re-render)
+ * yields a different key and may greet again.
+ */
+export function buildGreetingKey(
+  character: { slug?: string | null; audio_version?: string | null } | null | undefined,
+  locale: string,
+  slot: string,
+): string | null {
+  const slug = character?.slug ?? null
+  if (!slug) return null
+  return `${slug}|${character?.audio_version ?? ''}|${locale}|${slot}`
 }
 
 /**

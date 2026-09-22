@@ -19,25 +19,29 @@ it) — so it is resolved from an SSM SecureString at call time
 `_secret_from_ssm` shape `llm.py` already uses for the LLM API keys. It is never
 baked into the Lambda's environment or the CloudFormation template.
 
-This module is deliberately the only place in `langgraph_agents` that imports
-`botocore.signers`/`cryptography` for CloudFront signing — vva_motion stays
-boto3+stdlib only because it is COPY'd into the GPU worker image, and the worker has
-no business signing URLs.
+This module used to be the only place in `langgraph_agents` that imported
+`botocore.signers`/`cryptography` for CloudFront signing. Since D5c the
+signing lives in `langgraph_agents.shared.asset_urls` so both motion and
+static_audio (characters/*/audio/*) reuse the same key group — this module
+now re-exports that helper. vva_motion stays boto3+stdlib only because it is
+COPY'd into the GPU worker image.
 """
 from __future__ import annotations
 
-import datetime
 import os
-from functools import lru_cache
 
 import boto3
-from botocore.signers import CloudFrontSigner
-from cryptography.hazmat.primitives import hashes, serialization
-from cryptography.hazmat.primitives.asymmetric import padding
 
 from vva_motion.jobs import read_status
 
-SIGNED_URL_TTL = datetime.timedelta(minutes=5)
+# D5c: signing moved to shared so /characters can reuse it for static_audio
+from langgraph_agents.shared.asset_urls import (  # noqa: F401 — re-exported for backwards compat
+    SIGNED_URL_TTL,
+    _rsa_signer,
+    _signing_key_pem,
+    sign_url,
+)
+
 _TABLE = None
 
 
@@ -49,35 +53,6 @@ def _table():
     if _TABLE is None:
         _TABLE = boto3.resource("dynamodb").Table(os.environ["MOTION_TABLE"])
     return _TABLE
-
-
-@lru_cache(maxsize=1)
-def _signing_key_pem() -> str:
-    """Read the CloudFront private signing key from SSM. Cached for the life of
-    the process — same reasoning as llm.py's `_secret_from_ssm`: this is called
-    on every signed-URL request, and each miss would be a network round trip for
-    a value that cannot rotate mid-invocation anyway.
-
-    boto3's SSM client is constructed here, not at import time, so importing
-    this module never requires AWS credentials.
-    """
-    return boto3.client("ssm").get_parameter(
-        Name=os.environ["MOTION_SIGNING_KEY_PARAM"], WithDecryption=True,
-    )["Parameter"]["Value"]
-
-
-def _rsa_signer(message: bytes) -> bytes:
-    key = serialization.load_pem_private_key(
-        _signing_key_pem().encode(), password=None)
-    return key.sign(message, padding.PKCS1v15(), hashes.SHA1())
-
-
-def sign_url(s3_key: str) -> str:
-    signer = CloudFrontSigner(os.environ["MOTION_KEY_PAIR_ID"], _rsa_signer)
-    return signer.generate_presigned_url(
-        f"{os.environ['ASSET_BASE_URL']}/{s3_key}",
-        date_less_than=datetime.datetime.now(datetime.timezone.utc) + SIGNED_URL_TTL,
-    )
 
 
 def motion_status(job_id: str) -> dict:

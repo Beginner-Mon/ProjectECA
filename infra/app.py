@@ -40,6 +40,7 @@ from infra.asset_stack import AssetStack
 from infra.character_stack import CharacterStack
 from infra.crud_api_stack import CrudApiStack
 from infra.agent_stack import AgentStack
+from infra.speechllm_stack import SpeechllmStack
 from infra.rest_api_stack import RestApiStack
 from infra.kimodo_ecs_stack import KimodoEcsStack
 
@@ -119,6 +120,26 @@ crud_api_stack = CrudApiStack(app, "VvaCrudApiStack", env=env)
 agent_stack = AgentStack(
     app, "VvaAgentStack",
     asset_base_url=f"https://{asset_stack.distribution.distribution_domain_name}",
+    env=env,
+)
+
+# ── Track 2: VieNeu-TTS SpeechLLm (container, response_stream) ───────────
+# Serves SpeechLLm/api_server.py — /synthesize/stream (NDJSON) + /health.
+# Built by CI from SpeechLLm/Dockerfile (weights baked, HF_HUB_OFFLINE=1).
+#
+#     cdk deploy VvaSpeechllmStack -c speechllm_bootstrap=1          # repo, once
+#     cdk deploy VvaSpeechllmStack -c speechllm_image_tag=<sha>      # every time after
+#     cdk deploy VvaSpeechllmStack -c speechllm_image_tag=<sha> \
+#         -c agent_role_arn=<ARN of vva-agent role>                 # to lock Function URL
+#         -c speechllm_memory=3008 -c speechllm_arch=arm64          # D6 chot (tran quota)
+#
+# Two-step bootstrap giong VvaAgentStack: repo truoc, image sau.
+# Memory la tham so CDK, mac dinh 3008 MB — tran quota Lambda memory cua tai
+# khoan (khong phai 3538 ~ 2 vCPU nhu ke hoach ban dau). D6 se do 1769/3008
+# va chot muc nho nhat khong cham hon. Dung hardcode.
+speechllm_stack = SpeechllmStack(
+    app, "VvaSpeechllmStack",
+    voice_bucket_name=asset_stack.voice_bucket.bucket_name,
     env=env,
 )
 

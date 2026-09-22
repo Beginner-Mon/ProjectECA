@@ -50,6 +50,23 @@ def _using_onnx_embeddings() -> bool:
     return _embedding_backend() == "onnx"
 
 
+def _using_signed_speechllm() -> bool:
+    """True when VIENEU_TTS_URL needs SigV4 — a Lambda Function URL.
+
+    Mirrors services/vieneu_tts/client.py::_is_lambda_url WITHOUT importing
+    it: preflight runs before anything heavy is loaded, and importing the
+    client to ask about configuration would defeat that. Localhost stays
+    unsigned and needs no AWS credentials in the path at all, so botocore
+    is not required there — same shape as the embedding-backend predicates
+    above. (Fix #4: D3 added the lazy botocore import without listing it,
+    and this test-suite's whole point is catching exactly that drift.)
+    """
+    url = os.getenv("VIENEU_TTS_URL", "").strip().lower()
+    if not url or "localhost" in url or "127.0.0.1" in url:
+        return False
+    return "lambda-url" in url or ".on.aws" in url
+
+
 @dataclass(frozen=True)
 class LazyDependency:
     module: str
@@ -111,6 +128,16 @@ LAZY_DEPENDENCIES: tuple[LazyDependency, ...] = (
         "set, which is the deployed path; a local run with VVA_PG_DSN needs none "
         "of it. The Lambda runtime ships boto3, so this cannot be missing there",
         critical=False,
+    ),
+    LazyDependency(
+        "botocore",
+        "SigV4 signing for the SpeechLLm Function URL — only when "
+        "VIENEU_TTS_URL points at *.lambda-url.*.on.aws. Localhost TTS stays "
+        "unsigned and needs none of it. Without this a configured voice path "
+        "fails every turn (unsigned requests 403 at the URL), so it is "
+        "critical exactly when it is required",
+        critical=True,
+        required_when=_using_signed_speechllm,
     ),
     LazyDependency(
         "langchain_google_genai",

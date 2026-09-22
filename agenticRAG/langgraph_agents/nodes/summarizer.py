@@ -69,7 +69,11 @@ async def maybe_summarize(session_id: str) -> None:
         if total_tokens < _SUMMARY_THRESHOLD:
             return
 
-        # Fire background task (same pattern as _pending_tts_tasks)
+        # Fire background task, kept alive via a strong reference in
+        # _pending_summarizer_tasks (asyncio.create_task() only holds a WEAK
+        # one) — same pattern api/main.py used for its old TTS background
+        # task, before feature/tts-streaming replaced that task with a plain
+        # `async for` inside the already-open SSE generator.
         task = asyncio.create_task(
             _run_summarize(session_id, last_chunk or 0)
         )

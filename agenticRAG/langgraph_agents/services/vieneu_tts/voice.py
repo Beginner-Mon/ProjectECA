@@ -12,8 +12,10 @@ Two decisions worth stating, because both were the other way round before:
 2. This module does NOT check that the file exists. The path is resolved by
    SpeechLLm against ITS OWN working directory; those are two processes and, in
    the deployed layout, two machines. Checking here would pass locally and lie
-   in production. The existence check and the fall back to the preset voice both
-   live in `SpeechLLm/src/services/vieneu_client.py`, where the filesystem is.
+   in production. The existence check lives in
+   `SpeechLLm/src/services/vieneu_client.py`, where the filesystem is — and a
+   missing or unreadable reference now fails that request loudly there
+   (`VoiceResolutionError`) rather than silently substituting a preset voice.
 """
 
 from __future__ import annotations
@@ -44,8 +46,9 @@ def resolve_voice(
     """Return ``(voice_path, lang)`` for a reply about to be spoken.
 
     ``voice_path`` is None only when ``persona_id`` is unusable as a filename —
-    SpeechLLm then falls back to its preset voice, same as for a missing file.
-    ``lang`` is always a real code, so the caller can pass it downstream.
+    SpeechLLm now rejects that request outright (``VoiceResolutionError``,
+    HTTP 422) rather than falling back to a preset voice. ``lang`` is always a
+    real code, so the caller can pass it downstream.
     """
     lang = detect_lang(text, query=query, fallback=persona_lang)
 

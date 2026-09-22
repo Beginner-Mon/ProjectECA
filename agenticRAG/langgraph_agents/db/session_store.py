@@ -6,11 +6,12 @@ Coexists with memory/session_store.py (Firebase) for the old code path.
 from __future__ import annotations
 
 import json
+import time
 import uuid
 from datetime import datetime, timedelta, timezone
 from typing import Optional
 
-from langgraph_agents.db.postgres import PostgresClient
+from langgraph_agents.db.postgres import PostgresClient, STATS, STATS_ENABLED
 from langgraph_agents.shared import get_pg_client
 from langgraph_agents.shared.stm import get_stm
 
@@ -351,34 +352,98 @@ async def write_session_turn(
     `motion_job_id` (R25): the Kimodo job id for this turn, if any. Only
     the `queued`/`cache_hit` states carry one — `busy`/`unavailable` pass
     None, same as a turn with no motion at all. Written on the assistant row
-    only; the user row's motion_job_id is always NULL."""
+    only; the user row's motion_job_id is always NULL.
+
+    ONE HELD CONNECTION, TWO ROUND TRIPS — not three separate pg.execute()
+    calls. Diagnosed 11-09 (owner's vva.log: the send button stayed in "stop"
+    for 6.5-7.9s after the answer text was already fully shown, on TEXT-mode
+    turns with no TTS involved). Every `PostgresClient.execute()` call opens
+    its OWN transaction — a BEGIN, a `SELECT set_config('app.user_id', ...)`
+    for row-level security (postgres.py::user_scope), the query itself, and a
+    COMMIT: 4 round trips per call. Three separate execute() calls therefore
+    cost up to 12 sequential round trips for one turn's persistence, each one
+    paying full Vietnam-to-us-east-1 latency (~1s), all before the button
+    could release.
+
+    Held under one `pg.transaction()` instead: 1 BEGIN + 1 set_config + 2
+    queries + 1 COMMIT = 5 round trips total — the BEGIN/set_config/COMMIT
+    overhead is paid once instead of three times, and the query count itself
+    drops from 3 to 2.
+
+    NOT combined into a single WITH-CTE statement, even though users +
+    conversations + messages could syntactically be written as one — because
+    `messages` carries a row-level security WITH CHECK policy that subqueries
+    `conversations` (alembic/versions/007_rls.py, OWNED_VIA_SESSION policy:
+    `EXISTS (SELECT 1 FROM conversations c WHERE c.session_id = ... AND
+    c.user_id = current_setting('app.user_id')::uuid)`), and PostgreSQL's own
+    documentation on data-modifying CTEs is explicit that sibling
+    sub-statements sharing one WITH query "are executed with the same
+    snapshot... so they cannot see one another's effects on the target
+    tables" unless one explicitly reads the other via `FROM cte_name` (ours
+    does not — RLS's WITH CHECK queries the `conversations` TABLE directly,
+    not a CTE). For a BRAND-NEW session — the very first turn, where the
+    conversations upsert takes its INSERT branch rather than the ON CONFLICT
+    UPDATE one — combining all three into one WITH statement would make the
+    messages insert's own RLS check see `conversations` as it stood BEFORE
+    that same statement created the row, and the check would fail every
+    first turn of every new session. (Two SEPARATE statements in the SAME
+    transaction, as done here, do not have this problem: ordinary
+    Postgres visibility rules mean a later command in an open transaction
+    always sees an earlier command's own writes — this restriction is
+    specific to sub-statements sharing a single WITH.)
+
+    users+conversations, by contrast, ARE safely combined into one CTE
+    statement below: neither policy subqueries the other's table (both check
+    only `current_setting('app.user_id')` — see 007_rls.py's OWNED_DIRECTLY
+    policy, which has no cross-table EXISTS at all), and the FK from
+    conversations.user_id to users.id is enforced by Postgres's referential-
+    integrity trigger, which — unlike RLS's WITH CHECK — uses a dirty/self
+    snapshot specifically so "insert parent then child in one statement"
+    already works, and always has.
+
+    Preserves every semantic write_session_turn had before: ON CONFLICT
+    behaviour on both users and conversations; the user row is inserted
+    before the assistant row in the messages VALUES list, so it still gets
+    the lower `seq_id` (BIGSERIAL assigns nextval() in VALUES-list order,
+    same guarantee executemany()'s row order gave); motion_job_id still lands
+    only on the assistant row's `extras` JSONB; `created_at` is still left to
+    the column DEFAULT rather than passed as a parameter — an ISO string
+    bound to a `timestamptz` parameter fails under asyncpg's binary protocol,
+    which is exactly why it was never passed here.
+    """
     user_id = _to_uuid(user_id)
     pg = get_pg_client()
     await pg.connect()
     ts = datetime.now(timezone.utc).isoformat()
+    extras_json = (
+        json.dumps({"motion": {"job_id": motion_job_id}}) if motion_job_id else None
+    )
 
-    await pg.execute(
-        "INSERT INTO users (id) VALUES ($1::uuid) ON CONFLICT (id) DO NOTHING",
-        user_id,
-    )
-    await pg.execute(
-        """INSERT INTO conversations (session_id, user_id, created_at, updated_at)
-           VALUES ($1::uuid, $2::uuid, now(), now())
-           ON CONFLICT (session_id) DO UPDATE SET updated_at = now()""",
-        session_id, user_id,
-    )
-    # created_at omitted → DB DEFAULT now() fills it. Ordering within a turn is
-    # by seq_id (BIGSERIAL, insert order), not created_at. Passing an ISO string
-    # for a timestamptz param fails under executemany() binary binding.
-    await pg.executemany(
-        """INSERT INTO messages (session_id, role, content, token_count, extras)
-           VALUES ($1::uuid, $2, $3, $4, $5::jsonb)""",
-        [
-            (session_id, "user",      user_query,       None,         None),
-            (session_id, "assistant", assistant_answer, total_tokens,
-             json.dumps({"motion": {"job_id": motion_job_id}}) if motion_job_id else None),
-        ],
-    )
+    t0 = time.perf_counter() if STATS_ENABLED else 0.0
+    async with pg.transaction() as conn:
+        await conn.execute(
+            """WITH ins_user AS (
+                   INSERT INTO users (id) VALUES ($1::uuid)
+                   ON CONFLICT (id) DO NOTHING
+               )
+               INSERT INTO conversations (session_id, user_id, created_at, updated_at)
+               VALUES ($2::uuid, $1::uuid, now(), now())
+               ON CONFLICT (session_id) DO UPDATE SET updated_at = now()""",
+            user_id, session_id,
+        )
+        # created_at omitted → DB DEFAULT now() fills it. Ordering within a turn
+        # is by seq_id (BIGSERIAL, VALUES-list order), not created_at. Passing
+        # an ISO string for a timestamptz param fails under binary binding.
+        await conn.execute(
+            """INSERT INTO messages (session_id, role, content, token_count, extras)
+               VALUES
+                   ($1::uuid, 'user',      $2, NULL, NULL),
+                   ($1::uuid, 'assistant', $3, $4,   $5::jsonb)""",
+            session_id, user_query, assistant_answer, total_tokens, extras_json,
+        )
+    if STATS_ENABLED:
+        STATS.record("write_session_turn", time.perf_counter() - t0)
+
     await _append_stm(session_id, user_query, assistant_answer, ts)
 
 

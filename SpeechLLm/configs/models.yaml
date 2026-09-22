@@ -10,8 +10,51 @@
 #   voice_id: EXAVITQu4vr4xnSDxMaL
 
 vieneu:
-  mode: turbo
+  # v3turbo, not turbo. `turbo` is the v2 GGUF backend: it needs
+  # `pip install vieneu[gpu]` (llama-cpp-python) and does not run on a minimal
+  # install. v3turbo runs torch-free on CPU via ONNX Runtime, which is the whole
+  # reason VieNeu was chosen over Coqui — the GPU stays free for Kimodo.
+  mode: v3turbo
   device: cpu
-  output_dir: data/temp_audio
-  model_path: "models/vieneu-tts-v2-turbo.gguf"
-  voice_path: ""  # path to reference .wav for voice cloning, e.g. "voices/my_voice.wav"
+
+  # Deliberately empty. vieneu_client passes this as `backbone_repo`, which is a
+  # HUGGINGFACE REPO ID, not a filesystem path — the repo id and the file name are
+  # separate constructor arguments. The old value ("models/vieneu-tts-v2-turbo.gguf")
+  # was a local path in the repo-id slot, so it could never resolve, and the
+  # `models/` directory it named is gitignored and no longer exists anywhere.
+  # Empty means the library's own default repo is used and the weights come from
+  # the hub.
+  #
+  # DEPLOY NOTE: this works locally and will NOT work on Fargate — the VPC has
+  # nat_gateways=0, so there is no route to huggingface.co. Deployed, the weights
+  # must be baked into the image or pulled from S3 via the free gateway endpoint.
+  model_path: ""
+
+  # Passed to encode_reference(). The library defaults this to true; we do not.
+  # False is the setting the current Anne reference was accepted under, and it is
+  # the one that matters once stage 1 supplies a deliberately processed recording —
+  # denoising would strip the very character that was tuned into it.
+  denoise: false
+
+  # Codec for /synthesize/stream's chunks, each an independently-encoded file
+  # (see vieneu_client.py:_encode_chunk). Three options:
+  #
+  #   "flac" (DEFAULT) — lossless (soundfile, PCM_16). Owner's decision
+  #     (11-09-2026), by ear: N heard audible clicks at some chunk joins on
+  #     "opus" and none on the equivalent uncompressed-PCM stream — because
+  #     each chunk is encoded independently and restarting a LOSSY encoder
+  #     per chunk can seam audibly, while a lossless one decodes every chunk
+  #     back to bit-exact samples regardless of where its encoder started.
+  #     Costs size for that guarantee: measured ~309 kbps, ~4.15 MB for an
+  #     84.5s answer, vs. 1.79 MB for opus at compression_level 0.5 and
+  #     10.3 MB for wav.
+  #   "opus" — OGG/Opus via soundfile, smallest, LOSSY — the click risk
+  #     above is the tradeoff for that size. See opus_compression_level.
+  #   "wav" — PCM_16, largest, for a client that cannot decode Opus/FLAC.
+  codec: flac
+
+  # soundfile/libsndfile's OGG/Opus compression_level, 0.0-1.0 — read only
+  # when codec: opus above. Measured on Anne's voice: 0.5 -> 133 kbps (5.8x
+  # smaller than the equivalent WAV); 0.9 -> 33 kbps (23x smaller). Left in
+  # place, unpicked, for anyone switching codec back to opus.
+  opus_compression_level: 0.5

@@ -2,92 +2,71 @@
 Shared fixtures for SpeechLLm unit tests.
 
 Handles:
-- Stubbing heavy third-party dependencies (ElevenLabs SDK, Coqui TTS, PyTorch)
-  only when they are not installed in the test environment.
-- Setting CWD to SpeechLLm root (required for configs/models.yaml at import time)
-- Providing mocked TTS services so tests run without API keys or GPU
+- Setting CWD to SpeechLLm root (required by fixtures and voice paths)
+- Replacing the real model warm-up with a fake that marks it ready
+  immediately, so no test blocks on or triggers a real VieNeu load
+- Providing a plain TestClient — there is no router layer left to mock
+
+This file used to do considerably more. It stubbed `elevenlabs`, `TTS`, `torch`,
+`sounddevice` and `soundfile` with MagicMocks whenever they were not installed,
+and it injected a fake ELEVENLABS_API_KEY for the session. Both existed to serve
+the retired Coqui/ElevenLabs pipeline, whose modules were deleted on 10-09-2026.
+
+It later carried `mock_tts_router` / `synthesis_result` / `make_synthesis_result`,
+for the POST /synthesize route and src/services/tts_router.py. Both are gone —
+streaming (POST /synthesize/stream) calls VieNeuClient directly, so there is no
+router to mock and no "/synthesize response shape" left to build fixtures for.
+Tests that need synthesis behaviour now monkeypatch
+`api_server.vieneu_client._tts` with a fake model directly (see
+test_synthesize_stream.py).
+
+It also used to set a module-level `SPEECHLLM_SKIP_WARMUP=1` environment
+variable, read by api_server.py's lifespan handler to skip warm-up entirely.
+Removed on 11-09-2026: it was a test-only switch reachable from production
+through one stray environment variable, which is the exact "/health answers
+ok while nothing is loaded" bug the warm-up mechanism exists to prevent.
+Tests now patch `api_server._warm_up_model` directly instead (see
+`tts_client` below) — production code no longer branches on anything test
+suites control.
+
+The live import chain is now exactly two modules —
+
+    api_server.py -> src/services/vieneu_client.py
+
+— neither of which imports elevenlabs/TTS/torch/sounddevice, so stubbing them
+here would stub nothing. A `sys.modules` entry pointing at a MagicMock is a
+booby trap for the next person who adds a real dependency with one of those
+names, because the import silently succeeds and every attribute access returns
+a Mock instead of failing. Deleted rather than left "just in case".
 """
 
-import importlib.util
 import os
-import sys
 from pathlib import Path
-from unittest.mock import MagicMock, patch
 
 import pytest
 from fastapi.testclient import TestClient
 
 
 # ---------------------------------------------------------------------------
-# Stub heavy third-party packages that may not be installed in the test
-# environment.  Only packages that cannot be found are replaced with
-# MagicMock stubs; if a package IS installed it is left untouched so
-# that other test suites (e.g. DART integration tests) are unaffected.
-# ---------------------------------------------------------------------------
-
-_OPTIONAL_PACKAGES = {
-    "elevenlabs": ["elevenlabs", "elevenlabs.client"],
-    "TTS":        ["TTS", "TTS.api"],
-    "torch":      ["torch"],
-    "sounddevice": ["sounddevice"],
-    "soundfile":  ["soundfile"],
-}
-
-for _top_pkg, _sub_mods in _OPTIONAL_PACKAGES.items():
-    if importlib.util.find_spec(_top_pkg) is None:
-        for _mod in _sub_mods:
-            sys.modules.setdefault(_mod, MagicMock())
-
-
-# ---------------------------------------------------------------------------
-# Session-scoped CWD + environment fixture
+# Session-scoped CWD fixture
 #
-# api_server.py calls load_yaml("configs/models.yaml") and
-# ElevenLabsClient checks os.getenv("ELEVENLABS_API_KEY") at import time.
-# Both must be available before the module is first imported.
+# KEEP THIS. Even though api_server.py's own config/output-dir reads are now
+# anchored to Path(__file__) rather than the CWD, `voices/*.wav` fixtures and
+# ad-hoc relative paths used across this suite still assume SpeechLLm/ is the
+# working directory, and the runtime-import guard in
+# .github/workflows/release-tests.yml likewise `cd SpeechLLm` first.
 # ---------------------------------------------------------------------------
 
 @pytest.fixture(scope="session", autouse=True)
-def _speechllm_env(request):
-    """Set CWD to SpeechLLm root and provide a dummy API key for the session."""
+def _speechllm_cwd(request):
+    """Run the whole session from the SpeechLLm root."""
     speechllm_root = Path(request.config.rootdir) / "SpeechLLm"
     original_cwd = os.getcwd()
     os.chdir(speechllm_root)
 
-    original_key = os.environ.get("ELEVENLABS_API_KEY")
-    os.environ["ELEVENLABS_API_KEY"] = "test_key_for_unit_tests"
-
     yield
 
     os.chdir(original_cwd)
-    if original_key is None:
-        os.environ.pop("ELEVENLABS_API_KEY", None)
-    else:
-        os.environ["ELEVENLABS_API_KEY"] = original_key
-
-
-# ---------------------------------------------------------------------------
-# Mock data factory
-# ---------------------------------------------------------------------------
-
-def make_synthesis_result(**overrides) -> dict:
-    """
-    Build a realistic /synthesize response dict.
-
-    Call with no args for sensible defaults, or pass keyword overrides:
-        make_synthesis_result(language="vi", tts_provider="coqui")
-    """
-    defaults = {
-        "message": "Synthesis complete",
-        "audio_file": "test_audio.mp3",
-        "language": "en",
-        "emotion": "neutral",
-        "tts_time_sec": 0.123,
-        "tts_provider": "elevenlabs",
-        "request_id": None,
-    }
-    defaults.update(overrides)
-    return defaults
 
 
 # ---------------------------------------------------------------------------
@@ -95,45 +74,33 @@ def make_synthesis_result(**overrides) -> dict:
 # ---------------------------------------------------------------------------
 
 @pytest.fixture
-def synthesis_result():
-    """Expose the default synthesis result dict for assertions."""
-    return make_synthesis_result()
-
-
-@pytest.fixture
-def mock_tts_router():
+def tts_client(monkeypatch):
     """
-    Patch tts_router in api_server so /synthesize never calls
-    real ElevenLabs or Coqui services.
+    Provide a FastAPI TestClient with the real model warm-up replaced by a
+    fake that marks it ready immediately — no test in this suite should
+    load the real ~30s-cold/~8s-cached VieNeu model.
+
+    api_server.py's `lifespan` starts warm-up as
+    `threading.Thread(target=_warm_up_model, ...)`, which resolves
+    `_warm_up_model` as a module global at call time (i.e. when
+    `TestClient(app)` triggers startup below) — so patching the module
+    attribute here, before that happens, is enough. Tests that need to
+    exercise the REAL warm-up state machine (loading -> ready / error) build
+    their own TestClient instead and patch `vieneu_client._load_model` /
+    `_enrol_known_voices` — see test_api_endpoints.py's TestHealthEndpoint.
+
+    No router or model to mock beyond that — POST /synthesize/stream calls
+    `vieneu_client.synthesize_stream()` directly. A test that needs specific
+    synthesis behaviour monkeypatches `api_server.vieneu_client._tts` with a
+    fake (see test_synthesize_stream.py).
     """
-    with patch("api_server.tts_router") as mock_router:
-        mock_router.synthesize.return_value = "data/temp_audio/test_audio.mp3"
-        mock_router.last_provider = "elevenlabs"
-        yield mock_router
+    import api_server
 
+    def fake_warm_up_model():
+        api_server._MODEL_STATE["status"] = "ready"
+        api_server._MODEL_STATE["error"] = None
 
-@pytest.fixture
-def audio_dir(tmp_path):
-    """Create a temp audio directory pre-populated with sample test files."""
-    d = tmp_path / "audio"
-    d.mkdir()
-    # Minimal binary stubs — just enough for FileResponse to serve
-    (d / "test.mp3").write_bytes(b"\xff\xfb\x90\x00" + b"\x00" * 100)
-    (d / "test.wav").write_bytes(b"RIFF" + b"\x00" * 100)
-    return d
+    monkeypatch.setattr(api_server, "_warm_up_model", fake_warm_up_model)
 
-
-@pytest.fixture
-def tts_client(mock_tts_router, audio_dir):
-    """
-    Provide a FastAPI TestClient with TTS services fully mocked.
-
-    Patches:
-      - api_server.tts_router  (via mock_tts_router dependency)
-      - api_server.audio_dir   (via audio_dir tmp directory)
-    """
-    with patch("api_server.audio_dir", audio_dir):
-        from api_server import app
-
-        with TestClient(app) as client:
-            yield client
+    with TestClient(api_server.app) as client:
+        yield client

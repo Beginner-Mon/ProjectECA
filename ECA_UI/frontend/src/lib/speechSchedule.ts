@@ -58,10 +58,10 @@ export interface Placement extends Segment {
    * The audible gap in front of this chunk, in seconds: how far past its slot
    * it was when it became playable. 0 when on time.
    *
-   * This is the metric that says streaming is starving. Generation runs ~2.2x
-   * faster than playback, so every chunk should arrive seconds early; a
-   * non-zero value means something upstream (a proxy buffering, a slow CPU,
-   * the API Gateway) is holding chunks back.
+   * This is the metric that says streaming is starving. On Lambda generation
+   * runs SLOWER than playback (measured 0.64–0.74× realtime, D6), so a
+   * non-zero value means the initial buffer (computeStartTime) was short for
+   * this turn's actual rate — not a proxy or gateway holding chunks back.
    */
   lateBy: number
 }
@@ -78,14 +78,22 @@ export class ChunkScheduler {
   /** Applies to the first chunk placed, then resets to 0. */
   private firstOffset: number
   private readonly safety: number
+  /**
+   * Absolute context time for the first placement, set by computeStartTime
+   * (the measured buffer that keeps a slower-than-realtime stream gapless).
+   * One-shot: consumed by the first placement, then the timeline chains
+   * normally. Undefined keeps the old behaviour (first chunk at now+safety).
+   */
+  private firstStartAt: number | undefined
   /** Decoded (duration) or failed (null) chunks waiting for an earlier seq. */
   private readonly held = new Map<number, number | null>()
 
-  constructor(start: SchedulerStart = FROM_START, safety = START_SAFETY_S) {
+  constructor(start: SchedulerStart = FROM_START, safety = START_SAFETY_S, firstStartAt?: number) {
     this.nextSeq = start.seq
     this.firstOffset = start.offset
     this.mediaCursor = start.mediaStart
     this.safety = safety
+    this.firstStartAt = firstStartAt
   }
 
   /** The seq everything is waiting on. Every seq below it has been placed or skipped. */
@@ -131,7 +139,12 @@ export class ChunkScheduler {
       let startAt: number
       let lateBy = 0
       if (this.nextStartTime === null) {
-        startAt = now + this.safety
+        // First placement defines the timeline: at the measured buffer point
+        // when one was computed, else immediately like before. Consumed
+        // one-shot — everything after chains off nextStartTime either way,
+        // so the chaining half of this scheduler is untouched.
+        startAt = this.firstStartAt ?? now + this.safety
+        this.firstStartAt = undefined
       } else {
         // The whole rule: its slot if the slot is still ahead of us, otherwise
         // as soon as possible — and the difference is the gap the user hears.
@@ -148,6 +161,80 @@ export class ChunkScheduler {
     }
     return out
   }
+}
+
+/**
+ * Upper bound on the measured buffer: past this, silence is worse than a gap.
+ * A 600-char reply is ~33.5s of audio needing ~12–19s of buffer at the
+ * measured 0.64–0.74× rate, so 15s still leaves the longest replies slightly
+ * under-buffered by design — the alternative is staring at silence.
+ */
+export const MAX_START_DELAY_S = 15
+
+/** One decoded chunk's arrival instant (context clock) and media length. */
+export interface ChunkArrival {
+  at: number
+  duration: number
+}
+
+/**
+ * The earliest instant playback can start and still run the whole clip
+ * without a gap — measured per turn, not configured.
+ *
+ * Why measured, not a constant: the synthesis rate drifts (0.64–0.74×
+ * realtime across D6 runs) and goes stale the moment RAM, arch or model
+ * changes. Too small a buffer and the run starves from ~chunk 3; too big
+ * and a fast turn keeps the user waiting for nothing. Measuring the first
+ * three chunks is right either way — and if generation ever gets faster
+ * than playback, this collapses to now + START_SAFETY_S on its own.
+ *
+ * @param samples the first three decoded chunks in seq order (a1..a3).
+ *        Fewer than three means the stream already ended: everything is in
+ *        hand, so play immediately.
+ * @param estimatedTotalS expected total audio seconds (speech_start's
+ *        estimated_audio_s). Undefined on old servers: guessed as 3× the
+ *        first three chunks' total.
+ * @param now the context's currentTime.
+ */
+export function computeStartTime(
+  samples: readonly ChunkArrival[],
+  estimatedTotalS: number | undefined,
+  now: number,
+): number {
+  const immediate = now + START_SAFETY_S
+  if (samples.length < 3) return immediate
+  const [c1, c2, c3] = samples
+  // Steady-state rate only: a1 carries the one-off startup cost (model
+  // already warm server-side, but decode + scheduling here), so the rate
+  // runs from a1 to a3 over the two chunks produced inside that window.
+  const r = (c2.duration + c3.duration) / (c3.at - c1.at)
+  if (!(r > 0) || !Number.isFinite(r)) return immediate
+  let est = estimatedTotalS
+  if (est === undefined || est === null) {
+    est = (c1.duration + c2.duration + c3.duration) * 3
+    console.debug('[TTS] no estimated_audio_s from server; guessing total from first chunks')
+  }
+  const heard = c1.duration + c2.duration + c3.duration
+  const rest = Math.max(0, est - heard)
+  const doneAt = c3.at + rest / r
+  // Playback runs estimatedTotalS seconds from its start and must not end
+  // before generation does: startAt = doneAt − estimatedTotalS, but never
+  // sooner than right now.
+  //
+  // Plus one chunk (`+ c3.duration`): arrivals are DISCRETE, so the last
+  // chunk's audio lands all at once at doneAt yet still needs sounding time
+  // after that. Without the pad the continuous model above under-buffers by
+  // up to one chunk — verified by arithmetic on the measured shape (2.24s of
+  // audio every 2.90s × 15): the literal formula leaves the tail 0.66s late,
+  // with the pad every chunk lands within the 50 ms safety quantum.
+  // c3.duration stands in for the unknown last chunk; chunk sizes here are
+  // ~uniform (the 2.0s coalescing target in vieneu_client).
+  const startAt = Math.max(immediate, doneAt - est + c3.duration)
+  if (startAt > now + MAX_START_DELAY_S) {
+    console.debug('[TTS] measured buffer capped at 15s; longest replies may still starve at the tail')
+    return now + MAX_START_DELAY_S
+  }
+  return startAt
 }
 
 /**

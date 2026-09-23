@@ -1,6 +1,15 @@
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 
-import { ChunkScheduler, START_SAFETY_S, locate, mediaPositionAt, type Segment } from './speechSchedule'
+import {
+  ChunkScheduler,
+  MAX_START_DELAY_S,
+  START_SAFETY_S,
+  computeStartTime,
+  locate,
+  mediaPositionAt,
+  type ChunkArrival,
+  type Segment,
+} from './speechSchedule'
 
 const S = START_SAFETY_S
 const close = (actual: number, expected: number) => expect(actual).toBeCloseTo(expected, 9)
@@ -120,8 +129,7 @@ describe('mediaPositionAt', () => {
   })
 })
 
-describe('locate', () => {
-  it('finds the chunk, and the offset into it, for a clip time', () => {
+describe('locate', () => {  it('finds the chunk, and the offset into it, for a clip time', () => {
     expect(locate([2, 3, 1], 2.5)).toEqual({ seq: 1, offset: 0.5, mediaStart: 2 })
   })
 
@@ -140,5 +148,96 @@ describe('locate', () => {
 
   it('lands past the last chunk when asked for the end', () => {
     expect(locate([2, 3], 5)).toEqual({ seq: 2, offset: 0, mediaStart: 5 })
+  })
+})
+
+describe('computeStartTime', () => {
+  // The measured shape (D6): 2.24s of audio every 2.90s — generation at
+  // ~0.77× realtime, inside the 0.64–0.74× band that starves playback.
+  const D = 2.24
+  const G = 2.9
+  const N = 15
+  const arrivals: ChunkArrival[] = Array.from({ length: N }, (_, k) => ({ at: k * G, duration: D }))
+  const EST = N * D // 33.6s of audio
+
+  function scheduleAll(firstStartAt: number | undefined): { lateBy: number[]; startAt: number } {
+    const s = new ChunkScheduler(undefined, undefined, firstStartAt)
+    const lateBy: number[] = []
+    let first = 0
+    for (let k = 0; k < N; k++) {
+      for (const p of s.offer(k, D, k * G)) {
+        if (p.seq === 0) first = p.startAt
+        lateBy[p.seq] = p.lateBy
+      }
+    }
+    return { lateBy, startAt: first }
+  }
+
+  it('the measured slow stream plays with no audible gap once buffered', () => {
+    const now = arrivals[2].at
+    const startAt = computeStartTime(arrivals.slice(0, 3), EST, now)
+    // doneAt − est + one chunk: 40.6 − 33.6 + 2.24 = 9.24.
+    close(startAt, 9.24)
+    const { lateBy } = scheduleAll(startAt)
+    // Nothing past the 50 ms safety quantum — an exact tie between a slot
+    // and an arrival still costs one quantum by design, and that is
+    // inaudible. Anything above it would be a real gap.
+    expect(Math.max(...lateBy)).toBeLessThanOrEqual(START_SAFETY_S + 1e-9)
+  })
+
+  it('the same stream starves from the early chunks without the buffer', () => {
+    const { lateBy } = scheduleAll(undefined)
+    expect(lateBy[2]).toBeGreaterThan(0.3)
+    expect(Math.max(...lateBy)).toBeGreaterThan(0.5)
+  })
+
+  it('a faster-than-realtime stream starts at once, never early-waits', () => {
+    const fast: ChunkArrival[] = [0, 1, 2].map((k) => ({ at: k * 1.5, duration: D }))
+    close(computeStartTime(fast, EST, fast[2].at), fast[2].at + S)
+  })
+
+  it('a stream that ends before three chunks plays at once', () => {
+    const two = arrivals.slice(0, 2)
+    close(computeStartTime(two, EST, two[1].at), two[1].at + S)
+    close(computeStartTime([], EST, 10), 10 + S)
+  })
+
+  it('an unmeasurable rate falls back to starting at once, never throws', () => {
+    const tied: ChunkArrival[] = [
+      { at: 5, duration: 2 },
+      { at: 5, duration: 2 },
+      { at: 5, duration: 2 },
+    ]
+    close(computeStartTime(tied, EST, 5), 5 + S)
+    const silent: ChunkArrival[] = [
+      { at: 0, duration: 0 },
+      { at: 1, duration: 0 },
+      { at: 2, duration: 0 },
+    ]
+    close(computeStartTime(silent, EST, 2), 2 + S)
+  })
+
+  it('an old server without estimated_audio_s still plays, guessing the total', () => {
+    const debug = vi.spyOn(console, 'debug').mockImplementation(() => {})
+    try {
+      const startAt = computeStartTime(arrivals.slice(0, 3), undefined, arrivals[2].at)
+      expect(Number.isFinite(startAt)).toBe(true)
+      expect(debug).toHaveBeenCalled()
+    } finally {
+      debug.mockRestore()
+    }
+  })
+
+  it('caps the wait at 15s and says so', () => {
+    const debug = vi.spyOn(console, 'debug').mockImplementation(() => {})
+    try {
+      const now = arrivals[2].at
+      // A D6-sized turn at the slow end of the band needs ~60s of buffer.
+      const startAt = computeStartTime(arrivals.slice(0, 3), 126, now)
+      close(startAt, now + MAX_START_DELAY_S)
+      expect(debug).toHaveBeenCalled()
+    } finally {
+      debug.mockRestore()
+    }
   })
 })

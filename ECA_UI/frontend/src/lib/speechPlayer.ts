@@ -25,7 +25,14 @@
  */
 
 import { createSpeechAnalyser, ensureAudioContext } from '../avatar/lipSyncAudio'
-import { ChunkScheduler, locate, mediaPositionAt, type Placement } from './speechSchedule'
+import {
+  ChunkScheduler,
+  computeStartTime,
+  locate,
+  mediaPositionAt,
+  type ChunkArrival,
+  type Placement,
+} from './speechSchedule'
 
 // ── SpeechClip ───────────────────────────────────────────────────────────────
 
@@ -57,6 +64,13 @@ export interface SpeechMeta {
   /** Not part of the speech_start contract today; read if the server sends it.
    *  See `voiceScope` in ttsCache.ts for why it matters. */
   lang?: string
+  /**
+   * Expected total audio seconds (server's estimate from the spoken char
+   * count). Not part of older servers' speech_start; read if sent, like
+   * `lang` above. The player needs it BEFORE the stream ends to measure the
+   * gapless buffer (computeStartTime) — by `speech_end` it would be useless.
+   */
+  estimatedAudioS?: number
 }
 
 export interface ClipSnapshot {
@@ -203,6 +217,7 @@ export function applySpeechEvent(clip: SpeechClip, type: string, data: unknown):
         codec: typeof d.codec === 'string' ? d.codec : '',
         sampleRate: typeof d.sample_rate === 'number' ? d.sample_rate : 0,
         lang: typeof d.lang === 'string' ? d.lang : undefined,
+        estimatedAudioS: typeof d.estimated_audio_s === 'number' ? d.estimated_audio_s : undefined,
       })
       return true
     case 'speech_chunk':
@@ -253,6 +268,19 @@ interface Run {
   segments: Placement[]
   /** Clip time the run started from. */
   from: number
+}
+
+/**
+ * Waiting on the first three decoded chunks before a fresh stream sounds.
+ * The samples carry arrival instants on the context clock, so
+ * computeStartTime can place the first chunk where the run never starves.
+ * Cleared by teardown, a superseding play, or finishMeasuring — whichever
+ * comes first, so an aborted wait can never sound.
+ */
+interface MeasureState {
+  samples: (ChunkArrival | undefined)[]
+  controller: LipSyncTarget | null
+  gen: number
 }
 
 /**
@@ -311,6 +339,7 @@ class SpeechPlayer {
   private readonly decoding = new Set<number>()
   private decodeFailures = 0
   private run: Run | null = null
+  private measure: MeasureState | null = null
   private pausedAt = 0
   /** Whoever `startLipSync` was called on, so exactly that one gets the stop. */
   private mouth: LipSyncTarget | null = null
@@ -329,6 +358,13 @@ class SpeechPlayer {
    * voice at a time. A clip still streaming is fine: its chunks are scheduled
    * as they arrive.
    *
+   * A FRESH stream (`from` 0, still arriving) does not sound at once: the
+   * first three decoded chunks are measured first (computeStartTime), because
+   * generation runs slower than playback and starting immediately starves
+   * from ~chunk 3. That wait still resolves true — accepted, will sound —
+   * since false reads as "failed, press replay". Resume, seek and cache
+   * replay start at once, like before.
+   *
    * @returns false when nothing started: the browser has not allowed audio yet
    *          (autoplay policy), a newer call superseded this one, or the clip
    *          failed. The clip keeps its audio either way.
@@ -343,6 +379,10 @@ class SpeechPlayer {
       this.adopt(clip, ctx)
     } else {
       this.stopRun()
+    }
+    if (from === 0 && !clip.settled) {
+      this.measure = { samples: [], controller, gen }
+      return true
     }
     this.startRun(ctx, from, controller)
     return true
@@ -395,9 +435,10 @@ class SpeechPlayer {
 
   /**
    * Position over the audio decoded so far, 0..1. While a clip is still
-   * streaming the total keeps growing (generation outpaces playback ~2x), so
-   * the bar holds around the middle and then runs to the end once the last
-   * chunk lands. It never moves backwards.
+   * streaming the total keeps growing (generation runs slower than playback,
+   * ~0.64–0.74× measured, so the first chunks are deliberately held back by
+   * the measured buffer), and the bar runs to the end once the last chunk
+   * lands. It never moves backwards.
    */
   progress(): number {
     const total = this.knownDuration()
@@ -426,6 +467,7 @@ class SpeechPlayer {
     this.unsubscribeClip?.()
     this.unsubscribeClip = null
     this.clip = null
+    this.measure = null
     this.decoded = []
     this.decoding.clear()
     this.pausedAt = 0
@@ -442,6 +484,9 @@ class SpeechPlayer {
       return
     }
     this.decodeArrived()
+    // Stream ended before three chunks: everything is in hand, so measure
+    // with what arrived (computeStartTime starts at once on <3 samples).
+    if (this.measure && clip.status === 'complete') this.finishMeasuring()
     this.maybeFinish()
   }
 
@@ -493,11 +538,48 @@ class SpeechPlayer {
     this.decoded[seq] = buf
     const run = this.run
     const ctx = this.ctx
-    if (run && ctx) this.place(run, run.scheduler.offer(seq, buf ? buf.duration : null, ctx.currentTime))
+    if (run && ctx) {
+      this.place(run, run.scheduler.offer(seq, buf ? buf.duration : null, ctx.currentTime))
+    } else if (ctx) {
+      this.noteArrival(seq, buf, ctx.currentTime)
+    }
     this.maybeFinish()
   }
 
-  private startRun(ctx: AudioContext, from: number, controller: LipSyncTarget | null): void {
+  /**
+   * Record one decoded chunk toward the three-sample measurement, and start
+   * the run the moment the third lands. Runs only while no run exists — once
+   * started, arrivals go straight to the scheduler above.
+   */
+  private noteArrival(seq: number, buf: AudioBuffer | null, now: number): void {
+    const m = this.measure
+    if (!m || !this.clip || m.gen !== this.gen) return
+    if (seq >= 3) return
+    if (buf === null) {
+      // A failed chunk inside the first three cannot be measured around:
+      // fall back to starting now, and the scheduler skips it like before.
+      this.finishMeasuring()
+      return
+    }
+    m.samples[seq] = { at: now, duration: buf.duration }
+    if (m.samples[0] && m.samples[1] && m.samples[2]) this.finishMeasuring()
+  }
+
+  private finishMeasuring(): void {
+    const m = this.measure
+    const clip = this.clip
+    const ctx = this.ctx
+    this.measure = null
+    if (!m || !clip || !ctx || m.gen !== this.gen) return
+    const startAt = computeStartTime(
+      m.samples.filter((s): s is ChunkArrival => !!s),
+      clip.meta?.estimatedAudioS,
+      ctx.currentTime,
+    )
+    this.startRun(ctx, 0, m.controller, startAt)
+  }
+
+  private startRun(ctx: AudioContext, from: number, controller: LipSyncTarget | null, firstStartAt?: number): void {
     // Array.from, not .map: `decoded` is sparse while decodes are in flight,
     // and .map would keep the holes as holes instead of reading them as
     // "not decoded yet".
@@ -507,7 +589,7 @@ class SpeechPlayer {
     })
     const start = locate(durations, from)
     const run: Run = {
-      scheduler: new ChunkScheduler(start),
+      scheduler: new ChunkScheduler(start, undefined, firstStartAt),
       sources: new Set(),
       segments: [],
       from: start.mediaStart + start.offset,
@@ -552,8 +634,9 @@ class SpeechPlayer {
       run.segments.push(p)
       if (p.lateBy > 0) {
         // The one number that says streaming is starving. Generation runs
-        // ~2.2x faster than playback, so this should never fire; when it does,
-        // something between SpeechLLm and here is holding chunks back.
+        // SLOWER than playback here (~0.64–0.74× measured), so this fires
+        // when the measured buffer was short for this turn's actual rate —
+        // not when something between SpeechLLm and here holds chunks back.
         console.warn(
           `[TTS] chunk ${p.seq} started ${Math.round(p.lateBy * 1000)} ms after its slot — ` +
             'an audible gap: chunks are arriving slower than they play',

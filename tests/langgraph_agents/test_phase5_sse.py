@@ -345,10 +345,17 @@ def test_sse_chat_speech_mode_emits_start_chunks_end_in_order(api_client, monkey
     # query), not from SpeechLLm's "start" line — this turn's answer and
     # query are both Vietnamese, so "vi" (see test_lang_detect.py for the
     # detector itself; this just pins that _stream_speech forwards it).
-    assert start_events[0]["data"] == {
-        "voice_version": "abc123", "codec": "opus", "sample_rate": 48000,
-        "lang": "vi",
-    }
+    # truncated/spoken_chars/estimated_audio_s come from the spoken-length
+    # budget (text_budget.py): this turn's 9-char answer is under budget, so
+    # truncated is False and the estimate covers the whole reply.
+    data = start_events[0]["data"]
+    assert data["voice_version"] == "abc123"
+    assert data["codec"] == "opus"
+    assert data["sample_rate"] == 48000
+    assert data["lang"] == "vi"
+    assert data["truncated"] is False
+    assert data["spoken_chars"] == 9
+    assert data["estimated_audio_s"] == pytest.approx(9 / 17.9)
 
     chunk_events = [e for e in events if e["event"] == "speech_chunk"]
     assert [c["data"]["seq"] for c in chunk_events] == [0, 1, 2]

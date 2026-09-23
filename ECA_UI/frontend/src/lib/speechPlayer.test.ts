@@ -1,12 +1,18 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
-import { CLIP_DISABLED, SpeechClip, applySpeechEvent } from './speechPlayer'
+import { CLIP_DISABLED, SpeechClip, applySpeechEvent, speechPlayer } from './speechPlayer'
+import { ensureAudioContext } from '../avatar/lipSyncAudio'
 
 /*
- * The clip and the event parsing. The player itself needs a real AudioContext
- * (decodeAudioData, the audio clock) and is not exercised here; its timing
- * arithmetic is tested in speechSchedule.test.ts.
+ * The clip and the event parsing. The player's Web Audio half runs here
+ * against a stub AudioContext (decode + clock only); its timing arithmetic
+ * is tested in speechSchedule.test.ts.
  */
+
+vi.mock('../avatar/lipSyncAudio', () => ({
+  ensureAudioContext: vi.fn(),
+  createSpeechAnalyser: vi.fn(() => ({})),
+}))
 
 const START = { voice_version: 'abc', codec: 'opus', sample_rate: 48000 }
 const chunk = (seq: number, bytes: string) => ({ seq, codec: 'opus', audio: btoa(bytes) })
@@ -75,6 +81,16 @@ describe('applySpeechEvent', () => {
     expect(clip.meta?.lang).toBe('vi')
   })
 
+  it('reads estimated_audio_s when the server sends it, like lang', () => {
+    const clip = new SpeechClip()
+    applySpeechEvent(clip, 'speech_start', { ...START, estimated_audio_s: 33.5 })
+    expect(clip.meta?.estimatedAudioS).toBe(33.5)
+
+    const old = new SpeechClip()
+    applySpeechEvent(old, 'speech_start', START)
+    expect(old.meta?.estimatedAudioS).toBeUndefined()
+  })
+
   it('leaves other events alone', () => {
     expect(applySpeechEvent(new SpeechClip(), 'token', { content: 'x' })).toBe(false)
   })
@@ -140,5 +156,87 @@ describe('SpeechClip', () => {
     expect(clip.status).toBe('complete')
     expect(clip.intact).toBe(true)
     expect(clip.getSnapshot().received).toBe(2)
+  })
+})
+
+describe('SpeechPlayer measuring', () => {
+  const flush = () => new Promise((r) => setTimeout(r, 0))
+
+  function stubAudio() {
+    const started: number[] = []
+    const ctx = {
+      state: 'running',
+      currentTime: 100,
+      resume: async () => {},
+      decodeAudioData: async (_buf: ArrayBuffer) => ({ duration: 2.24 }),
+      createBufferSource: () => ({
+        buffer: null,
+        connect: () => {},
+        disconnect: () => {},
+        start: (when?: number) => {
+          started.push(when ?? 0)
+        },
+        stop: () => {},
+        onended: null,
+      }),
+    }
+    vi.mocked(ensureAudioContext).mockReturnValue(ctx as unknown as AudioContext)
+    return { ctx, started }
+  }
+
+  afterEach(() => {
+    speechPlayer.stop()
+    vi.restoreAllMocks()
+  })
+
+  it('sounds nothing when aborted while measuring', async () => {
+    const { started } = stubAudio()
+    const clip = new SpeechClip()
+    applySpeechEvent(clip, 'speech_start', { ...START, estimated_audio_s: 30 })
+    const accepted = speechPlayer.play(clip, null)
+    // Two chunks arrive and decode — the third, which would start the run,
+    // never gets its chance.
+    applySpeechEvent(clip, 'speech_chunk', chunk(0, 'A'))
+    applySpeechEvent(clip, 'speech_chunk', chunk(1, 'B'))
+    await flush()
+    await flush()
+    speechPlayer.stop() // abort mid-measure
+    expect(await accepted).toBe(true) // the wait itself was accepted
+    applySpeechEvent(clip, 'speech_chunk', chunk(2, 'C'))
+    await flush()
+    await flush()
+    expect(started).toEqual([])
+    expect(speechPlayer.getSnapshot().status).toBe('idle')
+  })
+
+  it('starts the run once the third chunk decodes', async () => {
+    const { started } = stubAudio()
+    const clip = new SpeechClip()
+    applySpeechEvent(clip, 'speech_start', { ...START, estimated_audio_s: 30 })
+    const accepted = speechPlayer.play(clip, null)
+    applySpeechEvent(clip, 'speech_chunk', chunk(0, 'A'))
+    applySpeechEvent(clip, 'speech_chunk', chunk(1, 'B'))
+    await flush()
+    await flush()
+    // Still measuring: nothing scheduled yet.
+    expect(started).toEqual([])
+    applySpeechEvent(clip, 'speech_chunk', chunk(2, 'C'))
+    await flush()
+    await flush()
+    expect(await accepted).toBe(true)
+    expect(started.length).toBeGreaterThan(0)
+    expect(speechPlayer.getSnapshot().status).toBe('playing')
+  })
+
+  it('replays a finished clip at once, with no measuring', async () => {
+    const { started } = stubAudio()
+    const clip = SpeechClip.fromCache(
+      { voiceVersion: 'abc', codec: 'opus', sampleRate: 48000 },
+      [new ArrayBuffer(8), new ArrayBuffer(8)],
+    )
+    expect(await speechPlayer.play(clip, null)).toBe(true)
+    await flush()
+    await flush()
+    expect(started.length).toBeGreaterThan(0)
   })
 })

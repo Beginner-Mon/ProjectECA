@@ -69,6 +69,8 @@
 
 from __future__ import annotations
 
+import re
+
 from aws_cdk import (
     Annotations,
     CfnOutput,
@@ -143,6 +145,38 @@ class SpeechllmStack(Stack):
         # Neu thieu, synth van pass (de cdk synth khong can deploy agent truoc)
         # nhung deploy se chua co bao ve — Annotations.add_error de bao.
         agent_role_arn = ctx("agent_role_arn") or ""
+
+        # D6 measure_principal_arn — knob TAM de mo duong do, PHAI GO NGAY
+        # sau khi do xong (T3e deploy lai khong co co nay + chay lai N2 de
+        # chung minh da go).
+        # Vi sao can: measure_speechllm.py phai goi THANG Function URL moi
+        # tach duoc thoi gian tong hop cua rieng SpeechLLm. Nhung cau
+        # DenyEveryoneElse chan moi principal tru agent role va warmer role —
+        # ke ca admin (N2 cua T1 chung minh: signed admin van 403). Khong co
+        # duong do nao khac ma khong pha kien truc bao mat.
+        # Vi sao chi go Deny ma khong them Allow: voi nguoi goi CUNG TAI
+        # KHOAN, IAM chi can HOAC identity policy HOAC resource policy cho
+        # phep — principal do da co lambda:InvokeFunctionUrl trong identity
+        # policy cua minh, nen go Deny la du. Them Allow la thua.
+        # Chu y ARN dang nao: voi credentials la role da assume,
+        # aws:PrincipalArn la ARN cua ROLE
+        # (arn:aws:iam::<account>:role/<ten>), KHONG PHAI ARN phien
+        # (arn:aws:sts::...:assumed-role/<ten>/<session>). Lay bang
+        # aws sts get-caller-identity roi chuyen ve dang role ARN. Dat sai
+        # dang thi deploy xanh ma van 403.
+        # Khi khong co gia tri: policy giong het hom nay — dung hai ARN.
+        measure_principal_arn = str(ctx("measure_principal_arn") or "").strip()
+        if measure_principal_arn and not re.fullmatch(
+            r"arn:aws:iam::[0-9]+:(role|user)/.+", measure_principal_arn
+        ):
+            # add_error, NOT raise: app.py construct stack nay o moi lenh
+            # `cdk`, raise se lam hong ca `cdk list`.
+            Annotations.of(self).add_error(
+                "VvaSpeechllmStack: measure_principal_arn sai dang — phai la "
+                "arn:aws:iam::<account>:role/<ten> hoac :user/<ten>, nhan duoc: "
+                f"{measure_principal_arn!r}"
+            )
+            measure_principal_arn = ""
 
         # ── ECR repository ──────────────────────────────────────────────
 
@@ -345,6 +379,12 @@ class SpeechllmStack(Stack):
             # Requires aws-cdk-lib>=2.269 (CfnResourcePolicy does not exist
             # in 2.254): see infra/requirements.txt.
             fn_arn = self.fn.function_arn
+            # Knob TAM cua D6: khi co measure_principal_arn thi them ARN do
+            # vao danh sach mien tru cua cau Deny — CHI VAY THOI, khong them
+            # cau Allow nao (ly do day du o cho doc context ben tren).
+            deny_exceptions = [agent_role_arn, warmer_role_arn]
+            if measure_principal_arn:
+                deny_exceptions.append(measure_principal_arn)
             lambda_.CfnResourcePolicy(
                 self, "SpeechllmResourcePolicy",
                 resource_arn=fn_arn,
@@ -391,10 +431,7 @@ class SpeechllmStack(Stack):
                             "Resource": fn_arn,
                             "Condition": {
                                 "StringNotEquals": {
-                                    "aws:PrincipalArn": [
-                                        agent_role_arn,
-                                        warmer_role_arn,
-                                    ],
+                                    "aws:PrincipalArn": deny_exceptions,
                                 },
                             },
                         },

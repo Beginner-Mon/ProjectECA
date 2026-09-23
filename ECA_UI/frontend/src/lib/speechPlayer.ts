@@ -29,6 +29,8 @@ import {
   ChunkScheduler,
   computeStartTime,
   locate,
+  MAX_START_DELAY_S,
+  priorStartTime,
   mediaPositionAt,
   type ChunkArrival,
   type Placement,
@@ -291,6 +293,17 @@ interface MeasureState {
   samples: (ChunkArrival | undefined)[]
   controller: LipSyncTarget | null
   gen: number
+  /**
+   * Fires at the prior-based safe start (priorStartTime), so a stream does
+   * not have to sit through three chunks before it may sound. Whichever
+   * comes first wins: the third sample cancels this timer and uses the
+   * measured start; this timer cancels the wait and starts on the prior.
+   *
+   * A short reply is the case that needs it. Three chunks take ~8.7s to
+   * arrive, but 5.6s of audio only needs ~3.2s of buffer — the old code
+   * spent five seconds of silence proving something it could have assumed.
+   */
+  timer: ReturnType<typeof setTimeout> | null
 }
 
 /**
@@ -391,7 +404,7 @@ class SpeechPlayer {
       this.stopRun()
     }
     if (from === 0 && !clip.settled) {
-      this.measure = { samples: [], controller, gen }
+      this.measure = { samples: [], controller, gen, timer: null }
       // Report the wait, do not stay silent about it: this clip IS the active
       // one from here on, and every subscriber needs to see that.
       this.setSnap('buffering')
@@ -480,6 +493,7 @@ class SpeechPlayer {
     this.unsubscribeClip?.()
     this.unsubscribeClip = null
     this.clip = null
+    if (this.measure?.timer) clearTimeout(this.measure.timer)
     this.measure = null
     this.decoded = []
     this.decoding.clear()
@@ -575,7 +589,25 @@ class SpeechPlayer {
       return
     }
     m.samples[seq] = { at: now, duration: buf.duration }
-    if (m.samples[0] && m.samples[1] && m.samples[2]) this.finishMeasuring()
+    if (m.samples[0] && m.samples[1] && m.samples[2]) {
+      this.finishMeasuring()
+      return
+    }
+    // First chunk: arm the prior-based start. Everything needed is known now
+    // — when generation began producing (this arrival) and how much audio is
+    // coming (the server's estimate) — so waiting for two more chunks only
+    // buys precision, and costs silence a short reply cannot afford.
+    const est = this.clip?.meta?.estimatedAudioS
+    const ctx = this.ctx
+    if (seq === 0 && m.timer === null && ctx && typeof est === 'number' && est > 0) {
+      const at = Math.min(priorStartTime(now, est), now + MAX_START_DELAY_S)
+      m.timer = setTimeout(
+        () => {
+          if (this.measure === m) this.finishMeasuring()
+        },
+        Math.max(0, (at - ctx.currentTime) * 1000),
+      )
+    }
   }
 
   private finishMeasuring(): void {
@@ -583,6 +615,7 @@ class SpeechPlayer {
     const clip = this.clip
     const ctx = this.ctx
     this.measure = null
+    if (m?.timer !== null && m?.timer !== undefined) clearTimeout(m.timer)
     if (!m || !clip || !ctx || m.gen !== this.gen) return
     const startAt = computeStartTime(
       m.samples.filter((s): s is ChunkArrival => !!s),

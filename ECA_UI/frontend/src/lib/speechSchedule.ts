@@ -171,6 +171,30 @@ export class ChunkScheduler {
  */
 export const MAX_START_DELAY_S = 15
 
+/**
+ * Slowest generation rate measured on Lambda (D6: 0.64–0.74× realtime).
+ *
+ * Used as a PRIOR, before any chunk timing exists, so a fresh stream does not
+ * have to sit through three chunks (~8.7s at the measured shape) before it may
+ * sound. Taking the slow end makes the prior conservative: it over-buffers a
+ * little and never starves. `computeStartTime` supersedes it the moment three
+ * samples exist, usually pulling the start earlier.
+ */
+export const PRIOR_RATE = 0.64
+
+/**
+ * Safe start time from the estimate alone — no chunk timing needed.
+ *
+ * `firstArrivalAt` matters and is easy to forget: generation finishes at
+ * `firstArrivalAt + total/rate`, not at `total/rate`, because nothing is
+ * produced during the model's own startup. Dropping it under-buffers by
+ * exactly that startup — the mistake that makes a short clip stutter three
+ * times and look like a transport problem.
+ */
+export function priorStartTime(firstArrivalAt: number, estimatedTotalS: number): number {
+  return firstArrivalAt + estimatedTotalS * (1 / PRIOR_RATE - 1)
+}
+
 /** One decoded chunk's arrival instant (context clock) and media length. */
 export interface ChunkArrival {
   at: number

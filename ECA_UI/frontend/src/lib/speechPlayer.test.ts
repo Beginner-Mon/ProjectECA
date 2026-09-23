@@ -232,6 +232,28 @@ describe('SpeechPlayer measuring', () => {
     expect(speechPlayer.getSnapshot().status).toBe('playing')
   })
 
+  it('starts on the prior when the safe moment arrives before the third chunk', async () => {
+    // A short reply cannot afford to wait for three chunks: at the measured
+    // shape those take ~8.7s, while 5.6s of audio only needs ~3.2s of buffer.
+    // priorStartTime says when it is safe using the slowest rate measured, so
+    // the run starts then even with one sample in hand. `estimated_audio_s`
+    // is tiny here only to keep the timer short.
+    const { started } = stubAudio()
+    const clip = new SpeechClip()
+    applySpeechEvent(clip, 'speech_start', { ...START, estimated_audio_s: 0.3 })
+    void speechPlayer.play(clip, null)
+    applySpeechEvent(clip, 'speech_chunk', chunk(0, 'A'))
+    await flush()
+    await flush()
+    // The prior puts the safe moment ~170 ms out (0.3s of audio at the
+    // slowest measured rate), so the wait is still on at this point.
+    expect(speechPlayer.getSnapshot().status).toBe('buffering')
+    expect(started).toEqual([])
+    await new Promise((r) => setTimeout(r, 300))
+    expect(started.length).toBeGreaterThan(0)
+    expect(speechPlayer.getSnapshot().status).toBe('playing')
+  })
+
   it('starts the run once the third chunk decodes', async () => {
     const { started } = stubAudio()
     const clip = new SpeechClip()

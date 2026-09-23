@@ -55,6 +55,7 @@ from langgraph_agents.nodes._persona_loader import (
 from langgraph_agents.services.exceptions import ServiceUnavailableError
 from langgraph_agents.services.vieneu_tts.client import get_vieneu_tts_client
 from langgraph_agents.services.vieneu_tts.voice import resolve_voice
+from langgraph_agents.services.vieneu_tts.text_budget import plan_spoken_text
 from langgraph_agents.nodes.summarizer import maybe_summarize, _pending_summarizer_tasks
 from langgraph_agents.db.session_store import (
     load_session_messages, populate_stm_from_messages, write_session_turn,
@@ -718,7 +719,20 @@ async def _stream_speech(text: str, voice_path: str | None, language: str | None
     Yields already-encoded SSE event dicts (encode_event output) — ready to
     `yield` straight out of a FastAPI event generator, same shape as every
     other event in this module.
+
+    Spoken-length cap (Owner decision): replies over the budget speak only
+    their first sentence — `plan_spoken_text` decides, this function only
+    applies. Both call sites (/chat and POST /tts) share this choke point,
+    so the cap cannot drift between them.
     """
+    plan = plan_spoken_text(text)
+    if plan.truncated:
+        # Counts only — never the content: replies routinely contain health
+        # details, and logs are not the place for them.
+        get_logger("langgraph.tts").info("speech_truncated", extra={
+            "total_chars": len(text),
+            "spoken_chars": len(plan.text),
+        })
     client = get_vieneu_tts_client()
     try:
         # contextlib.aclosing, not a bare `async for`: this loop `return`s the
@@ -732,7 +746,7 @@ async def _stream_speech(text: str, voice_path: str | None, language: str | None
         # — the property this function's own module docstring promises the
         # caller (see the /chat speech block in _stream_chat).
         async with contextlib.aclosing(client.synthesize_stream(
-            text=text, voice_path=voice_path, language=language,
+            text=plan.text, voice_path=voice_path, language=language,
         )) as events:
             async for event in events:
                 event_type = event.get("type")
@@ -754,6 +768,14 @@ async def _stream_speech(text: str, voice_path: str | None, language: str | None
                         # carries no language field, so this is not read off
                         # `event`.
                         "lang": language,
+                        # Spoken-length budget (plan_spoken_text, applied at
+                        # the top of this function): the frontend needs the
+                        # EXPECTED total to schedule gapless playback, and it
+                        # cannot know it until the stream ends. estimated is
+                        # over the SPOKEN part, not the full reply.
+                        "truncated": plan.truncated,
+                        "spoken_chars": len(plan.text),
+                        "estimated_audio_s": plan.estimated_audio_s,
                     })
                 elif event_type == "chunk":
                     yield encode_event("speech_chunk", {

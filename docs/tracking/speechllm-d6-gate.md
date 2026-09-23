@@ -288,7 +288,33 @@ nhảy ở bậc nào). Không đoán.
 | Phương án | Giữ/Bỏ | Vì sao |
 |---|---|---|
 | Chặn độ dài lời đáp có giọng | **Giữ** | Trực tiếp chặn high-water: lượt dài nhất đặt đỉnh. Một câu trả lời dài bất thường của user thật cũng OOM như D6 |
-| Bỏ `reporter_vi.wav` khỏi bucket | Giữ với dè dặt | Chỉ hạ SÀN baseline (mỗi giọng enrol chiếm hàng trăm MB — bậc +110 ngày 09-21 gợi ý nhưng chưa quy được cho giọng nào), không đổi luật scaling theo lượt |
-| Enrol giọng theo yêu cầu | Giữ với dè dặt | Cùng nhóm hạ sàn như trên; giá là lượt đầu mỗi giọng chậm thêm ~2–26s (số từ `_enrol_known_voices`) |
+| Bỏ `reporter_vi.wav` khỏi bucket | **Bỏ — đã thử, không ăn thua** | Xem mục đo bên dưới: trả lại **1 MB**, không phải hàng trăm |
+| Enrol giọng theo yêu cầu | **Bỏ** | Cùng lý do: chi phí không nằm ở *số* giọng mà ở *lần enrol đầu tiên*, mà lượt tổng hợp nào cũng phải trả lần đó |
+
+### Đo thật: xoá một giọng trả lại bao nhiêu? (23-09-2026)
+
+Bảng trên ban đầu ghi "mỗi giọng enrol chiếm hàng trăm MB". **Sai, và đã đo để bác bỏ.**
+
+Suy luận sai nằm ở chỗ lấy hiệu giữa environment thời chưa có giọng (**1.935 MB**) và thời có
+ba giọng (**2.657 MB**) rồi **chia đều cho ba** ⇒ ~240 MB/giọng. Phép chia đó giả định chi phí
+tuyến tính theo số giọng, và giả định đó chưa ai kiểm.
+
+Phép thử: xoá `voices/reporter_vi.wav` khỏi bucket lúc ~10:55, đợi environment mới.
+
+| | Nền sau khi enrol xong |
+|---|---|
+| 3 giọng (trước) | 2.657 MB |
+| **2 giọng (env mới 11:13)** | **2.656 MB** |
+
+Log của env mới xác nhận chỉ còn hai lần enrol (`anne_en` 6,33s, `anne_vi` 2,30s).
+**Xoá một giọng trả lại 1 MB.**
+
+Kết luận: khoản ~720 MB đó gần như toàn bộ là chi phí **một lần** của lần enrol đầu tiên (bộ
+mã hoá giọng cấp vùng làm việc), giọng thứ hai và thứ ba thêm vào gần như không tốn gì. Mọi
+phương án "bớt giọng đi cho nhẹ" vì thế đều vô nghĩa — dư địa vẫn là ~76 MB ở đỉnh như trước.
+Thứ duy nhất còn lại thực sự bảo vệ trần bộ nhớ là **chặn độ dài lời đáp**.
+
+`reporter_vi.wav` hiện vẫn đang bị xoá khỏi bucket. Không có hại (chỉ `anne` đang hoạt động,
+và cold start bớt được ~1,4 giây), phục hồi thì upload lại từ `SpeechLLm/voices/` trong repo.
 | Không gom chunk, stream thẳng | **Bỏ** | Tiền đề sai: wrapper đã stream thật, buffer ≤2s (chứng minh ở 2b.1). Chỉ mở lại nếu thí nghiệm lib cho thấy tích tụ nằm trong `infer_stream` |
 | Xin tăng quota Lambda memory | **Bỏ** | Owner đã từ chối 21/09 (giữ đúng quyết định) |

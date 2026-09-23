@@ -24,6 +24,13 @@ export class CameraController {
   private mode: CameraMode = 'head'
   private timer: ReturnType<typeof setTimeout> | null = null
   private overrideTimer: ReturnType<typeof setTimeout> | null = null
+  /**
+   * Mode to go back to when a `face` lock ends. Set on entering the lock,
+   * consumed on leaving it. `manual` is the case that matters: a user who had
+   * taken the camera gets it back where the lock left it, rather than being
+   * snapped to the auto `head` framing they had opted out of.
+   */
+  private resumeMode: CameraMode | null = null
 
   private readonly onModeChanged: (mode: CameraMode) => void
 
@@ -39,9 +46,37 @@ export class CameraController {
     return this.mode === 'manual'
   }
 
+  /** True while an FSM state owns the camera (see `CameraMode` `face`). */
+  get isLocked(): boolean {
+    return this.mode === 'face'
+  }
+
   onStateChanged(next: CharState): void {
     const wasWide = cameraModeOf(this.state) === 'hips'
+    const wasLocked = cameraModeOf(this.state) === 'face'
     this.state = next
+
+    // The lock is decided BEFORE the manual check: it exists precisely to
+    // override a user-held camera for the duration of one clip.
+    if (cameraModeOf(next) === 'face') {
+      if (!this.isLocked) this.resumeMode = this.mode
+      this.clearTimer()
+      this.clearOverrideTimer()
+      this.set('face')
+      return
+    }
+    if (wasLocked) {
+      const resume = this.resumeMode ?? 'head'
+      this.resumeMode = null
+      if (resume === 'manual') {
+        this.set('manual')
+        this.restartOverrideTimer()
+        return
+      }
+      // Anything else falls through to the ordinary rules below, which land
+      // on `head` (or `hips` if the next state is wide).
+    }
+
     if (this.mode === 'manual') return
     this.clearTimer()
 
@@ -64,6 +99,9 @@ export class CameraController {
 
   /** Manual free-camera triggered by user drag/zoom/pan. */
   notifyManualInteraction(): void {
+    // Orbit input is disabled in the scene while locked, so this is only a
+    // guard against a stray onEnd that was in flight when the lock began.
+    if (this.isLocked) return
     if (this.mode !== 'manual') {
       this.clearTimer()
       this.set('manual')
@@ -73,6 +111,10 @@ export class CameraController {
 
   /** Preset switch from UI. Exits manual and cancels idle timer. */
   setMode(mode: CameraMode): void {
+    // `face` is not a preset anyone picks; it is granted by the FSM and taken
+    // back when the state ends. Refusing it here keeps the lock from being
+    // entered without a resumeMode, or broken by the dev panel mid-clip.
+    if (mode === 'face' || this.isLocked) return
     this.clearOverrideTimer()
     this.clearTimer()
     this.set(mode)

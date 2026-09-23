@@ -180,6 +180,7 @@ export default function MotionControlPanel() {
               <option value="head" className="bg-card text-foreground">{t('motion.target_head')}</option>
               <option value="hips" className="bg-card text-foreground">{t('motion.target_hips')}</option>
               {cameraMode === 'manual' && <option value="manual" disabled className="bg-card text-muted-foreground">Manual (free)</option>}
+              {cameraMode === 'face' && <option value="face" disabled className="bg-card text-muted-foreground">Face (locked by gesture)</option>}
             </select>
           </div>
 

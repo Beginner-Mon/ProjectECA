@@ -207,6 +207,25 @@ class SpeechllmStack(Stack):
             "TRANSFORMERS_OFFLINE": "1",
             # Khong co VIENEU_TTS_URL o day — day la callee, khong phai caller.
             # Agent se tro toi Function URL cua ham nay (D3).
+            #
+            # HOME + XDG/NUMBA/MPL/TORCH cache redirects — Lambda de HOME
+            # UNSET, nen thu vien nao tu resolve HOME (voice-cloning path
+            # cua VieNeu) se ra "/home/sbx_user<uid>", va thu muc do
+            # READ-ONLY tren Lambda — chi /tmp ghi duoc. That bai KHONG xay
+            # ra o model load (HF_HOME=/opt/hf-cache trong Dockerfile da
+            # phu cache do roi) ma o buoc voice-encoding: /synthesize/stream
+            # tra 422, log "[Errno 30] Read-only file system:
+            # '/home/sbx_user1051'" dung luc encode reference voice
+            # (vd voices/anne_en.wav). Ap dung tay tren ham LIVE ngay
+            # 23-09-2026 de fix ngay (verify ca 3 reference voices encode
+            # duoc), dua vao code o day de cdk deploy sau khong xoa mat no.
+            "HOME": "/tmp",
+            "XDG_CACHE_HOME": "/tmp/.cache",
+            "XDG_DATA_HOME": "/tmp/.local/share",
+            "XDG_CONFIG_HOME": "/tmp/.config",
+            "NUMBA_CACHE_DIR": "/tmp/numba",
+            "MPLCONFIGDIR": "/tmp/mpl",
+            "TORCH_HOME": "/tmp/torch",
         }
         if voice_bucket_env:
             env_vars["VOICE_BUCKET"] = voice_bucket_env

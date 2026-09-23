@@ -42,6 +42,10 @@ __all__ = [
 
 SPOKEN_CHAR_LIMIT = 600
 FIRST_SENTENCE_MAX = 400
+# Floor on what counts as the first sentence. Below this the "sentence" is a
+# list marker, a decimal, or a heading — speaking it alone is worse than
+# speaking nothing. ~40 chars is about 2 seconds of audio.
+_MIN_FIRST_SENTENCE = 40
 CHARS_PER_AUDIO_SECOND = 17.9
 
 _ENV_LIMIT_NAME = "TTS_MAX_SPOKEN_CHARS"
@@ -66,14 +70,44 @@ def _limit() -> int:
 
 
 def _first_sentence(text: str) -> str:
-    """Cut right after the earliest sentence terminator, if any."""
-    positions = [i for t in _SENTENCE_ENDS if (i := text.find(t)) != -1]
-    if not positions:
-        return ""
-    cut = min(positions)
-    if text[cut] == "\n":
-        return text[:cut]
-    return text[: cut + 1]
+    """Cut right after the earliest terminator that actually ends a sentence.
+
+    "Earliest terminator" alone is wrong, and wrong in a way that is silent:
+    a reply opening with a numbered list ("1. Khoi dong khop vai...") has its
+    first "." at index 1, so the spoken text became "1." — 0.1s of audio
+    saying "one dot". A decimal ("tap 2.5 phut") did the same at index 13.
+    Two guards, both cheap:
+
+    * a "." preceded by a digit is a list marker or a decimal, never the end
+      of a sentence in this domain (replies are exercise instructions);
+    * a candidate shorter than _MIN_FIRST_SENTENCE is not a sentence worth
+      speaking — keep looking. This also covers a heading line ending in a
+      newline before the real first sentence.
+
+    Order of preference, and the reason for it:
+
+    1. the earliest terminator that clears both guards — a whole sentence,
+       long enough to be worth hearing;
+    2. failing that, the earliest terminator that clears the digit guard
+       even if it is short ("Xin chào…" with no other sentence after it).
+       A short whole sentence beats a mid-sentence cut: Owner's rule is
+       never to stop the voice mid-sentence;
+    3. "" — no terminator at all, so the caller cuts at a word boundary.
+       This is the only path that can end mid-sentence, and only because
+       there is no sentence to end.
+    """
+    fallback = ""
+    for i, char in enumerate(text):
+        if char not in _SENTENCE_ENDS:
+            continue
+        if char == "." and i > 0 and text[i - 1].isdigit():
+            continue
+        candidate = text[:i] if char == "\n" else text[: i + 1]
+        if len(candidate.strip()) < _MIN_FIRST_SENTENCE:
+            fallback = fallback or candidate
+            continue
+        return candidate
+    return fallback
 
 
 def plan_spoken_text(text: str) -> SpokenPlan:

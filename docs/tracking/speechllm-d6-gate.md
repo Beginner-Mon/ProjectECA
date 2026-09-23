@@ -202,3 +202,93 @@ So sánh arm64 (rẻ 20% Duration) hoãn lại, không làm đợt này. Lý do:
 trên `ubuntu-latest` (x86_64) và chỉ build một kiến trúc; arm64 cần QEMU
 hoặc runner ARM, và phải kiểm lại wheel của `onnxruntime`. Đó là một đợt
 việc riêng — ghi nợ ở `docs/tracking/tech-debt.md`.
+
+---
+
+## Bộ nhớ — điều tra 23-09-2026
+
+Nhiệm vụ: tìm ra bộ nhớ tăng theo cái gì. Chỉ đọc log + đọc code, không sửa,
+không deploy, không gọi API SpeechLLm. Kết luận trước, bằng chứng sau.
+
+**Kết luận: đỉnh bộ nhớ tăng theo độ dài audio của lượt DÀI NHẤT mà
+environment đó từng phục vụ (high-water mark một lần rồi chững) — không tăng
+theo số lượt gọi, không tăng khi idle.** Nói gọn: `peak = f(lượt dài nhất)`,
+không phải rò rỉ theo thời gian.
+
+### Bằng chứng log (CloudWatch Logs Insights, 7 ngày, 1.193 REPORT, 65 stream)
+
+Bốn environment của era hiện tại (09-23, sau các deploy prod), toàn bộ lượt
+theo thứ tự (`P` = ping warmer vài ms, `S` = tổng hợp, số = Duration):
+
+| Stream (giờ) | Diễn biến mem (MB) |
+|---|---|
+| `718ac3c8` 03:19–04:18, 18 lượt | 2657 (S 27,9s, INIT) → P×4 đứng yên 2657 → S 12,7s **+142** → S 4,2s +18 → P đứng yên → S 7,8s +14 → P×3 đứng yên → S 5,1s +1 → S 4,5s +0 → P×4 đứng yên **2833** |
+| `f57c2de8` 04:23–06:25, 28 lượt | 2656 (S 7,7s, INIT) → P đứng yên → S 5,4s **+166** → S 4,8s +21 → **P×22 liên tiếp (~105 phút) đứng yên tuyệt đối 2843** → S 171,7s (D6 cold) +86 → S 170,2s (D6 warm1) **+3** |
+| `bd700e94` 06:23–06:33, 3 lượt | 2657 (INIT, 24s) → S 191,7s → 2915 → P đứng yên |
+| `d004c9ac` 06:28–07:58, 20 lượt | 2657 (INIT, 21s) → S 195,6s **+256** → S 194,7s **+2** → P×17 đứng yên 2915–2916 |
+
+Trả lời ba câu của plan, mỗi câu kèm số:
+
+1. **Đỉnh có dâng ở lượt chỉ ping warmer? KHÔNG.** 22 ping đứng yên 2843
+   trong ~105 phút (`f57c2de8` lượt 4–25); 17 ping đứng yên 2915–2916; 8 ping
+   đứng yên 2833. Idle không rò rỉ.
+2. **Đỉnh có dâng đều theo từng lượt tổng hợp? KHÔNG đều — dâng rồi chững.**
+   Lượt tổng hợp dài thứ hai trên cùng env chỉ +2–3 MB (195,6s→+256 rồi
+   194,7s→+2; 171,7s→+86 rồi 170,2s→+3). Tăng trưởng dồn vào vài lượt đầu
+   của mỗi env (+142/+166/+256), sau đó ~0.
+3. **Đỉnh có chững sau vài lượt đầu? ĐÚNG.** Mọi stream đều chững: env chỉ
+   phục vụ clip ngắn (≤28s) chững ở 2833; env đã phục vụ lượt 170–196s chững
+   ở 2913–2932. Chênh ~100 MB giữa hai loại env chính là phần phụ thuộc độ
+   dài audio.
+
+Ghi thêm:
+
+- Environment sống lâu nhất quan sát được: ~2–2h20, ~28–29 lượt
+  (vd `f57c2de8`: 28 lượt/2h, đỉnh 2932; era cũ 09-19: 29 lượt/2h20, đỉnh
+  đứng yên 1782→1783 — ping-only chững tuyệt đối). Lambda thu hồi env sau
+  ~2h nên không có env nào sống lâu hơn để quan sát tiếp.
+- Baseline nhảy theo BẬC ở biên deploy, không bò dần: warmer ổn định 1783
+  (09-19/20) → 1893 (09-21/22, +110) → 2657 fresh (09-23, +764), cùng mức
+  cap 3008 MB cả ba era (đã đối chiếu `Memory Size` từng ngày). Nguyên nhân
+  từng bậc chưa truy (cần lịch sử deploy/image — ngoài phạm vi đợt này).
+- Era 09-19 buổi sáng: nhiều REPORT `Duration: 300000ms, Status: timeout`
+  ở 147–309 MB — chính là image hỏng mà comment ở `api_server.py:78-84` đã
+  ghi (warm-up treo, mỗi invoke đốt 300s; fix fail-fast `os._exit(1)` đã có
+  trong code). Lịch sử, không liên quan đợt này.
+
+### Bằng chứng code (2b — cả ba thứ plan yêu cầu)
+
+1. **Không chỗ nào gom toàn bộ chunk một lượt.** `synthesize_stream`
+   (`SpeechLLm/src/services/vieneu_client.py:537-561`): `buffer_parts` tối
+   đa ~2,0s audio (`_STREAM_BUFFER_SECONDS = 2.0`, dòng 495) rồi reset về
+   `[]` (dòng 561); mỗi chunk encode xong là `yield` ngay (564-573).
+   `api_server.py:218-227` (`ndjson_lines`) cũng `yield` từng event, không
+   tích, không ghi file tạm. Bộ nhớ wrapper tự viết **không** tỉ lệ với độ
+   dài audio.
+2. **`_voice_cache` / `_voice_version_cache không bị chặn, nhưng cố định 3
+   entry sau warm-up.** `vieneu_client.py:195-196` là dict trần, key là
+   voice path/S3 key, ghi đúng một lần mỗi giọng lúc enrol (324, 354) rồi
+   chỉ đọc-hit (310-311, 331-332). 3 giọng enrol lúc khởi động
+   (`_enrol_known_voices`, 358-429, liệt kê toàn bộ `*.wav` trong bucket).
+   Cache này đặt SÀN baseline (fresh env 2657 MB), không gây bò dần.
+3. **Tham chiếu sống qua nhiều request: đúng ba thứ, đều có giới hạn.**
+   `self._tts` (model, nạp một lần, 243-264), hai cache giọng ở trên, và
+   `_MODEL_STATE` hai chuỗi (`api_server.py:43`). Không hàng đợi, không
+   handle file mở, không dict nào ghi thêm mỗi request.
+
+**Phần chưa chứng minh được (nói thẳng):** transient +86 MB của lượt dài
+nằm ở `tts.infer_stream` của thư viện `vieneu` (onnxruntime arena giữ
+high-water, hay lib tích output nội bộ) — package này chỉ có trong image
+Lambda, máy này không đọc được. Cần một trong hai: nguồn lib, hoặc thí
+nghiệm có kiểm soát trên một env (các lượt tăng dần 10s→30s→120s, xem đỉnh
+nhảy ở bậc nào). Không đoán.
+
+### Bảng phương án đã lọc theo kết luận
+
+| Phương án | Giữ/Bỏ | Vì sao |
+|---|---|---|
+| Chặn độ dài lời đáp có giọng | **Giữ** | Trực tiếp chặn high-water: lượt dài nhất đặt đỉnh. Một câu trả lời dài bất thường của user thật cũng OOM như D6 |
+| Bỏ `reporter_vi.wav` khỏi bucket | Giữ với dè dặt | Chỉ hạ SÀN baseline (mỗi giọng enrol chiếm hàng trăm MB — bậc +110 ngày 09-21 gợi ý nhưng chưa quy được cho giọng nào), không đổi luật scaling theo lượt |
+| Enrol giọng theo yêu cầu | Giữ với dè dặt | Cùng nhóm hạ sàn như trên; giá là lượt đầu mỗi giọng chậm thêm ~2–26s (số từ `_enrol_known_voices`) |
+| Không gom chunk, stream thẳng | **Bỏ** | Tiền đề sai: wrapper đã stream thật, buffer ≤2s (chứng minh ở 2b.1). Chỉ mở lại nếu thí nghiệm lib cho thấy tích tụ nằm trong `infer_stream` |
+| Xin tăng quota Lambda memory | **Bỏ** | Owner đã từ chối 21/09 (giữ đúng quyết định) |

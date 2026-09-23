@@ -293,6 +293,15 @@ Mức: 🔴 critical (phải làm trước Phase 7 deploy) · 🟠 quan trọng 
 
 ## 🟡 Nên làm
 
+### D6 + TTS prod — nợ ghi 23/09 (đợt đo `feature/d6-measurement`, chi tiết ở [[speechllm-d6-gate]])
+
+- [ ] **Câu chào dựng sẵn** — hoãn tới khi có **giọng thật** thay giọng mẫu (giọng hiện tại chỉ là mẫu). Vì sao nợ: dựng clip bằng giọng mẫu rồi thu lại giọng thật là làm hai lần. Script đã sẵn (`scripts/upload_characters_to_s3.py`, đọc chữ từ `ui_strings.greeting.*`); dấu hiệu sẵn sàng: có file giọng thật + `VVA_PG_DSN` + SpeechLLm chạy local.
+- [ ] **Chunk giãn dần trên prod** — local mượt, prod giãn dần theo câu. Vì sao chưa sửa: leg SpeechLLm→máy đo đều ~3s từ đầu tới cuối (JSON `infra/spike/results/d6_3008_x86_*.json`), nên chỗ giãn nằm ở các leg sau — phải đo từng chặng (SpeechLLm → agent → API Gateway → trình duyệt), đừng đoán buffer. Dấu hiệu nhận ra: so gap đầu/cuối ở browser mà giãn trong khi JSON leg đầu đều thì xác nhận nằm downstream.
+- [ ] **Agent suy tên file giọng** — không đọc `voice_vi_key`/`voice_en_key` từ Neon mà suy tên cố định. Vì sao: thu âm lại giọng giữ tên cũ ⇒ trình duyệt vẫn phát bản cũ (cache theo tên). Dấu hiệu nhận ra: đổi file giọng trên S3 mà loa vẫn ra tiếng cũ.
+- [ ] **So sánh arm64** — rẻ 20% Duration nhưng CI chỉ build một kiến trúc (x86_64). Vì sao nợ: cần QEMU hoặc runner ARM + kiểm lại wheel `onnxruntime`. Dấu hiệu sẵn sàng: CI build được image arm64 chạy được test khói.
+- [ ] **`infra/.venv` của checkout gốc đã nâng lên 2.270.0 ở đợt này** (cần ≥2.269 cho `CfnResourcePolicy`; bản cũ 2.257 synth gãy). Ghi lại để phiên sau khỏi nghi ngờ — không phải việc làm, chỉ là ghi chú.
+- [ ] **Gộp `owasp-check`** — nhánh đó tách **trước** đợt viết lại TTS nên `client.py` bên đó ghi failure vào circuit breaker cho **mọi** mã HTTP kể cả 4xx. Vì sao phải cẩn thận: giữ phân loại 4xx/5xx của bản hiện tại (4xx là lỗi client, không phải outage), chỉ lấy phần log bên đó. Dấu hiệu nhận ra khi gộp sai: breaker nhảy open sau vài request 4xx bình thường.
+
 ### TTS streaming — nợ ghi 12/09 (worklog `11-09-2026.md`, branch `feature/tts-streaming`)
 
 - [ ] **~2s im lặng cuối lượt chat — N CHẤP NHẬN 12/09, không sửa bây giờ.** Chữ đã hiện hết

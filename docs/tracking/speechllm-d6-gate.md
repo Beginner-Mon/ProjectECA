@@ -132,3 +132,73 @@ Ghi nguyên văn mã trạng thái, không diễn giải.
 **Hoãn, lý do ghi rõ:** phép thử URL clip đã ký (bỏ chữ ký ⇒ 403, quá hạn ⇒ 403)
 chưa chạy được vì chưa có clip nào — câu chào dựng sẵn đã bị hoãn sang tech debt
 (Owner quyết, ngoài phạm vi đợt này).
+
+---
+
+## Kết quả đo 23-09-2026
+
+Cấu hình đo: 3.008 MB, x86_64, image `5fa3e98f13c6080a041e99b00b4c81cd17c86ea9`
+(không đổi so với prod). Câu đo `infra/spike/d6_long_vi.txt` (2.256 ký tự,
+hướng dẫn tập luyện, có dấu). Gọi thẳng Function URL qua
+`infra/spike/measure_speechllm.py` (đã mở Deny tạm bằng
+`-c measure_principal_arn`, gỡ ngay sau đo — N2 403 trở lại, xem T3e).
+
+| Lượt | first_byte | tổng hợp (start→end, không tính cold) | audio | tỉ lệ | chunks | spread | streamed |
+|---|---|---|---|---|---|---|---|
+| cold (ngay sau deploy) | không rõ (mất JSON, xem ghi chú) | không rõ | 124,89s | ~1,38 theo wall (tham khảo) | 58 | không rõ | có (chạy hết tới `end` ở 172,672s wall) |
+| warm1 | 0,954s | 170,140s | 125,91s | **1,351** | 58 | 170,140s | YES |
+| warm2 | 0,969s | 191,656s | 126,42s | **1,516** | 58 | 191,656s | YES |
+| warm3 | 0,969s | 195,594s | 125,24s | **1,562** | 58 | 195,594s | YES |
+| en (`anne_en.wav`) | 0,953s | 194,703s | 135,83s | **1,433** | 63 | 194,703s | YES |
+
+Ghi chú lượt cold: script crash khi in (`UnicodeEncodeError` — console cp1252
+không in được ký tự `→`) **trước** khi ghi JSON, nên mất `first_byte_at` và
+thời điểm từng chunk của lượt này; chỉ còn wall 172,672s / audio 124,89s /
+58 chunks từ stdout. Bốn lượt sau chạy với `PYTHONUTF8=1`, JSON đầy đủ trong
+`infra/spike/results/`.
+
+Khoảng cách giữa các chunk (leg SpeechLLm → máy đo, từ JSON): trung bình
+~3,0–3,2s, đều từ đầu tới cuối (5 gap đầu ≈ 5 gap cuối ≈ 3s; min 0,391s là
+chunk cuối cụt, max 4,563s). **Không giãn dần ở leg này** — hiện tượng giãn
+dần quan sát ở trình duyệt (nếu có) lọt vào ở các leg sau (agent → API
+Gateway → browser). Dữ liệu từng chunk đã lưu, chưa sửa gì.
+
+CloudWatch `/aws/lambda/vva-speechllm` (REPORT, nguyên văn):
+
+| Lượt | Duration | Max Memory Used | Ghi chú |
+|---|---|---|---|
+| warmer `/health` (ổn định, trước đo) | ~3–5ms | 2.843 MB | ping 5 phút/lần |
+| cold (đo) | 171.727ms | 2.929 MB | không có dòng Init trong REPORT này |
+| warm1 | 170.161ms | 2.932 MB | **peak đợt đo** |
+| warm2 | 191.715ms | 2.915 MB | |
+| warm3 | 195.633ms | 2.913 MB | **lượt dài nhất: còn dư ~104s so với timeout 300s** |
+| en | 194.741ms | 2.915 MB | |
+| 2 env mới concurrent (warmer ping rơi vào lúc đo) | ~21–24s + Init ~9,8s | 2.657 MB | cold `/health` ≈ 24s — khớp mốc cold start ~25s |
+| traffic thật trong ngày (trước đo) | 4,2–27,9s | 2.656–2.843 MB | TTS người dùng chạy bình thường |
+
+CloudWatch `/aws/lambda/vva-agent` (24h, 132 REPORT): `Max Memory Used` cao
+nhất **341/2.048 MB**, lượt dài nhất 12,8s. Không xác định được lượt nào là
+"tìm kiếm tài liệu + giọng nói" vì đường thành công không log marker giọng
+nói — con số trên là chặn trên, còn dư ~1,7 GB.
+
+### Trả lời ba giả định
+
+1. **Tổng hợp ≈ thời gian thực → SAI.** Thực đo 1,351–1,562 (vi) và 1,433
+   (en): chậm hơn thời gian thực ~1,5×. Bảng chi phí phải nhân ~1,5:
+   ~311k + 1,5k ping ≈ **312,5k GB-giây — vẫn trong free tier 400k ⇒ $0**;
+   nếu hết free tier ≈ $5,2 + ECR $0,15 ≈ **$5,4/tháng** (thay vì $3,6).
+2. **Trục RAM → ĐÓNG VÌ RÀNG BUỘC, không phải vì đo.** Env mới đã dùng
+   2.657 MB, ổn định 2.843 MB, peak tổng hợp 2.932 MB — mức 1.769 MB chắc
+   chắn OOM, không phải "chậm hơn". Muốn mở lại trục này phải giảm số giọng
+   enrol lúc khởi động. 3.008 MB chạy được nhưng **chỉ còn dư 76 MB**:
+   thêm một nhân vật có giọng là có khả năng tràn, mà 3.008 đã là trần quota
+   (Owner từ chối xin tăng 21/09).
+3. **Timeout 300s đủ → ĐÚNG.** Lượt dài nhất 196,563s wall, còn dư ~104s.
+   First byte khi ấm ~0,95–0,97s, xa dưới hạn chờ 45s của agent.
+
+### Hoãn: trục kiến trúc arm64
+
+So sánh arm64 (rẻ 20% Duration) hoãn lại, không làm đợt này. Lý do: CI chạy
+trên `ubuntu-latest` (x86_64) và chỉ build một kiến trúc; arm64 cần QEMU
+hoặc runner ARM, và phải kiểm lại wheel của `onnxruntime`. Đó là một đợt
+việc riêng — ghi nợ ở `docs/tracking/tech-debt.md`.

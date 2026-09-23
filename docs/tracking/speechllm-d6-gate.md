@@ -108,3 +108,27 @@ Toàn bộ phải ghi **số thật**, không ghi kỳ vọng: nóng (~0,6s) và
 - 2 giây cuối lượt (write_session_turn vào Neon) là tech debt, phần lớn tự biến mất khi agent cùng vùng với Neon.
 
 **D6 không phải “đã xong infra thì bật cho user” — D6 là việc phải làm trước khi được phép bật.**
+
+---
+
+## Phép thử phủ định — kết quả 23-09-2026
+
+Chạy trước khi mở bất kỳ quyền nào (T1 của đợt đo D6 trên cấu hình đang chạy thật).
+Ghi nguyên văn mã trạng thái, không diễn giải.
+
+| # | Lệnh | Kết quả nguyên văn |
+|---|---|---|
+| N1 | `GET /` không ký, Function URL | `HTTP/1.1 403 Forbidden`, `x-amzn-ErrorType: AccessDeniedException`, body `{"Message":"Forbidden"}` |
+| N1 | `GET /health` không ký, Function URL | `HTTP/1.1 403 Forbidden`, `x-amzn-ErrorType: AccessDeniedException`, body `{"Message":"Forbidden"}` |
+| N1 | `POST /synthesize/stream` không ký, Function URL | `HTTP/1.1 403 Forbidden`, `x-amzn-ErrorType: AccessDeniedException`, body `{"Message":"Forbidden"}` |
+| N2 | `POST /synthesize/stream` ký SigV4 bằng identity admin của máy (`infra/spike/measure_speechllm.py`, principal `arn:aws:iam::244203483654:user/admin`) | `HTTP 403 application/json` → `httpx.HTTPStatusError: Client error '403 Forbidden'` |
+| N3 | `GET /v1/characters/anne` không token, REST API | `HTTP/1.1 401 Unauthorized` |
+| N3 | `GET /v1/characters/anne/avatar-profile` không token, REST API | `HTTP/1.1 401 Unauthorized` |
+| N3 | `GET /v1/characters/anne/audio?clip=greeting.morning&lang=vi` không token, REST API | `HTTP/1.1 401 Unauthorized` |
+| N4 | `GET /v1/characters` không token, REST API | `HTTP/1.1 200 OK`, body `{"characters": [{"slug": "anne", ...}], "total": 1}` |
+| N5 | `GET https://d3292v7f15b95x.cloudfront.net/voices/anne_vi.wav` | `HTTP/1.1 403 Forbidden` (Server: AmazonS3, `X-Cache: Error from cloudfront`) |
+| N6 | Log `/aws/lambda/vva-speechllm` 35 phút gần nhất, filter `health` | 7 dòng `GET /health HTTP/1.1 200 OK`, cách nhau ~300s (đúng nhịp `rate(5 minutes)` của `vva-speechllm-warmer`) |
+
+**Hoãn, lý do ghi rõ:** phép thử URL clip đã ký (bỏ chữ ký ⇒ 403, quá hạn ⇒ 403)
+chưa chạy được vì chưa có clip nào — câu chào dựng sẵn đã bị hoãn sang tech debt
+(Owner quyết, ngoài phạm vi đợt này).

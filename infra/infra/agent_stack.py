@@ -225,6 +225,31 @@ class AgentStack(Stack):
         # reference.
         motion_key_pair_id = ctx("motion_key_pair_id") or ""
 
+        # speechllm_url is the opt-in switch for TTS (D3). api/main.py's
+        # tts_enabled() treats presence of VIENEU_TTS_URL as THE on-switch —
+        # no separate ENABLE_TTS flag — so the key must be ABSENT, not "",
+        # when this context value is not passed. That is the kill switch:
+        # any deploy that omits -c speechllm_url keeps TTS off, the same way
+        # omitting agent_image_tag keeps the function from being replaced.
+        # Plain context string, not a cross-stack reference to
+        # VvaSpeechllmStack — that stack's Function URL is only known once it
+        # has been deployed, exactly like motion_key_pair_id above.
+        #
+        # rstrip a trailing "/" so a context value like ".../on.aws/" cannot
+        # produce a "//synthesize/stream" request: VieNeuTTSClient.base_url
+        # already does the same rstrip defensively (services/vieneu_tts/
+        # client.py), but normalising here too means a bad value never even
+        # reaches the template.
+        speechllm_url = (ctx("speechllm_url") or "").strip().rstrip("/")
+        if speechllm_url and not speechllm_url.startswith("https://"):
+            Annotations.of(self).add_error(
+                "VvaAgentStack's speechllm_url must start with https:// — got "
+                f"{speechllm_url!r}. This is the vva-speechllm Function URL "
+                "(*.lambda-url.<region>.on.aws), which the client SigV4-signs "
+                "only when it looks like one (see "
+                "services/vieneu_tts/client.py::_is_lambda_url)."
+            )
+
         # ── Deploy readiness, loudly ────────────────────────────────────
         # Both of these used to default to "" and synthesize cleanly, deploy
         # cleanly, and then break motion in production: an empty key pair id
@@ -271,6 +296,64 @@ class AgentStack(Stack):
         cognito_client_id = ctx("cognito_app_client_id") or _DEFAULT_COGNITO_CLIENT_ID
         cognito_region = ctx("cognito_region") or self.region
 
+        # Built as a variable, not a dict literal, so VIENEU_TTS_URL can be left
+        # out of the CloudFormation template entirely rather than set to "" —
+        # Python has no `{"K": v if cond}`-style conditional key inside a `{...}`
+        # literal, so the only way to guarantee absence is to add the key after
+        # the fact, under `if`.
+        agent_environment = {
+            "VVA_PG_DSN_PARAM": dsn_param,
+            "DEEPSEEK_API_KEY_PARAM": deepseek_param,
+            "GEMINI_API_KEYS_PARAM": gemini_param,
+            "AUTH_PROVIDER": "cognito",
+            "COGNITO_REGION": cognito_region,
+            "COGNITO_USER_POOL_ID": self.cognito_pool_id,
+            "COGNITO_APP_CLIENT_ID": cognito_client_id,
+            "ALLOWED_ORIGINS": ",".join(allowed_origins),
+            "LOG_LEVEL": "INFO",
+            # No cache. Short-term memory is a cache over PostgreSQL, and
+            # the plan is to run without one for a month and measure the
+            # Neon CU-hours it would have saved before paying for anything.
+            # Switching later is this value plus STM_TABLE — the code and
+            # its tests are already in place. See shared/stm.py.
+            "STM_BACKEND": ctx("stm_backend") or "none",
+            # ENABLE_MCP, EMBEDDING_BACKEND, E5_ONNX_DIR and the LWA
+            # settings are baked into the image: they describe what the
+            # image IS, not where it is deployed. See agenticRAG/Dockerfile.
+            #
+            # ── Motion (Task 9, R24) ────────────────────────────────
+            # Fixed name, not a construct reference — see _MOTION_TABLE_NAME.
+            "MOTION_TABLE": _MOTION_TABLE_NAME,
+            # SSM parameter NAMES only, for both secrets — nodes/kimodo.py
+            # and motion_status.py resolve them at call time. Neither raw
+            # value ever appears in this Lambda's environment or the
+            # CloudFormation template (ruling R24).
+            "MOTION_HASH_SECRET_PARAM": motion_hash_secret_param,
+            "MOTION_SIGNING_KEY_PARAM": motion_signing_key_param,
+            "MOTION_KEY_PAIR_ID": motion_key_pair_id,
+            "ASSET_BASE_URL": asset_base_url or "",
+        }
+        if speechllm_url:
+            # VIENEU_TTS_URL (D3) — presence is the on-switch, so this key is
+            # added ONLY when speechllm_url is non-empty; the else-branch is
+            # simply "do nothing", not "set it to something falsy". api/main.py's
+            # tts_enabled() would actually still read `""` as off (it does
+            # `bool(os.getenv(...).strip())`), so this isn't the only thing
+            # standing between a forgotten -c speechllm_url and TTS turning on
+            # — but leaving the key out entirely means every OTHER reader agrees
+            # too, including a future one that checks `"VIENEU_TTS_URL" in
+            # os.environ` instead of truthiness, or a Lambda console operator
+            # who greps the environment tab and sees nothing rather than a
+            # suspicious empty string.
+            #
+            # The value is the plain https:// Function URL, unsigned — there is
+            # no signed request to precompute at synth time. The client
+            # (services/vieneu_tts/client.py::_is_lambda_url) decides, at CALL
+            # TIME, whether to SigV4-sign each request by matching this URL's
+            # host against `*.lambda-url.*.on.aws`; an unsigned request to that
+            # host 403s, which is exactly the case that check exists to avoid.
+            agent_environment["VIENEU_TTS_URL"] = speechllm_url
+
         self.fn = lambda_.DockerImageFunction(
             self, "Agent",
             function_name="vva-agent",
@@ -283,38 +366,7 @@ class AgentStack(Stack):
             code=lambda_.DockerImageCode.from_ecr(
                 self.repository, tag_or_digest=image_tag,
             ),
-            environment={
-                "VVA_PG_DSN_PARAM": dsn_param,
-                "DEEPSEEK_API_KEY_PARAM": deepseek_param,
-                "GEMINI_API_KEYS_PARAM": gemini_param,
-                "AUTH_PROVIDER": "cognito",
-                "COGNITO_REGION": cognito_region,
-                "COGNITO_USER_POOL_ID": self.cognito_pool_id,
-                "COGNITO_APP_CLIENT_ID": cognito_client_id,
-                "ALLOWED_ORIGINS": ",".join(allowed_origins),
-                "LOG_LEVEL": "INFO",
-                # No cache. Short-term memory is a cache over PostgreSQL, and
-                # the plan is to run without one for a month and measure the
-                # Neon CU-hours it would have saved before paying for anything.
-                # Switching later is this value plus STM_TABLE — the code and
-                # its tests are already in place. See shared/stm.py.
-                "STM_BACKEND": ctx("stm_backend") or "none",
-                # ENABLE_MCP, EMBEDDING_BACKEND, E5_ONNX_DIR and the LWA
-                # settings are baked into the image: they describe what the
-                # image IS, not where it is deployed. See agenticRAG/Dockerfile.
-                #
-                # ── Motion (Task 9, R24) ────────────────────────────────
-                # Fixed name, not a construct reference — see _MOTION_TABLE_NAME.
-                "MOTION_TABLE": _MOTION_TABLE_NAME,
-                # SSM parameter NAMES only, for both secrets — nodes/kimodo.py
-                # and motion_status.py resolve them at call time. Neither raw
-                # value ever appears in this Lambda's environment or the
-                # CloudFormation template (ruling R24).
-                "MOTION_HASH_SECRET_PARAM": motion_hash_secret_param,
-                "MOTION_SIGNING_KEY_PARAM": motion_signing_key_param,
-                "MOTION_KEY_PAIR_ID": motion_key_pair_id,
-                "ASSET_BASE_URL": asset_base_url or "",
-            },
+            environment=agent_environment,
             # 2048 MB — bumped 14/09/2026 after measured OOM on every
             # retrieval turn (see docs/worklogs/14-09-2026.md, defect #1).
             # 1024 bought ~0.58 vCPU and was sized for "just waiting on DeepSeek"

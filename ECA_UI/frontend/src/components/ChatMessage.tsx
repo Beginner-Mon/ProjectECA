@@ -245,9 +245,17 @@ function AudioButton({
   const mine = !!clip && player.clip === clip
   const playing = mine && player.status === 'playing'
   const paused = mine && player.status === 'paused'
-  // Audio is on its way and none has arrived yet.
+  /* Chunks are arriving but the player is still measuring how far ahead
+   * generation is before it dares start (speechPlayer.play → computeStartTime).
+   * Without this the button fell into a hole between "no audio yet" and
+   * "playing": chunks had arrived so `waiting` was false, the run had not
+   * started so `playing` was false, and the control looked dead. */
+  const buffering = mine && player.status === 'buffering'
+  // Audio is on its way and nothing can be heard yet.
   const waiting =
-    opening || (!!snap && (snap.status === 'pending' || (snap.status === 'streaming' && snap.received === 0)))
+    opening ||
+    buffering ||
+    (!!snap && (snap.status === 'pending' || (snap.status === 'streaming' && snap.received === 0)))
   // Only this button's own request counts as a failure worth showing: voice
   // mode's failure already falls back silently, and an abort is not a fault.
   const failed =
@@ -329,7 +337,10 @@ function AudioButton({
     setProgress(fraction * 100)
   }
 
-  const isActive = playing || paused
+  /* The stop control stays reachable while buffering: the main button is
+   * disabled during the wait, so without this a measured buffer could not be
+   * cancelled at all — you had to wait it out. */
+  const isActive = playing || paused || buffering
   const shownProgress = mine ? progress : 0
 
   return (

@@ -209,6 +209,29 @@ describe('SpeechPlayer measuring', () => {
     expect(speechPlayer.getSnapshot().status).toBe('idle')
   })
 
+  it('reports buffering, with the clip, for the whole measured wait', async () => {
+    // Regression 23-09-2026: the measured wait reported `idle` with a null
+    // clip, so the speaker button could not tell "this clip is about to
+    // speak" from "nothing is happening" — it showed no spinner, no pause
+    // icon, and a click on another message tore the waiting clip down.
+    stubAudio()
+    const clip = new SpeechClip()
+    applySpeechEvent(clip, 'speech_start', { ...START, estimated_audio_s: 30 })
+    void speechPlayer.play(clip, null)
+    applySpeechEvent(clip, 'speech_chunk', chunk(0, 'A'))
+    await flush()
+    await flush()
+    const snap = speechPlayer.getSnapshot()
+    expect(snap.status).toBe('buffering')
+    expect(snap.clip).toBe(clip)
+    // And it does become playing, rather than sticking on buffering.
+    applySpeechEvent(clip, 'speech_chunk', chunk(1, 'B'))
+    applySpeechEvent(clip, 'speech_chunk', chunk(2, 'C'))
+    await flush()
+    await flush()
+    expect(speechPlayer.getSnapshot().status).toBe('playing')
+  })
+
   it('starts the run once the third chunk decodes', async () => {
     const { started } = stubAudio()
     const clip = new SpeechClip()

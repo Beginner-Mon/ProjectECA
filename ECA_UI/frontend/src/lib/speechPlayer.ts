@@ -253,7 +253,17 @@ export interface LipSyncTarget {
   stopLipSync: () => void
 }
 
-export type PlayerStatus = 'idle' | 'playing' | 'paused'
+/**
+ * `buffering` is the measured wait before a fresh stream first sounds
+ * (computeStartTime — see play()). It exists because the UI has to be able to
+ * tell "nothing is happening" from "this clip is the active one and is about
+ * to speak": without it the player reported `idle` with a null clip while it
+ * held a clip and a pending run, so the speaker button showed neither its
+ * spinner nor its pause icon and looked like a dead control — and a click on
+ * another message tore the waiting clip down for good. Everything that acts
+ * on a live run (pause, seek, progress) still requires `playing`.
+ */
+export type PlayerStatus = 'idle' | 'buffering' | 'playing' | 'paused'
 
 export interface PlayerSnapshot {
   /** The clip being played or paused; null when idle. */
@@ -382,6 +392,9 @@ class SpeechPlayer {
     }
     if (from === 0 && !clip.settled) {
       this.measure = { samples: [], controller, gen }
+      // Report the wait, do not stay silent about it: this clip IS the active
+      // one from here on, and every subscriber needs to see that.
+      this.setSnap('buffering')
       return true
     }
     this.startRun(ctx, from, controller)

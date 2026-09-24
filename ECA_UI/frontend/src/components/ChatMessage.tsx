@@ -291,14 +291,6 @@ function AudioButton({
     // cache lookup away from this click.
     unlockSpeechAudio()
 
-    if (buffering) {
-      // The spinner is the cancel control while the wait is on: the separate
-      // stop button only appears once there is sound to stop.
-      speechPlayer.stop()
-      cancelSpeech(text, personaId || selectedVrmId || DEFAULT_PERSONA_ID)
-      setOwnClip(null)
-      return
-    }
     if (playing) {
       speechPlayer.pause()
       return
@@ -328,9 +320,15 @@ function AudioButton({
     }
   }
 
-  /** Stop for good: unlike pause, the next click starts from the beginning. */
+  /** Stop for good: unlike pause, the next click starts from the beginning.
+   *  During the wait this is also the cancel — it aborts the synthesis, which
+   *  is the only thing there is to stop before any sound exists. */
   const handleStop = () => {
     if (mine) speechPlayer.stop()
+    if (ownClip && !ownClip.settled) {
+      cancelSpeech(text, personaId || selectedVrmId || DEFAULT_PERSONA_ID)
+      setOwnClip(null)
+    }
   }
 
   const handleBarClick = (e: React.MouseEvent<HTMLDivElement>) => {
@@ -342,7 +340,10 @@ function AudioButton({
     setProgress(fraction * 100)
   }
 
-  const isActive = playing || paused
+  /* The stop button shows during the wait too. The spinner is not a control
+   * anyone would guess is clickable — a square stop sitting next to it is the
+   * only affordance that reads as "give up on this". */
+  const isActive = playing || paused || buffering
   const shownProgress = mine ? progress : 0
 
   return (
@@ -350,7 +351,7 @@ function AudioButton({
       <button
         className={`${btnClass} ${isActive ? 'text-foreground' : ''} ${failed ? 'text-destructive' : ''}`}
         onClick={handleToggle}
-        disabled={waiting && !buffering}
+        disabled={waiting}
         title={
           waiting
             ? t('chat.audio_generating')

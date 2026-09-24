@@ -31,6 +31,7 @@ import time
 from functools import lru_cache
 
 import boto3
+from botocore.exceptions import BotoCoreError, ClientError
 from langchain_core.messages import ToolMessage
 from langchain_core.runnables import RunnableConfig
 
@@ -75,10 +76,18 @@ _TABLE = None
 def _table():
     """Lazily-initialised DynamoDB table handle — see shared/stm.py:199 for
     the same pattern. Built on first use rather than at import time, so
-    importing this module never requires AWS credentials or MOTION_TABLE."""
+    importing this module never requires AWS credentials or MOTION_TABLE.
+
+    Returns None when MOTION_TABLE is unset: .env.example documents that as
+    the local default, meaning "motion off". The check is here rather than in
+    the node so tests that replace `_table` with a moto table need no env.
+    """
     global _TABLE
     if _TABLE is None:
-        _TABLE = boto3.resource("dynamodb").Table(os.environ["MOTION_TABLE"])
+        name = os.environ.get("MOTION_TABLE")
+        if not name:
+            return None
+        _TABLE = boto3.resource("dynamodb").Table(name)
     return _TABLE
 
 
@@ -141,6 +150,30 @@ def _msg(payload: dict) -> dict:
 
 
 async def kimodo_node(state: AgentState, config: RunnableConfig) -> dict:
+    """Degrade-don't-raise wrapper around `_kimodo_node`.
+
+    This node runs BEFORE the synthesizer (graph.py: kimodo -> synthesizer)
+    and nothing above it catches. An AWS error escaping here therefore ended
+    the whole turn — no motion AND no text answer — for a feature that is an
+    extra on top of the answer. Hit locally on 24/09: no AWS region on a dev
+    machine, `NoRegionError` out of boto3.resource(). AWS failures of any kind
+    (unconfigured, no credentials, throttle, 5xx) now mean `unavailable`,
+    which the frontend already renders as "motion is switched off".
+
+    Only botocore errors are caught: a bug in this module should still fail
+    loudly in tests rather than be read as "GPU off".
+    """
+    request_id = config["configurable"].get("request_id", "-")
+    try:
+        return await _kimodo_node(state, config)
+    except (BotoCoreError, ClientError) as exc:
+        logger.warning("kimodo_aws_error", extra={
+            "request_id": request_id, "error_type": type(exc).__name__, "error": str(exc),
+        })
+        return _msg({"state": "unavailable"})
+
+
+async def _kimodo_node(state: AgentState, config: RunnableConfig) -> dict:
     """Kimodo motion job enqueue node.
 
     Called via hard edge when planner sets needs_motion=true. Never calls the
@@ -152,6 +185,9 @@ async def kimodo_node(state: AgentState, config: RunnableConfig) -> dict:
     request_id = config["configurable"].get("request_id", "-")
     resolved_query = state.get("resolved_query") or config["configurable"]["query"]
     table = _table()
+    if table is None:
+        logger.info("kimodo_not_configured", extra={"request_id": request_id})
+        return _msg({"state": "unavailable"})
 
     logger.info("node_start", extra={
         "node": "kimodo", "request_id": request_id,

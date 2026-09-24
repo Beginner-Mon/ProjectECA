@@ -389,11 +389,20 @@ function VRMCharacter({ vrmUrl, modelId, onReady, vrmRef, avatarRef }: VRMCharac
     }
     animControllerRef.current?.update(delta)
     avatarControllerRef.current?.tick(delta)
-    vrm?.update(delta)
-    // Last: the clamp reads the pose this frame actually produced. A generated
-    // clip can descend further than the character is tall (measured: 1.21 m on
-    // motion_b28e8284), which would otherwise sink it through the floor and
-    // kill its shadow — see lib/groundClamp.ts.
+    // The clamp reads the pose this frame actually produced — which the mixer
+    // and inertializer have already written to the normalized bones, so it
+    // does not need vrm.update(). A generated clip can descend further than the
+    // character is tall (measured: 1.21 m on motion_b28e8284), which would
+    // otherwise sink it through the floor and kill its shadow — see
+    // lib/groundClamp.ts.
+    //
+    // Every write to the model group's transform MUST land BEFORE vrm.update():
+    // that call steps the spring-bone physics (hair, skirt), which integrates in
+    // WORLD space. A group move made after it is seen one frame late, as a jump
+    // the body never made. At the end of an exercise the clamp's lift falls as
+    // the pose stands back up — body stationary in the world — and the old
+    // order (physics, then clamp) whipped the hair ~10.6° on the first frame in
+    // a spring-joint simulation; this order gives 0°. See worklog 24-09-2026.
     if (modelGroupRef.current) {
       if (!groundClampRef.current) {
         groundClampRef.current = new GroundClamp(modelGroupRef.current, groundScratch, {
@@ -407,6 +416,7 @@ function VRMCharacter({ vrmUrl, modelId, onReady, vrmRef, avatarRef }: VRMCharac
       rootMotionRef.current.update(delta)
       groundClampRef.current.update(vrm)
     }
+    vrm?.update(delta)
   })
 
   return (

@@ -154,3 +154,59 @@ async def test_busy_when_queue_full(table, monkeypatch):
         enqueue(table, f"filler{i}", prompt=f"p{i}")
     out = _content(await kimodo_node({"resolved_query": "nâng hai tay"}, CONFIG))
     assert out["state"] == "busy"
+
+
+# ── Unconfigured / unreachable AWS must degrade, never raise ────────────────
+# kimodo runs BEFORE synthesizer (graph.py: kimodo -> synthesizer) and nothing
+# above the node catches, so an exception here used to end the whole turn: no
+# motion AND no text answer. Hit locally on 24/09 — a dev machine with no
+# MOTION_TABLE and no AWS region raised NoRegionError from boto3.resource().
+
+
+@pytest.mark.unit
+async def test_unavailable_when_motion_table_unset(monkeypatch):
+    """.env.example documents MOTION_TABLE as unset locally. That must mean
+    'motion off', and must not touch boto3 at all."""
+    monkeypatch.delenv("MOTION_TABLE", raising=False)
+    monkeypatch.setattr("langgraph_agents.nodes.kimodo._TABLE", None)
+
+    def _no_boto(*_a, **_k):
+        raise AssertionError("boto3 must not be called when MOTION_TABLE is unset")
+
+    monkeypatch.setattr("langgraph_agents.nodes.kimodo.boto3.resource", _no_boto)
+    out = _content(await kimodo_node({"resolved_query": "nâng hai tay"}, CONFIG))
+    assert out == {"state": "unavailable"}
+
+
+@pytest.mark.unit
+async def test_unavailable_when_aws_client_cannot_be_built(monkeypatch):
+    """The exact local failure: table configured, but no region/credentials."""
+    from botocore.exceptions import NoRegionError
+
+    def _raise():
+        raise NoRegionError()
+
+    monkeypatch.setattr("langgraph_agents.nodes.kimodo._table", _raise)
+    out = _content(await kimodo_node({"resolved_query": "nâng hai tay"}, CONFIG))
+    assert out == {"state": "unavailable"}
+
+
+@pytest.mark.unit
+async def test_unavailable_when_dynamodb_call_fails_mid_node(monkeypatch):
+    """Worker alive, then a throttle/5xx on a later call. Still degrade.
+
+    Stubs the jobs functions rather than using the moto `table` fixture, so
+    this guard is tested even where moto is not installed."""
+    from botocore.exceptions import ClientError
+
+    k = "langgraph_agents.nodes.kimodo"
+    monkeypatch.setattr(f"{k}._table", lambda: object())
+    monkeypatch.setattr(f"{k}.worker_alive", lambda _t: True)
+    monkeypatch.setattr(f"{k}.read_status", lambda _t, _j: None)
+
+    def _throttle(*_a, **_k):
+        raise ClientError({"Error": {"Code": "ProvisionedThroughputExceededException"}}, "Query")
+
+    monkeypatch.setattr("langgraph_agents.nodes.kimodo.queue_depth", _throttle)
+    out = _content(await kimodo_node({"resolved_query": "nâng hai tay"}, CONFIG))
+    assert out == {"state": "unavailable"}

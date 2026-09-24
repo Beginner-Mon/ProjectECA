@@ -7,6 +7,17 @@ import ChatMessage from './ChatMessage'
 import ChatDivider from './ChatDivider'
 import { useChat } from '../hooks/useChat'
 
+/** Mirrors the `query` constraint on ChatRequest (api/schemas.py).
+ *
+ *  Duplicated rather than imported because it lives on the other side of an
+ *  HTTP boundary. The point is not to enforce it — the server does that — but
+ *  to say so before the user has typed 6,000 characters and lost them to a 422
+ *  they cannot read.
+ *
+ *  Deliberately NOT a `maxLength` on the textarea: that silently truncates a
+ *  paste, so the user sends a half message believing it went whole. */
+const QUERY_MAX_CHARS = 4000
+
 /* ─── ChatPanel ─── */
 export default function ChatPanel() {
   const {
@@ -63,9 +74,12 @@ export default function ChatPanel() {
     bottomRef.current?.scrollIntoView({ behavior: 'smooth' })
   }, [messages, isTyping, stageLabel])
 
+  const overLimit = input.length > QUERY_MAX_CHARS
+
   const onKeyDown = (e: KeyboardEvent<HTMLTextAreaElement>) => {
     if (e.key === 'Enter' && !e.shiftKey) {
       e.preventDefault()
+      if (overLimit) return
       handleSend()
     }
   }
@@ -265,6 +279,14 @@ export default function ChatPanel() {
               >
                 <Mic className="w-5 h-5" />
               </button>
+              {input.length > QUERY_MAX_CHARS * 0.9 && (
+                <span
+                  className={`text-xs tabular-nums ${overLimit ? 'text-destructive' : 'text-muted-foreground'}`}
+                >
+                  {input.length.toLocaleString()} / {QUERY_MAX_CHARS.toLocaleString()}
+                </span>
+              )}
+
               {isGenerating ? (
                 <button
                   onClick={handleStop}
@@ -275,7 +297,7 @@ export default function ChatPanel() {
               ) : (
                 <button
                   onClick={handleSend}
-                  disabled={!input.trim()}
+                  disabled={!input.trim() || overLimit}
                   className="w-8 h-8 rounded-full bg-primary hover:bg-primary/90 disabled:opacity-30 disabled:cursor-not-allowed flex items-center justify-center transition-all text-primary-foreground"
                 >
                   <ArrowUp className="w-4 h-4" />

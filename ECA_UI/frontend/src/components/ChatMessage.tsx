@@ -224,8 +224,6 @@ function AudioButton({
   const barRef = useRef<HTMLDivElement | null>(null)
   /** A clip this button fetched itself, from the cache or POST /tts. */
   const [ownClip, setOwnClip] = useState<SpeechClip | null>(null)
-  /** Looking in the cache / opening the request — before any clip exists. */
-  const [opening, setOpening] = useState(false)
   const [progress, setProgress] = useState(0)
 
   const speechSnap = useClipSnapshot(speech)
@@ -252,7 +250,6 @@ function AudioButton({
   const buffering = mine && player.status === 'buffering'
   // Audio is on its way and nothing can be heard yet.
   const waiting =
-    opening ||
     buffering ||
     (!!snap && (snap.status === 'pending' || (snap.status === 'streaming' && snap.received === 0)))
   // Only this button's own request counts as a failure worth showing: voice
@@ -285,7 +282,7 @@ function AudioButton({
     if (found) setOwnClip(found)
   }, [text, personaId, selectedVrmId])
 
-  const handleToggle = async () => {
+  const handleToggle = () => {
     // Before any await: Safari and iOS WebViews start an AudioContext only
     // from inside the gesture's own call stack, and the play() below may be a
     // cache lookup away from this click.
@@ -305,19 +302,12 @@ function AudioButton({
       void speechPlayer.play(clip, avatarRef.current)
       return
     }
-    if (opening) return
-
-    // Nothing in memory — the cache, then the network.
-    setOpening(true)
-    try {
-      const fresh = await openSpeech(text, personaId || selectedVrmId || DEFAULT_PERSONA_ID)
-      setOwnClip(fresh)
-      // Straight away, even if nothing has arrived: the player schedules
-      // chunks as they land, so the first one plays the moment it decodes.
-      void speechPlayer.play(fresh, avatarRef.current)
-    } finally {
-      setOpening(false)
-    }
+    // Nothing in memory — the cache, then the network. The clip comes back
+    // already, empty, and fills itself; the player schedules chunks as they
+    // land, so the first one plays the moment it decodes.
+    const fresh = openSpeech(text, personaId || selectedVrmId || DEFAULT_PERSONA_ID)
+    setOwnClip(fresh)
+    void speechPlayer.play(fresh, avatarRef.current)
   }
 
   /** Stop for good: unlike pause, the next click starts from the beginning.
@@ -342,8 +332,10 @@ function AudioButton({
 
   /* The stop button shows during the wait too. The spinner is not a control
    * anyone would guess is clickable — a square stop sitting next to it is the
-   * only affordance that reads as "give up on this". */
-  const isActive = playing || paused || buffering
+   * only affordance that reads as "give up on this". `own` covers the moment
+   * before the player has adopted the clip: the request is already running
+   * then, so it must already be cancellable. */
+  const isActive = playing || paused || buffering || (!!own && !own.settled)
   const shownProgress = mine ? progress : 0
 
   return (

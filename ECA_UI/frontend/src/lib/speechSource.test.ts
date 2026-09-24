@@ -36,10 +36,21 @@ afterEach(() => {
 })
 
 describe('synthesis in flight', () => {
+  it('is registered before the first await, not after the cache read', async () => {
+    // The click has to leave something behind immediately. While the token
+    // and cache lookups were in flight there was no clip: nothing to cancel,
+    // and closing the conversation lost the request without a trace.
+    speakText.mockImplementation(() => new Promise(() => {}))
+    const clip = openSpeech('ngay lập tức', 'anne')
+    expect(liveSpeech('ngay lập tức', 'anne')).toBe(clip)
+    cancelSpeech('ngay lập tức', 'anne')
+  })
+
   it('hands back the same clip instead of starting a second synthesis', async () => {
     speakText.mockImplementation(() => new Promise(() => {})) // never settles
-    const first = await openSpeech('xin chào', 'anne')
-    const second = await openSpeech('xin chào', 'anne')
+    const first = openSpeech('xin chào', 'anne')
+    const second = openSpeech('xin chào', 'anne')
+    await new Promise((r) => setTimeout(r, 0))
 
     expect(second).toBe(first)
     expect(speakText).toHaveBeenCalledTimes(1)
@@ -59,18 +70,30 @@ describe('synthesis in flight', () => {
     cancelSpeech('bài tập vai', 'anne')
   })
 
-  it('cancelling aborts the request and forgets the clip', async () => {
+  it('cancelling before the request goes out never sends it at all', async () => {
+    speakText.mockImplementation(() => new Promise(() => {}))
+    openSpeech('dừng đi', 'anne')
+
+    cancelSpeech('dừng đi', 'anne') // same tick: the cache read has not returned
+    await new Promise((r) => setTimeout(r, 0))
+
+    expect(speakText).not.toHaveBeenCalled()
+    expect(liveSpeech('dừng đi', 'anne')).toBeNull()
+  })
+
+  it('cancelling after it is on the wire aborts it', async () => {
     let signal: AbortSignal | undefined
     speakText.mockImplementation((...args: unknown[]) => {
       signal = args[3] as AbortSignal
       return new Promise(() => {})
     })
-    await openSpeech('dừng đi', 'anne')
+    openSpeech('dừng giữa chừng', 'anne')
+    await new Promise((r) => setTimeout(r, 0)) // let the request start
 
-    cancelSpeech('dừng đi', 'anne')
+    cancelSpeech('dừng giữa chừng', 'anne')
 
     expect(signal?.aborted).toBe(true)
-    expect(liveSpeech('dừng đi', 'anne')).toBeNull()
+    expect(liveSpeech('dừng giữa chừng', 'anne')).toBeNull()
   })
 
   it('a failed synthesis is not handed to the next click', async () => {

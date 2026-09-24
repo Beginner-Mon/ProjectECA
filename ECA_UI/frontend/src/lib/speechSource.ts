@@ -137,33 +137,52 @@ export function cancelSpeech(text: string, persona: string): void {
  * error) shows up as the clip failing, which is what the speaker button
  * watches anyway.
  */
-export async function openSpeech(
-  text: string,
-  persona: string,
-): Promise<SpeechClip> {
+export function openSpeech(text: string, persona: string): SpeechClip {
   const existing = liveSpeech(text, persona)
   if (existing) return existing
+
+  // The clip and its registry entry exist BEFORE the first await. That
+  // ordering is the whole point: the cache read and the token lookup take a
+  // moment, and during that moment the old code had nothing to show for the
+  // click — no clip, so no way to cancel, and closing the conversation lost
+  // the request with no trace. Now the button has something from the first
+  // frame, and so does anyone who comes back to it.
+  const clip = new SpeechClip()
+  const controller = new AbortController()
+  live.set(liveKey(text, persona), { clip, controller })
+  void fillSpeech(clip, controller, text, persona)
+  return clip
+}
+
+/** Cache first, network second — into a clip the caller already holds. */
+async function fillSpeech(
+  clip: SpeechClip,
+  controller: AbortController,
+  text: string,
+  persona: string,
+): Promise<void> {
   const [sub, key] = await Promise.all([cognitoSub(), cacheKeyFor(text, persona)])
+  if (controller.signal.aborted) return
   if (sub && key) {
     const hit = await readCachedClip(sub, key)
+    if (controller.signal.aborted) return
     if (hit) {
-      return SpeechClip.fromCache(
-        {
-          voiceVersion: hit.meta.voiceVersion,
-          codec: hit.meta.codec,
-          sampleRate: hit.meta.sampleRate,
-          lang: hit.meta.lang,
-        },
-        hit.chunks,
-      )
+      // Hydrate rather than hand back a second clip: the caller is already
+      // watching this one, and the player may already be waiting on it.
+      clip.begin({
+        voiceVersion: hit.meta.voiceVersion,
+        codec: hit.meta.codec,
+        sampleRate: hit.meta.sampleRate,
+        lang: hit.meta.lang,
+      })
+      hit.chunks.forEach((bytes, seq) => clip.addChunk(seq, bytes))
+      clip.finish(hit.chunks.length)
+      return
     }
   }
 
-  const clip = new SpeechClip()
   const origin = { text, persona }
-  const controller = new AbortController()
-  live.set(liveKey(text, persona), { clip, controller })
-  speakText(text, persona, (type, data) => routeSpeechEvent(clip, type, data, origin), controller.signal).then(
+  await speakText(text, persona, (type, data) => routeSpeechEvent(clip, type, data, origin), controller.signal).then(
     () => {
       // The body ended without speech_end or speech_failed. Whatever arrived is
       // a fragment; failing the clip stops playback and lets a click retry.
@@ -181,5 +200,4 @@ export async function openSpeech(
       clip.fail(e instanceof Error ? e.message : String(e))
     },
   )
-  return clip
 }

@@ -147,6 +147,20 @@ export function openSpeech(text: string, persona: string): SpeechClip {
   // click — no clip, so no way to cancel, and closing the conversation lost
   // the request with no trace. Now the button has something from the first
   // frame, and so does anyone who comes back to it.
+  // One synthesis at a time. Only one clip can be heard — speechPlayer is a
+  // singleton and a new clip evicts the old — so a second click is a change
+  // of mind, not a second thing to listen to. Without this, clicking five
+  // messages bought five Lambda invocations to hear one of them, against an
+  // account-wide concurrency limit of 10 shared with the agent itself.
+  //
+  // Only in-flight work is dropped. A finished clip stays: it costs nothing
+  // and a click on it plays from memory.
+  for (const [key, entry] of live) {
+    if (entry.clip.settled) continue
+    live.delete(key)
+    entry.controller.abort()
+  }
+
   const clip = new SpeechClip()
   const controller = new AbortController()
   live.set(liveKey(text, persona), { clip, controller })

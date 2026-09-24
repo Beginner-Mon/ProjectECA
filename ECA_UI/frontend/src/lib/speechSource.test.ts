@@ -96,6 +96,26 @@ describe('synthesis in flight', () => {
     expect(liveSpeech('dừng giữa chừng', 'anne')).toBeNull()
   })
 
+  it('a second message cancels the first: one synthesis at a time', async () => {
+    // Only one clip can be heard, so a click on another message is a change
+    // of mind. Five clicks used to buy five Lambda invocations to hear one.
+    const signals: AbortSignal[] = []
+    speakText.mockImplementation((...args: unknown[]) => {
+      signals.push(args[3] as AbortSignal)
+      return new Promise(() => {})
+    })
+    openSpeech('tin nhắn một', 'anne')
+    await new Promise((r) => setTimeout(r, 0))
+    openSpeech('tin nhắn hai', 'anne')
+    await new Promise((r) => setTimeout(r, 0))
+
+    expect(signals[0]?.aborted).toBe(true)
+    expect(signals[1]?.aborted).toBe(false)
+    expect(liveSpeech('tin nhắn một', 'anne')).toBeNull()
+    expect(liveSpeech('tin nhắn hai', 'anne')).not.toBeNull()
+    cancelSpeech('tin nhắn hai', 'anne')
+  })
+
   it('a failed synthesis is not handed to the next click', async () => {
     speakText.mockImplementation(() => Promise.reject(new Error('503')))
     const clip = await openSpeech('hỏng', 'anne')

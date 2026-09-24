@@ -73,6 +73,58 @@ async function remember(clip: SpeechClip, { text, persona }: SpeechOrigin): Prom
 }
 
 /**
+ * Synthesis that is on its way, by message.
+ *
+ * It lives here rather than in the component that started it, because the
+ * component does not outlive the request: closing the conversation, switching
+ * to another one, or anything else that unmounts the speaker button used to
+ * abort a synthesis already in flight — the button came back as a plain
+ * speaker, the ~25 seconds of work were thrown away, and the next click paid
+ * for all of it again.
+ *
+ * The audio itself never had that problem: speechPlayer is a singleton, so a
+ * clip that had started playing kept playing through the unmount. This makes
+ * the loading half behave the same way.
+ *
+ * Entries stay until they fail or are cancelled. A completed one is worth
+ * keeping for the session: it is the same clip IndexedDB now holds, minus the
+ * read.
+ */
+interface LiveSpeech {
+  clip: SpeechClip
+  controller: AbortController
+}
+
+const live = new Map<string, LiveSpeech>()
+
+const liveKey = (text: string, persona: string): string => `${persona}\u0000${text}`
+
+/** The clip already being synthesised (or just finished) for this message. */
+export function liveSpeech(text: string, persona: string): SpeechClip | null {
+  const entry = live.get(liveKey(text, persona))
+  if (!entry) return null
+  if (entry.clip.status === 'failed') {
+    live.delete(liveKey(text, persona))
+    return null
+  }
+  return entry.clip
+}
+
+/**
+ * Give up on a synthesis: stop the request, drop the clip.
+ *
+ * Only ever called from a deliberate stop. Navigating away is NOT that — see
+ * the note above.
+ */
+export function cancelSpeech(text: string, persona: string): void {
+  const key = liveKey(text, persona)
+  const entry = live.get(key)
+  if (!entry) return
+  live.delete(key)
+  if (!entry.clip.settled) entry.controller.abort()
+}
+
+/**
  * A clip for `text` in `persona`'s voice: this browser's cache first, the
  * network second.
  *
@@ -88,8 +140,9 @@ async function remember(clip: SpeechClip, { text, persona }: SpeechOrigin): Prom
 export async function openSpeech(
   text: string,
   persona: string,
-  signal?: AbortSignal,
 ): Promise<SpeechClip> {
+  const existing = liveSpeech(text, persona)
+  if (existing) return existing
   const [sub, key] = await Promise.all([cognitoSub(), cacheKeyFor(text, persona)])
   if (sub && key) {
     const hit = await readCachedClip(sub, key)
@@ -108,7 +161,9 @@ export async function openSpeech(
 
   const clip = new SpeechClip()
   const origin = { text, persona }
-  speakText(text, persona, (type, data) => routeSpeechEvent(clip, type, data, origin), signal).then(
+  const controller = new AbortController()
+  live.set(liveKey(text, persona), { clip, controller })
+  speakText(text, persona, (type, data) => routeSpeechEvent(clip, type, data, origin), controller.signal).then(
     () => {
       // The body ended without speech_end or speech_failed. Whatever arrived is
       // a fragment; failing the clip stops playback and lets a click retry.

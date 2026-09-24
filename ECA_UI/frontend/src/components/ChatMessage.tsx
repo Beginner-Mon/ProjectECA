@@ -12,7 +12,7 @@ import {
   type ClipSnapshot,
   type SpeechClip,
 } from '../lib/speechPlayer'
-import { openSpeech } from '../lib/speechSource'
+import { cancelSpeech, liveSpeech, openSpeech } from '../lib/speechSource'
 import { useMotion } from '../hooks/useMotion'
 
 export interface Message {
@@ -222,7 +222,6 @@ function AudioButton({
   const { t } = useTranslation()
   const { avatarRef, selectedVrmId } = useMotion()
   const barRef = useRef<HTMLDivElement | null>(null)
-  const abortRef = useRef<AbortController | null>(null)
   /** A clip this button fetched itself, from the cache or POST /tts. */
   const [ownClip, setOwnClip] = useState<SpeechClip | null>(null)
   /** Looking in the cache / opening the request — before any clip exists. */
@@ -274,11 +273,17 @@ function AudioButton({
     return () => cancelAnimationFrame(raf)
   }, [playing])
 
-  /* Leaving the page (or this conversation) abandons an on-demand request.
-   * The clip fails as aborted, which also stops it if it was playing. */
+  /* Re-attach to synthesis already in flight for this message.
+   *
+   * Unmounting used to abort it: close the conversation while the speaker
+   * spun and ~25 seconds of synthesis were thrown away, the button came back
+   * as a plain speaker, and the next click paid for it all again. The request
+   * now outlives this component (speechSource keeps it), so coming back finds
+   * it — still loading, or ready to play. */
   useEffect(() => {
-    return () => abortRef.current?.abort()
-  }, [])
+    const found = liveSpeech(text, personaId || selectedVrmId || DEFAULT_PERSONA_ID)
+    if (found) setOwnClip(found)
+  }, [text, personaId, selectedVrmId])
 
   const handleToggle = async () => {
     // Before any await: Safari and iOS WebViews start an AudioContext only
@@ -286,6 +291,14 @@ function AudioButton({
     // cache lookup away from this click.
     unlockSpeechAudio()
 
+    if (buffering) {
+      // The spinner is the cancel control while the wait is on: the separate
+      // stop button only appears once there is sound to stop.
+      speechPlayer.stop()
+      cancelSpeech(text, personaId || selectedVrmId || DEFAULT_PERSONA_ID)
+      setOwnClip(null)
+      return
+    }
     if (playing) {
       speechPlayer.pause()
       return
@@ -304,22 +317,14 @@ function AudioButton({
 
     // Nothing in memory — the cache, then the network.
     setOpening(true)
-    abortRef.current?.abort()
-    const controller = new AbortController()
-    abortRef.current = controller
     try {
-      const fresh = await openSpeech(
-        text,
-        personaId || selectedVrmId || DEFAULT_PERSONA_ID,
-        controller.signal,
-      )
-      if (controller.signal.aborted) return
+      const fresh = await openSpeech(text, personaId || selectedVrmId || DEFAULT_PERSONA_ID)
       setOwnClip(fresh)
       // Straight away, even if nothing has arrived: the player schedules
       // chunks as they land, so the first one plays the moment it decodes.
       void speechPlayer.play(fresh, avatarRef.current)
     } finally {
-      if (!controller.signal.aborted) setOpening(false)
+      setOpening(false)
     }
   }
 
@@ -337,10 +342,7 @@ function AudioButton({
     setProgress(fraction * 100)
   }
 
-  /* The stop control stays reachable while buffering: the main button is
-   * disabled during the wait, so without this a measured buffer could not be
-   * cancelled at all — you had to wait it out. */
-  const isActive = playing || paused || buffering
+  const isActive = playing || paused
   const shownProgress = mine ? progress : 0
 
   return (
@@ -348,7 +350,7 @@ function AudioButton({
       <button
         className={`${btnClass} ${isActive ? 'text-foreground' : ''} ${failed ? 'text-destructive' : ''}`}
         onClick={handleToggle}
-        disabled={waiting}
+        disabled={waiting && !buffering}
         title={
           waiting
             ? t('chat.audio_generating')

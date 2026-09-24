@@ -7,6 +7,11 @@
 
 ## 0. TRẠNG THÁI ĐANG TREO (đọc trước — dễ mất khi compact)
 
+> 🔴 **File này lạc hậu ~1 tháng (22/09).** Mục 0 dưới đây còn ghi "CHẶN CỨNG:
+> không có AWS credentials" trong khi **production đang chạy trên AWS**. Trạng
+> thái đúng, đã đối chiếu với `origin/release`: **`docs/worklogs/22-09-2026.md`**.
+> Đọc file đó trước khi tin bất cứ dòng nào bên dưới.
+
 - **Service lúc viết file này (08/08)** — kiểm bằng curl, không phải nhớ:
   backend `:8000` ✅ 200 · **TTS `:5000` ✅ 200** · frontend `:5173` ✅ 200 ·
   docker `eca-postgres`/`eca-redis`/`eca-searxng` up 8 ngày ✅
@@ -97,15 +102,19 @@
   `get_persona()` đọc cache nạp từ `characters.persona` **trước** file, nên ở đâu
   có DB là ở đó file markdown không có tác dụng.
 
-### 🔴 CHẶN CỨNG — chỉ Owner gỡ được
+### ✅ ĐÃ GỠ — khối "chặn cứng AWS" bên dưới đã lạc hậu
 
-- **Không có AWS credentials** ⇒ `npx ampx sandbox` chết ở `InvalidCredentialError`.
-  Hệ quả: **toàn bộ thay đổi auth backend chưa chạy thật lần nào.** Chống trùng tài khoản
-  mới chỉ chứng minh được là *biên dịch được*.
-  Gỡ: `cd ECA_UI/frontend && npx ampx configure profile`
-  Kèm 2 việc phải làm cùng lúc: đặt `VITE_GOOGLE_CLIENT_ID`, và thêm origin của app vào
-  **Authorized JavaScript origins** ở Google Cloud console (GIS chặn theo origin — khác
-  danh sách redirect URI của hosted UI).
+> ~~**Không có AWS credentials** ⇒ toàn bộ thay đổi auth backend chưa chạy thật lần nào.~~
+> **Sai từ khoảng giữa tháng 9.** Dự án **đang chạy production trên AWS**: Cognito,
+> Lambda (agent · CRUD · characters · SpeechLLm), API Gateway, CloudFront ký URL, Neon,
+> ECS GPU cho motion. Có sự cố thật đã xử lý (OOM `vva-agent` 14/09) — tức là nó chạy
+> thật, không phải chỉ biên dịch được.
+>
+> Cái còn thiếu bây giờ là **credentials cho MÁY CỦA K**, không phải cho dự án: máy này
+> không có `aws` CLI nên K không đọc được CloudWatch, không xem được config Lambda, không
+> kiểm được chi phí. Đó là chặn *người*, không chặn *sản phẩm*.
+
+### 🔴 CHẶN CỨNG — chỉ Owner gỡ được
 - **Không có JDK/Android SDK**, iOS bất khả trên Windows ⇒ `src/lib/nativeAuth.ts` chưa
   thực thi lần nào, chưa có thư mục `android/`.
 - **Chưa có domain cho App Links** ⇒ mobile auth không hoàn tất được. Checklist:

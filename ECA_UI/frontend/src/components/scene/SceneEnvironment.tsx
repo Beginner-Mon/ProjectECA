@@ -14,10 +14,21 @@
  * Also conditionally renders Stars for the dark theme.
  */
 
-import { useMemo } from 'react'
+import { useMemo, Suspense } from 'react'
 import * as THREE from 'three'
 import { Environment, Stars } from '@react-three/drei'
 import { ENV_CONFIG } from '../../config/environmentConfig'
+import { backdropMode, resolveBackground } from '../../lib/backgroundAssets'
+import SceneBackdrop from './SceneBackdrop'
+import StageDome from './StageDome'
+
+// Resolved once: the backdrop is config, not state.
+const BACKGROUND = ENV_CONFIG.environment.background
+const BACKDROP_URL = BACKGROUND.kind === 'dome' ? null : resolveBackground(BACKGROUND.id)
+const BACKDROP_MODE = backdropMode(BACKGROUND, BACKDROP_URL)
+if (BACKGROUND.kind !== 'dome' && BACKGROUND.id && !BACKDROP_URL) {
+  console.warn(`[backdrop] no background.* under src/asset/backgrounds/${ENV_CONFIG.environment.background.id}/ — using the gradient`)
+}
 
 interface SceneEnvironmentProps {
   theme: 'light' | 'dark'
@@ -72,7 +83,22 @@ function GradientBackground({ theme }: { theme: 'light' | 'dark' }) {
 
 export default function SceneEnvironment({ theme }: SceneEnvironmentProps) {
   const { environment } = ENV_CONFIG
-  const showStars = theme === 'dark' ? environment.showStars.dark : environment.showStars.light
+  // Stars float over a flat colour; over a photo they read as dust on the lens,
+  // and the stage dome draws its own.
+  const showStars = BACKDROP_MODE === 'gradient' && (theme === 'dark' ? environment.showStars.dark : environment.showStars.light)
+
+  if (BACKDROP_MODE === 'dome') return <StageDome />
+
+  if (BACKDROP_MODE === 'image' && BACKDROP_URL) {
+    // The gradient covers the wait while the image loads. It must NOT stay
+    // mounted after: it is an opaque full-screen quad that would paint over
+    // scene.background.
+    return (
+      <Suspense fallback={<GradientBackground theme={theme} />}>
+        <SceneBackdrop url={BACKDROP_URL} />
+      </Suspense>
+    )
+  }
 
   return (
     <>

@@ -41,14 +41,15 @@ export interface ChatContextType {
   deleteSessionAction: (sessionId: string) => Promise<void>
   markSessionsClean: () => void
   // Audio recording (frontend only, click toggle)
+  /** Voice input (dictation) is listening. Speech lands in `input`. */
   isRecording: boolean
   recordingDuration: number
+  /** Browser recogniser error code; show via dictationErrorKey (lib/dictation). */
   recordingError: string | null
-  previewAudioUrl: string | null
-  startRecord: () => Promise<void>
+  /** False in browsers without speech recognition (Firefox, Android WebView). */
+  dictationSupported: boolean
+  startRecord: () => void
   stopRecord: () => void
-  cancelRecord: () => void
-  sendAudio: () => void
 }
 
 export const ChatContext = createContext<ChatContextType | null>(null)

@@ -17,12 +17,31 @@
  * visual tuning, since nobody has ever seen it rendered.
  */
 
-import { useRef, useEffect } from 'react'
+import { useRef, useEffect, Suspense } from 'react'
 import * as THREE from 'three'
 import { useFrame } from '@react-three/fiber'
 import type { VRM } from '@pixiv/three-vrm'
 import { ENV_CONFIG } from '../../config/environmentConfig'
 import { DEFAULT_SHADOW_FIT, ShadowCameraFitter } from '../../lib/shadowFit'
+import { resolveFloor } from '../../lib/floorAssets'
+import { backdropOwnsFloor, resolveBackground } from '../../lib/backgroundAssets'
+import GroundFloor from './GroundFloor'
+
+// Some backdrops bring their own floor: the stage dome (its lower half) and a
+// grounded panorama (the photo's floor, curving up into its walls). Our floor
+// disc would be laid over it, so it stands down while one is active; the
+// invisible shadow plane stays, so the character still casts a shadow there.
+const { background } = ENV_CONFIG.environment
+const GROUNDED_BACKDROP = backdropOwnsFloor(
+  background,
+  background.kind === 'dome' ? null : resolveBackground(background.id),
+)
+
+// Resolved once: the floor id is config, not state.
+const FLOOR_TEXTURES = GROUNDED_BACKDROP ? null : resolveFloor(ENV_CONFIG.ground.floor.id)
+if (ENV_CONFIG.ground.floor.id && !GROUNDED_BACKDROP && !FLOOR_TEXTURES) {
+  console.warn(`[floor] no textures for "${ENV_CONFIG.ground.floor.id}" under src/asset/floors/ — using the invisible shadow plane`)
+}
 
 interface SceneLightingProps {
   vrm: VRM | null
@@ -47,9 +66,13 @@ export default function SceneLighting({ vrm }: SceneLightingProps) {
     const light = lightRef.current
     if (!light) return
 
-    light.shadow.mapSize.set(shadows.mapSize, shadows.mapSize)
-    light.shadow.bias = shadows.bias
-    light.shadow.normalBias = shadows.normalBias
+    // mapSize / bias / normalBias are NOT set here: they are props on the
+    // <directionalLight> below. This effect runs AFTER the first frame, and
+    // three.js allocates the shadow map on that frame at the default 512²
+    // and never reallocates it. Setting 1024 here afterwards left a 512²
+    // texture sampled as if it were 1024², so the shadow was read from the
+    // wrong place and disappeared (found 25/09 with the floor preview:
+    // no shadow at all until the map was forced to reallocate).
 
     fitterRef.current = new ShadowCameraFitter(light, {
       ...DEFAULT_SHADOW_FIT,
@@ -122,6 +145,11 @@ export default function SceneLighting({ vrm }: SceneLightingProps) {
         intensity={main.intensity}
         position={main.position}
         castShadow={main.castShadow}
+        // Applied at creation, before the first frame allocates the map. See
+        // the note in the fitter effect above.
+        shadow-mapSize={[shadows.mapSize, shadows.mapSize]}
+        shadow-bias={shadows.bias}
+        shadow-normalBias={shadows.normalBias}
       />
 
       {/* ── Hemisphere: ambient fill, no directional influence ───────── */}
@@ -131,17 +159,26 @@ export default function SceneLighting({ vrm }: SceneLightingProps) {
         intensity={ambient.intensity}
       />
 
-      {/* ── Ground plane: catches real directional shadow (XY plane) ─── */}
-      <mesh
-        position={[0, 0, 0]}
-        receiveShadow
-      >
-        <planeGeometry args={[ground.planeSize, ground.planeSize]} />
-        <shadowMaterial
-          transparent
-          opacity={ground.shadowMaterialOpacity}
-        />
-      </mesh>
+      {/* ── Ground: a visible textured floor if configured, otherwise the
+          invisible plane that only catches the directional shadow. Never
+          both — the shadow would be drawn twice. ─────────────────────── */}
+      {FLOOR_TEXTURES ? (
+        // Own boundary: the textures load after the avatar, never in front of it.
+        <Suspense fallback={null}>
+          <GroundFloor textures={FLOOR_TEXTURES} />
+        </Suspense>
+      ) : (
+        <mesh
+          position={[0, 0, 0]}
+          receiveShadow
+        >
+          <planeGeometry args={[ground.planeSize, ground.planeSize]} />
+          <shadowMaterial
+            transparent
+            opacity={ground.shadowMaterialOpacity}
+          />
+        </mesh>
+      )}
     </>
   )
 }

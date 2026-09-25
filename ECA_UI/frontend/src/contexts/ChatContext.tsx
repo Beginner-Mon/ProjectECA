@@ -24,7 +24,7 @@ import { resolveGreeting, type CapturedGreeting } from '../lib/greeting'
 import { useLocale } from '../hooks/useLocale'
 
 export type { SessionItem, ChatContextType } from '../hooks/useChat'
-import { useAudioRecorder } from '../hooks/useAudioRecorder'
+import { useDictation } from '../hooks/useDictation'
 
 /* The pointer to the conversation lives in lib/chatSession.ts, along with the
  * reason it is written late and expires. Nothing here mints an id: a
@@ -111,38 +111,22 @@ export function ChatProvider({ children }: { children: ReactNode }) {
   const switchingRef = useRef(false)
   const stageTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null)
 
-  // Audio recording — frontend only (no backend)
-  const { isRecording, duration: recordingDuration, audioUrl: previewAudioUrl, audioBlob: previewAudioBlob, error: recordingError, start: startRecord, stop: stopRecord, cancel: cancelRecord } = useAudioRecorder()
-
-  const sendAudio = useCallback(() => {
-    if (!previewAudioBlob || !previewAudioUrl) return
-    const url = URL.createObjectURL(previewAudioBlob)
-    const msg: Message = {
-      id: crypto.randomUUID(),
-      role: 'user',
-      content: '',
-      timestamp: new Date(),
-      audioUrl: url,
-    }
-    // Ephemeral greeting: same as handleSend
-    setMessages((prev) => {
-      const isPristine = prev.length === 1 && prev[0].id === GREETING_ID
-      if (isPristine) return [msg]
-      return [...prev, msg]
-    })
-    // clear preview but keep sent message url
-    // useAudioRecorder's cancel would revoke previewUrl — do it manually
-    // we already created a new url for the message, so revoke preview
-    URL.revokeObjectURL(previewAudioUrl)
-    // reset recorder preview (call cancel without revoking again)
-    // hack: clear via internal state by calling cancel then restoring? simpler: just let hook clear on next start
-    // Instead, we manually clear by calling cancel and then set new preview to null via effect
-    // For now, just clear preview url via hook's cancel (will revoke again harmlessly if already revoked)
-    cancelRecord()
-  }, [previewAudioBlob, previewAudioUrl, cancelRecord])
+  // Voice input = dictation into the chat box (lib/dictation.ts). The mic used
+  // to record a clip that was shown as an audio bubble and never reached the
+  // agent; now speech becomes ordinary text the user can edit and send.
+  const dictation = useDictation(locale)
+  const isRecording = dictation.isListening
+  const recordingDuration = dictation.duration
+  const recordingError = dictation.error
+  const dictationSupported = dictation.supported
+  const { start: startDictation, stop: stopRecord, cancel: cancelDictation } = dictation
 
   const inputRef = useRef(input)
   inputRef.current = input
+  const startRecord = useCallback(() => {
+    // Whatever is typed now stays; what is heard is appended after it.
+    startDictation(inputRef.current, setInput)
+  }, [startDictation])
   const isGeneratingRef = useRef(isGenerating)
   isGeneratingRef.current = isGenerating
 
@@ -522,6 +506,9 @@ export function ChatProvider({ children }: { children: ReactNode }) {
   const handleSend = useCallback(async () => {
     const text = inputRef.current.trim()
     if (!text || isGeneratingRef.current) return
+    // Sending ends dictation, discarding words still in flight: otherwise they
+    // arrive after the box is cleared and refill it.
+    cancelDictation()
     // Voice mode: wake the AudioContext NOW, while this is still the click (or
     // Enter) that sent the message. The reply's audio lands seconds later, far
     // outside any user gesture; a context started here stays running, so the
@@ -765,7 +752,7 @@ export function ChatProvider({ children }: { children: ReactNode }) {
     // request. Without it the closure keeps whichever locale was active when the
     // callback was created, and the backend would keep serving the old
     // character voice and the old safety-warning language.
-  }, [webSearch, voiceReply, selectedVrmId, locale, transitionTo, endThinking, playMotionFile, ensureSessionId, avatarRef])
+  }, [webSearch, voiceReply, selectedVrmId, locale, transitionTo, endThinking, playMotionFile, ensureSessionId, avatarRef, cancelDictation])
 
   useEffect(() => {
     return () => {
@@ -806,13 +793,11 @@ export function ChatProvider({ children }: { children: ReactNode }) {
       isRecording,
       recordingDuration,
       recordingError,
-      previewAudioUrl,
+      dictationSupported,
       startRecord,
       stopRecord,
-      cancelRecord,
-      sendAudio,
     }),
-    [messages, input, isTyping, isGenerating, stageLabel, ui, webSearch, voiceReply, isRestoring, isSwitching, startNewSession, handleSend, handleStop, imageUrls, addImage, removeImage, sessionList, sessionsDirty, activeSessionId, refreshSessions, switchToSession, deleteSessionAction, markSessionsClean, isRecording, recordingDuration, recordingError, previewAudioUrl, startRecord, stopRecord, cancelRecord, sendAudio],
+    [messages, input, isTyping, isGenerating, stageLabel, ui, webSearch, voiceReply, isRestoring, isSwitching, startNewSession, handleSend, handleStop, imageUrls, addImage, removeImage, sessionList, sessionsDirty, activeSessionId, refreshSessions, switchToSession, deleteSessionAction, markSessionsClean, isRecording, recordingDuration, recordingError, dictationSupported, startRecord, stopRecord],
   )
 
   return <ChatContext.Provider value={value}>{children}</ChatContext.Provider>

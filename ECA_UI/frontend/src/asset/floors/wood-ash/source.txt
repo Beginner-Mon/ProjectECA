@@ -1,0 +1,6 @@
+Wood Floor Ash (Poliigon_WoodFloorAsh_4186), 1K
+Source: Poliigon (poliigon.com). Check the licence terms of your Poliigon account
+before shipping; Poliigon assets are not CC0.
+Maps: color.jpg = BaseColor (sRGB), normal.png = Normal (OpenGL, per the bundled
+.mtlx), roughness.jpg = Roughness, ao.jpg = AmbientOcclusion (all linear).
+Metallic map omitted: all black (mean 2/255), wood is non-metal.

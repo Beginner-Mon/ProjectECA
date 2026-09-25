@@ -9,9 +9,18 @@
 import * as THREE from 'three'
 
 export const ENV_CONFIG = {
+  // ── Character ─────────────────────────────────────────────────────────
+  character: {
+    /** Where the model group is authored, Z-up world. "Reset position" returns
+     *  the character here, and the floor disc is centred under it. */
+    home: [0, 1.5, 0] as [number, number, number],
+  },
+
   // ── Debug ─────────────────────────────────────────────────────────────
   debug: {
-    showGrid: true,
+    // Off by default, like showAxes: a debug overlay that users saw as lines
+    // drawn on the floor. The Graphics settings toggle still turns it on.
+    showGrid: false,
     // Off by default: the axis labels are DOM overlays and were shipping to
     // production users, who then had to find the Graphics toggle to hide them.
     // The setting persists per browser, so a developer turns it on once.
@@ -78,6 +87,28 @@ export const ENV_CONFIG = {
     planeSize: 200,
     shadowMaterialOpacity: 0.35,
     // No contact shadow: removed 25/09, see SceneLighting.tsx header.
+
+    /** Visible textured floor (components/scene/GroundFloor.tsx). */
+    floor: {
+      /** Folder under src/asset/floors/. null = no visible floor: back to the
+       *  invisible shadow-catching plane above. */
+      id: 'wood-ash' as string | null,
+      /** Metres covered by one repeat of the texture. Poliigon wood sets are
+       *  authored at roughly 2 m square. */
+      metresPerTile: 2,
+      /** Disc radius, metres. Motions carry the character away from home, so
+       *  this is generous; the edge fades out. */
+      radius: 12,
+      /** Fraction of the radius that stays fully opaque before the fade. */
+      fadeStart: 0.45,
+      /** Multiplies the colour map. The scene has no tone mapping and a 2.0
+       *  directional light, so pure white would glare. Lower = darker floor. */
+      tint: '#c8c8c8',
+      normalStrength: 1,
+      aoIntensity: 1,
+      /** Floor centre, world XY: under the character's home. */
+      center: [0, 1.5] as [number, number],
+    },
   },
 
   // ── Environment / Background ──────────────────────────────────────────
@@ -93,6 +124,62 @@ export const ENV_CONFIG = {
       intensity: 0.3,                         // low for MToon — avoids over-reflection
     },
     iblResolution: 64,                        // low to avoid GPU memory issues (D3D11)
+    /** Backdrop image (components/scene/SceneBackdrop.tsx). Same in every UI
+     *  theme; takes priority over the gradient/HDRI above and hides the stars. */
+    background: {
+      /** Folder under src/asset/backgrounds/. null = the gradient/HDRI. */
+      id: 'house' as string | null,
+      /** 'dome' = procedural stage sphere around the character (StageDome),
+       *  no image, `id` unused. 'flat' = ordinary picture, fixed, cover-fit.
+       *  'panorama' = 2:1 equirectangular 360°, turns with the camera. */
+      kind: 'dome' as 'dome' | 'flat' | 'panorama',
+      /** Stage dome (kind 'dome'). Colours are sRGB hex. */
+      dome: {
+        /** Metres. Larger than the camera's max orbit (20) so it never leaves. */
+        radius: 30,
+        /** Height of the dome centre = where the horizon glow sits. 0 = floor
+         *  level, so the band glows behind the character's legs. */
+        horizonZ: 0,
+        zenith: '#101233',
+        /** Colour where sky meets floor. Keep it near zenith/floor for a smooth
+         *  night sky; a bright colour (e.g. '#9c94e0') makes a glowing stripe
+         *  across the middle of the screen — removed at the Owner's request. */
+        horizon: '#221f52',
+        floor: '#16133c',
+        /** Extra glow added along the horizon. 0 = none (no bright band). */
+        glowStrength: 0,
+        /** Glow band half-width around the horizon (0..1 of the dome height). */
+        glowWidth: 0.12,
+        /** How high above the horizon the sky reaches the zenith colour. */
+        skyFade: 0.35,
+        /** Nebula cloud strength, 0 = none. */
+        nebula: 0.35,
+        /** Fraction of star cells that hold a star, 0..1. */
+        starDensity: 0.12,
+        starBrightness: 1.6,
+      },
+      /** Brightness multiplier. Below 1 dims the backdrop so the avatar reads first. */
+      intensity: 1,
+      /** Panorama only (three cannot blur a flat backdrop). 0 = sharp. */
+      blurriness: 0,
+      /**
+       * Panorama only. Project the photo onto a real floor + dome around the
+       * character (three's GroundedSkybox) instead of drawing it at infinity.
+       * At infinity a panorama has no size: its scale is set by the camera's
+       * 45° lens alone, so the room looked magnified around a 1.6 m avatar.
+       * Grounded, the room gets real-world scale and parallax. null = infinite.
+       */
+      ground: {
+        /** Height the photo was taken from, metres. Sets the room's scale:
+         *  too small = room looks huge, too large = room looks like a dollhouse. */
+        height: 1.6,
+        /** Dome radius, metres: roughly the room's reach. Past it, walls are
+         *  projected onto the dome; beyond it the infinite backdrop shows. */
+        radius: 10,
+        /** Turn the room around the character, degrees. */
+        yawDeg: 0,
+      } as { height: number; radius: number; yawDeg: number } | null,
+    },
     showStars: {
       dark: true,
       light: false,

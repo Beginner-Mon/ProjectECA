@@ -3,6 +3,7 @@ import { useTranslation } from 'react-i18next'
 import { ArrowUp, Mic, Square, Plus, Globe, Image, X, Volume2 } from 'lucide-react'
 import TextareaAutosize from 'react-textarea-autosize'
 import { useChat } from '../hooks/useChat'
+import { dictationErrorKey } from '../lib/dictation'
 
 /**
  * ChatInputBar — the message composer (textarea + attachments + mic + send).
@@ -30,14 +31,14 @@ export default function ChatInputBar() {
     isRecording,
     recordingDuration,
     recordingError,
-    previewAudioUrl,
+    dictationSupported,
     startRecord,
     stopRecord,
-    cancelRecord,
-    sendAudio,
   } = useChat()
 
   const { t } = useTranslation()
+  const recordingErrorKey = recordingError ? dictationErrorKey(recordingError) : null
+  const recordingErrorText = recordingErrorKey ? t(recordingErrorKey) : null
   const [showAddMenu, setShowAddMenu] = useState(false)
 
   const addMenuRef = useRef<HTMLDivElement>(null)
@@ -166,25 +167,22 @@ export default function ChatInputBar() {
           {isRecording && (
             <span className="text-xs text-destructive animate-pulse">● {String(Math.floor(recordingDuration / 60)).padStart(2, '0')}:{String(recordingDuration % 60).padStart(2, '0')}</span>
           )}
-          {recordingError && (
-            <span className="text-xs text-destructive truncate max-w-[120px]" title={recordingError}>{recordingError}</span>
-          )}
-          {previewAudioUrl && !isRecording && (
-            <div className="flex items-center gap-1">
-              <audio controls src={previewAudioUrl} className="h-8 w-32" />
-              <button onClick={sendAudio} className="px-2 py-1 text-xs bg-primary text-primary-foreground rounded-lg">{t('chat.audio_send')}</button>
-              <button onClick={cancelRecord} className="px-2 py-1 text-xs border rounded-lg">{t('chat.audio_discard')}</button>
-            </div>
+          {recordingErrorText && (
+            <span className="text-xs text-destructive truncate max-w-[160px]" title={recordingErrorText}>{recordingErrorText}</span>
           )}
 
           <div className="flex-1" />
 
           <div className="flex items-center gap-1">
             <button
-              title={isRecording ? t('chat.record_stop') : t('chat.record_start')}
-              onClick={() => (isRecording ? stopRecord() : void startRecord())}
-              className={`p-2 rounded-lg transition-colors ${isRecording ? 'bg-destructive text-destructive-foreground animate-pulse' : 'text-muted-foreground hover:text-foreground hover:bg-secondary/60'}`}
-              disabled={isGenerating}
+              title={
+                !dictationSupported
+                  ? t('chat.dictation_unsupported')
+                  : isRecording ? t('chat.record_stop') : t('chat.record_start')
+              }
+              onClick={() => (isRecording ? stopRecord() : startRecord())}
+              className={`p-2 rounded-lg transition-colors disabled:opacity-40 disabled:cursor-not-allowed ${isRecording ? 'bg-destructive text-destructive-foreground animate-pulse' : 'text-muted-foreground hover:text-foreground hover:bg-secondary/60'}`}
+              disabled={isGenerating || !dictationSupported}
             >
               <Mic className="w-5 h-5" />
             </button>

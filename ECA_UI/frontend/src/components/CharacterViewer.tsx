@@ -37,7 +37,7 @@ import { useGraphics } from '../hooks/useGraphics'
  * Where the model group is authored. The "Reset position" button returns the
  * character here; RootMotionAccumulator captures the same value as its base.
  */
-const MODEL_HOME: [number, number, number] = [0, 1.5, 0]
+const MODEL_HOME = ENV_CONFIG.character.home
 
 /** Keeps the debug axis labels under the chat/sidebar (see ThinkingBubble). */
 const AXIS_LABEL_Z: [number, number] = [100, 0]

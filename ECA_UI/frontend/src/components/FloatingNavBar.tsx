@@ -29,7 +29,6 @@ import {
 import { useTranslation } from 'react-i18next'
 import { useMediaQuery } from '../lib/use-media-query'
 import { useAvatarBg } from '../hooks/useAvatarBg'
-import { useMotion } from '../hooks/useMotion'
 import { PANEL_BG, PANEL_BORDER } from '../lib/utils'
 import ChatPanel from './ChatPanel'
 import ChatSessionsPanel from './panels/ChatSessionsPanel'
@@ -38,6 +37,7 @@ import SettingsPanel from './panels/SettingsPanel'
 import MotionControlPanel from './panels/MotionControlPanel'
 import ProfileSettingsModal from './ProfileSettingsModal'
 import MobileNavBar from './MobileNavBar'
+import MobileChatDock from './MobileChatDock'
 import AvatarWithLogo from './AvatarWithLogo'
 
 /* ─── Types ─── */
@@ -258,7 +258,6 @@ function DraggableBar({
 
 export default function FloatingNavBar() {
   const isMobile = useMediaQuery('(max-width: 767px)')
-  const { isMusicPlaying, toggleMusic } = useMotion()
   const translatedNavItems = useTranslatedNavItems()
 
   const [dockedEdge, setDockedEdge] = useState<DockedEdge>('left')
@@ -475,21 +474,23 @@ export default function FloatingNavBar() {
     }
   }
 
-  /* ─── Mobile: draggable hamburger + icon-only dropdown ─── */
+  /* ─── Mobile: bottom chat dock + right-edge rail + sheets ───
+   *
+   * The conversation lives in MobileChatDock (toggle ^ above the pinned
+   * composer, list expands inline to 40vh — not an overlay). The rail and
+   * overlay sheets here cover sessions/avatars/motion/settings only.
+   */
   if (isMobile) {
     return (
       <>
+        <MobileChatDock
+          chatOpen={activePanel === 'chat'}
+          onToggleChat={handleIconClick}
+        />
         <MobileNavBar
           activePanel={activePanel}
           onIconClick={handleIconClick}
-          onOpenModal={(type) => {
-            prevPanelRef.current = activePanel
-            setModalType(type)
-            setActivePanel(null)
-          }}
           navItems={translatedNavItems}
-          isMusicPlaying={isMusicPlaying}
-          toggleMusic={toggleMusic}
           panelContent={
             activePanel && activePanel !== 'chat' ? (
             <PanelContent

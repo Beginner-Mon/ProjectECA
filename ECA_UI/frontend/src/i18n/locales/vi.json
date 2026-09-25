@@ -33,8 +33,10 @@
     "menu_search_online": "Tìm trên web",
     "menu_voice_reply": "Trả lời bằng giọng nói",
     "new_conversation": "Cuộc trò chuyện mới",
+    "hide_conversation": "Ẩn hội thoại",
     "record_start": "Ghi âm",
     "record_stop": "Dừng ghi",
+    "show_conversation": "Hiện hội thoại",
     "status_online": "Trực tuyến · Sẵn sàng trò chuyện",
     "status_restoring": "Đang tải hội thoại trước...",
     "title": "Trợ lý ảo"

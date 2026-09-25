@@ -3,14 +3,12 @@ import { useTranslation } from 'react-i18next'
 import { Music2 } from 'lucide-react'
 import EcaLogo from '../components/EcaLogo'
 import FloatingNavBar from '../components/FloatingNavBar'
-import ChatPanel from '../components/ChatPanel'
 import { MotionProvider } from '../contexts/MotionContext'
 import { useMotion } from '../hooks/useMotion'
 import { ChatProvider } from '../contexts/ChatContext'
 import { GraphicsProvider } from '../contexts/GraphicsContext'
 import { AvatarBgProvider } from '../contexts/AvatarBgContext'
 import { PreferencesProvider } from '../contexts/PreferencesContext'
-import { PANEL_BG, PANEL_BORDER } from '../lib/utils'
 
 function AudioToggle() {
   const { t } = useTranslation()
@@ -47,7 +45,10 @@ export default function MainLayout() {
             <EcaLogo className="w-14 h-14 text-foreground" />
             <h1 className="text-2xl font-semibold tracking-[0.18em] text-foreground">ECA</h1>
           </Link>
-          <AudioToggle />
+          {/* Desktop only — mobile rail has no music toggle (removed by design). */}
+          <span className="hidden md:flex items-center">
+            <AudioToggle />
+          </span>
         </div>
 
         {/* Full-screen content */}
@@ -55,10 +56,9 @@ export default function MainLayout() {
           <Outlet />
         </div>
 
-        {/* Mobile chat — fixed at bottom — reuse desktop panel style, không duplicate literal */}
-        <div className={`block md:hidden fixed bottom-0 inset-x-0 z-40 h-[40vh] max-h-[40vh] rounded-t-2xl border-t ${PANEL_BORDER} shadow-[0_-8px_40px_rgba(0,0,0,0.4)] overflow-hidden ${PANEL_BG}`}>
-          <ChatPanel />
-        </div>
+        {/* Mobile bottom cluster (toggle ^ + expandable messages + pinned
+            composer) lives in MobileChatDock, rendered by FloatingNavBar's
+            mobile branch — not here. */}
 
         {/* Floating navigation overlay */}
         <FloatingNavBar />

@@ -810,7 +810,6 @@ return (
           const hasPanned = targetDelta > MANUAL_THRESHOLD_PAN
           const hasZoomed = distDelta > MANUAL_THRESHOLD_ZOOM
           const shouldManual = hasPanned || hasZoomed
-          console.log('[manual-check]', { target: targetDelta.toFixed(3), dist: distDelta.toFixed(3), hasPanned, hasZoomed, shouldManual, from: cameraMode })
           if (shouldManual) {
             notifyManualInteraction()
           }

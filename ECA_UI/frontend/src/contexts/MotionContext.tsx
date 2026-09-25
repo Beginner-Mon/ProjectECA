@@ -336,13 +336,11 @@ export function MotionProvider({ children }: { children: ReactNode }) {
   const resetCharacterPosition = useCallback(() => {
     const reset = positionResetRef.current
     if (!canResetPosition || !reset) return false
+    // The camera makes the same jump inside `reset` (CharacterViewer's
+    // onTeleport), so the user's view is kept, not replaced.
     reset()
-    // Back to the default framing. A no-op in `head`; from a manual or wide
-    // camera it eases over to where the character now stands, instead of
-    // leaving the view pointed at an empty spot.
-    cameraController.setMode('head')
     return true
-  }, [canResetPosition, cameraController])
+  }, [canResetPosition])
 
   // Dev-only test handle. Lives here (always mounted) rather than in the debug
   // panel, so automated checks don't depend on a panel being open.

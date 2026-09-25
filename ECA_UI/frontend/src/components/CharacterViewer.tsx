@@ -162,10 +162,21 @@ interface VRMCharacterProps {
   onReady: (ready: boolean) => void
   vrmRef: React.MutableRefObject<VRM | null>
   avatarRef: React.MutableRefObject<AvatarController | null>
+  /**
+   * Called after "Reset position" moves the character, with the world-space
+   * jump, so the camera can make the same jump. Needed because camera follow
+   * is off by design (CameraConfig.followTarget): without it the character
+   * would leave the frame.
+   */
+  onTeleport?: (delta: THREE.Vector3) => void
 }
 
-function VRMCharacter({ vrmUrl, modelId, onReady, vrmRef, avatarRef }: VRMCharacterProps) {
+function VRMCharacter({ vrmUrl, modelId, onReady, vrmRef, avatarRef, onTeleport }: VRMCharacterProps) {
   const { attachControllers, setClipInfo, prefetchGestures, registerPositionReset } = useMotion()
+  const onTeleportRef = useRef(onTeleport)
+  useEffect(() => {
+    onTeleportRef.current = onTeleport
+  }, [onTeleport])
 
   const gltf = useLoader(GLTFLoader, vrmUrl, (loader) => {
     loader.register((parser) => new VRMLoaderPlugin(parser))
@@ -235,6 +246,9 @@ function VRMCharacter({ vrmUrl, modelId, onReady, vrmRef, avatarRef }: VRMCharac
   useEffect(() => registerPositionReset(() => {
     const group = modelGroupRef.current
     if (!group) return
+    // The group sits directly under the scene root, so its position delta IS
+    // the world-space jump the camera has to match.
+    const before = group.position.clone()
     animControllerRef.current?.resetRootMotion()
     rootMotionRef.current?.reset()
     group.position.x = MODEL_HOME[0]
@@ -244,6 +258,7 @@ function VRMCharacter({ vrmUrl, modelId, onReady, vrmRef, avatarRef }: VRMCharac
     // reads each joint's parent world matrix, so refresh the subtree first.
     group.updateMatrixWorld(true)
     vrm.springBoneManager?.reset()
+    onTeleportRef.current?.(group.position.clone().sub(before))
   }), [vrm, registerPositionReset])
   // Per-instance state — key={vrmUrl} remounts resets these on model switch.
   // `posed`: the first animation pose has reached the bones.
@@ -637,6 +652,24 @@ function Scene({ theme, vrmUrl, modelId, onReady, avatarRef }: SceneProps) {
   const lockPrevPosRef = useRef(new THREE.Vector3())
   const lockInitializedRef = useRef(false)
 
+  // "Reset position" jumped the character by `delta`: make the same jump with
+  // the camera, so whatever view the user had (default or dragged) is kept.
+  // Also shifts an in-flight transition's start and the Lock X/Y/Z baselines,
+  // or those would pull the camera back toward the old spot.
+  const handleTeleport = (delta: THREE.Vector3) => {
+    camera.position.add(delta)
+    const controls = controlsRef.current
+    if (controls) (controls.target as THREE.Vector3).add(delta)
+    const t = cameraTransitionRef.current
+    if (t) {
+      t.startPos.add(delta)
+      t.startTarget.add(delta)
+    }
+    lockPrevTargetRef.current.add(delta)
+    lockPrevPosRef.current.add(delta)
+    controls?.update()
+  }
+
   // Every frame: make the camera orbit target follow the selected bone.
   // We also shift the camera position by the same delta so the orbital
   // offset (angle + distance) is preserved while the rig moves.
@@ -845,6 +878,7 @@ return (
         modelId={modelId}
         onReady={onReady}
         avatarRef={avatarRef}
+        onTeleport={handleTeleport}
       />
       <ThinkingBubble vrmRef={vrmRef} />
       <FloatingParticles />
@@ -905,7 +939,6 @@ return (
           const hasPanned = targetDelta > MANUAL_THRESHOLD_PAN
           const hasZoomed = distDelta > MANUAL_THRESHOLD_ZOOM
           const shouldManual = hasPanned || hasZoomed
-          console.log('[manual-check]', { target: targetDelta.toFixed(3), dist: distDelta.toFixed(3), hasPanned, hasZoomed, shouldManual, from: cameraMode })
           if (shouldManual) {
             notifyManualInteraction()
           }

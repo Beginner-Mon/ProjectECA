@@ -1,4 +1,4 @@
-import { Activity, Sliders, Camera, Smile, Lock, RotateCcw } from 'lucide-react'
+import { Activity, Sliders, Smile, Lock, RotateCcw } from 'lucide-react'
 import { useEffect, useState, useMemo } from 'react'
 import { useTranslation } from 'react-i18next'
 import { ScrollArea } from '../ui/scroll-area'
@@ -6,9 +6,7 @@ import { useMotion } from '../../hooks/useMotion'
 import type { CameraMode, CharState } from '../../lib/AnimationStates'
 import { CANONICAL_EMOTIONS, type CanonicalEmotion } from '../../avatar/AvatarProfile'
 import { getManifest } from '../../avatar/vrmManifest'
-import { DEFAULT_CAMERA_CONFIG } from '../../lib/CameraConfig'
 import { fetchMotionStatus } from '../../lib/api'
-import { isInertialDebug, setInertialDebug } from '../../lib/Inertializer'
 
 const PRESET_TO_CANONICAL: Record<string, CanonicalEmotion> = {
   neutral: 'neutral',
@@ -34,8 +32,6 @@ export default function MotionControlPanel() {
     vrmOptions,
     cameraConfig,
     setCameraConfig,
-    blendMode,
-    setBlendMode,
     resetCharacterPosition,
     canResetPosition,
   } = useMotion()
@@ -68,8 +64,6 @@ export default function MotionControlPanel() {
   const [emotionDurationMs, setEmotionDurationMs] = useState(500)
   const [lastEmotion, setLastEmotion] = useState<string>('—')
   const [avatarMode, setAvatarMode] = useState<string>('—')
-  // Mirrors the Inertializer's module-level debug flag so the button reflects it.
-  const [blendLog, setBlendLog] = useState(isInertialDebug)
 
   // Filter motion files so Character state actions don't leak into the debug picker.
   // The picker used to list bundled sample .bvh files under asset/motions/
@@ -112,78 +106,47 @@ export default function MotionControlPanel() {
 
       <ScrollArea className="flex-1 min-h-0 p-4">
         <div className="flex flex-col gap-4">
+          {/* Camera config trimmed by design: pan is always on
+              (DEFAULT_CAMERA_CONFIG.enablePan) and follow is always off so
+              pan actually works. Target select + per-axis locks remain. */}
           <div className="flex flex-col gap-1.5 p-3 rounded-xl bg-secondary/20 border border-border/10">
-            <div className="flex items-center justify-between">
-              <span className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground flex items-center gap-1.5">
-                <Camera className="w-3 h-3" />
-                {t('motion.camera_config')}
-              </span>
-              <button
-                onClick={() => setCameraConfig(DEFAULT_CAMERA_CONFIG)}
-                className="text-[9px] text-muted-foreground hover:text-foreground transition-colors cursor-pointer"
-              >
-                {t('motion.reset')}
-              </button>
-            </div>
-            
-            <label className="flex items-center justify-between text-[11px] text-foreground mt-1 cursor-pointer">
-              <span>{t('motion.follow_target')}</span>
-              <input
-                type="checkbox"
-                checked={cameraConfig.followTarget}
-                onChange={(e) => setCameraConfig({ ...cameraConfig, followTarget: e.target.checked })}
-                className="accent-primary"
-              />
-            </label>
-            
-            <label className="flex items-center justify-between text-[11px] text-foreground cursor-pointer">
-              <span>{t('motion.enable_pan')}</span>
-              <input
-                type="checkbox"
-                checked={cameraConfig.enablePan}
-                onChange={(e) => setCameraConfig({ ...cameraConfig, enablePan: e.target.checked })}
-                className="accent-primary"
-              />
-            </label>
-
-            <div className="flex flex-col gap-1.5 mt-2">
-              <span className="text-[10px] text-muted-foreground flex items-center gap-1">
-                <Lock className="w-3 h-3" />
-                {t('motion.lock_axes')}
-              </span>
-              <div className="flex gap-1.5">
-                {(['X', 'Y', 'Z'] as const).map((axis) => {
-                  const key = `lock${axis}` as const
-                  const locked = cameraConfig[key]
-                  return (
-                    <button
-                      key={axis}
-                      onClick={() => setCameraConfig({ ...cameraConfig, [key]: !locked })}
-                      className={`flex-1 py-1.5 text-[11px] font-medium rounded-md border transition-colors cursor-pointer flex items-center justify-center gap-1 ${
-                        locked
-                          ? 'bg-primary text-primary-foreground border-primary shadow-sm'
-                          : 'bg-secondary/40 text-muted-foreground border-border/20 hover:bg-secondary/60 hover:text-foreground'
-                      }`}
-                      title={locked ? t('motion.lock_axis', { axis }) : t('motion.unlock_axis', { axis })}
-                    >
-                      <Lock className="w-3 h-3" />
-                      {axis}
-                    </button>
-                  )
-                })}
-              </div>
-            </div>
-
             <select
               value={cameraMode}
               onChange={(e) => setCameraMode(e.target.value as CameraMode)}
-              className="w-full bg-transparent text-xs text-foreground font-medium border-none outline-none cursor-pointer mt-1.5 pt-1.5 border-t border-border/10"
+              className="w-full bg-transparent text-xs text-foreground font-medium border-none outline-none cursor-pointer"
             >
               <option value="head" className="bg-card text-foreground">{t('motion.target_head')}</option>
               <option value="hips" className="bg-card text-foreground">{t('motion.target_hips')}</option>
               {cameraMode === 'manual' && <option value="manual" disabled className="bg-card text-muted-foreground">Manual (free)</option>}
               {cameraMode === 'face' && <option value="face" disabled className="bg-card text-muted-foreground">Face (locked by gesture)</option>}
             </select>
+            <div className="flex flex-col gap-1.5 mt-1.5 pt-1.5 border-t border-border/10">
+            <span className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground flex items-center gap-1.5">
+              <Lock className="w-3 h-3" />
+              {t('motion.lock_axes')}
+            </span>
+            <div className="flex gap-1.5">
+              {(['X', 'Y', 'Z'] as const).map((axis) => {
+                const key = `lock${axis}` as const
+                const locked = cameraConfig[key]
+                return (
+                  <button
+                    key={axis}
+                    onClick={() => setCameraConfig({ ...cameraConfig, [key]: !locked })}
+                    className={`flex-1 py-1.5 text-[11px] font-medium rounded-md border transition-colors cursor-pointer flex items-center justify-center gap-1 ${
+                      locked
+                        ? 'bg-primary text-primary-foreground border-primary shadow-sm'
+                        : 'bg-secondary/40 text-muted-foreground border-border/20 hover:bg-secondary/60 hover:text-foreground'
+                    }`}
+                    title={locked ? t('motion.lock_axis', { axis }) : t('motion.unlock_axis', { axis })}
+                  >
+                    <Lock className="w-3 h-3" />
+                    {axis}
+                  </button>
+                )
+              })}
+            </div>
+            </div>
           </div>
 
           {/* (1) FSM state selector — dev-only. Contents derived from STATES debugLabel. */}
@@ -211,50 +174,6 @@ export default function MotionControlPanel() {
                   </option>
                 ))}
               </select>
-            </div>
-          )}
-
-          {/* (1b) Blend mode toggle — A/B compare inertial vs crossfade */}
-          {import.meta.env.DEV && (
-            <div className="flex flex-col gap-1.5 p-3 rounded-xl bg-secondary/20 border border-border/10">
-              <span className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground flex items-center gap-1.5">
-                <Activity className="w-3 h-3" />
-                Blend
-              </span>
-              <div className="flex gap-1">
-                {(['inertial', 'crossfade'] as const).map((mode) => (
-                  <button
-                    key={mode}
-                    onClick={() => setBlendMode(mode)}
-                    className={`flex-1 py-1.5 text-[11px] font-medium rounded-md border transition-colors cursor-pointer capitalize ${
-                      blendMode === mode
-                        ? 'bg-primary text-primary-foreground border-primary shadow-sm'
-                        : 'bg-secondary/40 text-muted-foreground border-border/20 hover:bg-secondary/60 hover:text-foreground'
-                    }`}
-                  >
-                    {mode}
-                  </button>
-                ))}
-              </div>
-              <span className="text-[10px] text-muted-foreground/60">
-                {blendMode === 'inertial' ? 'C1 quintic — single clip' : 'Legacy fadeOut/fadeIn'}
-              </span>
-              {blendMode === 'inertial' && (
-                <button
-                  onClick={() => {
-                    const next = !isInertialDebug()
-                    setInertialDebug(next)
-                    setBlendLog(next)
-                  }}
-                  className={`py-1.5 text-[11px] font-medium rounded-md border transition-colors cursor-pointer ${
-                    blendLog
-                      ? 'bg-primary text-primary-foreground border-primary shadow-sm'
-                      : 'bg-secondary/40 text-muted-foreground border-border/20 hover:bg-secondary/60 hover:text-foreground'
-                  }`}
-                >
-                  {blendLog ? 'Logging θ / duration' : 'Log θ / duration'}
-                </button>
-              )}
             </div>
           )}
 

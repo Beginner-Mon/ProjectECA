@@ -85,8 +85,8 @@ export default function ChatMessage({ message, isStreaming }: ChatMessageProps) 
 
     const cleaned = message.content.replace(/<\/?evidence_citation>/g, '')
     return (
-      <div className="px-3 md:px-5 py-1 md:py-3 animate-message-in w-full max-w-full">
-        <div className="prose dark:prose-invert prose-p:leading-relaxed prose-strong:text-foreground prose-headings:text-foreground prose-pre:bg-secondary/50 prose-pre:border prose-pre:border-border/40 max-w-none text-[clamp(0.75rem,0.68rem+0.3vw,0.875rem)] text-foreground/90">
+      <div className="px-3 md:px-5 py-2 md:py-3 animate-message-in w-full max-w-full">
+        <div className="prose dark:prose-invert prose-p:leading-relaxed prose-strong:text-foreground prose-headings:text-foreground prose-pre:bg-secondary/50 prose-pre:border prose-pre:border-border/40 max-w-none text-sm text-foreground/90">
           <ReactMarkdown remarkPlugins={[remarkGfm]}>{cleaned}</ReactMarkdown>
         </div>
         {message.motionNotice && (
@@ -107,10 +107,10 @@ export default function ChatMessage({ message, isStreaming }: ChatMessageProps) 
   }
 
   return (
-    <div className="group flex px-2 md:px-4 py-0.5 md:py-1 animate-message-in flex-row-reverse w-full max-w-full">
+    <div className="group flex px-2 md:px-4 py-1 animate-message-in flex-row-reverse w-full max-w-full">
       <div className="w-fit max-w-[80%]">
         {(message.content || !message.audioUrl) && (
-          <div className="min-w-0 rounded-2xl px-2.5 md:px-3 py-1 md:py-2 text-[clamp(0.75rem,0.68rem+0.3vw,0.875rem)] leading-relaxed bg-primary text-primary-foreground">
+          <div className="min-w-0 rounded-2xl px-3 py-2 text-sm leading-relaxed bg-primary text-primary-foreground">
             <p className="whitespace-pre-wrap break-words">{message.content}</p>
           </div>
         )}

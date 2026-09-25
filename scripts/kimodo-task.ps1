@@ -26,6 +26,7 @@
       San sang khi log co "model loaded, recovered ... abandoned job(s)".
     - Queue DynamoDB `vva-motion-jobs`: chi co row worker#heartbeat = worker song,
       chua co job nao. Enqueue that de test render 7s/job.
+    - 'logs' ep UTF-8 (AWS_CLI_OUTPUT_ENCODING) — khong co thi aws CLI chet vi ky tu tqdm tren console Windows.
 #>
 
 [CmdletBinding()]
@@ -122,8 +123,12 @@ switch ($Action) {
     'status' { Show-Status }
 
     'logs' {
-        Write-Host "Duoi log $LogGroup (cho 'model loaded' la san sang):" -ForegroundColor Cyan
-        aws logs tail $LogGroup --since 10m --region $Region 2>&1 | Select-Object -First 40
+        # tqdm progress bars in the container log crash AWS CLI v2 on a cp1252
+        # console ('charmap' codec can't encode '▎'); force UTF-8 both sides.
+        $env:AWS_CLI_OUTPUT_ENCODING = 'utf-8'
+        [Console]::OutputEncoding = [System.Text.Encoding]::UTF8
+        Write-Host "Duoi log $LogGroup (cho 'model loaded' / 'job done' la san sang):" -ForegroundColor Cyan
+        aws logs tail $LogGroup --since 10m --region $Region 2>&1 | Select-Object -Last 40
     }
 
     'on' {

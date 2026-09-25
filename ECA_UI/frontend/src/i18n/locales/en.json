@@ -33,8 +33,10 @@
     "menu_search_online": "Search online",
     "menu_voice_reply": "Voice reply",
     "new_conversation": "New conversation",
+    "hide_conversation": "Hide conversation",
     "record_start": "Record",
     "record_stop": "Stop recording",
+    "show_conversation": "Show conversation",
     "status_online": "Online · Ready to chat",
     "status_restoring": "Loading your previous conversation...",
     "title": "Virtual Assistant"

@@ -139,8 +139,9 @@ export interface MotionContextType {
   /**
    * Move the character back to where it started, undoing the travel that
    * motions leave behind (intended: the character stays where a motion ends).
-   * A cut, not a walk. Refused (returns false) during `exercise` and
-   * `gesture`, when a clip is still producing travel or owns the camera.
+   * A cut, not a walk; the camera jumps by the same amount so the view is
+   * kept. Refused (returns false) during `exercise` and `gesture`, when a clip
+   * is still producing travel or owns the camera.
    */
   resetCharacterPosition: () => boolean
   /** False while `resetCharacterPosition` would be refused. */

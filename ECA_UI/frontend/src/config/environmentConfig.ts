@@ -71,20 +71,13 @@ export const ENV_CONFIG = {
     fitGroundZ: 0,
   },
 
-  // ── Ground & Contact Shadow ───────────────────────────────────────────
+  // ── Ground ────────────────────────────────────────────────────────────
   ground: {
     y: -1.5,                                  // matches model group position.y
     // Real shadow-catching ground plane
     planeSize: 200,
     shadowMaterialOpacity: 0.35,
-    // drei ContactShadows (screen-space, for extra softness at feet)
-    contactShadow: {
-      opacity: 0.8, // Soft puddle under feet
-      blur: 2.0,
-      scale: 5,
-      far: 3,
-      color: '#1a1020',
-    },
+    // No contact shadow: removed 25/09, see SceneLighting.tsx header.
   },
 
   // ── Environment / Background ──────────────────────────────────────────

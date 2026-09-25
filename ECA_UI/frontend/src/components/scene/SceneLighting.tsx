@@ -7,14 +7,19 @@
  * The directional light also carries the shadow configuration: PCFSoft shadow
  * map, tight frustum, tuned bias values.
  *
- * Includes the ground plane (invisible shadow receiver) and contact shadows.
+ * Includes the ground plane (invisible shadow receiver). That plane is the ONLY
+ * floor shadow: drei's <ContactShadows> was removed on 25/09. It was mounted
+ * under a -PI/2 wrapper, which pointed both its plane and its capture camera
+ * DOWN, so it never rendered from above and showed as a black square when the
+ * camera went under the floor, while still costing a full extra scene render
+ * plus two blur passes every frame. If a soft contact shadow is wanted again,
+ * the wrapper must be +PI/2 (drei is Y-up, this scene is Z-up), and it needs
+ * visual tuning, since nobody has ever seen it rendered.
  */
 
 import { useRef, useEffect } from 'react'
 import * as THREE from 'three'
 import { useFrame } from '@react-three/fiber'
-import { ContactShadows } from '@react-three/drei'
-import { VRMHumanBoneName } from '@pixiv/three-vrm'
 import type { VRM } from '@pixiv/three-vrm'
 import { ENV_CONFIG } from '../../config/environmentConfig'
 import { DEFAULT_SHADOW_FIT, ShadowCameraFitter } from '../../lib/shadowFit'
@@ -26,8 +31,6 @@ interface SceneLightingProps {
 export default function SceneLighting({ vrm }: SceneLightingProps) {
   const lightRef = useRef<THREE.DirectionalLight>(null!)
   const fitterRef = useRef<ShadowCameraFitter | null>(null)
-  const contactShadowGroupRef = useRef<THREE.Group>(null)
-  const scratchRef = useRef(new THREE.Vector3())
 
   const {
     lighting: { main, ambient },
@@ -61,21 +64,6 @@ export default function SceneLighting({ vrm }: SceneLightingProps) {
   // Track the subject. Throttled internally — this is not per-frame work.
   useFrame((_state, delta) => {
     fitterRef.current?.update(vrm, delta * 1000)
-
-    // Make the contact shadow follow the character's root position horizontally
-    if (vrm && contactShadowGroupRef.current) {
-      const hips = vrm.humanoid?.getNormalizedBoneNode(VRMHumanBoneName.Hips)
-      if (hips) {
-        hips.getWorldPosition(scratchRef.current)
-        // Group rotation is [-PI/2, 0, 0] (X-up rotated to Z-up).
-        // The ContactShadows component inside it operates in its own local space
-        // where its X matches world X, and its Y matches world Y (due to rotation).
-        // However, setting the position on the GROUP itself means we use world
-        // coordinates. X and Y in Z-up world.
-        contactShadowGroupRef.current.position.x = scratchRef.current.x
-        contactShadowGroupRef.current.position.y = scratchRef.current.y
-      }
-    }
   })
 
   // DEV handle for the shadow-frustum probe: compare the fitted frustum against
@@ -154,18 +142,6 @@ export default function SceneLighting({ vrm }: SceneLightingProps) {
           opacity={ground.shadowMaterialOpacity}
         />
       </mesh>
-
-      {/* ── Contact Shadow: soft puddle under feet (XY plane) ──────── */}
-      <group ref={contactShadowGroupRef} rotation={[-Math.PI / 2, 0, 0]}>
-        <ContactShadows
-          position={[0, 0, 0]}
-          opacity={ground.contactShadow.opacity}
-          scale={ground.contactShadow.scale}
-          blur={ground.contactShadow.blur}
-          far={ground.contactShadow.far}
-          color={ground.contactShadow.color}
-        />
-      </group>
     </>
   )
 }

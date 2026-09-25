@@ -111,6 +111,21 @@ export class RootMotionAccumulator {
     }
   }
 
+  /**
+   * Put the group back at its authored XY and forget all accumulated travel,
+   * including a ramp still in flight. The "Reset position" button. Z is left
+   * alone: GroundClamp owns it.
+   */
+  reset(): void {
+    this.offset.set(0, 0, 0)
+    this.pendingOffset.set(0, 0, 0)
+    this.blending = false
+    this.blendElapsed = 0
+    this.startHipsWorld = null
+    this.target.position.x = this.basePosition.x
+    this.target.position.y = this.basePosition.y
+  }
+
   /** Cancel tracking without accumulating (e.g. animation was interrupted). */
   cancelOneShot(): void {
     this.startHipsWorld = null

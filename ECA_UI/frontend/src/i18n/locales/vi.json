@@ -58,6 +58,8 @@
     "replay_hint": "Chọn để xem lại —",
     "replay_motion": "Xem lại động tác",
     "reset": "Đặt lại",
+    "reset_position": "Về vị trí ban đầu",
+    "reset_position_busy": "Dùng được khi động tác hiện tại kết thúc",
     "subtitle": "Nguồn animation & phát lại",
     "target_head": "Mục tiêu: Đầu",
     "target_hips": "Mục tiêu: Hông",

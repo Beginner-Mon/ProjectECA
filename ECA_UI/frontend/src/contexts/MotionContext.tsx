@@ -321,6 +321,29 @@ export function MotionProvider({ children }: { children: ReactNode }) {
 
   const handleReset = useCallback(() => animController?.restart(), [animController])
 
+  // The model group, its root-motion accumulator and the spring bones all live
+  // in CharacterViewer, which registers the actual reset here.
+  const positionResetRef = useRef<(() => void) | null>(null)
+  const registerPositionReset = useCallback((reset: () => void) => {
+    positionResetRef.current = reset
+    return () => {
+      if (positionResetRef.current === reset) positionResetRef.current = null
+    }
+  }, [])
+  // exercise: the clip is still producing travel, and the hand-off at its end
+  // would re-apply it. gesture: the camera lock owns the view.
+  const canResetPosition = currentState !== 'exercise' && currentState !== 'gesture'
+  const resetCharacterPosition = useCallback(() => {
+    const reset = positionResetRef.current
+    if (!canResetPosition || !reset) return false
+    reset()
+    // Back to the default framing. A no-op in `head`; from a manual or wide
+    // camera it eases over to where the character now stands, instead of
+    // leaving the view pointed at an empty spot.
+    cameraController.setMode('head')
+    return true
+  }, [canResetPosition, cameraController])
+
   // Dev-only test handle. Lives here (always mounted) rather than in the debug
   // panel, so automated checks don't depend on a panel being open.
   const stateHistoryRef = useRef<CharState[]>([])
@@ -505,6 +528,9 @@ export function MotionProvider({ children }: { children: ReactNode }) {
       blendMode,
       setBlendMode,
       handleReset,
+      resetCharacterPosition,
+      canResetPosition,
+      registerPositionReset,
       clipInfo,
       setClipInfo,
       avatarRef,
@@ -542,6 +568,9 @@ export function MotionProvider({ children }: { children: ReactNode }) {
       sessionMotions,
       registerSessionMotion,
       handleReset,
+      resetCharacterPosition,
+      canResetPosition,
+      registerPositionReset,
       clipInfo,
       isMusicPlaying,
       toggleMusic,

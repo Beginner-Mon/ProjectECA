@@ -663,6 +663,25 @@ export class PoseInertializer {
     }
   }
 
+  /**
+   * Forget all root travel handed to the group: the "Reset position" button.
+   * The caller moves the group home; the next `begin()` re-derives `groupBase`
+   * from wherever the group then is.
+   *
+   * A hand-off still in flight also cancels the pose blend. Otherwise the hips
+   * would keep decaying from their displaced local offset with nothing
+   * compensating on the group, and the character would visibly slide the rest
+   * of the way to its reset spot. Reset is a cut, so the pose cuts with it.
+   */
+  resetGroup(): void {
+    if (this.groupActive) this.cancel()
+    this.groupAccum.set(0, 0, 0)
+    this.groupPending.set(0, 0, 0)
+    this.groupActive = false
+    this.groupCoeffs = null
+    this.groupX0 = 0
+  }
+
   cancel(): void {
     this.active = false
     this.offsets = []

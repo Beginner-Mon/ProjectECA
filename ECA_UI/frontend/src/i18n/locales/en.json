@@ -57,6 +57,8 @@
     "replay_hint": "Pick one to replay —",
     "replay_motion": "Replay motion",
     "reset": "Reset",
+    "reset_position": "Reset position",
+    "reset_position_busy": "Available once the current movement finishes",
     "subtitle": "Animation source & playback",
     "target_head": "Target: Head",
     "target_hips": "Target: Hips",

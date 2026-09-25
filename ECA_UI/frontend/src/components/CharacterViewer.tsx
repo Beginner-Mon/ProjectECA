@@ -33,6 +33,12 @@ import ThinkingBubble from './scene/ThinkingBubble'
 import { GraphicsProvider } from '../contexts/GraphicsContext'
 import { useGraphics } from '../hooks/useGraphics'
 
+/**
+ * Where the model group is authored. The "Reset position" button returns the
+ * character here; RootMotionAccumulator captures the same value as its base.
+ */
+const MODEL_HOME: [number, number, number] = [0, 1.5, 0]
+
 /** Keeps the debug axis labels under the chat/sidebar (see ThinkingBubble). */
 const AXIS_LABEL_Z: [number, number] = [100, 0]
 
@@ -88,6 +94,16 @@ const FACE_LOCK_MIN_DISTANCE = 0.15
  * independent.
  */
 const TRACK_DAMPING = 8
+
+/**
+ * Seconds to ease the camera back out of the `face` lock. Slower than the
+ * 0.6 s mode switch on purpose: the kiss ends on a close-up, and a quick pull
+ * back to 1 m reads as a cut rather than a camera move.
+ */
+const FACE_RELEASE_SEC = 1.2
+
+/** Smooth start AND smooth stop — a release that only eases out starts with a jolt. */
+const easeInOutCubic = (p: number) => (p < 0.5 ? 4 * p * p * p : 1 - Math.pow(-2 * p + 2, 3) / 2)
 
 /** Responsive presets per camera mode. wideFraming = current desktop-tuned offsets;
  *  narrowFraming = mobile-portrait offsets (increase Y to push back, Z stays at eye level).
@@ -149,7 +165,7 @@ interface VRMCharacterProps {
 }
 
 function VRMCharacter({ vrmUrl, modelId, onReady, vrmRef, avatarRef }: VRMCharacterProps) {
-  const { attachControllers, setClipInfo, prefetchGestures } = useMotion()
+  const { attachControllers, setClipInfo, prefetchGestures, registerPositionReset } = useMotion()
 
   const gltf = useLoader(GLTFLoader, vrmUrl, (loader) => {
     loader.register((parser) => new VRMLoaderPlugin(parser))
@@ -211,6 +227,24 @@ function VRMCharacter({ vrmUrl, modelId, onReady, vrmRef, avatarRef }: VRMCharac
   const rootMotionRef = useRef<RootMotionAccumulator | null>(null)
   const posedRef = useRef(false)
   const emotionTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+
+  // "Reset position": undo the travel motions leave behind. Both accumulators
+  // are cleared: the inertializer's (default blend) and RootMotionAccumulator's
+  // (crossfade). Called from a click, i.e. between frames, so the next frame
+  // renders the character at home.
+  useEffect(() => registerPositionReset(() => {
+    const group = modelGroupRef.current
+    if (!group) return
+    animControllerRef.current?.resetRootMotion()
+    rootMotionRef.current?.reset()
+    group.position.x = MODEL_HOME[0]
+    group.position.y = MODEL_HOME[1]
+    // Hair and skirt: the spring bones integrate in world space, so a jump of
+    // metres would read as a violent whip. Put them at rest instead. reset()
+    // reads each joint's parent world matrix, so refresh the subtree first.
+    group.updateMatrixWorld(true)
+    vrm.springBoneManager?.reset()
+  }), [vrm, registerPositionReset])
   // Per-instance state — key={vrmUrl} remounts resets these on model switch.
   // `posed`: the first animation pose has reached the bones.
   const [posed, setPosed] = useState(false)
@@ -420,7 +454,7 @@ function VRMCharacter({ vrmUrl, modelId, onReady, vrmRef, avatarRef }: VRMCharac
   })
 
   return (
-    <group ref={modelGroupRef} position={[0, 1.5, 0]} rotation={[Math.PI / 2, 0, 0]}>
+    <group ref={modelGroupRef} position={MODEL_HOME} rotation={[Math.PI / 2, 0, 0]}>
       {/* visible=false until the first animation pose is applied — the model
           never renders in bind pose (T-pose). */}
       <primitive object={vrm.scene} visible={revealed} />
@@ -497,6 +531,20 @@ function Scene({ theme, vrmUrl, modelId, onReady, avatarRef }: SceneProps) {
   // `face` is an FSM-granted lock (see CameraMode): no orbit, no zoom, no pan
   // until the state that asked for it ends.
   const cameraLocked = cameraMode === 'face'
+  // True while easing OUT of the lock. Must be React state, not a ref: it
+  // drives OrbitControls' props, and drei calls controls.update() in its own
+  // useFrame (priority -1, before ours) whenever `enabled` is true. Handing
+  // the user's settings back the instant the lock ended let that update clamp
+  // the camera from the ~0.45 m close-up out to minDistance (1 m) in ONE
+  // frame: the snap.
+  const [releasing, setReleasing] = useState(false)
+  const releasingRef = useRef(false)
+  const cameraHeld = cameraLocked || releasing
+  /**
+   * The user's view when the lock began, relative to the head bone, so a
+   * manual camera is handed back where it was, not left on the close-up.
+   */
+  const preLockViewRef = useRef<{ pos: THREE.Vector3; target: THREE.Vector3 } | null>(null)
   // eslint-disable-next-line @typescript-eslint/no-explicit-any -- drei OrbitControls ref is an untyped Three.js controls instance
   const controlsRef = useRef<any>(null)
   const vrmRef = useRef<VRM | null>(null)
@@ -506,6 +554,11 @@ function Scene({ theme, vrmUrl, modelId, onReady, avatarRef }: SceneProps) {
     startPos: THREE.Vector3
     startTarget: THREE.Vector3
     elapsed: number
+    duration: number
+    /** Leaving the `face` lock: slower, eased at both ends, clears `releasing`. */
+    release: boolean
+    /** Explicit destination relative to the anchor bone (manual hand-back). */
+    endOffset: { pos: THREE.Vector3; target: THREE.Vector3 } | null
   } | null>(null)
   const prevCameraModeRef = useRef(cameraMode)
 
@@ -532,20 +585,37 @@ function Scene({ theme, vrmUrl, modelId, onReady, avatarRef }: SceneProps) {
     prevCameraModeRef.current = cameraMode
 
     if (prev === cameraMode) return
-    if (!cameraInitializedRef.current || !controlsRef.current || !vrmRef.current) return
+    const isRelease = prev === 'face'
+    const bone = vrmRef.current?.humanoid.getNormalizedBoneNode(CAMERA_MODES[cameraMode].boneName)
+    if (!cameraInitializedRef.current || !controlsRef.current || !bone) {
+      // No transition will run, so nothing would ever clear `releasing`.
+      releasingRef.current = false
+      setReleasing(false)
+      return
+    }
 
-    const mode = CAMERA_MODES[cameraMode]
-    const bone = vrmRef.current.humanoid.getNormalizedBoneNode(mode.boneName)
-    if (!bone) return
+    const anchor = new THREE.Vector3()
+    bone.getWorldPosition(anchor)
 
-    const tempVec = new THREE.Vector3()
-    bone.getWorldPosition(tempVec)
+    // Entering the lock: remember the user's view. Not while still easing out
+    // of a previous lock: that view is mid-flight, the saved one is the real one.
+    if (cameraMode === 'face' && !releasingRef.current) {
+      preLockViewRef.current = {
+        pos: camera.position.clone().sub(anchor),
+        target: (controlsRef.current.target as THREE.Vector3).clone().sub(anchor),
+      }
+    }
 
     cameraTransitionRef.current = {
       startPos: camera.position.clone(),
       startTarget: controlsRef.current.target.clone(),
       elapsed: 0,
+      duration: isRelease ? FACE_RELEASE_SEC : TRANSITION_DURATION,
+      release: isRelease,
+      endOffset: isRelease && cameraMode === 'manual' ? preLockViewRef.current : null,
     }
+    releasingRef.current = isRelease
+    setReleasing(isRelease)
   }, [cameraMode]) // eslint-disable-line react-hooks/exhaustive-deps -- camera.position is mutable and should not trigger a transition; only cameraMode matters
 
   // Reusable vectors to avoid GC pressure
@@ -572,7 +642,8 @@ function Scene({ theme, vrmUrl, modelId, onReady, avatarRef }: SceneProps) {
   // offset (angle + distance) is preserved while the rig moves.
   // In manual mode the camera is fully user-owned — do not follow.
   useFrame((_state, delta) => {
-    if (cameraMode === 'manual') return
+    // Manual is user-owned, except while a transition is handing it back.
+    if (cameraMode === 'manual' && !cameraTransitionRef.current) return
     if (!vrmRef.current || !controlsRef.current) return
 
     // Compute t from canvas width: desktop (>768px) → t=0 (wideFraming only),
@@ -622,13 +693,33 @@ function Scene({ theme, vrmUrl, modelId, onReady, avatarRef }: SceneProps) {
     if (cameraTransitionRef.current) {
       const t = cameraTransitionRef.current
       t.elapsed += delta
-      const progress = Math.min(t.elapsed / TRANSITION_DURATION, 1)
-      const eased = 1 - Math.pow(1 - progress, 3)
+      const progress = Math.min(t.elapsed / t.duration, 1)
+      const eased = t.release ? easeInOutCubic(progress) : 1 - Math.pow(1 - progress, 3)
 
       const currentCustomOffset = new THREE.Vector3(cameraConfig.offsetX, cameraConfig.offsetY, cameraConfig.offsetZ)
-      const endTarget = lookPos.clone().add(currentCustomOffset)
-      endTarget.z += targetZRef.current
-      const endPos = followPos.clone().add(responsiveDisplayRef.current).add(currentCustomOffset)
+      let endTarget: THREE.Vector3
+      let endPos: THREE.Vector3
+      if (t.endOffset) {
+        // Manual hand-back: the user's own framing, re-anchored to where the
+        // head is now.
+        endTarget = followPos.clone().add(t.endOffset.target)
+        endPos = followPos.clone().add(t.endOffset.pos)
+      } else {
+        endTarget = lookPos.clone().add(currentCustomOffset)
+        endTarget.z += targetZRef.current
+        endPos = followPos.clone().add(responsiveDisplayRef.current).add(currentCustomOffset)
+      }
+      // Land where OrbitControls will keep the camera. The `head` preset sits
+      // 0.5 m out, inside the default 1 m minDistance, so a transition ending
+      // there was clamped outward on the next frame: a second, smaller snap.
+      const minDist = cameraMode === 'face' ? FACE_LOCK_MIN_DISTANCE : cameraConfig.minDistance
+      const reach = endPos.distanceTo(endTarget)
+      if (reach < minDist) {
+        const dir = reach > 1e-6
+          ? endPos.clone().sub(endTarget).normalize()
+          : camera.position.clone().sub(endTarget).normalize()
+        endPos = endTarget.clone().addScaledVector(dir, minDist)
+      }
 
       camera.position.lerpVectors(t.startPos, endPos, eased)
       controlsRef.current.target.lerpVectors(t.startTarget, endTarget, eased)
@@ -637,6 +728,10 @@ function Scene({ theme, vrmUrl, modelId, onReady, avatarRef }: SceneProps) {
       if (progress >= 1) {
         cameraTransitionRef.current = null
         lastAppliedOffsetRef.current.copy(responsiveDisplayRef.current)
+        if (t.release) {
+          releasingRef.current = false
+          setReleasing(false)
+        }
       }
       return
     }
@@ -786,10 +881,10 @@ return (
       {/* Orbital camera: follows hips, enforces minimum distance (radius) */}
       <OrbitControls
         ref={controlsRef}
-        enabled={!cameraLocked}
+        enabled={!cameraHeld}
         enablePan={cameraConfig.enablePan}
         enableZoom={cameraConfig.enableZoom}
-        minDistance={cameraLocked ? FACE_LOCK_MIN_DISTANCE : cameraConfig.minDistance}
+        minDistance={cameraHeld ? FACE_LOCK_MIN_DISTANCE : cameraConfig.minDistance}
         maxDistance={cameraConfig.maxDistance}
         target={[0, 0, 0]}
         onStart={() => {

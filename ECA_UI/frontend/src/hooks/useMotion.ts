@@ -136,6 +136,17 @@ export interface MotionContextType {
   blendMode: 'inertial' | 'crossfade'
   setBlendMode: (mode: 'inertial' | 'crossfade') => void
   handleReset: () => void
+  /**
+   * Move the character back to where it started, undoing the travel that
+   * motions leave behind (intended: the character stays where a motion ends).
+   * A cut, not a walk. Refused (returns false) during `exercise` and
+   * `gesture`, when a clip is still producing travel or owns the camera.
+   */
+  resetCharacterPosition: () => boolean
+  /** False while `resetCharacterPosition` would be refused. */
+  canResetPosition: boolean
+  /** Wiring hook for the component that owns the model group. Returns the unregister function. */
+  registerPositionReset: (reset: () => void) => () => void
   clipInfo: { tracks: number; duration: number } | null
   setClipInfo: (info: { tracks: number; duration: number } | null) => void
 

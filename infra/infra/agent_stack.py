@@ -53,6 +53,7 @@ from aws_cdk import (
     aws_ecr as ecr,
     aws_iam as iam,
     aws_lambda as lambda_,
+    aws_ssm as ssm,
 )
 from constructs import Construct
 
@@ -97,6 +98,26 @@ _DEFAULT_MOTION_HASH_SECRET_PARAM = "/vva/motion/hash-secret"
 # churn PgBouncer exists to absorb; and anything session-scoped goes through
 # PostgresClient.user_scope(), which is transaction-scoped and survives it.
 _DEFAULT_DSN_PARAM = "/vva/neon/dsn-pooler"
+
+# Where CI records the image it just rolled onto the function.
+#
+# CDK owns the shape, CI owns the code: deploy-agent.yml pushes an image
+# and calls update-function-code, which never touches this template. The
+# template therefore remembers whichever tag the last `cdk deploy` was
+# given, and drifts further behind with every CI run - on 25/09 it still
+# said a6c99cba while the function had been running 23e5e59a for days.
+#
+# That drift is a loaded gun. A `cdk deploy VvaAgentStack` copied from an
+# older runbook rolls the function BACK to a week-old build, silently and
+# successfully: on 23/09 that would have taken VIENEU_TTS_URL and the
+# spoken-length cap with it. Reading the tag from here means a deploy
+# without an explicit -c agent_image_tag lands on what is actually running.
+#
+# Resolved by CloudFormation AT DEPLOY TIME (an
+# AWS::SSM::Parameter::Value<String> parameter), not at synth time: a
+# synth-time lookup caches into cdk.context.json and goes stale, which is
+# the same gun pointed at the same foot.
+_IMAGE_TAG_PARAM = "/vva/agent/image-tag"
 
 # LLM credentials as SSM SecureStrings rather than environment variables.
 # Lambda environment variables are plaintext in the CloudFormation template, and
@@ -189,17 +210,19 @@ class AgentStack(Stack):
             self.fn = None
             return
 
+        # No explicit tag: take the one CI last deployed, from SSM. The flag
+        # still wins when given - that is how a deliberate rollback to a named
+        # build is expressed.
+        #
+        # This used to raise. Raising stopped a deploy from DELETING the
+        # function (an absent tag was never "skip the function"), and that
+        # danger is gone either way now - but it also forced every caller to
+        # supply a tag by hand, and a hand-supplied tag is how the function got
+        # rolled backwards. A missing parameter still fails the deploy, loudly,
+        # from CloudFormation.
         if not image_tag:
-            raise ValueError(
-                "VvaAgentStack needs the image tag to deploy.\n\n"
-                "  First time (repository only):\n"
-                "    cdk deploy VvaAgentStack -c agent_bootstrap=1\n\n"
-                "  Every time after that:\n"
-                "    cdk deploy VvaAgentStack -c agent_image_tag=<git-sha>\n\n"
-                "Neither flag is NOT treated as 'skip the function'. A deploy "
-                "that quietly omitted it would DELETE the live one, and "
-                "CloudFormation would call that a success — the same failure "
-                "crud_api_stack.py guards against with its Cognito check."
+            image_tag = ssm.StringParameter.value_for_string_parameter(
+                self, _IMAGE_TAG_PARAM,
             )
 
         # ── Function ────────────────────────────────────────────────────

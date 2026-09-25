@@ -311,6 +311,27 @@ jobs:
 
           echo "::notice::${{ env.FUNCTION_NAME }} now runs ${{ github.sha }}"
 
+      # Tell CDK what is actually running.
+      #
+      # CDK owns the shape and CI owns the code, which leaves the template
+      # remembering whichever tag the last `cdk deploy` happened to be given -
+      # on 25-09 it still said a6c99cba while this workflow had rolled the
+      # function forward to 23e5e59a days earlier. A later `cdk deploy` copied
+      # from an older runbook would then roll the function BACK a week,
+      # silently, and CloudFormation would call it a success.
+      #
+      # agent_stack.py reads this parameter when no -c agent_image_tag is
+      # given, so writing it here is what stops the two pipelines fighting over
+      # the image. Written AFTER the update lands: the parameter must never
+      # advertise a build that is not serving traffic.
+      - name: Record the deployed tag for CDK
+        if: steps.fn.outputs.exists == 'true'
+        run: |
+          set -euo pipefail
+          aws ssm put-parameter             --name /vva/agent/image-tag             --value "${{ github.sha }}"             --type String             --overwrite >/dev/null
+          echo "::notice::/vva/agent/image-tag = ${{ github.sha }}"
+
+
       # A green update-function-code only means Lambda ACCEPTED the image. It
       # does not mean the container starts: a bad CMD, a missing system library
       # or a model baked to the wrong path all fail at INIT, and INIT happens on

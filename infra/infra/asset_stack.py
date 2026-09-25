@@ -384,6 +384,33 @@ class AssetStack(Stack):
                 "motion_signing_key.pub"
             )
 
+        # Context avoids a cross-stack reference back to RestApiStack, which
+        # already depends on this stack through AgentStack.
+        rest_api_id = ctx("rest_api_id")
+        if rest_api_id:
+            additional_behaviors["v1/*"] = cloudfront.BehaviorOptions(
+                origin=origins.HttpOrigin(
+                    f"{rest_api_id}.execute-api.{self.region}.amazonaws.com",
+                    # Cold starts can take 45s before the first streamed byte.
+                    read_timeout=Duration.seconds(60),
+                    keepalive_timeout=Duration.seconds(60),
+                    # No origin_path: the viewer URL already includes /v1.
+                ),
+                viewer_protocol_policy=cloudfront.ViewerProtocolPolicy.REDIRECT_TO_HTTPS,
+                allowed_methods=cloudfront.AllowedMethods.ALLOW_ALL,
+                cache_policy=cloudfront.CachePolicy.CACHING_DISABLED,
+                # Forward Authorization and Origin, but use API Gateway's Host.
+                origin_request_policy=cloudfront.OriginRequestPolicy.ALL_VIEWER_EXCEPT_HOST_HEADER,
+                compress=False,  # Preserve streaming without compression buffering.
+                # API Gateway supplies CORS; do not override it with cors_policy.
+            )
+        else:
+            Annotations.of(self).add_warning(
+                "rest_api_id is not set: API traffic still uses the regional "
+                "API Gateway endpoint. Pass -c rest_api_id=<id> to add v1/* "
+                "to this CloudFront distribution."
+            )
+
         self.distribution = cloudfront.Distribution(
             self, "AssetDistribution",
             comment="VVA assets (VRM models) + character catalog",
@@ -444,3 +471,9 @@ class AssetStack(Stack):
             value=f"https://{self.distribution.distribution_domain_name}",
             description="Frontend VITE_ASSET_BASE_URL",
         )
+        if rest_api_id:
+            CfnOutput(
+                self, "ApiCdnUrl",
+                value=f"https://{self.distribution.distribution_domain_name}/v1",
+                description="Frontend VITE_API_GATEWAY_URL",
+            )

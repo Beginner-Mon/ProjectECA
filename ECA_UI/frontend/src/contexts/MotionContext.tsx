@@ -221,6 +221,10 @@ export function MotionProvider({ children }: { children: ReactNode }) {
       const off = controller.on('stateChanged', (state) => {
         setCurrentState(state)
         cameraController.onStateChanged(state)
+        // Leaving a gesture early (another state took over) must not leave its
+        // face track running on the next animation. Natural ends are harmless:
+        // the track has already finished by then.
+        if (state !== 'gesture') avatarRef.current?.stopFaceTrack()
       })
 
       return () => {
@@ -368,6 +372,11 @@ export function MotionProvider({ children }: { children: ReactNode }) {
       },
       get history() {
         return [...stateHistoryRef.current]
+      },
+      /** Live facial weight of a channel, e.g. __fsm.face('ou') — for checking
+       *  the kiss face actually reaches the mesh. */
+      face(channel: string) {
+        return avatarRef.current?.debugChannelWeight(channel) ?? null
       },
     }
   }, [transitionTo, playMotionFile, animController, cameraController, currentState, vrmOptions])

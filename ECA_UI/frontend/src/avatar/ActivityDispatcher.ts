@@ -106,7 +106,14 @@ export class ActivityDispatcher {
     // Registry first. `transitionTo` resolves the clip THROUGH the registry, so
     // registering afterwards would play whichever gesture ran last.
     registry.update('gesture', clip)
-    return anim.transitionTo('gesture')
+    const started = await anim.transitionTo('gesture')
+    // The face starts when the clip does — transitionTo resolves once the clip
+    // is loaded and playing — so keyframe times line up with the motion.
+    // Re-read the avatar: a model switch during the await must not receive it.
+    if (started && gesture.face && this.deps.getAvatar() === avatar) {
+      avatar.playFaceTrack(gesture.face)
+    }
+    return started
   }
 
   private resolveGesture(gesture: GestureDef): DynamicClip | null {

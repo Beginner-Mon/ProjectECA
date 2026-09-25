@@ -29,7 +29,25 @@ export const defaultProfile: AvatarProfile = {
   // to the built-in FSM states (idle / greeting / bored / thinking / exercise),
   // which are untouched.
   gestures: {
-    kiss: { source: { builtIn: 'kiss' }, blendSec: 0.5 },
+    kiss: {
+      source: { builtIn: 'kiss' },
+      blendSec: 0.5,
+      // Timed to Kiss.fbx (3.73 s): the hand is closest to the face at ~1.9 s
+      // (measured, worklog 19-09). Smile → lips purse (U) and eyes close as the
+      // hand arrives → smile after the blow. `happy` is 0 while the eyes are
+      // closed: some models' happy expression blocks blink / mouth overrides.
+      // Uses `blink`, not a wink: Bronya has no working blinkLeft/blinkRight.
+      face: [
+        { t: 0.0, face: {} },
+        { t: 0.5, face: { happy: 0.4 } },
+        { t: 1.1, face: { happy: 0.15, U: 0.5 } },
+        { t: 1.5, face: { U: 0.9, blink: 0.9 } },
+        { t: 2.2, face: { U: 0.9, blink: 0.9 } },
+        { t: 2.6, face: { happy: 0.6, U: 0.1 } },
+        { t: 3.4, face: { happy: 0.4 } },
+        { t: 3.73, face: {} },
+      ],
+    },
   },
   reactions: {
     // Animation and emotion together in one binding — the click plays the clip

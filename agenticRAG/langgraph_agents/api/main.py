@@ -584,7 +584,12 @@ async def _stream_chat(req, request_id, config, state, background_tasks, request
                         final_state.update(node_output)
 
         elif mode == "custom":
-            if isinstance(payload, dict) and "content" in payload:
+            if isinstance(payload, dict) and "emotion" in payload:
+                # Reply-driven avatar emotion (shared/reply_emotion.py): the
+                # synthesizer sends it ahead of the text, already filtered by
+                # the health rules. The browser applies it to the avatar's face.
+                yield encode_event("emotion", payload["emotion"])
+            elif isinstance(payload, dict) and "content" in payload:
                 if not conversation_stage_started:
                     yield encode_event(
                         "stage",

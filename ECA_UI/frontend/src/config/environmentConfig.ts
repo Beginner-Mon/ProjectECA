@@ -228,10 +228,15 @@ export const ENV_CONFIG = {
   // ── MToon Material Overrides ──────────────────────────────────────────
   // Only applies if `enabled: true`. Tweak shading at the material level
   // BEFORE the shader runs — cleaner than post-processing.
+  /** "Softer shadows" toggle (Graphics settings; key `mtoon` kept so saved
+   *  settings still apply). NOT a switch for toon shading — the avatar is always
+   *  MToon. See lib/shadowOverride.ts. */
   mtoon: {
     enabled: false,
-    shadingShiftFactor:0.85,    // 0-1: higher = less dark shadow on face
-    shadeColorHex: '#1a1020',    // color of shaded area (hex, usually dark)
+    shadingShiftFactor: 0.85, // 0-1: higher = smaller shadow areas on the face/body
+    /** Shadow tint override. null = keep each model's own authored tint (the
+     *  near-black '#1a1020' made skin shadows muddy on every character). */
+    shadeColorHex: null as string | null,
   },
 
   // ── Floating Particles ────────────────────────────────────────────────

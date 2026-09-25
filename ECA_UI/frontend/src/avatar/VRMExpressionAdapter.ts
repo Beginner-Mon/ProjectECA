@@ -1,6 +1,7 @@
 import { VRMExpressionMorphTargetBind, type VRM } from '@pixiv/three-vrm'
 import type * as THREE from 'three'
 import type { AvatarProfile } from './AvatarProfile'
+import { faceTrackChannels } from './GestureFaceController'
 
 /**
  * The ONLY class allowed to touch the VRM (facial-animation-plan.md §2). Resolves
@@ -36,6 +37,9 @@ export class VRMExpressionAdapter {
     }
     wanted.add(profile.blinkChannel)
     for (const channel of Object.values(profile.visemes)) wanted.add(channel)
+    // Gesture face tracks (e.g. a wink on blinkLeft) — unmanaged channels are
+    // never written, so a track naming them would silently do nothing.
+    for (const channel of faceTrackChannels(profile)) wanted.add(channel)
 
     const manager = vrm.expressionManager
     this.available = new Set<string>()

@@ -177,8 +177,8 @@
   },
   "graphics": {
     "debug": "Debug",
-    "mtoon": "MToon Shading",
-    "mtoon_desc": "Anime-style toon shading on materials",
+    "mtoon": "Softer shadows",
+    "mtoon_desc": "Smaller shadow areas on the character",
     "particles": "Floating Particles",
     "particles_desc": "Animated background particles",
     "performance": "Performance",

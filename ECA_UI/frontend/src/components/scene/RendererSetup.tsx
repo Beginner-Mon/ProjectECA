@@ -10,9 +10,10 @@
 import { useThree } from '@react-three/fiber'
 import { useEffect } from 'react'
 import * as THREE from 'three'
-import type { VRM, MToonMaterial } from '@pixiv/three-vrm'
+import type { VRM } from '@pixiv/three-vrm'
 import { ENV_CONFIG } from '../../config/environmentConfig'
 import { useGraphics } from '../../hooks/useGraphics'
+import { applySoftShadows } from '../../lib/shadowOverride'
 
 /** Texture property names that should be in linear space (non-color data). */
 const LINEAR_TEXTURE_PROPS = new Set([
@@ -68,11 +69,10 @@ export default function RendererSetup({ vrm }: RendererSetupProps) {
       for (const mat of materials) {
         if (!mat) continue
 
-        // MToon shade override (driven by Graphics Settings toggle)
-        if (gfx.mtoon && (mat as MToonMaterial).isMToonMaterial) {
-          const mtoon = mat as MToonMaterial
-          mtoon.shadingShiftFactor = ENV_CONFIG.mtoon.shadingShiftFactor
-          mtoon.shadeColorFactor = new THREE.Color(ENV_CONFIG.mtoon.shadeColorHex)
+        // "Softer shadows" (Graphics settings toggle, stored as `mtoon`).
+        // Applies on "on" and RESTORES the model's own values on "off" — see
+        // lib/shadowOverride.ts. MToon itself is always on either way.
+        if (applySoftShadows(mat as unknown as Parameters<typeof applySoftShadows>[0], gfx.mtoon, ENV_CONFIG.mtoon)) {
           corrections++
         }
 

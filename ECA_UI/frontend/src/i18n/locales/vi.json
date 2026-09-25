@@ -177,8 +177,8 @@
   },
   "graphics": {
     "debug": "Gỡ lỗi",
-    "mtoon": "Tô bóng MToon",
-    "mtoon_desc": "Tô bóng hoạt hình kiểu anime cho vật liệu",
+    "mtoon": "Bóng đổ mềm hơn",
+    "mtoon_desc": "Thu nhỏ vùng bóng tối trên nhân vật",
     "particles": "Hạt lơ lửng",
     "particles_desc": "Hạt nền chuyển động",
     "performance": "Hiệu năng",

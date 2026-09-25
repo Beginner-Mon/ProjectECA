@@ -25,6 +25,7 @@ import { useLocale } from '../hooks/useLocale'
 
 export type { SessionItem, ChatContextType } from '../hooks/useChat'
 import { useDictation } from '../hooks/useDictation'
+import { parseReplyEmotion, REPLY_EMOTION_FADE_MS } from '../lib/replyEmotion'
 
 /* The pointer to the conversation lives in lib/chatSession.ts, along with the
  * reason it is written late and expires. Nothing here mints an id: a
@@ -641,11 +642,21 @@ export function ChatProvider({ children }: { children: ReactNode }) {
               if (stageTimeoutRef.current) clearTimeout(stageTimeoutRef.current)
               setStageLabel(STAGE_COMPOSING)
             }
+          } else if (type === 'emotion') {
+            // Reply-driven emotion: sent ahead of the text, already filtered by
+            // the backend's health rules (lib/replyEmotion.ts). Unknown or
+            // malformed events are dropped.
+            const emotion = parseReplyEmotion(data)
+            if (emotion) avatarRef.current?.setEmotion(emotion.name, emotion.intensity, REPLY_EMOTION_FADE_MS)
           } else if (type === 'token') {
             if (stageTimeoutRef.current) clearTimeout(stageTimeoutRef.current)
             setStageLabel(null)
             setIsTyping(false)
             endThinking()
+            // Keep the reply's expression while its text is still arriving —
+            // otherwise the avatar drifts back to idle moods 3 s after the
+            // emotion event, mid-reply. (Voice playback does this itself.)
+            avatarRef.current?.notifyEngaged()
             const content = (data as { content: string }).content
             answer += content
             setMessages((prev) =>

@@ -27,6 +27,7 @@ from langchain_core.messages import SystemMessage, HumanMessage, AIMessage, Tool
 from langchain_core.runnables import RunnableConfig
 
 from langgraph.config import get_stream_writer
+from langgraph_agents.shared import reply_emotion
 from langgraph_agents.state import AgentState, ErrorSeverity
 from langgraph_agents.llm import get_chat_model, get_fallback_chat_model, extract_cache_tokens
 from langgraph_agents.nodes._persona_loader import (
@@ -425,6 +426,11 @@ async def synthesizer_node(state: AgentState, config: RunnableConfig) -> dict:
         locale,
     )
     voice_card = build_voice_card(persona, mode) + avatar_note
+    # Reply-driven avatar emotion: the model opens with [emotion: NAME N],
+    # stripped below before anything else sees the text (shared/reply_emotion).
+    # Last, beside the voice card, where instructions are followed most reliably.
+    if reply_emotion.enabled():
+        voice_card += reply_emotion.PROMPT_RULE
     msgs = [
         SystemMessage(content=system),
         *history,
@@ -434,13 +440,27 @@ async def synthesizer_node(state: AgentState, config: RunnableConfig) -> dict:
 
     ai_msg = None  # kept for prompt-cache telemetry (fix #1)
     used_fallback = False
+    tag_stream = reply_emotion.EmotionTagStream()
+
+    def send_emotion(emotion: dict | None) -> None:
+        # Its own custom-stream item, ahead of the text: api/main.py turns it
+        # into the `emotion` SSE event. Health rules applied here, where the
+        # turn's mode and safety tags are known.
+        emotion = reply_emotion.apply_emotion_policy(emotion, mode, required_outputs)
+        if emotion is not None and writer is not None:
+            writer({"emotion": emotion})
 
     try:
         if writer is not None:
             final = ""
             tokens = 0
             async for chunk in llm.astream(msgs):
-                content = chunk.content if hasattr(chunk, "content") else str(chunk)
+                raw = chunk.content if hasattr(chunk, "content") else str(chunk)
+                # Hold back only while the start could still be the emotion tag;
+                # everything the user sees (and `final`) is tag-free.
+                emotion, content = tag_stream.feed(raw) if raw else (None, "")
+                if emotion is not None:
+                    send_emotion(emotion)
                 if content:
                     final += content
                     writer({"content": content})
@@ -460,9 +480,17 @@ async def synthesizer_node(state: AgentState, config: RunnableConfig) -> dict:
                     ai_msg = chunk
                 elif (getattr(chunk, "response_metadata", None) or {}).get("token_usage"):
                     ai_msg = chunk
+            # A reply that ended while still possibly a tag (e.g. just "[1]"):
+            # release what was held.
+            emotion, content = tag_stream.flush()
+            if emotion is not None:
+                send_emotion(emotion)
+            if content:
+                final += content
+                writer({"content": content})
         else:
             ai_msg = await llm.ainvoke(msgs)
-            final = ai_msg.content
+            _, final = reply_emotion.parse_emotion_tag(ai_msg.content or "")
             tokens = 0
             if hasattr(ai_msg, "usage_metadata") and ai_msg.usage_metadata:
                 tokens = ai_msg.usage_metadata.get("total_tokens", 0)
@@ -485,7 +513,8 @@ async def synthesizer_node(state: AgentState, config: RunnableConfig) -> dict:
         if fallback_model is not None:
             try:
                 fb_ai_msg = await fallback_model.ainvoke(msgs)
-                final = fb_ai_msg.content or ""
+                emotion, final = reply_emotion.parse_emotion_tag(fb_ai_msg.content or "")
+                send_emotion(emotion)
                 tokens = 0
                 if hasattr(fb_ai_msg, "usage_metadata") and fb_ai_msg.usage_metadata:
                     tokens = fb_ai_msg.usage_metadata.get("total_tokens", 0)

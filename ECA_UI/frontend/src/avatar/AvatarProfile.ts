@@ -40,8 +40,30 @@ export type Viseme = 'A' | 'I' | 'U' | 'E' | 'O'
  * `url` is an absolute address for a clip a character brings with it, which is
  * what makes "each character has its own animations" possible without a deploy.
  */
+/**
+ * What a face-track keyframe can name. Written in the PROFILE's vocabulary, not
+ * raw VRM channels, so one track works on every model: an emotion resolves
+ * through `recipes`, a viseme through `visemes`, `blink` through `blinkChannel`.
+ * `blinkLeft` / `blinkRight` are the raw three-vrm presets (a wink); models
+ * without them simply no-op, so prefer `blink` for anything that must show.
+ */
+export type FaceToken = CanonicalEmotion | Viseme | 'blink' | 'blinkLeft' | 'blinkRight'
+
+/** One keyframe: at `t` seconds into the gesture, these weights (0..1). A token
+ *  absent from a key is 0 there. Values between keys are smoothly interpolated. */
+export interface FaceKey {
+  t: number
+  face: Partial<Record<FaceToken, number>>
+}
+
 export interface GestureDef {
   source: { builtIn: string } | { url: string; loader: 'fbx' | 'bvh' }
+  /**
+   * Optional facial expression played in step with the clip, from the moment
+   * it starts (GestureFaceController). While it plays it owns the mouth and
+   * eyes, overriding lip-sync and auto-blink, then hands them back.
+   */
+  face?: FaceKey[]
   /** Blend seconds when leaving this gesture. Defaults to the state's. */
   blendSec?: number
   /** @deprecated use blendSec */

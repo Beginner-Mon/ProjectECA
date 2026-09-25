@@ -12,7 +12,7 @@ import { bodyPartClick } from './userActivity'
  */
 
 function makeDeps(profile: AvatarProfile) {
-  const avatar = { profile, setEmotion: vi.fn() }
+  const avatar = { profile, setEmotion: vi.fn(), playFaceTrack: vi.fn() }
   const registry = { update: vi.fn(), prefetchGestures: vi.fn() }
   const anim = { transitionTo: vi.fn(async () => true) }
   const resolveBuiltIn = vi.fn((match: string) => `/assets/${match}-hash.fbx`)
@@ -127,5 +127,36 @@ describe('ActivityDispatcher', () => {
     const warmed = registry.prefetchGestures.mock.calls[0][0] as { url: string }[]
     expect(warmed).toHaveLength(Object.keys(defaultProfile.gestures ?? {}).length)
     expect(warmed[0].url).toContain('kiss')
+  })
+
+  it("starts the gesture's face track once the clip is playing (the kiss face)", async () => {
+    const { dispatcher, avatar, anim } = makeDeps(defaultProfile)
+
+    await dispatcher.dispatch(bodyPartClick('mouth'))
+
+    expect(avatar.playFaceTrack).toHaveBeenCalledTimes(1)
+    expect(avatar.playFaceTrack).toHaveBeenCalledWith(defaultProfile.gestures!.kiss.face)
+    expect(anim.transitionTo).toHaveBeenCalledBefore(avatar.playFaceTrack as never)
+  })
+
+  it('does not start the face when the FSM refused the gesture', async () => {
+    const { dispatcher, avatar, anim } = makeDeps(defaultProfile)
+    anim.transitionTo.mockResolvedValueOnce(false)
+
+    await dispatcher.dispatch(bodyPartClick('mouth'))
+
+    expect(avatar.playFaceTrack).not.toHaveBeenCalled()
+  })
+
+  it('plays a gesture without a face track and leaves the face alone', async () => {
+    const profile = withProfile({
+      gestures: { wave: { source: { builtIn: 'wave' } } },
+      reactions: { 'bodyPartClick:head': { gesture: 'wave' } },
+    })
+    const { dispatcher, avatar, anim } = makeDeps(profile)
+
+    expect(await dispatcher.dispatch(bodyPartClick('head'))).toBe(true)
+    expect(anim.transitionTo).toHaveBeenCalledWith('gesture')
+    expect(avatar.playFaceTrack).not.toHaveBeenCalled()
   })
 })

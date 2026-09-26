@@ -424,6 +424,78 @@
   animation: slide-up 0.35s cubic-bezier(0.16, 1, 0.3, 1);
 }
 
+/* Mobile conversation height moves its handle and the measured navigation rail together. */
+.mobile-chat-content {
+  transition: height 250ms cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .mobile-chat-content {
+    transition: none;
+  }
+}
+
+@media (width < 768px) {
+  /* White mobile surfaces in either app theme; the outer dock stays transparent. */
+  .mobile-chat-composer,
+  .mobile-chat-conversation,
+  .mobile-nav-rail {
+    --background: #fff;
+    --foreground: #202024;
+    --card: #fff;
+    --card-foreground: #202024;
+    --popover: #fff;
+    --popover-foreground: #202024;
+    --primary: #303038;
+    --primary-foreground: #fff;
+    --secondary: #f1f1f4;
+    --secondary-foreground: #303038;
+    --muted: #f1f1f4;
+    --muted-foreground: #64646e;
+    --border: #c6c6ce;
+    --destructive: #c72c42;
+    --destructive-foreground: #fff;
+    color: var(--foreground);
+  }
+
+  /* The dock remains in a dark scope, so override inverted Markdown colors
+     locally as well as the app tokens (links, code and quotes included). */
+  .mobile-chat-conversation .prose {
+    --tw-prose-body: var(--foreground);
+    --tw-prose-headings: var(--foreground);
+    --tw-prose-lead: var(--muted-foreground);
+    --tw-prose-links: var(--foreground);
+    --tw-prose-bold: var(--foreground);
+    --tw-prose-counters: var(--muted-foreground);
+    --tw-prose-bullets: var(--muted-foreground);
+    --tw-prose-hr: var(--border);
+    --tw-prose-quotes: var(--foreground);
+    --tw-prose-quote-borders: var(--border);
+    --tw-prose-captions: var(--muted-foreground);
+    --tw-prose-kbd: var(--foreground);
+    --tw-prose-kbd-shadows: 32 32 36;
+    --tw-prose-code: var(--foreground);
+    --tw-prose-pre-code: var(--foreground);
+    --tw-prose-pre-bg: var(--secondary);
+    --tw-prose-th-borders: var(--border);
+    --tw-prose-td-borders: var(--border);
+  }
+
+  .mobile-chat-composer,
+  .mobile-chat-composer *,
+  .mobile-nav-rail,
+  .mobile-nav-rail *,
+  .mobile-chat-handle {
+    -webkit-tap-highlight-color: transparent;
+  }
+
+  .mobile-chat-composer button:focus-visible,
+  .mobile-nav-rail button:focus-visible {
+    outline: 2px solid #5268b5;
+    outline-offset: 2px;
+  }
+}
+
 /* Nav icon button hover glow */
 .nav-icon-btn:hover {
   box-shadow: 0 0 16px rgba(139, 92, 246, 0.12);

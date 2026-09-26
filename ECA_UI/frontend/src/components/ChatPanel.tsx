@@ -13,7 +13,7 @@ import { useChat } from '../hooks/useChat'
  * pinned separately below the message list there, so rendering it here too
  * would stack two composers. Everywhere else the full panel renders.
  */
-export default function ChatPanel({ hideInput = false }: { hideInput?: boolean }) {
+export default function ChatPanel({ hideInput = false, active = true }: { hideInput?: boolean; active?: boolean }) {
   const {
     messages,
     isTyping,
@@ -30,11 +30,12 @@ export default function ChatPanel({ hideInput = false }: { hideInput?: boolean }
 
   /* auto-scroll on new messages */
   useEffect(() => {
+    if (!active) return
     bottomRef.current?.scrollIntoView({ behavior: 'smooth' })
-  }, [messages, isTyping, stageLabel])
+  }, [messages, isTyping, stageLabel, active])
 
   return (
-    <div className={`flex flex-col h-full md:border-r border-border/40 relative z-10 ${hideInput ? 'bg-transparent' : 'bg-card'}`}>
+    <div className={`flex flex-col h-full md:border-r border-border/40 ${hideInput ? 'bg-transparent' : 'bg-card relative z-10'}`}>
       {/* ── Header ── */}
       <header className="hidden md:flex items-center gap-3 px-5 py-4 border-b border-border/40 bg-card shrink-0">
         <div className="flex-1 min-w-0">
@@ -59,7 +60,7 @@ export default function ChatPanel({ hideInput = false }: { hideInput?: boolean }
 
       {/* ── Messages ── */}
       <ScrollArea className="flex-1 min-h-0 px-2">
-        <div className="py-2 md:py-4 space-y-1 md:space-y-2 max-w-full overflow-x-hidden">
+        <div className="pt-2 pb-0 md:pt-4 md:pb-0 space-y-1 md:space-y-2 max-w-full overflow-x-hidden">
           {isSwitching ? (
             <div className="flex flex-col items-center justify-center py-16 gap-2 text-muted-foreground">
               <Loader2 className="w-5 h-5 animate-spin" />

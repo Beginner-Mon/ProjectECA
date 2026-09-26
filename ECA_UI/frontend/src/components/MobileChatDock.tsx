@@ -1,80 +1,140 @@
+import { useId, useRef, useState, type PointerEvent, type RefObject } from 'react'
 import { useTranslation } from 'react-i18next'
 import { ChevronsUp, ChevronsDown } from 'lucide-react'
-import type { PanelId } from './FloatingNavBar'
 import ChatPanel from './ChatPanel'
 import ChatInputBar from './ChatInputBar'
 import MobileMotionChips from './MobileMotionChips'
+import { clampChatHeight, moveChatDrag } from '../lib/mobileChatLayout'
 
 interface MobileChatDockProps {
-  /** `activePanel === 'chat'` means the message list is expanded. */
   chatOpen: boolean
-  onToggleChat: (id: PanelId) => void
+  onOpenChange: (open: boolean) => void
+  maxHeight: number
+  dockRef: RefObject<HTMLDivElement | null>
+  contentRef: RefObject<HTMLDivElement | null>
 }
 
-/**
- * MobileChatDock — the mobile bottom cluster (rendered by FloatingNavBar's
- * mobile branch).
- *
- * The chevron and the message list are ONE expandable cluster: the centered
- * lucide chevron sits at the TOP of the cluster, and tapping it pulls the
- * whole cluster (chevron + 40vh list) up with a slide-up animation — or
- * collapses it back down to just the chevron resting on the composer.
- * No backdrop, NOT an overlay sheet like sessions/avatars/motion.
- *
- * Bottom-up when open: [v chevron] [motion chips + 35vh messages]
- * [composer, always visible].
- */
-export default function MobileChatDock({ chatOpen, onToggleChat }: MobileChatDockProps) {
-  const { t } = useTranslation()
+interface Drag {
+  pointerId: number
+  startY: number
+  startHeight: number
+  dragging: boolean
+}
 
-  // `dark` scope: the black scrim is identical in both app themes, so the
-  // whole dock subtree always resolves dark-theme tokens (light text on
-  // dark) — readable on bg-black/15 whether the app is light or dark.
-  // The project declares dark as `@custom-variant dark (&:is(.dark *))`,
-  // so this class flips exactly this subtree and nothing else.
+/** The handle resizes the conversation; the composer always stays mounted below it. */
+export default function MobileChatDock({ chatOpen, onOpenChange, maxHeight, dockRef, contentRef }: MobileChatDockProps) {
+  const { t } = useTranslation()
+  const contentId = useId()
+  const drag = useRef<Drag | null>(null)
+  const suppressClick = useRef(false)
+  const [dragHeight, setDragHeight] = useState<number | null>(null)
+  const [savedHeight, setSavedHeight] = useState<number | null>(null)
+  const height = clampChatHeight(dragHeight ?? (chatOpen ? savedHeight ?? maxHeight : 0), maxHeight)
+  const expanded = height > 0
+
+  const startDrag = (event: PointerEvent<HTMLButtonElement>) => {
+    if (!event.isPrimary || event.button !== 0 || drag.current) return
+    suppressClick.current = false
+    drag.current = {
+      pointerId: event.pointerId,
+      startY: event.clientY,
+      // A gesture interrupting an animation starts at the visible height.
+      startHeight: contentRef.current?.getBoundingClientRect().height ?? height,
+      dragging: false,
+    }
+    event.currentTarget.setPointerCapture(event.pointerId)
+  }
+
+  const moveDrag = (event: PointerEvent<HTMLButtonElement>) => {
+    const current = drag.current
+    if (!current || current.pointerId !== event.pointerId) return
+    const next = moveChatDrag(current.startHeight, current.startY, event.clientY, maxHeight, current.dragging)
+    current.dragging = next.dragging
+    if (!next.dragging) return
+    suppressClick.current = true
+    setDragHeight(next.height)
+    onOpenChange(next.height > 0)
+  }
+
+  const finishDrag = (event: PointerEvent<HTMLButtonElement>) => {
+    const current = drag.current
+    if (!current || current.pointerId !== event.pointerId) return
+    drag.current = null
+    if (current.dragging) {
+      // Cancel/lost capture commits the last position, not a spurious event coordinate.
+      const nextHeight = event.type === 'pointerup'
+        ? moveChatDrag(current.startHeight, current.startY, event.clientY, maxHeight, true).height
+        : clampChatHeight(dragHeight ?? current.startHeight, maxHeight)
+      if (nextHeight > 0) setSavedHeight(nextHeight)
+      onOpenChange(nextHeight > 0)
+    }
+    setDragHeight(null)
+    if (event.currentTarget.hasPointerCapture(event.pointerId)) {
+      event.currentTarget.releasePointerCapture(event.pointerId)
+    }
+  }
+
+  const resizeWithKeyboard = (nextHeight: number) => {
+    const clamped = clampChatHeight(nextHeight, maxHeight)
+    if (clamped > 0) setSavedHeight(clamped)
+    onOpenChange(clamped > 0)
+  }
+
   return (
-    <div className="dark block md:hidden fixed bottom-0 inset-x-0 z-40">
-      {/* ── Expandable cluster: chevron on top, list below it ── */}
-      {chatOpen ? (
-        <div className="bg-black/15 rounded-t-2xl border-t border-border/40 overflow-hidden animate-slide-up flex flex-col relative z-0">
-          <div className="flex justify-center shrink-0 border-b border-border/40">
-            <button
-              onClick={() => onToggleChat('chat')}
-              aria-label={t('chat.hide_conversation')}
-              aria-expanded
-              title={t('chat.hide_conversation')}
-              className="px-8 text-muted-foreground hover:text-foreground transition-colors"
-            >
-              <ChevronsDown className="w-5 h-5" />
-            </button>
-          </div>
-          <div className="h-[35vh] max-h-[35vh] overflow-hidden flex flex-col">
-            <MobileMotionChips />
-            <div className="flex-1 min-h-0 overflow-hidden">
-              <ChatPanel hideInput />
-            </div>
-          </div>
-        </div>
-      ) : (
-        /* Collapsed: only the chevron, resting directly on the composer. */
-        <div className="flex justify-center bg-black/15 border-t border-border/40">
+    <div
+      ref={dockRef}
+      className="dark block md:hidden fixed bottom-0 inset-x-0 z-40 bg-transparent"
+      style={{ paddingBottom: 'calc(0.75rem + env(safe-area-inset-bottom, 0px))' }}
+    >
+      <div className="mobile-chat-conversation mx-3 bg-white border border-border/40 rounded-2xl p-2 flex flex-col">
+        <div className="flex justify-center shrink-0">
           <button
-            onClick={() => onToggleChat('chat')}
-            aria-label={t('chat.show_conversation')}
-            aria-expanded={false}
-            title={t('chat.show_conversation')}
-            className="px-8 text-muted-foreground hover:text-foreground transition-colors"
+            type="button"
+            onClick={(event) => {
+              // Keyboard clicks have detail=0 and must work even after pointer cancellation.
+              if (suppressClick.current && event.detail !== 0) {
+                suppressClick.current = false
+                return
+              }
+              onOpenChange(!chatOpen)
+            }}
+            onPointerDown={startDrag}
+            onPointerMove={moveDrag}
+            onPointerUp={finishDrag}
+            onPointerCancel={finishDrag}
+            onLostPointerCapture={finishDrag}
+            onKeyDown={(event) => {
+              const next = event.key === 'ArrowUp' ? height + 24
+                : event.key === 'ArrowDown' ? height - 24
+                  : event.key === 'Home' ? 0
+                    : event.key === 'End' ? maxHeight : null
+              if (next === null) return
+              event.preventDefault()
+              resizeWithKeyboard(next)
+            }}
+            aria-label={t(expanded ? 'chat.hide_conversation' : 'chat.show_conversation')}
+            aria-expanded={expanded}
+            aria-controls={contentId}
+            title={t('chat.resize_conversation')}
+            className="mobile-chat-handle w-full h-4 flex items-center justify-center touch-none select-none cursor-ns-resize text-muted-foreground hover:text-foreground focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-foreground"
           >
-            <ChevronsUp className="w-5 h-5" />
+            {expanded ? <ChevronsDown className="size-3.5" /> : <ChevronsUp className="size-3.5" />}
           </button>
         </div>
-      )}
-
-      {/* ── Composer, always visible. Transparent like the message list
-          (option 1: both transparent), and z-20 so it always paints above
-          the conversation frame (ChatPanel root is z-10). ── */}
-      <div className="bg-black/15 relative z-20" style={{ paddingBottom: 'env(safe-area-inset-bottom)' }}>
-        <ChatInputBar />
+        <div
+          id={contentId}
+          ref={contentRef}
+          inert={!expanded}
+          aria-hidden={!expanded}
+          className="mobile-chat-content max-h-[35vh] overflow-hidden flex flex-col"
+          style={{ height, maxHeight: `min(35vh, ${maxHeight}px)`, transition: dragHeight !== null ? 'none' : undefined }}
+        >
+          <MobileMotionChips />
+          <div className="flex-1 min-h-0 overflow-hidden">
+            <ChatPanel hideInput active={expanded} />
+          </div>
+        </div>
+        <ChatInputBar embedded />
       </div>
     </div>
   )

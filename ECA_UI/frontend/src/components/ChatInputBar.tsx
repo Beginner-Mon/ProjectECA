@@ -12,7 +12,7 @@ import { useChat } from '../hooks/useChat'
  * State comes from `useChat()` (ChatProvider), so the bar and any
  * ChatPanel share input/draft/recording state with no prop threading.
  */
-export default function ChatInputBar() {
+export default function ChatInputBar({ embedded = false }: { embedded?: boolean }) {
   const {
     input,
     setInput,
@@ -63,8 +63,8 @@ export default function ChatInputBar() {
   }
 
   return (
-    <div className="px-3 pb-3 pt-1 md:p-4 bg-transparent shrink-0">
-      <div className="flex flex-col gap-3 bg-transparent border border-border/40 rounded-2xl p-2 focus-within:ring-1 focus-within:ring-primary/50 focus-within:border-primary/50 transition-all relative">
+    <div className={embedded ? 'bg-transparent shrink-0' : 'px-3 pb-3 pt-0 md:px-4 md:pb-4 md:pt-0 bg-transparent shrink-0'}>
+      <div className={`mobile-chat-composer flex flex-col gap-0 md:gap-3 transition-colors relative ${embedded ? 'bg-transparent' : 'bg-white md:bg-transparent border border-border/40 rounded-2xl p-2 md:focus-within:ring-1 md:focus-within:ring-primary/50 md:focus-within:border-primary/50'}`}>
         {imageUrls.length > 0 && (
           <div className="flex gap-1.5 overflow-x-auto mx-1 p-2">
             {imageUrls.map((url, i) => (

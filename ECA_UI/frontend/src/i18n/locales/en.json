@@ -37,6 +37,7 @@
     "record_start": "Record",
     "record_stop": "Stop recording",
     "show_conversation": "Show conversation",
+    "resize_conversation": "Drag to resize the conversation or tap to open or close. Use arrow keys to adjust the height.",
     "status_online": "Online · Ready to chat",
     "status_restoring": "Loading your previous conversation...",
     "title": "Virtual Assistant"

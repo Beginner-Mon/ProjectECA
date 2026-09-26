@@ -1,4 +1,5 @@
 import { useTranslation } from 'react-i18next'
+import type { RefObject } from 'react'
 import { X } from 'lucide-react'
 import type { PanelId, NavItem } from './FloatingNavBar'
 import { useAvatarBg } from '../hooks/useAvatarBg'
@@ -9,6 +10,7 @@ interface MobileNavBarProps {
   onIconClick: (id: PanelId) => void
   navItems: NavItem[]
   panelContent?: React.ReactNode
+  railRef: RefObject<HTMLDivElement | null>
 }
 
 /**
@@ -26,6 +28,7 @@ export default function MobileNavBar({
   onIconClick,
   navItems,
   panelContent,
+  railRef,
 }: MobileNavBarProps) {
   const { t } = useTranslation()
   const { bg } = useAvatarBg()
@@ -42,19 +45,16 @@ export default function MobileNavBar({
   const railBtnClass = (isActive: boolean) =>
     `flex items-center justify-center rounded-xl transition-colors ${
       isActive
-        ? 'bg-primary/20 text-primary'
-        : 'text-muted-foreground hover:text-foreground hover:bg-white/10'
+        ? 'bg-secondary text-foreground'
+        : 'text-muted-foreground hover:text-foreground hover:bg-secondary/60'
     }`
 
   return (
     <>
       {/* ── Right-edge vertical rail ── */}
       <div
-        className="fixed right-2 top-1/2 -translate-y-1/2 z-[10000] flex flex-col items-center gap-1 p-1.5 rounded-2xl backdrop-blur-md border border-border/30 shadow-lg"
-        style={{
-          background: 'rgba(0,0,0,0.15)',
-          marginBottom: 'env(safe-area-inset-bottom)',
-        }}
+        ref={railRef}
+        className="mobile-nav-rail fixed right-2 top-1/2 -translate-y-1/2 z-[10000] flex flex-col items-center gap-1 p-1.5 rounded-2xl bg-white overflow-y-auto [&>*]:shrink-0"
       >
         {railItems.map((item) => {
           const Icon = item.icon
@@ -76,9 +76,11 @@ export default function MobileNavBar({
         <div className="h-px w-6 bg-border/40" />
         <button
           onClick={() => onIconClick('settings')}
-          className="rounded-full transition-colors"
+          className={railBtnClass(activePanel === 'settings')}
+          style={{ width: btnSize, height: btnSize }}
           title={t('nav.profile_settings')}
           aria-label={t('nav.profile_settings')}
+          aria-pressed={activePanel === 'settings'}
         >
           <AvatarWithLogo size="xs" bgClassName={bg.className} logoClassName={bg.logoClassName} />
         </button>

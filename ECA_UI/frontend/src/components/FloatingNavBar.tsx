@@ -36,8 +36,7 @@ import AvatarsPanel from './panels/AvatarsPanel'
 import SettingsPanel from './panels/SettingsPanel'
 import MotionControlPanel from './panels/MotionControlPanel'
 import ProfileSettingsModal from './ProfileSettingsModal'
-import MobileNavBar from './MobileNavBar'
-import MobileChatDock from './MobileChatDock'
+import MobileChatLayout from './MobileChatLayout'
 import AvatarWithLogo from './AvatarWithLogo'
 
 /* ─── Types ─── */
@@ -477,19 +476,16 @@ export default function FloatingNavBar() {
   /* ─── Mobile: bottom chat dock + right-edge rail + sheets ───
    *
    * The conversation lives in MobileChatDock (toggle ^ above the pinned
-   * composer, list expands inline to 40vh — not an overlay). The rail and
+   * composer, list resizes inline up to 35vh). The rail and
    * overlay sheets here cover sessions/avatars/motion/settings only.
    */
   if (isMobile) {
     return (
       <>
-        <MobileChatDock
-          chatOpen={activePanel === 'chat'}
-          onToggleChat={handleIconClick}
-        />
-        <MobileNavBar
+        <MobileChatLayout
           activePanel={activePanel}
           onIconClick={handleIconClick}
+          onChatOpenChange={(open) => setActivePanel((prev) => open ? 'chat' : prev === 'chat' ? null : prev)}
           navItems={translatedNavItems}
           panelContent={
             activePanel && activePanel !== 'chat' ? (

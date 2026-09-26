@@ -224,7 +224,7 @@ export function MotionProvider({ children }: { children: ReactNode }) {
         // Leaving a gesture early (another state took over) must not leave its
         // face track running on the next animation. Natural ends are harmless:
         // the track has already finished by then.
-        if (state !== 'gesture') avatarRef.current?.stopFaceTrack()
+        if (state !== 'gesture') avatarRef.current?.stopGestureTracks()
       })
 
       return () => {

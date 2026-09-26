@@ -124,8 +124,9 @@ export const ENV_CONFIG = {
       intensity: 0.3,                         // low for MToon — avoids over-reflection
     },
     iblResolution: 64,                        // low to avoid GPU memory issues (D3D11)
-    /** Backdrop image (components/scene/SceneBackdrop.tsx). Same in every UI
-     *  theme; takes priority over the gradient/HDRI above and hides the stars. */
+    /** Backdrop (components/scene/SceneBackdrop.tsx / StageDome.tsx). Takes
+     *  priority over the gradient/HDRI above and hides the stars. The stage
+     *  dome has one palette per UI theme; an image backdrop is the same in both. */
     background: {
       /** Folder under src/asset/backgrounds/. null = the gradient/HDRI. */
       id: 'house' as string | null,
@@ -133,30 +134,48 @@ export const ENV_CONFIG = {
        *  no image, `id` unused. 'flat' = ordinary picture, fixed, cover-fit.
        *  'panorama' = 2:1 equirectangular 360°, turns with the camera. */
       kind: 'dome' as 'dome' | 'flat' | 'panorama',
-      /** Stage dome (kind 'dome'). Colours are sRGB hex. */
+      /** Stage dome (kind 'dome'). Shape is shared; colours follow the UI
+       *  theme (StageDome eases between them on a theme switch). sRGB hex. */
       dome: {
         /** Metres. Larger than the camera's max orbit (20) so it never leaves. */
         radius: 30,
         /** Height of the dome centre = where the horizon glow sits. 0 = floor
          *  level, so the band glows behind the character's legs. */
         horizonZ: 0,
-        zenith: '#101233',
-        /** Colour where sky meets floor. Keep it near zenith/floor for a smooth
-         *  night sky; a bright colour (e.g. '#9c94e0') makes a glowing stripe
-         *  across the middle of the screen — removed at the Owner's request. */
-        horizon: '#221f52',
-        floor: '#16133c',
-        /** Extra glow added along the horizon. 0 = none (no bright band). */
-        glowStrength: 0,
-        /** Glow band half-width around the horizon (0..1 of the dome height). */
-        glowWidth: 0.12,
-        /** How high above the horizon the sky reaches the zenith colour. */
-        skyFade: 0.35,
-        /** Nebula cloud strength, 0 = none. */
-        nebula: 0.35,
-        /** Fraction of star cells that hold a star, 0..1. */
-        starDensity: 0.12,
-        starBrightness: 1.6,
+        /** Night sky. */
+        dark: {
+          zenith: '#101233',
+          /** Colour where sky meets floor. Keep it near zenith/floor for a smooth
+           *  night sky; a bright colour (e.g. '#9c94e0') makes a glowing stripe
+           *  across the middle of the screen — removed at the Owner's request. */
+          horizon: '#221f52',
+          floor: '#16133c',
+          /** Extra glow added along the horizon. 0 = none (no bright band). */
+          glowStrength: 0,
+          /** Glow band half-width around the horizon (0..1 of the dome height). */
+          glowWidth: 0.12,
+          /** How high above the horizon the sky reaches the zenith colour. */
+          skyFade: 0.35,
+          /** Nebula cloud strength, 0 = none. */
+          nebula: 0.35,
+          /** Fraction of star cells that hold a star, 0..1. */
+          starDensity: 0.12,
+          starBrightness: 1.6,
+        },
+        /** Soft daytime studio sky: periwinkle overhead fading to a near-white
+         *  horizon (matches the light UI's #f0f2f8), a pale lilac floor so the
+         *  shadow still reads, faint clouds, no stars. */
+        light: {
+          zenith: '#a9bbe6',
+          horizon: '#f1f0fa',
+          floor: '#d8dbee',
+          glowStrength: 0,
+          glowWidth: 0.12,
+          skyFade: 0.55,
+          nebula: 0.12,
+          starDensity: 0,
+          starBrightness: 0,
+        },
       },
       /** Brightness multiplier. Below 1 dims the backdrop so the avatar reads first. */
       intensity: 1,

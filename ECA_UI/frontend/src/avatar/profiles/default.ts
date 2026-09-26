@@ -47,6 +47,33 @@ export const defaultProfile: AvatarProfile = {
         { t: 3.4, face: { happy: 0.4 } },
         { t: 3.73, face: {} },
       ],
+      // Close-up for the second half — the kiss at the lips (~1.5–2.25 s) and
+      // the blow (~2.5–2.75 s). Simulated on the clip (worklog 26-09): with the
+      // 30 % face follow the camera reaches ~30 cm from the nose at the kiss and
+      // ~32–35 cm in the blow; nearest joint (a thumb tip) stays 6 cm outside
+      // the 10 cm near plane; no backstop push needed.
+      cameraZoom: [
+        { t: 0.0, scale: 1 },
+        { t: 1.4, scale: 1 },
+        { t: 1.9, scale: 0.7 },
+        { t: 2.8, scale: 0.7 },
+        { t: 3.4, scale: 1 },
+      ],
+      // The viewer IS the kiss partner. Kiss.fbx: the left palm rises from
+      // ~0.75 s and rests on the partner's head 1.4–2.4 s (within 3 cm), then
+      // leaves for the blow. Move in as the hand arrives, hold while it rests,
+      // move back out after — so the hand goes around the back of the viewer's
+      // head instead of across the lens.
+      partnerView: {
+        hand: 'left',
+        keys: [
+          { t: 0.0, weight: 0 },
+          { t: 0.8, weight: 0 },
+          { t: 1.45, weight: 1 },
+          { t: 2.45, weight: 1 },
+          { t: 3.2, weight: 0 },
+        ],
+      },
     },
   },
   reactions: {

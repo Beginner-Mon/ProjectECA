@@ -32,6 +32,7 @@ import ClickRipple from './scene/ClickRipple'
 import ThinkingBubble from './scene/ThinkingBubble'
 import { GraphicsProvider } from '../contexts/GraphicsContext'
 import { useGraphics } from '../hooks/useGraphics'
+import { clearanceBackoff, keepAway, limitAimOffset, noseFocus, partnerEyes } from '../lib/faceLock'
 
 /**
  * Where the model group is authored. The "Reset position" button returns the
@@ -52,26 +53,39 @@ interface CameraModeDef {
    */
   trackBone?: VRMHumanBoneName
   trackWeight?: number
+  /** Aim at the nose instead of the bone itself (lib/faceLock.ts noseFocus).
+   *  The head bone sits around jaw height, so aiming at it framed the chin. */
+  focus?: 'nose'
   /**
-   * Look-at only. The entry transition parks the camera in front of
-   * `boneName`; after that the position is held and only the target moves.
-   * Without this, the follow loop translates the camera with the target,
-   * so a hand coming toward the lens would push the camera away from it.
+   * FSM-granted lock (the kiss): the fraction (0..1) of the face's movement
+   * the camera copies. 0 = held still (the avatar leans into it — the lens went
+   * through her), 1 = glued to the face (she looks frozen in the frame — Owner:
+   * "static, worse"). In between: you see her lean in and rise, and the camera
+   * keeps its distance. Always with a clearance backstop. Runs even when the
+   * user's auto-follow is off: the lock owns the camera.
    */
-  holdPosition?: boolean
+  followFace?: number
+  /** Cap on how far the aim may lean toward `trackBone`, as the angle between
+   *  "looking at the nose" and "looking at the aim" (degrees). Keeps the nose in
+   *  frame while the view still pans toward the hand. */
+  maxAimOffsetDeg?: number
 }
 
 const CAMERA_MODES: Record<CameraMode, CameraModeDef> = {
   head: { boneName: VRMHumanBoneName.Head },
   hips: { boneName: VRMHumanBoneName.Head },
-  // Kiss.fbx (the only gesture today) is LEFT-handed: measured through the
-  // clip, the left hand closes from 76 cm to 31 cm of the head while the
-  // right barely moves. 0.4 keeps the face in frame while the hand leads.
+  // Kiss.fbx, measured (worklog 26-09): head 26 cm forward + 8 cm up, heel
+  // lifts 9 cm; the kissing (left) hand closes to 31 cm of the head. Simulated
+  // on the clip with these values: the view pans across ~19° toward the hand,
+  // the nose never more than ~16° off-centre (vertical half-FOV is 22.5°), no
+  // joint closer than ~22 cm, camera steps ≤ 0.6 cm/frame.
   face: {
     boneName: VRMHumanBoneName.Head,
+    focus: 'nose',
     trackBone: VRMHumanBoneName.LeftHand,
     trackWeight: 0.4,
-    holdPosition: true,
+    maxAimOffsetDeg: 15,
+    followFace: 0.3,
   },
   manual: { boneName: VRMHumanBoneName.Head },
 }
@@ -84,7 +98,33 @@ const CAMERA_MODES: Record<CameraMode, CameraModeDef> = {
  * enough that the blended look-at point can come toward the lens (the blown
  * kiss) without OrbitControls' radius clamp shoving the camera back.
  */
-const FACE_LOCK_MIN_DISTANCE = 0.15
+const FACE_LOCK_MIN_DISTANCE = 0.05
+
+/**
+ * Partner point-of-view shot (the kiss). The camera stands ~28 cm from her nose
+ * point (PARTNER_MIN_DISTANCE) — the nose point is derived from the eye bones,
+ * i.e. INSIDE the head, so the 13 cm the midpoint alone gave put the lens inside
+ * her skull (Owner, 26-09). PARTNER_FACE_GUARD: as she leans in (the head moves
+ * 26 cm forward) the frozen camera backs off to keep at least this much; 22 cm
+ * matches FACE_CLEARANCE for the head. Near plane and FOV still ease in a little
+ * for the close-up.
+ */
+const PARTNER_NEAR = 0.02
+const PARTNER_FOV = 60
+const PARTNER_FACE_GUARD = 0.22
+
+/**
+ * Face lock: no joint may come closer to the camera than this, metres. The
+ * mesh extends a few cm past its joints; the camera's near plane is 0.1 m.
+ * At the 0.6 m framing the kiss never triggers it (closest joint 24 cm,
+ * measured) — it is the backstop for other avatars and clips.
+ */
+const FACE_CLEARANCE = 0.22
+/** Finger joints sit at the mesh surface (the camera clips at 0.1 m), so they
+ *  may come much closer; the wrist has a little more mesh around it. Using
+ *  0.22 for fingers pushed the camera straight back out of the kiss close-up. */
+const FINGER_CLEARANCE = 0.12
+const HAND_CLEARANCE = 0.16
 
 /**
  * Per-second rate at which the held camera's look-at target closes on the
@@ -121,11 +161,11 @@ const CAMERA_RESPONSIVE_PRESETS: Record<CameraMode, CameraResponsivePreset> = {
     narrowTargetZ: -0.4,
   },
   face: {
-    // Straight in front of the head bone, tighter than `head` and lifted a
-    // little so the eyes/mouth sit in the middle of the frame. Tune here.
-    wideFraming: [0, 0.45, 0.04],
-    narrowFraming: [0, 0.9, 0.04],
-    narrowTargetZ: -0.3,
+    // Straight in front of the NOSE, 0.6 m: beyond everything the kiss brings
+    // toward the lens (measured: closest joint 24 cm at this distance).
+    wideFraming: [0, 0.6, 0],
+    narrowFraming: [0, 1.0, 0],
+    narrowTargetZ: -0.15,
   },
   manual: {
     // Not used while manual (follow is disabled), but keep a valid entry
@@ -600,6 +640,9 @@ function Scene({ theme, vrmUrl, modelId, onReady, avatarRef }: SceneProps) {
     prevCameraModeRef.current = cameraMode
 
     if (prev === cameraMode) return
+    // A new lock starts from its own baseline.
+    faceLockRef.current = null
+    faceBackoffRef.current = 0
     const isRelease = prev === 'face'
     const bone = vrmRef.current?.humanoid.getNormalizedBoneNode(CAMERA_MODES[cameraMode].boneName)
     if (!cameraInitializedRef.current || !controlsRef.current || !bone) {
@@ -638,6 +681,25 @@ function Scene({ theme, vrmUrl, modelId, onReady, avatarRef }: SceneProps) {
   /** Where the camera looks: `followPos`, pulled toward `trackBone` if set. */
   const lookPos = useMemo(() => new THREE.Vector3(), [])
   const trackPos = useMemo(() => new THREE.Vector3(), [])
+  const eyeL = useMemo(() => new THREE.Vector3(), [])
+  const eyeR = useMemo(() => new THREE.Vector3(), [])
+  const faceDir = useMemo(() => new THREE.Vector3(), [])
+  /** Face lock backstop: current extra distance, eased back to 0 when clear. */
+  const faceBackoffRef = useRef(0)
+  /** Face lock baseline, taken when the lock settles: where the nose and the
+   *  camera were. The camera then copies `followFace` of the nose's movement. */
+  const faceLockRef = useRef<{ nose: THREE.Vector3; camera: THREE.Vector3 } | null>(null)
+  const nominalCam = useMemo(() => new THREE.Vector3(), [])
+  const partnerEstimate = useMemo(() => new THREE.Vector3(), [])
+  /** The partner's eyes: follows the estimate until the hand has settled on
+   *  the partner's head (weight reaches 1), then freezes — the partner stands
+   *  still and she comes to you. Reset when the shot ends. */
+  const partnerRef = useRef({ point: new THREE.Vector3(), init: false, frozen: false })
+  const lensDefaultsRef = useRef<{ near: number; fov: number } | null>(null)
+  /** Humanoid bones of the current VRM, for the clearance check. */
+  const faceJointsRef = useRef<{ vrm: VRM | null; bones: THREE.Object3D[]; points: THREE.Vector3[]; clear: number[] }>({
+    vrm: null, bones: [], points: [], clear: [],
+  })
   const deltaVec = useMemo(() => new THREE.Vector3(), [])
   const offsetDeltaVec = useMemo(() => new THREE.Vector3(), [])
   const lastAppliedOffsetRef = useRef(new THREE.Vector3(0, 0.5, 0))
@@ -710,6 +772,17 @@ function Scene({ theme, vrmUrl, modelId, onReady, avatarRef }: SceneProps) {
     if (!bone) return
 
     bone.getWorldPosition(followPos)
+    if (mode.focus === 'nose') {
+      const humanoid = vrmRef.current.humanoid
+      const le = humanoid.getNormalizedBoneNode(VRMHumanBoneName.LeftEye)
+      const re = humanoid.getNormalizedBoneNode(VRMHumanBoneName.RightEye)
+      noseFocus(
+        followPos.clone(),
+        le ? le.getWorldPosition(eyeL) : null,
+        re ? re.getWorldPosition(eyeR) : null,
+        followPos,
+      )
+    }
 
     // The look-at point. Same as the anchor unless the mode tracks a second
     // bone, in which case it sits `trackWeight` of the way toward it. The
@@ -721,6 +794,12 @@ function Scene({ theme, vrmUrl, modelId, onReady, avatarRef }: SceneProps) {
     if (trackBone) {
       trackBone.getWorldPosition(trackPos)
       lookPos.lerp(trackPos, mode.trackWeight ?? 0)
+    }
+    if (mode.maxAimOffsetDeg != null) {
+      // Measured from the nominal camera spot (focus + preset offset): close
+      // enough for the lock, and the same during the entry transition.
+      nominalCam.copy(followPos).add(responsiveDisplayRef.current)
+      limitAimOffset(nominalCam, followPos, lookPos, THREE.MathUtils.degToRad(mode.maxAimOffsetDeg), lookPos)
     }
 
     if (cameraTransitionRef.current) {
@@ -783,14 +862,75 @@ function Scene({ theme, vrmUrl, modelId, onReady, avatarRef }: SceneProps) {
       return
     }
 
-    if (mode.holdPosition) {
-      // Track: the camera stays where the entry transition parked it and only
-      // the look-at target moves, damped, toward the blended point. Deliberately
-      // ahead of the `followTarget` check — an FSM-granted lock owns the camera
-      // and must track even if the user has switched auto-follow off.
-      // OrbitControls.update() re-aims the camera at the new target; with no
-      // input pending it leaves the position alone (bar the radius clamp,
-      // which FACE_LOCK_MIN_DISTANCE keeps out of the way).
+    if (mode.followFace != null) {
+      // Partial follow: the camera copies `followFace` of the nose's movement
+      // since the lock settled, so the avatar visibly leans in and rises while
+      // the camera keeps its distance; the view pans toward the hand through
+      // the (limited) look target. Ahead of the `followTarget` check on
+      // purpose — an FSM-granted lock owns the camera.
+      if (!faceLockRef.current) {
+        faceLockRef.current = { nose: followPos.clone(), camera: camera.position.clone() }
+      }
+      const lock = faceLockRef.current
+      const cam = faceDir.copy(followPos).sub(lock.nose).multiplyScalar(mode.followFace).add(lock.camera)
+
+      // Backstop along the face→camera axis: back off at once if a joint would
+      // come within FACE_CLEARANCE, ease back once clear (no snapping).
+      const axis = cam.sub(followPos)
+      const baseDist = axis.length()
+      if (baseDist > 1e-6) {
+        axis.divideScalar(baseDist)
+        const joints = faceJointsRef.current
+        if (joints.vrm !== vrmRef.current) {
+          const bones: THREE.Object3D[] = []
+          const clear: number[] = []
+          for (const name of Object.values(VRMHumanBoneName)) {
+            const node = vrmRef.current!.humanoid.getNormalizedBoneNode(name as VRMHumanBoneName)
+            if (!node) continue
+            bones.push(node)
+            clear.push(
+              /Thumb|Index|Middle|Ring|Little/.test(name) ? FINGER_CLEARANCE
+                : /Hand$/.test(name) ? HAND_CLEARANCE
+                : FACE_CLEARANCE,
+            )
+          }
+          faceJointsRef.current = { vrm: vrmRef.current, bones, points: bones.map(() => new THREE.Vector3()), clear }
+        }
+        const { bones, points, clear } = faceJointsRef.current
+        for (let i = 0; i < bones.length; i++) bones[i].getWorldPosition(points[i])
+        // The gesture's zoom track (e.g. the kiss close-up) scales the distance
+        // before the backstop, so the backstop still has the last word.
+        const dist = baseDist * (avatarRef.current?.cameraZoomScale ?? 1)
+        const need = clearanceBackoff(followPos, axis, dist, points, clear)
+        const prev = faceBackoffRef.current
+        faceBackoffRef.current = need > prev ? need : prev + (need - prev) * (1 - Math.exp(-3 * delta))
+        camera.position.copy(followPos).addScaledVector(axis, dist + faceBackoffRef.current)
+      }
+
+      // Partner point of view (GestureDef.partnerView): blend from the face
+      // lock into the partner's eyes, straight in front of her face along the
+      // lock's own axis (no sideways drift toward the resting hand). No joint
+      // backstop in the shot — her hand is SUPPOSED to be around the viewer's
+      // head, beside the lens; only her face is kept from crossing it.
+      const partnerW = avatarRef.current?.partnerViewWeight ?? 0
+      const ps = partnerRef.current
+      if (partnerW > 0 && baseDist > 1e-6) {
+        partnerEyes(followPos, axis, partnerEstimate)
+        if (!ps.init) {
+          ps.point.copy(partnerEstimate)
+          ps.init = true
+        } else if (!ps.frozen) {
+          ps.point.lerp(partnerEstimate, 1 - Math.exp(-6 * delta))
+        }
+        if (partnerW >= 0.999) ps.frozen = true
+        camera.position.lerp(ps.point, partnerW)
+        keepAway(camera.position, followPos, PARTNER_FACE_GUARD)
+        targetPos.lerp(followPos, partnerW) // look at her nose
+      } else if (partnerW <= 0 && ps.init) {
+        ps.init = false
+        ps.frozen = false
+      }
+
       controlsRef.current.target.lerp(targetPos, 1 - Math.exp(-TRACK_DAMPING * delta))
       lastAppliedOffsetRef.current.copy(responsiveDisplayRef.current)
       controlsRef.current.update()
@@ -813,6 +953,24 @@ function Scene({ theme, vrmUrl, modelId, onReady, avatarRef }: SceneProps) {
     // Update the controls target to the new follow point
     controlsRef.current.target.copy(targetPos)
     controlsRef.current.update()
+  })
+
+  // Lens for the partner point-of-view shot. Separate from the follow loop on
+  // purpose: that loop returns early in some modes, and the lens must ALWAYS be
+  // restored once the shot is over (weight 0), whatever mode the camera is in.
+  useFrame(() => {
+    const cam = camera as THREE.PerspectiveCamera
+    if (!cam.isPerspectiveCamera) return
+    if (!lensDefaultsRef.current) lensDefaultsRef.current = { near: cam.near, fov: cam.fov }
+    const lens = lensDefaultsRef.current
+    const w = cameraMode === 'face' ? (avatarRef.current?.partnerViewWeight ?? 0) : 0
+    const near = w > 0.001 ? PARTNER_NEAR : lens.near
+    const fov = lens.fov + (PARTNER_FOV - lens.fov) * w
+    if (cam.near !== near || Math.abs(cam.fov - fov) > 1e-4) {
+      cam.near = near
+      cam.fov = fov
+      cam.updateProjectionMatrix()
+    }
   })
 
   // Second plane: enforce Lock X/Y/Z after the main follow/transition logic and

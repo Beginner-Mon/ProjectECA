@@ -10,6 +10,7 @@ import { HeadController } from './HeadController'
 import { IdleBehaviorController } from './IdleBehaviorController'
 import { LipSyncController } from './LipSyncController'
 import { GestureFaceController } from './GestureFaceController'
+import { GestureCameraTrack } from './GestureCameraTrack'
 
 const DEFAULT_EMOTION_DURATION_MS = 500
 const EVENT_GRACE_MS = 3000
@@ -37,6 +38,9 @@ export class AvatarController {
   private readonly idle: IdleBehaviorController
   private readonly lipSync: LipSyncController
   private readonly gestureFace: GestureFaceController
+  private readonly cameraZoom = new GestureCameraTrack(1)
+  private readonly partnerView = new GestureCameraTrack(0)
+  private partnerHand: 'left' | 'right' = 'left'
   private readonly contributors: readonly ExpressionContributor[]
 
   constructor(vrm: VRM, profile: AvatarProfile) {
@@ -92,9 +96,37 @@ export class AvatarController {
     }
   }
 
-  /** The gesture ended early: fade the face track out. */
-  stopFaceTrack(): void {
+  /** Play a gesture's camera zoom (GestureDef.cameraZoom) from now. */
+  playCameraZoom(track: Array<{ t: number; scale: number }>): void {
+    this.cameraZoom.play(track.map((k) => ({ t: k.t, value: k.scale })))
+  }
+
+  /** Play a gesture's partner point-of-view shot (GestureDef.partnerView) from now. */
+  playPartnerView(view: { hand: 'left' | 'right'; keys: Array<{ t: number; weight: number }> }): void {
+    this.partnerHand = view.hand
+    this.partnerView.play(view.keys.map((k) => ({ t: k.t, value: k.weight })))
+  }
+
+  /** 0 = normal face lock, 1 = camera at the partner's eyes (this frame). */
+  get partnerViewWeight(): number {
+    return this.partnerView.value
+  }
+
+  /** The hand resting on the partner's head in the current partner shot. */
+  get partnerViewHand(): 'left' | 'right' {
+    return this.partnerHand
+  }
+
+  /** Face-lock distance multiplier the camera applies this frame (1 = none). */
+  get cameraZoomScale(): number {
+    return this.cameraZoom.value
+  }
+
+  /** The gesture ended early: fade the face track out and ease the zoom back. */
+  stopGestureTracks(): void {
     this.gestureFace.stop()
+    this.cameraZoom.stop()
+    this.partnerView.stop()
   }
 
   stopLipSync(): void {
@@ -137,6 +169,8 @@ export class AvatarController {
     this.blink.tick(delta)
     this.lipSync.tick(delta)
     this.gestureFace.tick(delta)
+    this.cameraZoom.tick(delta)
+    this.partnerView.tick(delta)
     this.eye.tick(delta, t)
     // Head follows the eye gaze — must run AFTER eye.tick so currentYaw/Pitch
     // are fresh. Bones only; independent of the blendshape mixer below.

@@ -14,11 +14,44 @@
  *
  * Seen, never lit: a ShaderMaterial ignores lights, and it never touches
  * scene.environment (MToon is tuned for one directional light).
+ *
+ * One palette per UI theme (ENV_CONFIG…dome.dark / .light). A theme switch
+ * eases the uniforms over ~0.5 s on the same material — no re-mount, no flash.
  */
 
-import { useEffect, useMemo } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
+import { useFrame } from '@react-three/fiber'
 import * as THREE from 'three'
 import { ENV_CONFIG } from '../../config/environmentConfig'
+
+interface Palette {
+  zenith: string
+  horizon: string
+  floor: string
+  glowStrength: number
+  glowWidth: number
+  skyFade: number
+  nebula: number
+  starDensity: number
+  starBrightness: number
+}
+
+/** Rate of the theme crossfade, 1/s (≈95 % done in 0.5 s). */
+const THEME_EASE = 6
+
+const COLOR_KEYS = ['zenith', 'horizon', 'floor'] as const
+const NUMBER_KEYS = ['glowStrength', 'glowWidth', 'skyFade', 'nebula', 'starDensity', 'starBrightness'] as const
+const UNIFORM: Record<(typeof COLOR_KEYS)[number] | (typeof NUMBER_KEYS)[number], string> = {
+  zenith: 'uZenith',
+  horizon: 'uHorizon',
+  floor: 'uFloor',
+  glowStrength: 'uGlowStrength',
+  glowWidth: 'uGlowWidth',
+  skyFade: 'uSkyFade',
+  nebula: 'uNebula',
+  starDensity: 'uStarDensity',
+  starBrightness: 'uStarBrightness',
+}
 
 const vertexShader = /* glsl */ `
   varying vec3 vDir;
@@ -103,32 +136,61 @@ const fragmentShader = /* glsl */ `
   }
 `
 
-export default function StageDome() {
+export default function StageDome({ theme }: { theme: 'light' | 'dark' }) {
   const { dome } = ENV_CONFIG.environment.background
   const [hx, hy] = ENV_CONFIG.character.home
 
-  const material = useMemo(
-    () =>
-      new THREE.ShaderMaterial({
-        vertexShader,
-        fragmentShader,
-        uniforms: {
-          uZenith: { value: new THREE.Color(dome.zenith) },
-          uHorizon: { value: new THREE.Color(dome.horizon) },
-          uFloor: { value: new THREE.Color(dome.floor) },
-          uGlowWidth: { value: dome.glowWidth },
-          uSkyFade: { value: dome.skyFade },
-          uGlowStrength: { value: dome.glowStrength },
-          uNebula: { value: dome.nebula },
-          uStarDensity: { value: dome.starDensity },
-          uStarBrightness: { value: dome.starBrightness },
-        },
-        side: THREE.BackSide, // seen from inside
-        depthWrite: false, // always behind everything
-        fog: false,
-      }),
-    [dome],
-  )
+  // Built once with the palette the app starts in; later switches ease in.
+  const [initialTheme] = useState(theme)
+  const material = useMemo(() => {
+    const start: Palette = dome[initialTheme]
+    const uniforms: Record<string, THREE.IUniform> = {}
+    for (const k of COLOR_KEYS) uniforms[UNIFORM[k]] = { value: new THREE.Color(start[k]) }
+    for (const k of NUMBER_KEYS) uniforms[UNIFORM[k]] = { value: start[k] }
+    return new THREE.ShaderMaterial({
+      vertexShader,
+      fragmentShader,
+      uniforms,
+      side: THREE.BackSide, // seen from inside
+      depthWrite: false, // always behind everything
+      fog: false,
+    })
+  }, [dome, initialTheme])
+
+  // Target palette as THREE.Colors, rebuilt only when the theme changes.
+  const target = useMemo(() => {
+    const p: Palette = dome[theme]
+    return {
+      colors: COLOR_KEYS.map((k) => new THREE.Color(p[k])),
+      numbers: NUMBER_KEYS.map((k) => p[k]),
+    }
+  }, [dome, theme])
+  const settled = useRef(true)
+  useEffect(() => {
+    settled.current = false
+  }, [target])
+
+  useFrame((_, delta) => {
+    if (settled.current) return
+    const a = 1 - Math.exp(-THEME_EASE * delta)
+    let remaining = 0
+    COLOR_KEYS.forEach((k, i) => {
+      const c = material.uniforms[UNIFORM[k]].value as THREE.Color
+      c.lerp(target.colors[i], a)
+      remaining = Math.max(remaining, Math.abs(c.r - target.colors[i].r), Math.abs(c.g - target.colors[i].g), Math.abs(c.b - target.colors[i].b))
+    })
+    NUMBER_KEYS.forEach((k, i) => {
+      const u = material.uniforms[UNIFORM[k]]
+      u.value += (target.numbers[i] - u.value) * a
+      remaining = Math.max(remaining, Math.abs(target.numbers[i] - u.value))
+    })
+    if (remaining < 1e-3) {
+      // Snap the last fraction so the palette is exact once settled.
+      COLOR_KEYS.forEach((k, i) => (material.uniforms[UNIFORM[k]].value as THREE.Color).copy(target.colors[i]))
+      NUMBER_KEYS.forEach((k, i) => (material.uniforms[UNIFORM[k]].value = target.numbers[i]))
+      settled.current = true
+    }
+  })
   const geometry = useMemo(() => new THREE.SphereGeometry(dome.radius, 96, 48), [dome.radius])
 
   useEffect(() => () => {

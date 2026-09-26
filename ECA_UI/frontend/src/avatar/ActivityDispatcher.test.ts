@@ -12,7 +12,7 @@ import { bodyPartClick } from './userActivity'
  */
 
 function makeDeps(profile: AvatarProfile) {
-  const avatar = { profile, setEmotion: vi.fn(), playFaceTrack: vi.fn() }
+  const avatar = { profile, setEmotion: vi.fn(), playFaceTrack: vi.fn(), playCameraZoom: vi.fn(), playPartnerView: vi.fn() }
   const registry = { update: vi.fn(), prefetchGestures: vi.fn() }
   const anim = { transitionTo: vi.fn(async () => true) }
   const resolveBuiltIn = vi.fn((match: string) => `/assets/${match}-hash.fbx`)
@@ -158,5 +158,32 @@ describe('ActivityDispatcher', () => {
     expect(await dispatcher.dispatch(bodyPartClick('head'))).toBe(true)
     expect(anim.transitionTo).toHaveBeenCalledWith('gesture')
     expect(avatar.playFaceTrack).not.toHaveBeenCalled()
+  })
+
+  it("starts the gesture's camera zoom with the clip (the kiss close-up)", async () => {
+    const { dispatcher, avatar, anim } = makeDeps(defaultProfile)
+
+    await dispatcher.dispatch(bodyPartClick('mouth'))
+
+    expect(avatar.playCameraZoom).toHaveBeenCalledWith(defaultProfile.gestures!.kiss.cameraZoom)
+    expect(anim.transitionTo).toHaveBeenCalledBefore(avatar.playCameraZoom as never)
+  })
+
+  it('does not zoom when the FSM refused the gesture', async () => {
+    const { dispatcher, avatar, anim } = makeDeps(defaultProfile)
+    anim.transitionTo.mockResolvedValueOnce(false)
+
+    await dispatcher.dispatch(bodyPartClick('mouth'))
+
+    expect(avatar.playCameraZoom).not.toHaveBeenCalled()
+  })
+
+  it("starts the kiss's partner point-of-view shot with the clip", async () => {
+    const { dispatcher, avatar, anim } = makeDeps(defaultProfile)
+
+    await dispatcher.dispatch(bodyPartClick('mouth'))
+
+    expect(avatar.playPartnerView).toHaveBeenCalledWith(defaultProfile.gestures!.kiss.partnerView)
+    expect(anim.transitionTo).toHaveBeenCalledBefore(avatar.playPartnerView as never)
   })
 })

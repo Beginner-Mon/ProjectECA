@@ -110,8 +110,10 @@ export class ActivityDispatcher {
     // The face starts when the clip does — transitionTo resolves once the clip
     // is loaded and playing — so keyframe times line up with the motion.
     // Re-read the avatar: a model switch during the await must not receive it.
-    if (started && gesture.face && this.deps.getAvatar() === avatar) {
-      avatar.playFaceTrack(gesture.face)
+    if (started && this.deps.getAvatar() === avatar) {
+      if (gesture.face) avatar.playFaceTrack(gesture.face)
+      if (gesture.cameraZoom) avatar.playCameraZoom(gesture.cameraZoom)
+      if (gesture.partnerView) avatar.playPartnerView(gesture.partnerView)
     }
     return started
   }

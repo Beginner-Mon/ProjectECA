@@ -87,7 +87,7 @@ export default function SceneEnvironment({ theme }: SceneEnvironmentProps) {
   // and the stage dome draws its own.
   const showStars = BACKDROP_MODE === 'gradient' && (theme === 'dark' ? environment.showStars.dark : environment.showStars.light)
 
-  if (BACKDROP_MODE === 'dome') return <StageDome />
+  if (BACKDROP_MODE === 'dome') return <StageDome theme={theme} />
 
   if (BACKDROP_MODE === 'image' && BACKDROP_URL) {
     // The gradient covers the wait while the image loads. It must NOT stay

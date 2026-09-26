@@ -101,18 +101,20 @@ Mức: 🔴 critical (phải làm trước Phase 7 deploy) · 🟠 quan trọng 
 
 ## 🔴 Critical — chặn Phase 7
 
-- [ ] **No-auth IDOR — FIX ĐÃ CÓ, đang GATED (phải bật cờ trước deploy)** — `api/auth.py::
-      resolve_user_id` verify Cognito ID token (JWKS RS256 + audience + issuer + token_use),
-      `user_id = sub`, wired vào mọi endpoint. Cờ `REQUIRE_AUTH` default **false** (demo nội bộ
-      vẫn nhận client user_id — không chặn demo). **Hành động bắt buộc trước network deploy: set
-      `REQUIRE_AUTH=true` + 3 biến Cognito** → token-less/invalid → 401, IDOR đóng. Còn lại:
-      deploy Cognito (`ampx sandbox`/AWS) để có pool thật. (Security review 12/06 Vuln 1;
-      integration 18/06, worklog 18/06)
+- [x] **No-auth IDOR — ĐÃ ĐÓNG HẲN, không còn là chuyện bật cờ.**
+      ~~Cờ `REQUIRE_AUTH` default false, phải set true trước network deploy.~~ **Lạc hậu từ
+      18/08**: cờ đó **đã bị xoá khỏi `api/auth.py`**, vì một công tắc tắt được xác thực chính
+      là công tắc khiến nó bị tắt. Giờ mọi route đi qua `Depends(current_user_id)`, danh tính
+      lấy từ `sub` của token đã verify, và **không endpoint nào nhận `user_id`** ở path, query
+      hay body (`routes_crud.py`: *"There is deliberately no user_id path or query parameter to
+      trust"*). Cùng id đó được bind vào session DB nên RLS lọc từng câu lệnh — handler quên
+      bind thì **raise**, không trả rỗng. Đóng bằng cấu trúc, không bằng cấu hình.
+      (Security review 12/06 Vuln 1; đóng hẳn 18/08)
 
 - [x] **Chốt nhà cung cấp DB cloud** — Owner chốt **Neon** (31/07). Plan thi hành: **[`.claude/plans/neon-migration.md`](../../.claude/plans/neon-migration.md)**.
 - [x] **Thi hành plan Neon** — ✅ **XONG 05/08** (git: `d7851fb`). Backend `:8000` chạy trên Neon (ap-southeast-1),
-      dữ liệu ghi vào Neon (đã đối chứng local). DSN nằm ở `agenticRAG/agentic_rag_gemini/.env`
-      (gitignored). Chi phí DB thật: **12 query / 1,4 s / lượt = 4,8%** (đo bằng counter, không đoán).
+      dữ liệu ghi vào Neon (đã đối chứng local). DSN nằm ở `agenticRAG/.env` (gitignored —
+      đường cũ `agentic_rag_gemini/` đã xoá 10/08). Chi phí DB thật: **12 query / 1,4 s / lượt = 4,8%** (đo bằng counter, không đoán).
 - [ ] 🔴 **Ingest SEGFAULT khi backend đang chạy** — `scripts/ingest_kb_pgvector.py` chết exit 139,
       **log rỗng, không traceback**. Khoanh vùng được: chết ở `embed_passages()` (inference torch),
       **không** phải DB. Tắt uvicorn thì chạy bình thường → hai tiến trình tranh chấp native runtime
@@ -360,9 +362,9 @@ Mức: 🔴 critical (phải làm trước Phase 7 deploy) · 🟠 quan trọng 
       phải chạy tiền cảnh. Fix Bloom vẫn nguyên trong config; các thay đổi sau đó (`shadowFit`,
       `groundClamp`) không đụng postprocessing.
 - [ ] **Bundle FE nặng** — JS ~2MB (gzip ~580KB) + VRM asset 9-29MB bundle thẳng. Chưa lazy-load/CDN.
-- [ ] **FE không có test runner** — `package.json` chỉ có `dev/build/lint/preview`, không có `test`.
-      Mọi hồi quy FE hiện chỉ dựa vào `tsc -b`. Backend có 275 test, FE có 0. Cân nhắc vitest +
-      vài test cho `AnimationController` / `shadowFit` / `groundClamp` (logic thuần, dễ test).
+- [x] ~~**FE không có test runner**~~ — ĐÃ XONG. `npm test` chạy vitest:
+      **295 test / 28 file, all pass** (đo 22/09). Mục này từng ghi "FE có 0 test" và đã sai
+      khoảng một tháng.
 - [ ] **`npm run lint` đỏ: 11 error / 3 warning** — có sẵn, không chặn `build` nên không ai thấy.
       Gồm `no-explicit-any` ×3 (`lib/bvhToVrm.ts`), `set-state-in-effect` ×2, `refs`-during-render
       (`FloatingNavBar.tsx:457`), import thừa (`LogOut`, `LucideIcon`), `tick` tự tham chiếu trong
@@ -388,16 +390,14 @@ Mức: 🔴 critical (phải làm trước Phase 7 deploy) · 🟠 quan trọng 
       một câu trả lời lâm sàng ~2500 ký tự. Đo thật trên câu trả lời thường (175 và 303 ký tự):
       TTS chỉ **4,5s / 5,5s**, tổng lượt **12,8s / 12,0s** — giọng nói chỉ thêm ~5s. Quyết định của
       Owner.
-- [ ] **`/chat` giữ SSE mở tới 130s để chờ TTS** — `_poll_speech_result` chặn `done`. FE đã né bằng
-      cách thả UI ở `speech_pending`, nhưng về kiến trúc nên đổi sang: FE nhận `task_id` rồi **poll
-      `GET /tts/{task_id}/result`** (endpoint đã có sẵn, comment gọi nó là "fallback"). Được: stream
-      đóng sớm, sống sót khi mất kết nối, hợp Phase 7 (cloud + edge). Cần Owner quyết vì đổi luồng.
-- [ ] **TTS đặt tên file sai ngôn ngữ** — `services/vieneu_tts/tasks.py` không gửi `language`, nên
-      `api_server.py` default `"en"` ⇒ văn bản tiếng Việt ra `vieneu_en_*.wav`. **Chỉ sai tên file**,
-      `language` không đi vào `tts.infer()`. Cosmetic, nhưng gây hiểu nhầm khi debug.
-- [ ] **File WAV không ai dọn** — mỗi lượt có giọng đẻ ra ~5 MB trong `SpeechLLm/data/temp_audio/`,
-      không có TTL/cleanup. Chạy vài trăm lượt là đầy đĩa. Phase 7 sẽ đẩy sang S3 nhưng local vẫn cần
-      job dọn.
+- [x] ~~**`/chat` giữ SSE mở tới 130s để chờ TTS**~~ — KHÔNG CÒN. `7729290` (17/09) cho
+      `POST /tts` stream giống `/chat` và **xoá hẳn** đường poll. Không còn `task_id`, không
+      còn key Redis, không còn `_poll_speech_result`. Sự kiện giờ là
+      `speech_start` / `speech_chunk` / `speech_end`.
+- [x] ~~**TTS đặt tên file sai ngôn ngữ**~~ — không còn ý nghĩa: `tasks.py` đã bị xoá cùng
+      đường ghi file, audio giờ stream thẳng qua SSE chứ không đẻ ra `.wav` trên đĩa.
+- [x] ~~**File WAV không ai dọn**~~ — tự hết khi TTS chuyển sang streaming (`7729290`):
+      không còn ghi file trung gian nên không còn gì để dọn.
 - [ ] **Commit limit của máy dev gần cạn** — 44,6/44,7 GB khi chạy đồng thời backend + TTS. Lúc đó
       `tsc`/`node` **không khởi động nổi** (`paging file is too small`, `VirtualAlloc failed`), rất
       dễ tưởng nhầm là lỗi code. Cần tăng pagefile hoặc đừng chạy TTS song song lúc build FE.

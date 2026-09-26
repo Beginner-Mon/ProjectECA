@@ -68,3 +68,43 @@ describe('RootMotionAccumulator — crossfade path (ramp)', () => {
 
 // Inertial root motion is now handled by PoseInertializer (1 - x/x0) — see Inertializer.test.ts
 // This file only covers the crossfade ramp path.
+
+describe('RootMotionAccumulator — reset (Reset position button)', () => {
+  it('returns the group to its authored XY and forgets every accumulated offset', () => {
+    const target = new THREE.Object3D()
+    target.position.set(0, 1.5, 0)
+    const acc = new RootMotionAccumulator(target)
+
+    acc.beginOneShot(makeVrm(new THREE.Vector3(0, 0, 0)).vrm)
+    acc.commitOneShot(makeVrm(new THREE.Vector3(2, 1, 0)).vrm, 0.5)
+    acc.update(1) // blend complete: offset folded in
+    expect(target.position.x).toBeCloseTo(2, 5)
+    target.position.z = 0.3 // GroundClamp's lift
+
+    acc.reset()
+    expect(target.position.x).toBeCloseTo(0, 5)
+    expect(target.position.y).toBeCloseTo(1.5, 5)
+    expect(target.position.z).toBeCloseTo(0.3, 5) // Z belongs to GroundClamp
+    expect(acc.currentOffset.length()).toBeCloseTo(0, 5)
+
+    // The next one-shot accumulates from home, not from the old offset.
+    acc.beginOneShot(makeVrm(new THREE.Vector3(0, 0, 0)).vrm)
+    acc.commitOneShot(makeVrm(new THREE.Vector3(1, 0, 0)).vrm, 0.5)
+    acc.update(1)
+    expect(target.position.x).toBeCloseTo(1, 5)
+  })
+
+  it('cancels a ramp in flight so later updates do not drag the group back out', () => {
+    const target = new THREE.Object3D()
+    target.position.set(0, 1.5, 0)
+    const acc = new RootMotionAccumulator(target)
+    acc.beginOneShot(makeVrm(new THREE.Vector3(0, 0, 0)).vrm)
+    acc.commitOneShot(makeVrm(new THREE.Vector3(3, 0, 0)).vrm, 1)
+    acc.update(0.4)
+
+    acc.reset()
+    acc.update(1)
+    expect(target.position.x).toBeCloseTo(0, 5)
+    expect(acc.isTracking).toBe(false)
+  })
+})

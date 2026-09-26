@@ -7,17 +7,41 @@
  * The directional light also carries the shadow configuration: PCFSoft shadow
  * map, tight frustum, tuned bias values.
  *
- * Includes the ground plane (invisible shadow receiver) and contact shadows.
+ * Includes the ground plane (invisible shadow receiver). That plane is the ONLY
+ * floor shadow: drei's <ContactShadows> was removed on 25/09. It was mounted
+ * under a -PI/2 wrapper, which pointed both its plane and its capture camera
+ * DOWN, so it never rendered from above and showed as a black square when the
+ * camera went under the floor, while still costing a full extra scene render
+ * plus two blur passes every frame. If a soft contact shadow is wanted again,
+ * the wrapper must be +PI/2 (drei is Y-up, this scene is Z-up), and it needs
+ * visual tuning, since nobody has ever seen it rendered.
  */
 
-import { useRef, useEffect } from 'react'
+import { useRef, useEffect, Suspense } from 'react'
 import * as THREE from 'three'
 import { useFrame } from '@react-three/fiber'
-import { ContactShadows } from '@react-three/drei'
-import { VRMHumanBoneName } from '@pixiv/three-vrm'
 import type { VRM } from '@pixiv/three-vrm'
 import { ENV_CONFIG } from '../../config/environmentConfig'
 import { DEFAULT_SHADOW_FIT, ShadowCameraFitter } from '../../lib/shadowFit'
+import { resolveFloor } from '../../lib/floorAssets'
+import { backdropOwnsFloor, resolveBackground } from '../../lib/backgroundAssets'
+import GroundFloor from './GroundFloor'
+
+// Some backdrops bring their own floor: the stage dome (its lower half) and a
+// grounded panorama (the photo's floor, curving up into its walls). Our floor
+// disc would be laid over it, so it stands down while one is active; the
+// invisible shadow plane stays, so the character still casts a shadow there.
+const { background } = ENV_CONFIG.environment
+const GROUNDED_BACKDROP = backdropOwnsFloor(
+  background,
+  background.kind === 'dome' ? null : resolveBackground(background.id),
+)
+
+// Resolved once: the floor id is config, not state.
+const FLOOR_TEXTURES = GROUNDED_BACKDROP ? null : resolveFloor(ENV_CONFIG.ground.floor.id)
+if (ENV_CONFIG.ground.floor.id && !GROUNDED_BACKDROP && !FLOOR_TEXTURES) {
+  console.warn(`[floor] no textures for "${ENV_CONFIG.ground.floor.id}" under src/asset/floors/ — using the invisible shadow plane`)
+}
 
 interface SceneLightingProps {
   vrm: VRM | null
@@ -26,8 +50,6 @@ interface SceneLightingProps {
 export default function SceneLighting({ vrm }: SceneLightingProps) {
   const lightRef = useRef<THREE.DirectionalLight>(null!)
   const fitterRef = useRef<ShadowCameraFitter | null>(null)
-  const contactShadowGroupRef = useRef<THREE.Group>(null)
-  const scratchRef = useRef(new THREE.Vector3())
 
   const {
     lighting: { main, ambient },
@@ -44,9 +66,13 @@ export default function SceneLighting({ vrm }: SceneLightingProps) {
     const light = lightRef.current
     if (!light) return
 
-    light.shadow.mapSize.set(shadows.mapSize, shadows.mapSize)
-    light.shadow.bias = shadows.bias
-    light.shadow.normalBias = shadows.normalBias
+    // mapSize / bias / normalBias are NOT set here: they are props on the
+    // <directionalLight> below. This effect runs AFTER the first frame, and
+    // three.js allocates the shadow map on that frame at the default 512²
+    // and never reallocates it. Setting 1024 here afterwards left a 512²
+    // texture sampled as if it were 1024², so the shadow was read from the
+    // wrong place and disappeared (found 25/09 with the floor preview:
+    // no shadow at all until the map was forced to reallocate).
 
     fitterRef.current = new ShadowCameraFitter(light, {
       ...DEFAULT_SHADOW_FIT,
@@ -61,21 +87,6 @@ export default function SceneLighting({ vrm }: SceneLightingProps) {
   // Track the subject. Throttled internally — this is not per-frame work.
   useFrame((_state, delta) => {
     fitterRef.current?.update(vrm, delta * 1000)
-
-    // Make the contact shadow follow the character's root position horizontally
-    if (vrm && contactShadowGroupRef.current) {
-      const hips = vrm.humanoid?.getNormalizedBoneNode(VRMHumanBoneName.Hips)
-      if (hips) {
-        hips.getWorldPosition(scratchRef.current)
-        // Group rotation is [-PI/2, 0, 0] (X-up rotated to Z-up).
-        // The ContactShadows component inside it operates in its own local space
-        // where its X matches world X, and its Y matches world Y (due to rotation).
-        // However, setting the position on the GROUP itself means we use world
-        // coordinates. X and Y in Z-up world.
-        contactShadowGroupRef.current.position.x = scratchRef.current.x
-        contactShadowGroupRef.current.position.y = scratchRef.current.y
-      }
-    }
   })
 
   // DEV handle for the shadow-frustum probe: compare the fitted frustum against
@@ -134,6 +145,11 @@ export default function SceneLighting({ vrm }: SceneLightingProps) {
         intensity={main.intensity}
         position={main.position}
         castShadow={main.castShadow}
+        // Applied at creation, before the first frame allocates the map. See
+        // the note in the fitter effect above.
+        shadow-mapSize={[shadows.mapSize, shadows.mapSize]}
+        shadow-bias={shadows.bias}
+        shadow-normalBias={shadows.normalBias}
       />
 
       {/* ── Hemisphere: ambient fill, no directional influence ───────── */}
@@ -143,29 +159,26 @@ export default function SceneLighting({ vrm }: SceneLightingProps) {
         intensity={ambient.intensity}
       />
 
-      {/* ── Ground plane: catches real directional shadow (XY plane) ─── */}
-      <mesh
-        position={[0, 0, 0]}
-        receiveShadow
-      >
-        <planeGeometry args={[ground.planeSize, ground.planeSize]} />
-        <shadowMaterial
-          transparent
-          opacity={ground.shadowMaterialOpacity}
-        />
-      </mesh>
-
-      {/* ── Contact Shadow: soft puddle under feet (XY plane) ──────── */}
-      <group ref={contactShadowGroupRef} rotation={[-Math.PI / 2, 0, 0]}>
-        <ContactShadows
+      {/* ── Ground: a visible textured floor if configured, otherwise the
+          invisible plane that only catches the directional shadow. Never
+          both — the shadow would be drawn twice. ─────────────────────── */}
+      {FLOOR_TEXTURES ? (
+        // Own boundary: the textures load after the avatar, never in front of it.
+        <Suspense fallback={null}>
+          <GroundFloor textures={FLOOR_TEXTURES} />
+        </Suspense>
+      ) : (
+        <mesh
           position={[0, 0, 0]}
-          opacity={ground.contactShadow.opacity}
-          scale={ground.contactShadow.scale}
-          blur={ground.contactShadow.blur}
-          far={ground.contactShadow.far}
-          color={ground.contactShadow.color}
-        />
-      </group>
+          receiveShadow
+        >
+          <planeGeometry args={[ground.planeSize, ground.planeSize]} />
+          <shadowMaterial
+            transparent
+            opacity={ground.shadowMaterialOpacity}
+          />
+        </mesh>
+      )}
     </>
   )
 }

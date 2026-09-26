@@ -1,5 +1,5 @@
 import type { VRM } from '@pixiv/three-vrm'
-import type { AvatarProfile, CanonicalEmotion } from './AvatarProfile'
+import type { AvatarProfile, CanonicalEmotion, FaceKey } from './AvatarProfile'
 import { AnimationState } from './AnimationState'
 import { VRMExpressionAdapter } from './VRMExpressionAdapter'
 import { ExpressionMixer, type ExpressionContributor } from './ExpressionMixer'
@@ -9,6 +9,8 @@ import { EyeController } from './EyeController'
 import { HeadController } from './HeadController'
 import { IdleBehaviorController } from './IdleBehaviorController'
 import { LipSyncController } from './LipSyncController'
+import { GestureFaceController } from './GestureFaceController'
+import { GestureCameraTrack } from './GestureCameraTrack'
 
 const DEFAULT_EMOTION_DURATION_MS = 500
 const EVENT_GRACE_MS = 3000
@@ -35,6 +37,10 @@ export class AvatarController {
   private readonly head: HeadController
   private readonly idle: IdleBehaviorController
   private readonly lipSync: LipSyncController
+  private readonly gestureFace: GestureFaceController
+  private readonly cameraZoom = new GestureCameraTrack(1)
+  private readonly partnerView = new GestureCameraTrack(0)
+  private partnerHand: 'left' | 'right' = 'left'
   private readonly contributors: readonly ExpressionContributor[]
 
   constructor(vrm: VRM, profile: AvatarProfile) {
@@ -45,9 +51,11 @@ export class AvatarController {
     this.eye = new EyeController(vrm)
     this.head = new HeadController(vrm, this.eye)
     this.lipSync = new LipSyncController(profile)
+    this.gestureFace = new GestureFaceController(profile)
     this.idle = new IdleBehaviorController(this.expression, this.eye, this.profile.binaryEmotions)
-    // Order = layering (§5). Emotion first; lip-sync overrides the mouth; blink last.
-    this.contributors = [this.expression, this.lipSync, this.blink]
+    // Order = layering (§5). Emotion first; lip-sync overrides the mouth; blink
+    // next; a gesture's face track LAST, so while it plays it owns mouth + eyes.
+    this.contributors = [this.expression, this.lipSync, this.blink, this.gestureFace]
   }
 
   // ── External commands (refresh engagement -> ENGAGED) ────────────────────
@@ -76,6 +84,49 @@ export class AvatarController {
   startLipSync(analyser: AnalyserNode): void {
     this.lipSync.start(analyser)
     this.notifyEngaged(0)
+  }
+
+  /** Play a gesture's facial track (GestureDef.face) from now. Engages for its
+   *  length, so the idle wanderer cannot change the expression underneath it. */
+  playFaceTrack(track: FaceKey[]): void {
+    this.gestureFace.play(track)
+    if (this.gestureFace.isPlaying) {
+      const lengthMs = (track[track.length - 1].t - track[0].t) * 1000
+      this.notifyEngaged(lengthMs)
+    }
+  }
+
+  /** Play a gesture's camera zoom (GestureDef.cameraZoom) from now. */
+  playCameraZoom(track: Array<{ t: number; scale: number }>): void {
+    this.cameraZoom.play(track.map((k) => ({ t: k.t, value: k.scale })))
+  }
+
+  /** Play a gesture's partner point-of-view shot (GestureDef.partnerView) from now. */
+  playPartnerView(view: { hand: 'left' | 'right'; keys: Array<{ t: number; weight: number }> }): void {
+    this.partnerHand = view.hand
+    this.partnerView.play(view.keys.map((k) => ({ t: k.t, value: k.weight })))
+  }
+
+  /** 0 = normal face lock, 1 = camera at the partner's eyes (this frame). */
+  get partnerViewWeight(): number {
+    return this.partnerView.value
+  }
+
+  /** The hand resting on the partner's head in the current partner shot. */
+  get partnerViewHand(): 'left' | 'right' {
+    return this.partnerHand
+  }
+
+  /** Face-lock distance multiplier the camera applies this frame (1 = none). */
+  get cameraZoomScale(): number {
+    return this.cameraZoom.value
+  }
+
+  /** The gesture ended early: fade the face track out and ease the zoom back. */
+  stopGestureTracks(): void {
+    this.gestureFace.stop()
+    this.cameraZoom.stop()
+    this.partnerView.stop()
   }
 
   stopLipSync(): void {
@@ -117,6 +168,9 @@ export class AvatarController {
     this.expression.tick(delta)
     this.blink.tick(delta)
     this.lipSync.tick(delta)
+    this.gestureFace.tick(delta)
+    this.cameraZoom.tick(delta)
+    this.partnerView.tick(delta)
     this.eye.tick(delta, t)
     // Head follows the eye gaze — must run AFTER eye.tick so currentYaw/Pitch
     // are fresh. Bones only; independent of the blendshape mixer below.

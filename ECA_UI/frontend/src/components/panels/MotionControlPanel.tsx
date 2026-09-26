@@ -1,4 +1,4 @@
-import { Activity, Sliders, Smile, Lock } from 'lucide-react'
+import { Activity, Sliders, Smile, Lock, RotateCcw } from 'lucide-react'
 import { useEffect, useState, useMemo } from 'react'
 import { useTranslation } from 'react-i18next'
 import { ScrollArea } from '../ui/scroll-area'
@@ -32,6 +32,8 @@ export default function MotionControlPanel() {
     vrmOptions,
     cameraConfig,
     setCameraConfig,
+    resetCharacterPosition,
+    canResetPosition,
   } = useMotion()
 
   // Derive modelId exactly the same way CharacterViewer does.
@@ -229,6 +231,22 @@ export default function MotionControlPanel() {
                   </option>
                 ))}
               </select>
+          </div>
+
+          {/* User-facing: motions leave the character where they end, on
+              purpose. This is the way back to the starting spot. */}
+          <div className="flex flex-col gap-1.5 p-3 rounded-xl bg-secondary/20 border border-border/10">
+            <button
+              onClick={() => resetCharacterPosition()}
+              disabled={!canResetPosition}
+              className="flex items-center justify-center gap-1.5 w-full py-1.5 rounded-lg text-xs font-medium text-foreground bg-secondary/40 hover:bg-secondary/60 transition-colors cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
+            >
+              <RotateCcw className="w-3 h-3" />
+              {t('motion.reset_position')}
+            </button>
+            {!canResetPosition && (
+              <p className="text-[10px] text-muted-foreground">{t('motion.reset_position_busy')}</p>
+            )}
           </div>
 
           {import.meta.env.DEV && (

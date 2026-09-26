@@ -221,6 +221,10 @@ export function MotionProvider({ children }: { children: ReactNode }) {
       const off = controller.on('stateChanged', (state) => {
         setCurrentState(state)
         cameraController.onStateChanged(state)
+        // Leaving a gesture early (another state took over) must not leave its
+        // face track running on the next animation. Natural ends are harmless:
+        // the track has already finished by then.
+        if (state !== 'gesture') avatarRef.current?.stopGestureTracks()
       })
 
       return () => {
@@ -321,6 +325,27 @@ export function MotionProvider({ children }: { children: ReactNode }) {
 
   const handleReset = useCallback(() => animController?.restart(), [animController])
 
+  // The model group, its root-motion accumulator and the spring bones all live
+  // in CharacterViewer, which registers the actual reset here.
+  const positionResetRef = useRef<(() => void) | null>(null)
+  const registerPositionReset = useCallback((reset: () => void) => {
+    positionResetRef.current = reset
+    return () => {
+      if (positionResetRef.current === reset) positionResetRef.current = null
+    }
+  }, [])
+  // exercise: the clip is still producing travel, and the hand-off at its end
+  // would re-apply it. gesture: the camera lock owns the view.
+  const canResetPosition = currentState !== 'exercise' && currentState !== 'gesture'
+  const resetCharacterPosition = useCallback(() => {
+    const reset = positionResetRef.current
+    if (!canResetPosition || !reset) return false
+    // The camera makes the same jump inside `reset` (CharacterViewer's
+    // onTeleport), so the user's view is kept, not replaced.
+    reset()
+    return true
+  }, [canResetPosition])
+
   // Dev-only test handle. Lives here (always mounted) rather than in the debug
   // panel, so automated checks don't depend on a panel being open.
   const stateHistoryRef = useRef<CharState[]>([])
@@ -347,6 +372,11 @@ export function MotionProvider({ children }: { children: ReactNode }) {
       },
       get history() {
         return [...stateHistoryRef.current]
+      },
+      /** Live facial weight of a channel, e.g. __fsm.face('ou') — for checking
+       *  the kiss face actually reaches the mesh. */
+      face(channel: string) {
+        return avatarRef.current?.debugChannelWeight(channel) ?? null
       },
     }
   }, [transitionTo, playMotionFile, animController, cameraController, currentState, vrmOptions])
@@ -505,6 +535,9 @@ export function MotionProvider({ children }: { children: ReactNode }) {
       blendMode,
       setBlendMode,
       handleReset,
+      resetCharacterPosition,
+      canResetPosition,
+      registerPositionReset,
       clipInfo,
       setClipInfo,
       avatarRef,
@@ -542,6 +575,9 @@ export function MotionProvider({ children }: { children: ReactNode }) {
       sessionMotions,
       registerSessionMotion,
       handleReset,
+      resetCharacterPosition,
+      canResetPosition,
+      registerPositionReset,
       clipInfo,
       isMusicPlaying,
       toggleMusic,

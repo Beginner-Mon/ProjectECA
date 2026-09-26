@@ -804,3 +804,46 @@ describe('PoseInertializer — regression: world hips stays continuous (fix lỗ
     expect(hips.position.length()).toBeCloseTo(0, 5)
   })
 })
+
+describe('PoseInertializer — resetGroup (Reset position button)', () => {
+  function travel(iz: PoseInertializer, hips: THREE.Object3D) {
+    hips.position.set(0, 0, 0)
+    iz.recordFrame()
+    hips.position.set(0, 0, 1.0) // 1 m of travel
+    iz.recordFrame()
+    iz.recordFrame()
+    hips.position.set(0, 0, 0) // idle rest
+    iz.begin(0.8, 1 / 60, true)
+  }
+
+  it('forgets accumulated travel, so the next hand-off starts from the caller-set home', () => {
+    const { vrm, group, hips } = makePosedVrm()
+    const iz = new PoseInertializer(vrm)
+    iz.setGroupTarget(group)
+    travel(iz, hips)
+    for (let i = 0; i < 120; i++) { iz.restoreRaw(); hips.position.set(0, 0, 0); iz.update(1 / 60); iz.recordFrame() }
+    expect(Math.abs(group.position.y - 1.5)).toBeGreaterThan(0.5) // travelled
+
+    iz.resetGroup()
+    group.position.set(0, 1.5, group.position.z) // caller puts the model home
+    travel(iz, hips) // begin() re-derives groupBase = position - accum
+    for (let i = 0; i < 120; i++) { iz.restoreRaw(); hips.position.set(0, 0, 0); iz.update(1 / 60); iz.recordFrame() }
+    // One metre from HOME, not two from the old spot.
+    expect(Math.abs(group.position.y - 1.5)).toBeCloseTo(1.0, 1)
+  })
+
+  it('stops a hand-off in flight: later updates never move the group again', () => {
+    const { vrm, group, hips } = makePosedVrm()
+    const iz = new PoseInertializer(vrm)
+    iz.setGroupTarget(group)
+    travel(iz, hips)
+    for (let i = 0; i < 10; i++) { iz.restoreRaw(); hips.position.set(0, 0, 0); iz.update(1 / 60); iz.recordFrame() }
+
+    iz.resetGroup()
+    group.position.set(0, 1.5, 0)
+    for (let i = 0; i < 120; i++) { iz.restoreRaw(); hips.position.set(0, 0, 0); iz.update(1 / 60); iz.recordFrame() }
+    expect(group.position.x).toBeCloseTo(0, 5)
+    expect(group.position.y).toBeCloseTo(1.5, 5)
+    expect(iz.isActive).toBe(false)
+  })
+})

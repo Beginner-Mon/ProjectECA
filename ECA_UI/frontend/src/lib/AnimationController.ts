@@ -118,6 +118,11 @@ export class AnimationController {
     if (target) this.inertializer.setGroupTarget(target)
   }
 
+  /** Drop root travel the inertializer has handed to the group (Reset position). */
+  resetRootMotion(): void {
+    this.inertializer.resetGroup()
+  }
+
   /**
    * Current state. Note this is `'idle'` before the first successful
    * transition, while `currentAction` is still null — that is what makes the

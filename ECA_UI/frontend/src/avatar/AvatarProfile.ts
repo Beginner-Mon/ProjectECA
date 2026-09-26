@@ -40,8 +40,45 @@ export type Viseme = 'A' | 'I' | 'U' | 'E' | 'O'
  * `url` is an absolute address for a clip a character brings with it, which is
  * what makes "each character has its own animations" possible without a deploy.
  */
+/**
+ * What a face-track keyframe can name. Written in the PROFILE's vocabulary, not
+ * raw VRM channels, so one track works on every model: an emotion resolves
+ * through `recipes`, a viseme through `visemes`, `blink` through `blinkChannel`.
+ * `blinkLeft` / `blinkRight` are the raw three-vrm presets (a wink); models
+ * without them simply no-op, so prefer `blink` for anything that must show.
+ */
+export type FaceToken = CanonicalEmotion | Viseme | 'blink' | 'blinkLeft' | 'blinkRight'
+
+/** One keyframe: at `t` seconds into the gesture, these weights (0..1). A token
+ *  absent from a key is 0 there. Values between keys are smoothly interpolated. */
+export interface FaceKey {
+  t: number
+  face: Partial<Record<FaceToken, number>>
+}
+
 export interface GestureDef {
   source: { builtIn: string } | { url: string; loader: 'fbx' | 'bvh' }
+  /**
+   * Optional facial expression played in step with the clip, from the moment
+   * it starts (GestureFaceController). While it plays it owns the mouth and
+   * eyes, overriding lip-sync and auto-blink, then hands them back.
+   */
+  face?: FaceKey[]
+  /**
+   * Optional camera zoom timed to the clip (GestureCameraTrack), while the
+   * gesture holds the camera in its face lock: `scale` multiplies the lock's
+   * distance — 1 = normal framing, 0.7 = 30 % closer. Starts with the clip.
+   */
+  cameraZoom?: Array<{ t: number; scale: number }>
+  /**
+   * Optional point-of-view shot for a two-person gesture (the kiss): the
+   * camera moves into the invisible partner's place — halfway between her nose
+   * and the palm resting on the partner's head — so her hand goes around the
+   * back of the viewer's head instead of across the lens. `weight` keys: 0 =
+   * the normal face lock, 1 = at the partner's eyes. `hand` is the one resting
+   * on the partner's head.
+   */
+  partnerView?: { hand: 'left' | 'right'; keys: Array<{ t: number; weight: number }> }
   /** Blend seconds when leaving this gesture. Defaults to the state's. */
   blendSec?: number
   /** @deprecated use blendSec */

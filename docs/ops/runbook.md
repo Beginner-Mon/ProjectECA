@@ -9,7 +9,9 @@ Step-by-step guide for deploying the ECA LangGraph backend + ECA UI on a single 
 | **Python 3.10+** | Conda recommended (env name `firstconda` used below) |
 | **Docker Desktop** | For PostgreSQL + Redis (canonical setup) |
 | **Git** | To clone the repo |
-| **DeepSeek API key** | Set in `agenticRAG/agentic_rag_gemini/.env` (gitignored) |
+| **DeepSeek API key** | Set in `agenticRAG/.env` (gitignored) |
+| **Neon Postgres DSN** | Same file. The local container is a fallback, not the database the team uses |
+| **Cognito user pool** | Same file. Auth is mandatory in every environment — there is no offline mode |
 
 Local install of PostgreSQL/Redis works but isn't documented — Docker is the supported path.
 
@@ -18,7 +20,7 @@ Local install of PostgreSQL/Redis works but isn't documented — Docker is the s
 ```bash
 git clone <repo-url> eca
 cd eca
-git checkout feature/langgraph-rewrite
+git checkout release        # mainline; feature/langgraph-rewrite stopped collecting work on 09-09
 ```
 
 Create conda environment:
@@ -32,18 +34,51 @@ pip install sentence-transformers  # not pinned in requirements; needed by memor
 
 ## 2. Configuration
 
-Create `.env` at `agenticRAG/agentic_rag_gemini/.env` (no `.env.example` shipped):
+Copy the template and fill it in. The file is `agenticRAG/.env` — the old
+`agenticRAG/agentic_rag_gemini/` path this section used to name was deleted on
+10-08 along with the package that read it.
+
+```bash
+cp agenticRAG/.env.example agenticRAG/.env
+```
+
+`agenticRAG/.env.example` is the authority: every variable is listed there with
+its default and the reason it exists. Four of them decide whether the service
+starts at all.
 
 ```ini
-# Required
 DEEPSEEK_API_KEY=sk-...
 
-# Optional — defaults shown
-DEEPSEEK_BASE_URL=https://api.deepseek.com
-DEEPSEEK_MODEL=deepseek-v4-pro
-LOG_LEVEL=INFO
-LLM_HEALTHCHECK=0
+# The application role. NOT the owner — PostgreSQL exempts a table's owner from
+# its own row-level security policies, so connecting as the owner would leave
+# RLS enabled, listed by \d+, and completely inert. Development deliberately
+# uses the same role as production: a query that forgets its user scope then
+# fails on your machine instead of after deploy.
+VVA_PG_DSN=postgresql://eca_user:...@ep-....c-NN.us-east-1.aws.neon.tech/neondb?sslmode=require
+
+# Migrations only. Alembic reads this first, because DDL needs the owner.
+VVA_PG_DSN_OWNER=postgresql://neondb_owner:...@.../neondb?sslmode=require
+
+# Auth is mandatory in every environment. There is no flag that relaxes it —
+# `REQUIRE_AUTH` was deleted; see the note at the top of api/auth.py. Without a
+# user pool the service fails at startup rather than answering 401 to everyone.
+COGNITO_REGION=
+COGNITO_USER_POOL_ID=
+COGNITO_APP_CLIENT_ID=
 ```
+
+> ⚠️ Neon hostnames carry a `.c-NN` segment. The direct endpoint is the pooled
+> one with `-pooler` removed and **`.c-NN` kept** — dropping it too fails
+> authentication, which reads as a wrong password and is very hard to guess at.
+
+Without `VVA_PG_DSN` the service falls back to the local Docker container and
+logs a warning saying so. That fallback used to be silent, which is how the app
+and Alembic once ended up on two different databases.
+
+Voice output is **optional** and requires the separate SpeechLLm/VieNeu-TTS
+service on port 5000. If it is not running, `output_mode: text` works normally
+and speech requests degrade gracefully (`/health/detailed` reports
+`speechllm: ok=false` → overall `degraded`, which is expected).
 
 Voice output is **optional** and requires the separate SpeechLLm/VieNeu-TTS service on
 port 5000. If it is not running, `output_mode: text` works normally and speech requests
@@ -124,15 +159,19 @@ check — non-critical, so it shows `degraded` on a 200 rather than pulling the 
 out of the load balancer.
 
 `config_source` answers the other start-up question: which `.env` was actually read. If
-it says `(LEGACY ...)`, the file is still in `agentic_rag_gemini/` and should be moved to
-`agenticRAG/.env`.
+it says `(LEGACY ...)`, a stray `.env` survives in the deleted `agentic_rag_gemini/`
+directory — `.env` is gitignored, so removing the package never removed it on machines
+that had one. Move it to `agenticRAG/.env`.
 
-**Auth:** by default `REQUIRE_AUTH=false` — the backend accepts the client-supplied
-`user_id` (no login needed, correct for internal demo). When a valid Cognito **ID token**
-is sent as `Authorization: Bearer <jwt>`, the backend ignores the client `user_id` and
-uses the token's `sub`. Set `REQUIRE_AUTH=true` (+ `COGNITO_REGION` /
-`COGNITO_USER_POOL_ID` / `COGNITO_APP_CLIENT_ID`) to **require** a valid token — this is
-the production setting that closes the IDOR gap and MUST be on before any network exposure.
+**Auth:** every route needs `Authorization: Bearer <Cognito ID token>`, in every
+environment. There is no flag: `REQUIRE_AUTH` was deleted, because a switch that can
+turn authentication off is the switch that leaves it off. The user is taken from the
+token's `sub` and from nowhere else — no endpoint accepts a `user_id` in a path, query
+or body, which is what closed the IDOR gap for good rather than by configuration.
+
+The same verified id is bound to the database session, so row-level security filters
+every statement by it. A handler that forgets to bind raises rather than returning an
+empty result — fail-closed, not fail-quiet.
 
 Terminal 2 — Frontend. There are two UIs:
 
@@ -210,8 +249,10 @@ with `docker compose -f docker-compose.langgraph.yml up -d postgres redis`.
 
 ## 6. Open the UI
 
-New React UI (demo): **`http://localhost:5173`** — talks to the backend on :8000 via
-`VITE_API_BASE_URL` (default). No login needed in demo mode.
+New React UI: **`http://localhost:5173`** — talks to the backend on :8000 via
+`VITE_API_BASE_URL` (default). **You have to sign in**: Cognito verification is
+mandatory in every environment, so the `COGNITO_*` values from §2 must be set
+and the frontend must point at the same pool.
 
 Old SSE test UI (debugging): `http://localhost:3000/?api_base=http://localhost:8000`
 (served from `ECA_UI/test-ui/sse-test/`).
@@ -295,7 +336,7 @@ opening does not affect others. (Breaker state is internal; it is not surfaced i
 
 ### React UI (:5173) chat fails with `net::ERR_FAILED` / CORS blocked
 `.env` `ALLOWED_ORIGINS` overrides the code default and must list the Vite origin.
-Ensure `agenticRAG/agentic_rag_gemini/.env` has:
+Ensure `agenticRAG/.env` has:
 ```ini
 ALLOWED_ORIGINS=http://localhost:3000,http://localhost:8080,http://localhost:5173
 ```
@@ -415,8 +456,8 @@ docker compose -f docker-compose.langgraph.yml down -v    # wipe volumes
 |---|---|---|
 | `LOG_LEVEL` | `INFO` | Set to `DEBUG` for verbose, `WARNING` to suppress noise |
 | `LLM_HEALTHCHECK` | `0` | Set to `1` to actually call LLM in `/health/detailed` (burns API credits) |
-| `REQUIRE_AUTH` | `false` | `true` = reject requests without a valid Cognito ID token (closes IDOR; production). Requires the 3 Cognito vars below. |
-| `COGNITO_REGION` / `COGNITO_USER_POOL_ID` / `COGNITO_APP_CLIENT_ID` | — | Cognito user-pool identifiers used to verify the JWT (JWKS + audience + issuer). Only needed when `REQUIRE_AUTH=true`. |
+| ~~`REQUIRE_AUTH`~~ | — | **Deleted.** Auth is unconditional now; a flag that could switch it off was the flag that left it off. `api/auth.py` explains why it is not coming back. |
+| `COGNITO_REGION` / `COGNITO_USER_POOL_ID` / `COGNITO_APP_CLIENT_ID` | — | Cognito user-pool identifiers used to verify the JWT (JWKS + audience + issuer). **Required** — the service refuses to start without them. |
 | `ALLOWED_ORIGINS` | `localhost:3000,5173,8080` | CORS allow-list. The Vite UI origin `http://localhost:5173` is included by default. |
 | `VITE_API_BASE_URL` (frontend) | `http://localhost:8000` | Where the React UI sends API calls. Set in `ECA_UI/frontend/.env.local` (gitignored) at build/dev time. |
 | `EMBEDDING_ALLOW_DOWNLOAD` | `(unset)` | **Embedding model cache.** Default (unset): loads `intfloat/multilingual-e5-small` from `~/.cache/huggingface/hub/` only — no HF-Hub round-trips on restart. Set to `1` for a one-time download on a fresh machine without a local cache. Must be pre-cached before first run on the production machine; see `pip install sentence-transformers && python -c "from sentence_transformers import SentenceTransformer; SentenceTransformer('intfloat/multilingual-e5-small')"`. |

@@ -359,10 +359,12 @@ export interface SessionMessage {
  * checks those first).
  *
  * POST /tts answers with an SSE stream of the same events /chat sends in voice
- * mode: `speech_start`, one `speech_chunk` per self-standing Opus (or WAV)
- * file, then `speech_end` — or `speech_failed`. The first chunk lands about
- * half a second after synthesis starts and the rest arrive faster than they
- * play, so the caller plays as it goes instead of waiting for the whole answer.
+ * mode: `speech_start`, then per sentence a `speech_sentence` mark and one
+ * `speech_chunk` per self-standing Opus/FLAC (or WAV) file, then `speech_end`
+ * (`partial: true` if it stopped early) — or `speech_failed`. The server
+ * synthesises one sentence per call, slower than it plays, so the player
+ * buffers per sentence and plays as it goes instead of waiting for the whole
+ * answer (lib/speechSchedule.ts sentenceStartTime).
  *
  * fetch, not the axios client: axios is XHR and cannot deliver a stream
  * progressively. This used to be a task id plus a one-second poll through

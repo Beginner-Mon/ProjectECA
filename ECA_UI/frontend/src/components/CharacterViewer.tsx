@@ -134,6 +134,13 @@ const HAND_CLEARANCE = 0.16
  * independent.
  */
 const TRACK_DAMPING = 8
+/**
+ * Hips framing carries the camera along with the character's travel (see the
+ * follow loop). The hips are low-passed first at this rate (1/s, ~0.5 s time
+ * constant) so in-place sway — a side lunge, a squat's shift — barely moves
+ * the wide shot while real travel is followed.
+ */
+const HIPS_FOLLOW_RATE = 2
 
 /**
  * Seconds to ease the camera back out of the `face` lock. Slower than the
@@ -626,6 +633,10 @@ function Scene({ theme, vrmUrl, modelId, onReady, avatarRef }: SceneProps) {
   const MANUAL_THRESHOLD_ZOOM = 0.2
   const manualStartTargetRef = useRef<THREE.Vector3 | null>(null)
   const manualStartDistRef = useRef<number | null>(null)
+  /** Bumped whenever a camera transition starts; a gesture that overlapped
+   *  one cannot be measured (the transition moved target and distance). */
+  const transitionGenRef = useRef(0)
+  const manualStartGenRef = useRef(-1)
 
   useEffect(() => {
     camera.up.set(0, 0, 1)
@@ -644,8 +655,13 @@ function Scene({ theme, vrmUrl, modelId, onReady, avatarRef }: SceneProps) {
     faceLockRef.current = null
     faceBackoffRef.current = 0
     const isRelease = prev === 'face'
+    // Entering manual from head/hips (a zoom or pan past the threshold, see
+    // onEnd) keeps the view the user just made. A transition here flew the
+    // camera to the head preset — endOffset is null outside a release — so the
+    // first zoom-out snapped back into the head (Owner, 28-09).
     const bone = vrmRef.current?.humanoid.getNormalizedBoneNode(CAMERA_MODES[cameraMode].boneName)
-    if (!cameraInitializedRef.current || !controlsRef.current || !bone) {
+    if (!cameraInitializedRef.current || !controlsRef.current || !bone || (cameraMode === 'manual' && !isRelease)) {
+      cameraTransitionRef.current = null
       // No transition will run, so nothing would ever clear `releasing`.
       releasingRef.current = false
       setReleasing(false)
@@ -664,6 +680,7 @@ function Scene({ theme, vrmUrl, modelId, onReady, avatarRef }: SceneProps) {
       }
     }
 
+    transitionGenRef.current++
     cameraTransitionRef.current = {
       startPos: camera.position.clone(),
       startTarget: controlsRef.current.target.clone(),
@@ -681,6 +698,14 @@ function Scene({ theme, vrmUrl, modelId, onReady, avatarRef }: SceneProps) {
   /** Where the camera looks: `followPos`, pulled toward `trackBone` if set. */
   const lookPos = useMemo(() => new THREE.Vector3(), [])
   const trackPos = useMemo(() => new THREE.Vector3(), [])
+  const hipsPos = useMemo(() => new THREE.Vector3(), [])
+  const hipsDelta = useMemo(() => new THREE.Vector3(), [])
+  /** Smoothed hips position for the hips-framing carry; invalid = re-baseline. */
+  const hipsFollowRef = useRef({ smooth: new THREE.Vector3(), valid: false })
+  /** Total camera carry applied so far, so a user gesture can be measured
+   *  without the character's travel (see onEnd). */
+  const followShiftRef = useRef(new THREE.Vector3())
+  const manualStartShiftRef = useRef(new THREE.Vector3())
   const eyeL = useMemo(() => new THREE.Vector3(), [])
   const eyeR = useMemo(() => new THREE.Vector3(), [])
   const faceDir = useMemo(() => new THREE.Vector3(), [])
@@ -729,6 +754,7 @@ function Scene({ theme, vrmUrl, modelId, onReady, avatarRef }: SceneProps) {
     }
     lockPrevTargetRef.current.add(delta)
     lockPrevPosRef.current.add(delta)
+    hipsFollowRef.current.valid = false // the hips jumped too; already carried above
     controls?.update()
   }
 
@@ -803,6 +829,7 @@ function Scene({ theme, vrmUrl, modelId, onReady, avatarRef }: SceneProps) {
     }
 
     if (cameraTransitionRef.current) {
+      hipsFollowRef.current.valid = false // re-baseline once the transition lands
       const t = cameraTransitionRef.current
       t.elapsed += delta
       const progress = Math.min(t.elapsed / t.duration, 1)
@@ -935,6 +962,33 @@ function Scene({ theme, vrmUrl, modelId, onReady, avatarRef }: SceneProps) {
       lastAppliedOffsetRef.current.copy(responsiveDisplayRef.current)
       controlsRef.current.update()
       return
+    }
+
+    // Hips framing (a motion is playing): carry camera AND target along with
+    // the character's horizontal travel. Per-frame follow is off by design
+    // (CameraConfig.followTarget) and the camera only re-framed on a mode
+    // change, so back-to-back motions — which stay in `hips` — walked her out
+    // of the shot (Owner, 28-09). Adding the delta rather than re-pinning the
+    // target keeps the user's orbit, zoom and pan. XY only: vertical bob is
+    // not travel.
+    const hf = hipsFollowRef.current
+    const hipsBone = cameraMode === 'hips' ? vrmRef.current.humanoid.getNormalizedBoneNode(VRMHumanBoneName.Hips) : null
+    if (hipsBone) {
+      hipsBone.getWorldPosition(hipsPos)
+      if (!hf.valid) {
+        hf.smooth.copy(hipsPos)
+        hf.valid = true
+      } else {
+        hipsDelta.copy(hf.smooth)
+        hf.smooth.lerp(hipsPos, 1 - Math.exp(-HIPS_FOLLOW_RATE * delta))
+        hipsDelta.subVectors(hf.smooth, hipsDelta).setZ(0)
+        camera.position.add(hipsDelta)
+        ;(controlsRef.current.target as THREE.Vector3).add(hipsDelta)
+        followShiftRef.current.add(hipsDelta)
+        controlsRef.current.update()
+      }
+    } else {
+      hf.valid = false
     }
 
     if (!cameraConfig.followTarget) return
@@ -1083,6 +1137,8 @@ return (
           if (controlsRef.current) {
             manualStartTargetRef.current = controlsRef.current.target.clone()
             manualStartDistRef.current = camera.position.distanceTo(controlsRef.current.target as THREE.Vector3)
+            manualStartGenRef.current = cameraTransitionRef.current ? -1 : transitionGenRef.current
+            manualStartShiftRef.current.copy(followShiftRef.current)
           }
         }}
         onEnd={() => {
@@ -1091,11 +1147,21 @@ return (
           manualStartTargetRef.current = null
           manualStartDistRef.current = null
           if (!startTarget || startDist === null || !controlsRef.current) return
-          const targetDelta = (controlsRef.current.target as THREE.Vector3).distanceTo(startTarget)
+          // Take out the hips-framing carry applied during the gesture: that is
+          // the character travelling, not the user panning.
+          const carried = followShiftRef.current.clone().sub(manualStartShiftRef.current)
+          const targetDelta = (controlsRef.current.target as THREE.Vector3).clone().sub(carried).distanceTo(startTarget)
           const endDist = camera.position.distanceTo(controlsRef.current.target as THREE.Vector3)
           const distDelta = Math.abs(endDist - startDist)
-          const hasPanned = targetDelta > MANUAL_THRESHOLD_PAN
-          const hasZoomed = distDelta > MANUAL_THRESHOLD_ZOOM
+          // Only what the USER did may count (Owner, 28-09: every generated
+          // motion flipped the camera to manual). A transition (e.g. head ->
+          // hips as the motion starts) changes target and distance by itself,
+          // so a gesture overlapping one is not measured; the hips carry is
+          // subtracted above. With per-frame follow on (followTarget, off by
+          // design) the loop re-pins the target, so a pan cannot be measured.
+          const measurable = !cameraTransitionRef.current && manualStartGenRef.current === transitionGenRef.current
+          const hasPanned = measurable && !cameraConfig.followTarget && targetDelta > MANUAL_THRESHOLD_PAN
+          const hasZoomed = measurable && distDelta > MANUAL_THRESHOLD_ZOOM
           const shouldManual = hasPanned || hasZoomed
           if (shouldManual) {
             notifyManualInteraction()

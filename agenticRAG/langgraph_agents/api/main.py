@@ -711,117 +711,150 @@ async def _stream_chat(req, request_id, config, state, background_tasks, request
 
 
 async def _stream_speech(text: str, voice_path: str | None, language: str | None):
-    """Turn one SpeechLLm NDJSON stream into speech_* SSE events.
+    """Turn a reply into speech_* SSE events, one SpeechLLm call per sentence.
 
     Shared by /chat's speech block and POST /tts — both need the exact same
     translation from client.synthesize_stream()'s
     {"type": "start"|"chunk"|"end"|"error"} lines to the
-    speech_start/speech_chunk/speech_end/speech_failed events the browser
-    listens for (see the CONTRACT table in the plan this change implements).
-    One copy here is what makes it impossible for the two call sites to drift
-    on what a "chunk" event looks like.
+    speech_start/speech_sentence/speech_chunk/speech_end/speech_failed events
+    the browser listens for. One copy here is what makes it impossible for the
+    two call sites to drift on what a "chunk" event looks like.
 
     Yields already-encoded SSE event dicts (encode_event output) — ready to
     `yield` straight out of a FastAPI event generator, same shape as every
     other event in this module.
 
-    Spoken-length cap (Owner decision): replies over the budget speak only
-    their first sentence — `plan_spoken_text` decides, this function only
-    applies. Both call sites (/chat and POST /tts) share this choke point,
-    so the cap cannot drift between them.
+    Sentence by sentence (Owner decision 28-09-2026, see text_budget.py): the
+    reply is split by `plan_spoken_text` and each piece is synthesized in
+    turn, in order, on the same open stream. To the browser it is still ONE
+    clip — one speech_start, chunk seqs continuing across sentences, one
+    speech_end — plus a `speech_sentence` marker before each sentence's
+    chunks, so the player can buffer per sentence instead of per reply.
+
+    Failure: before any audio has gone out, one speech_failed as before.
+    After some has, the reply keeps what was spoken — speech_end with
+    `partial: true`, so the browser plays it but does not cache it as whole.
     """
     plan = plan_spoken_text(text)
+    tts_log = get_logger("langgraph.tts")
     if plan.truncated:
         # Counts only — never the content: replies routinely contain health
         # details, and logs are not the place for them.
-        get_logger("langgraph.tts").info("speech_truncated", extra={
+        tts_log.info("speech_truncated", extra={
             "total_chars": len(text),
-            "spoken_chars": len(plan.text),
+            "spoken_chars": plan.spoken_chars,
         })
+    if not plan.segments:
+        yield encode_event("speech_failed", {"error": "nothing to speak"})
+        return
+
     client = get_vieneu_tts_client()
-    try:
-        # contextlib.aclosing, not a bare `async for`: this loop `return`s the
-        # moment it sees "end" or "error" (see below), which — without this —
-        # would leave client.synthesize_stream()'s generator to be torn down
-        # whenever the garbage collector next gets to it, not deterministically
-        # when this function stops using it. aclosing() calls .aclose() on the
-        # inner generator on every exit path (normal, `return`, or an
-        # exception raised here or by the caller disconnecting), which is what
-        # actually closes the underlying httpx stream to SpeechLLm on the spot
-        # — the property this function's own module docstring promises the
-        # caller (see the /chat speech block in _stream_chat).
-        async with contextlib.aclosing(client.synthesize_stream(
-            text=plan.text, voice_path=voice_path, language=language,
-        )) as events:
-            async for event in events:
-                event_type = event.get("type")
-                if event_type == "start":
-                    yield encode_event("speech_start", {
-                        "voice_version": event.get("voice_version"),
-                        "codec": event.get("codec"),
-                        "sample_rate": event.get("sample_rate"),
-                        # The reference wav — and so voice_version, its hash —
-                        # is per (persona, language): anne_vi.wav and
-                        # anne_en.wav always hash differently. Without `lang`
-                        # here the frontend's cache can only key staleness by
-                        # persona, so every language switch in a bilingual
-                        # conversation looked exactly like Anne's voice having
-                        # been re-recorded, and purged the OTHER language's
-                        # still-valid cached audio too. `language` is this
-                        # function's own parameter (resolve_voice()'s output
-                        # at both call sites) — SpeechLLm's "start" line itself
-                        # carries no language field, so this is not read off
-                        # `event`.
-                        "lang": language,
-                        # Spoken-length budget (plan_spoken_text, applied at
-                        # the top of this function): the frontend needs the
-                        # EXPECTED total to schedule gapless playback, and it
-                        # cannot know it until the stream ends. estimated is
-                        # over the SPOKEN part, not the full reply.
-                        "truncated": plan.truncated,
-                        "spoken_chars": len(plan.text),
-                        "estimated_audio_s": plan.estimated_audio_s,
-                    })
-                elif event_type == "chunk":
-                    yield encode_event("speech_chunk", {
-                        "seq": event.get("seq"),
-                        "codec": event.get("codec"),
-                        "audio": event.get("audio"),
-                    })
-                elif event_type == "end":
-                    yield encode_event("speech_end", {"chunks": event.get("chunks")})
-                    return
-                elif event_type == "error":
-                    # SpeechLLm's own report of a mid-stream failure — not a
-                    # transport error, so the client already left the circuit
-                    # breaker alone for this one. Still ends the turn the same
-                    # way a transport failure does: one speech_failed, then
-                    # stop.
-                    #
-                    # `extra` key is "tts_message", not "message" — LogRecord
-                    # already reserves "message" for the formatted log line,
-                    # and passing it in `extra` raises KeyError from inside
-                    # logging itself (a test failure that only ever a real
-                    # error line would have surfaced).
-                    logger.warning("speech_stream_error", extra={
-                        "tts_message": event.get("message"),
-                    })
-                    yield encode_event("speech_failed", {
-                        "error": event.get("message") or "TTS error",
-                    })
-                    return
-                else:
-                    # Forward-compatible: an event type this code does not
-                    # know about yet is dropped, not treated as fatal —
-                    # SpeechLLm and the agent deploy independently, so a new
-                    # event type showing up here should not break existing
-                    # turns.
-                    logger.warning("speech_stream_unknown_event_type", extra={
-                        "event_type": event_type,
-                    })
-    except ServiceUnavailableError as exc:
-        # Breaker open, connect/HTTP failure, stream drop, or malformed
-        # NDJSON — client.synthesize_stream() already recorded the breaker
-        # failure; this just turns it into the one event the browser expects.
-        logger.error("speech_stream_unavailable", extra={"error": str(exc)})
-        yield encode_event("speech_failed", {"error": str(exc)})
+    started = False
+    seq_base = 0  # chunks already sent, over all earlier sentences
+    for index, segment in enumerate(plan.segments):
+        sent_here = 0  # chunks of THIS sentence forwarded so far
+        failure: str | None = None
+        ended = False
+        try:
+            # contextlib.aclosing, not a bare `async for`: this loop `break`s
+            # the moment it sees "end" or "error", which — without this — would
+            # leave client.synthesize_stream()'s generator to be torn down
+            # whenever the garbage collector next gets to it. aclosing() calls
+            # .aclose() on every exit path (normal, break, an exception here, or
+            # the caller disconnecting), which is what actually closes the
+            # httpx stream to SpeechLLm on the spot — the property the /chat
+            # speech block in _stream_chat relies on.
+            async with contextlib.aclosing(client.synthesize_stream(
+                text=segment.text, voice_path=voice_path, language=language,
+            )) as events:
+                async for event in events:
+                    event_type = event.get("type")
+                    if event_type == "start":
+                        if not started:
+                            yield encode_event("speech_start", {
+                                "voice_version": event.get("voice_version"),
+                                "codec": event.get("codec"),
+                                "sample_rate": event.get("sample_rate"),
+                                # The reference wav — and so voice_version, its
+                                # hash — is per (persona, language). Without
+                                # `lang` the frontend cache can only key
+                                # staleness by persona, and every language
+                                # switch looked like a re-recorded voice.
+                                # SpeechLLm's "start" line carries no language,
+                                # so this is resolve_voice()'s output, not
+                                # read off `event`.
+                                "lang": language,
+                                # Whole-reply totals (text_budget.py). The
+                                # player buffers per sentence from the
+                                # speech_sentence events; these stay for older
+                                # clients and for the cache.
+                                "truncated": plan.truncated,
+                                "spoken_chars": plan.spoken_chars,
+                                "estimated_audio_s": plan.estimated_audio_s,
+                                "sentences": len(plan.segments),
+                            })
+                            started = True
+                        yield encode_event("speech_sentence", {
+                            "index": index,
+                            "first_seq": seq_base,
+                            "estimated_audio_s": segment.estimated_audio_s,
+                        })
+                    elif event_type == "chunk":
+                        local_seq = event.get("seq")
+                        if not isinstance(local_seq, int):
+                            local_seq = sent_here
+                        yield encode_event("speech_chunk", {
+                            "seq": seq_base + local_seq,
+                            "codec": event.get("codec"),
+                            "audio": event.get("audio"),
+                        })
+                        sent_here = max(sent_here, local_seq + 1)
+                    elif event_type == "end":
+                        chunks = event.get("chunks")
+                        if isinstance(chunks, int):
+                            sent_here = max(sent_here, chunks)
+                        ended = True
+                        break
+                    elif event_type == "error":
+                        # SpeechLLm's own report of a mid-stream failure — not
+                        # a transport error, so the client already left the
+                        # circuit breaker alone for this one.
+                        #
+                        # `extra` key is "tts_message", not "message" —
+                        # LogRecord reserves "message", and passing it in
+                        # `extra` raises KeyError from inside logging itself.
+                        logger.warning("speech_stream_error", extra={
+                            "tts_message": event.get("message"),
+                            "sentence": index,
+                        })
+                        failure = event.get("message") or "TTS error"
+                        break
+                    else:
+                        # Forward-compatible: an event type this code does not
+                        # know about yet is dropped, not treated as fatal —
+                        # SpeechLLm and the agent deploy independently.
+                        logger.warning("speech_stream_unknown_event_type", extra={
+                            "event_type": event_type,
+                        })
+        except ServiceUnavailableError as exc:
+            # Breaker open, connect/HTTP failure, stream drop, or malformed
+            # NDJSON — client.synthesize_stream() already recorded the breaker
+            # failure; this just decides which event the browser gets.
+            logger.error("speech_stream_unavailable", extra={
+                "error": str(exc), "sentence": index,
+            })
+            failure = str(exc)
+        if failure is None and not ended:
+            failure = "TTS stream ended without an end line"
+
+        seq_base += sent_here
+        if failure is not None:
+            if seq_base == 0:
+                yield encode_event("speech_failed", {"error": failure})
+            else:
+                # Some of the reply was already spoken: keep it, but say it is
+                # not the whole reply.
+                yield encode_event("speech_end", {"chunks": seq_base, "partial": True})
+            return
+
+    yield encode_event("speech_end", {"chunks": seq_base})

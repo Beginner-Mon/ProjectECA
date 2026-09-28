@@ -431,14 +431,18 @@ def test_sse_chat_speech_service_unavailable_emits_speech_failed(api_client, mon
 
 
 @pytest.mark.unit
-def test_sse_chat_speech_truncated_stream_emits_exactly_one_speech_failed(api_client, monkeypatch):
+def test_sse_chat_speech_truncated_stream_emits_exactly_one_terminal_event(api_client, monkeypatch):
     """End-to-end regression, through the REAL client.synthesize_stream (an
     httpx.MockTransport, no network — not _FakeTTSClient) and the real
     _stream_speech: a stream that closes without ever sending "end" or "error"
-    must still produce exactly one terminal speech_failed, not silence. Before
+    must still produce exactly one terminal event, not silence. Before
     client.synthesize_stream() was fixed to treat a missing terminal line as a
     failure, this case produced no speech_end AND no speech_failed — the
     browser had no way to learn the turn was over.
+
+    Since 28-09 (sentence by sentence) a failure AFTER some audio went out
+    keeps that audio: the terminal event is speech_end with partial=True, not
+    speech_failed (see test_tts_spoken_cap.py for the before-any-audio case).
     """
     client, _, mock_graph = api_client
     mock_graph.astream = _make_fake_astream_stage_only()
@@ -478,8 +482,10 @@ def test_sse_chat_speech_truncated_stream_emits_exactly_one_speech_failed(api_cl
     events = _parse_sse_stream(resp.content)
     kinds = [e["event"] for e in events]
 
-    assert kinds.count("speech_failed") == 1
-    assert kinds.count("speech_end") == 0
+    assert kinds.count("speech_failed") == 0
+    ends = [e for e in events if e["event"] == "speech_end"]
+    assert len(ends) == 1
+    assert ends[0]["data"] == {"chunks": 1, "partial": True}
     assert kinds.count("speech_start") == 1  # the "start" line did get through
     assert kinds[-1] == "done"
 
@@ -548,11 +554,12 @@ def test_tts_endpoint_streams_speech_events_when_enabled(api_client, monkeypatch
     events = _parse_sse_stream(resp.content)
     kinds = [e["event"] for e in events]
 
-    assert kinds == ["speech_start", "speech_chunk", "speech_end"]
+    assert kinds == ["speech_start", "speech_sentence", "speech_chunk", "speech_end"]
     assert events[0]["data"]["voice_version"] == "def456"
     assert events[0]["data"]["lang"] == "vi"  # "xin chào" — resolve_voice()'s own detection
-    assert events[1]["data"]["seq"] == 0
-    assert events[2]["data"]["chunks"] == 1
+    assert events[1]["data"] == {"index": 0, "first_seq": 0, "estimated_audio_s": pytest.approx(8 / 17.9)}
+    assert events[2]["data"]["seq"] == 0
+    assert events[3]["data"]["chunks"] == 1
 
 
 # ── Session persisted ──────────────────────────────────────────────

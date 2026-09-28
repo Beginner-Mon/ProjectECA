@@ -7,7 +7,10 @@ import {
   computeStartTime,
   locate,
   mediaPositionAt,
+  PRIOR_RATE,
+  sentenceStartTime,
   type ChunkArrival,
+  type SentenceMark,
   type Segment,
 } from './speechSchedule'
 
@@ -238,6 +241,92 @@ describe('computeStartTime', () => {
       expect(debug).toHaveBeenCalled()
     } finally {
       debug.mockRestore()
+    }
+  })
+})
+
+describe('sentenceStartTime — per-sentence buffering', () => {
+  const marks: SentenceMark[] = [
+    { firstSeq: 0, estimatedAudioS: 3 },
+    { firstSeq: 2, estimatedAudioS: 4 },
+  ]
+
+  it("holds the chunk that opens a later sentence by that sentence's own buffer", () => {
+    close(sentenceStartTime(marks, 2, 10, false)!, 10 + 4 * (1 / PRIOR_RATE - 1))
+  })
+
+  it('never holds the first sentence, a mid-sentence chunk, or a settled clip', () => {
+    expect(sentenceStartTime(marks, 0, 10, false)).toBeUndefined()
+    expect(sentenceStartTime(marks, 1, 10, false)).toBeUndefined()
+    expect(sentenceStartTime(marks, 3, 10, false)).toBeUndefined()
+    expect(sentenceStartTime(marks, 2, 10, true)).toBeUndefined()
+  })
+
+  it('does not hold a sentence that has already arrived whole (a later one started)', () => {
+    const more = [...marks, { firstSeq: 4, estimatedAudioS: 2 }]
+    expect(sentenceStartTime(more, 2, 10, false)).toBeUndefined()
+  })
+
+  it('caps the hold like the start-of-play buffer', () => {
+    const long = [marks[0], { firstSeq: 2, estimatedAudioS: 200 }]
+    close(sentenceStartTime(long, 2, 10, false)!, 10 + MAX_START_DELAY_S)
+  })
+})
+
+describe('ChunkScheduler with a start gate', () => {
+  it('holds only the gated chunk, does not report the hold as lateness, and chains after it', () => {
+    const gate = (seq: number) => (seq === 1 ? 20 : undefined)
+    const s = new ChunkScheduler(undefined, S, undefined, gate)
+    const [a] = s.offer(0, 2.0, 10)
+    const [b] = s.offer(1, 1.0, 10.5)
+    const [c] = s.offer(2, 1.0, 10.6)
+    close(a.startAt, 10 + S)
+    close(b.startAt, 20) // a pause after sentence 1
+    expect(b.lateBy).toBe(0)
+    close(c.startAt, 21)
+  })
+
+  it('costs nothing when the previous chunk is still sounding past the gate', () => {
+    const s = new ChunkScheduler(undefined, S, undefined, (seq) => (seq === 1 ? 11 : undefined))
+    s.offer(0, 5.0, 10)
+    const [b] = s.offer(1, 1.0, 10.5)
+    close(b.startAt, 10 + S + 5.0)
+  })
+
+  it('reaches first sound far sooner than buffering the whole reply (simulated at the measured slow rate)', () => {
+    // 5 sentences of 4 s audio, generated one after another at PRIOR_RATE,
+    // each arriving as two 2 s chunks. Per-sentence: the first sentence plays
+    // after its own buffer. Whole-reply (the old way): a single prior over
+    // 20 s of audio.
+    const rate = PRIOR_RATE
+    const sentences: SentenceMark[] = []
+    const arrivals: { seq: number; at: number; d: number }[] = []
+    let t = 0
+    let seq = 0
+    for (let k = 0; k < 5; k++) {
+      sentences.push({ firstSeq: seq, estimatedAudioS: 4 })
+      for (let c = 0; c < 2; c++) {
+        t += 2 / rate
+        arrivals.push({ seq: seq++, at: t, d: 2 })
+      }
+    }
+    const firstAt = arrivals[0].at
+    const perSentenceStart = Math.min(firstAt + 4 * (1 / rate - 1), firstAt + MAX_START_DELAY_S)
+    // Marks arrive just before their sentence's chunks, so when chunk q is
+    // placed only the marks up to it are known.
+    const s = new ChunkScheduler(undefined, S, perSentenceStart, (q, now) =>
+      sentenceStartTime(sentences.filter((m) => m.firstSeq <= q), q, now, false))
+    const placed = arrivals.flatMap((a) => s.offer(a.seq, a.d, a.at))
+    const wholeReplyStart = firstAt + 20 * (1 / rate - 1)
+
+    expect(placed[0].startAt).toBeLessThan(wholeReplyStart - 5)
+    // Never a stutter inside a sentence: the second chunk of every sentence
+    // follows its first with no gap.
+    for (let k = 0; k < 5; k++) {
+      const first = placed[2 * k]
+      const second = placed[2 * k + 1]
+      close(second.startAt, first.startAt + first.length)
+      expect(second.lateBy).toBe(0)
     }
   })
 })

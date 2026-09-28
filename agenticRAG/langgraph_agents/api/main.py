@@ -555,6 +555,7 @@ async def _stream_chat(req, request_id, config, state, background_tasks, request
                                 job_id = job_payload.get("job_id")
                                 if job_id:
                                     final_state["motion_job_id"] = job_id
+                                    final_state["motion_prompt"] = job_payload.get("prompt")
                     except Exception as exc:
                         logger.warning("kimodo_job_id_capture_failed", extra={"error": str(exc)})
 
@@ -613,6 +614,7 @@ async def _stream_chat(req, request_id, config, state, background_tasks, request
                 total_tokens=final_state.get("total_tokens", 0),
                 grader_result=final_state.get("grader_result", "pass"),
                 motion_job_id=final_state.get("motion_job_id"),
+                motion_prompt=final_state.get("motion_prompt"),
             )
             yield encode_event("session_persisted", {"session_id": req.session_id})
         except Exception as exc:

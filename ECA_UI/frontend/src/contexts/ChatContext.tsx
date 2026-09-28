@@ -320,10 +320,10 @@ export function ChatProvider({ children }: { children: ReactNode }) {
             // and acted on by the effect below.
             motionJobId: m.motion_job_id,
             motionExpiresAt: m.motion_expires_at,
-            // The user's own words for this turn — the picker lists motions by
-            // what was asked for, and on a restore the question is the message
-            // immediately before the answer.
-            motionLabel: m.role === 'assistant' ? history[i - 1]?.content : undefined,
+            // The prompt Kimodo rendered, so the picker lists motions by what
+            // was actually asked for. Older rows never recorded that prompt,
+            // so fall back to the message immediately before the answer.
+            motionLabel: m.role === 'assistant' ? (m.motion_prompt || history[i - 1]?.content) : undefined,
           })),
         )
 
@@ -348,7 +348,7 @@ export function ChatProvider({ children }: { children: ReactNode }) {
               // Deliberately no url. A signed URL lives five minutes, and this
               // page has no cached clip — fetching one now would hand the
               // picker a dead link. It resolves a fresh one when picked.
-              label: history[i - 1]?.content ?? '',
+              label: m.motion_prompt || history[i - 1]?.content || '',
             })
           } else {
             setMessages((prev) =>
@@ -679,6 +679,7 @@ export function ChatProvider({ children }: { children: ReactNode }) {
               state: string
               job_id?: string
               retry_after_seconds?: number
+              prompt?: string
             }
             const notice = (text: string | undefined) =>
               setMessages((prev) =>
@@ -706,8 +707,10 @@ export function ChatProvider({ children }: { children: ReactNode }) {
                   // job_id is the cache key: the URL is a CloudFront signature
                   // that differs on every fetch, so keying on it would re-fetch
                   // and re-retarget the same clip each replay.
-                  // `text` is what the user typed, so the motion picker lists
-                  // "động tác squat" rather than a hash nobody can read.
+                  // `m.prompt` is the prompt Kimodo rendered — the planner's
+                  // cleaned resolved_query — so the motion picker lists
+                  // "động tác squat" rather than a hash nobody can read. Fall
+                  // back to what the user typed if the backend didn't send one.
                   // `false` is a real failure, not a soft "nothing to do":
                   // the avatar has no controller (WebGL off, VRM never
                   // attached), the clip failed to fetch or retarget (the
@@ -715,7 +718,7 @@ export function ChatProvider({ children }: { children: ReactNode }) {
                   // refused. Dropping it here cleared the notice as if the
                   // clip had played, so a tester whose laptop could not play
                   // motion saw "Building the movement..." and then nothing.
-                  const played = await playMotionFile(url, jobId, text)
+                  const played = await playMotionFile(url, jobId, m.prompt || text)
                   if (!played) {
                     console.warn('[motion] avatar could not play clip', { jobId })
                     notice(copy.motion_failed)

@@ -705,7 +705,9 @@ def _make_fake_astream_with_kimodo(kimodo_payload: dict):
 def test_kimodo_job_id_reaches_write_session_turn(api_client, monkeypatch, state):
     """queued/cache_hit job ids must be captured and passed through to persistence."""
     client, _, mock_graph = api_client
-    mock_graph.astream = _make_fake_astream_with_kimodo({"state": state, "job_id": "job-abc-123"})
+    mock_graph.astream = _make_fake_astream_with_kimodo(
+        {"state": state, "job_id": "job-abc-123", "prompt": "squat movement"}
+    )
     _set_graph(mock_graph)
 
     import langgraph_agents.api.main as api_module
@@ -721,6 +723,7 @@ def test_kimodo_job_id_reaches_write_session_turn(api_client, monkeypatch, state
     events = _parse_sse_stream(resp.content)
     assert events[-1]["event"] == "done"
     assert captured.get("motion_job_id") == "job-abc-123"
+    assert captured.get("motion_prompt") == "squat movement"
 
 
 @pytest.mark.unit
@@ -747,6 +750,7 @@ def test_kimodo_no_job_id_for_busy_or_unavailable(api_client, monkeypatch, state
     events = _parse_sse_stream(resp.content)
     assert events[-1]["event"] == "done"
     assert captured.get("motion_job_id") is None
+    assert captured.get("motion_prompt") is None
 
 
 @pytest.mark.unit

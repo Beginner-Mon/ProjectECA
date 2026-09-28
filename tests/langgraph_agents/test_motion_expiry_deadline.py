@@ -133,7 +133,26 @@ def test_the_flag_is_absent_when_there_is_no_motion():
     assert "motion_job_id" not in shaped[0] and "motion_expires_at" not in shaped[0]
     assert shaped[1]["motion_job_id"] == "a72fb4b3"
     assert shaped[1]["motion_expires_at"] is not None
+    assert "motion_prompt" not in shaped[1], "old row: job_id only, no prompt stored"
     assert "motion_job_id" not in shaped[2] and "motion_expires_at" not in shaped[2]
+
+
+@pytest.mark.unit
+def test_motion_prompt_is_carried_when_stored_but_absent_on_old_rows():
+    """A row written after this feature shipped has both job_id and prompt in
+    its extras — the restored motion should be labelled by what Kimodo
+    actually rendered, not the raw user message. A row written before it
+    (job_id only) must not fabricate a prompt key."""
+    with_prompt = _Row(role="assistant", content="đây", token_count=12,
+                        extras='{"motion": {"job_id": "a72fb4b3", "prompt": "squat movement"}}')
+    job_id_only = _Row(role="assistant", content="đây", token_count=12,
+                        extras='{"motion": {"job_id": "a72fb4b3"}}')
+
+    shaped_with_prompt = _shape_message(with_prompt, _ago(minutes=5))
+    shaped_job_id_only = _shape_message(job_id_only, _ago(minutes=5))
+
+    assert shaped_with_prompt["motion_prompt"] == "squat movement"
+    assert "motion_prompt" not in shaped_job_id_only
 
 
 @pytest.mark.unit

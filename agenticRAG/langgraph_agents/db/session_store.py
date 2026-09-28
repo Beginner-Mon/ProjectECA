@@ -64,10 +64,14 @@ def _shape_message(row, created_at: Optional[datetime]) -> dict:
         "tokens":    row["token_count"],
         "timestamp": created_at.isoformat() if created_at else None,
     }
-    job_id = _extras(row).get("motion", {}).get("job_id")
+    motion = _extras(row).get("motion", {})
+    job_id = motion.get("job_id")
     if job_id:
         out["motion_job_id"] = job_id
         out["motion_expires_at"] = motion_expires_at(created_at)
+        prompt = motion.get("prompt")
+        if prompt:
+            out["motion_prompt"] = prompt
     return out
 
 
@@ -339,6 +343,7 @@ async def write_session_turn(
     total_tokens: int = 0,
     grader_result: str = "pass",
     motion_job_id: str | None = None,
+    motion_prompt: str | None = None,
 ) -> None:
     """`motion_job_id` is stored inside the `extras` JSONB column, namespaced
     under "motion" — not as a column of its own. Motion is an occasional extra
@@ -353,6 +358,12 @@ async def write_session_turn(
     the `queued`/`cache_hit` states carry one — `busy`/`unavailable` pass
     None, same as a turn with no motion at all. Written on the assistant row
     only; the user row's motion_job_id is always NULL.
+
+    `motion_prompt`: the prompt Kimodo actually rendered from — the
+    planner's `resolved_query`, not the raw user message. A restored motion
+    (GET /sessions/{id} after a refresh) should be labelled by what the GPU
+    was asked to draw, and that is often not what the user typed. Optional
+    because `motion_job_id` predates it and old rows have none.
 
     ONE HELD CONNECTION, TWO ROUND TRIPS — not three separate pg.execute()
     calls. Diagnosed 11-09 (owner's vva.log: the send button stayed in "stop"
@@ -415,9 +426,13 @@ async def write_session_turn(
     pg = get_pg_client()
     await pg.connect()
     ts = datetime.now(timezone.utc).isoformat()
-    extras_json = (
-        json.dumps({"motion": {"job_id": motion_job_id}}) if motion_job_id else None
-    )
+    if motion_job_id:
+        motion_extra = {"job_id": motion_job_id}
+        if motion_prompt:
+            motion_extra["prompt"] = motion_prompt
+        extras_json = json.dumps({"motion": motion_extra})
+    else:
+        extras_json = None
 
     t0 = time.perf_counter() if STATS_ENABLED else 0.0
     async with pg.transaction() as conn:

@@ -342,6 +342,13 @@ export interface SessionMessage {
   /** Present only when this turn rendered a motion. Assistant rows only. */
   motion_job_id?: string
   /**
+   * The prompt Kimodo actually rendered — the planner's cleaned
+   * `resolved_query`, not the user's raw message. Absent on rows stored
+   * before this field was recorded; callers fall back to the user's message
+   * in that case.
+   */
+  motion_prompt?: string
+  /**
    * When that motion stops being fetchable — ISO-8601, absolute.
    *
    * A deadline rather than an `expired` boolean, and the difference matters

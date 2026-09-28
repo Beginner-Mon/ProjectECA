@@ -36,6 +36,7 @@ async def test_unavailable_when_no_heartbeat(table, monkeypatch):
     monkeypatch.setattr("langgraph_agents.nodes.kimodo._table", lambda: table)
     out = _content(await kimodo_node({"resolved_query": "nâng hai tay"}, CONFIG))
     assert out["state"] == "unavailable"
+    assert "prompt" not in out
     assert table.scan()["Count"] == 0          # hàng đợi không bao giờ được nạp rác
 
 
@@ -46,6 +47,7 @@ async def test_queued_with_position_and_eta(table, monkeypatch):
     out = _content(await kimodo_node({"resolved_query": "nâng hai tay"}, CONFIG))
     assert out["state"] == "queued"
     assert out["queue_position"] == 1 and out["eta_seconds"] == 5
+    assert out["prompt"] == "nâng hai tay"
 
 
 @pytest.mark.unit
@@ -60,6 +62,8 @@ async def test_second_identical_request_while_queued_reuses_same_job(table, monk
     second = _content(await kimodo_node({"resolved_query": "NÂNG HAI TAY"}, CONFIG))
     assert first["state"] == "queued" and second["state"] == "queued"
     assert second["job_id"] == first["job_id"]
+    assert first["prompt"] == "nâng hai tay"
+    assert second["prompt"] == "NÂNG HAI TAY"  # dedup branch echoes THIS call's resolved_query
     assert table.scan()["Count"] == 2          # 1 job + 1 heartbeat, KHÔNG phải 2 job
 
 
@@ -80,6 +84,7 @@ async def test_cache_hit_when_job_already_done(table, monkeypatch):
     out = _content(await kimodo_node({"resolved_query": "nâng hai tay"}, CONFIG))
     assert out["state"] == "cache_hit"
     assert out["job_id"] == job_id
+    assert out["prompt"] == "nâng hai tay"
     assert table.scan()["Count"] == 2          # heartbeat + the pre-seeded row, KHÔNG job mới
 
 
@@ -154,6 +159,7 @@ async def test_busy_when_queue_full(table, monkeypatch):
         enqueue(table, f"filler{i}", prompt=f"p{i}")
     out = _content(await kimodo_node({"resolved_query": "nâng hai tay"}, CONFIG))
     assert out["state"] == "busy"
+    assert "prompt" not in out
 
 
 # ── Unconfigured / unreachable AWS must degrade, never raise ────────────────

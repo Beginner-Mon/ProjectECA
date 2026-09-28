@@ -186,3 +186,38 @@ async def test_write_session_turn_motion_job_id_on_assistant_row_only(fake_pg_an
     # $1=session_id, $2=user_query, $3=assistant_answer, $4=total_tokens, $5=extras
     assert messages_args[-1] is not None
     assert "job-abc-123" in messages_args[-1]
+
+
+@pytest.mark.unit
+@pytest.mark.asyncio
+async def test_write_session_turn_motion_prompt_on_assistant_row_only(fake_pg_and_stm):
+    """extras JSONB carries motion.prompt (the Kimodo resolved_query) when
+    given, on the assistant row only — the user row's extras stays NULL,
+    same as motion_job_id."""
+    from langgraph_agents.db.session_store import write_session_turn
+
+    fake_pg = fake_pg_and_stm
+
+    await write_session_turn(
+        user_id="11111111-1111-1111-1111-111111111111",
+        session_id="22222222-2222-2222-2222-222222222222",
+        user_query="show me a stretch",
+        assistant_answer="here's one",
+        total_tokens=7,
+        motion_job_id="job-abc-123",
+        motion_prompt="squat movement",
+    )
+
+    _, (messages_sql, messages_args) = fake_pg.conn.execute_calls
+    assert "squat movement" in messages_args[-1]
+
+    fake_pg.conn.execute_calls.clear()
+    await write_session_turn(
+        user_id="11111111-1111-1111-1111-111111111111",
+        session_id="22222222-2222-2222-2222-222222222222",
+        user_query="hello",
+        assistant_answer="hi there",
+        total_tokens=5,
+    )
+    _, (messages_sql, messages_args) = fake_pg.conn.execute_calls
+    assert messages_args[-1] is None, "no motion at all — extras still NULL"

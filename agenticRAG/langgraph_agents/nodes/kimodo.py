@@ -223,9 +223,11 @@ async def _kimodo_node(state: AgentState, config: RunnableConfig) -> dict:
 
     existing = await asyncio.to_thread(read_status, table, job_id)
     if existing and existing["status"] == "done":
-        return _msg({"state": "cache_hit", "job_id": job_id})   # GPU không chạy
+        # job_id is an HMAC of resolved_query, so a cache hit is still the
+        # right label for what would have been rendered.
+        return _msg({"state": "cache_hit", "job_id": job_id, "prompt": resolved_query})   # GPU không chạy
     if existing and existing["status"] in ("queued", "processing"):
-        return _msg({"state": "queued", "job_id": job_id,
+        return _msg({"state": "queued", "job_id": job_id, "prompt": resolved_query,
                      "queue_position": 1, "eta_seconds": SECONDS_PER_JOB})
 
     depth = await asyncio.to_thread(queue_depth, table)
@@ -250,6 +252,6 @@ async def _kimodo_node(state: AgentState, config: RunnableConfig) -> dict:
         "elapsed_ms": elapsed_ms, "job_id": job_id, "queue_position": depth + 1,
     })
 
-    return _msg({"state": "queued", "job_id": job_id,
+    return _msg({"state": "queued", "job_id": job_id, "prompt": resolved_query,
                  "queue_position": depth + 1,
                  "eta_seconds": (depth + 1) * SECONDS_PER_JOB})

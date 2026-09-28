@@ -282,7 +282,8 @@ export function MotionProvider({ children }: { children: ReactNode }) {
       if (!registry || !animController || !url) return false
 
       // Only backend renders are listed: a cacheKey means this came from the
-      // motion queue, where `label` is what the user asked for. The bundled
+      // motion queue, where `label` is the prompt Kimodo rendered (the user's
+      // message itself, on older sessions that never recorded one). The bundled
       // debug files carry neither and must not accumulate in the list.
       // Newest first, deduped by job id — asking twice for the same movement
       // is one entry, the same way it is one render.

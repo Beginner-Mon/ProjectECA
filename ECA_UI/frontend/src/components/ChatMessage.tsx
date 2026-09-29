@@ -148,16 +148,11 @@ export default function ChatMessage({ message, isStreaming }: ChatMessageProps) 
 function AssistantActions({ message, isStreaming }: { message: Message; isStreaming?: boolean }) {
   const { t } = useTranslation()
   const { setMessageFeedback } = useChat()
-  const { id: clientId, content, speech, personaId, serverId, feedback, motionJobId } = message
+  const { content, speech, personaId, serverId, feedback, motionJobId, motionNotice } = message
   const { copied, handleCopy } = useCopy(content)
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [modalOpen, setModalOpen] = useState(false)
-  /** Bumped every time the modal opens, and passed to it as `key`. The modal
-   *  reads its initial reasons/comment once, in useState initialisers — a
-   *  changed key remounts it fresh instead of an effect re-seeding state on
-   *  `open` (which would mean calling setState synchronously in an effect). */
-  const [modalGeneration, setModalGeneration] = useState(0)
 
   if (isStreaming) return null
 
@@ -183,13 +178,13 @@ function AssistantActions({ message, isStreaming }: { message: Message; isStream
     if (saving || !serverId) return
     setError(null)
     const previous = feedback ?? null
-    setMessageFeedback(clientId, next)
+    setMessageFeedback(serverId, next)
     setSaving(true)
     try {
       const result = await call()
-      if (result) setMessageFeedback(clientId, result)
+      if (result) setMessageFeedback(serverId, result)
     } catch {
-      setMessageFeedback(clientId, previous)
+      setMessageFeedback(serverId, previous)
       setError(t('feedback.error_save'))
     } finally {
       setSaving(false)
@@ -222,7 +217,6 @@ function AssistantActions({ message, isStreaming }: { message: Message; isStream
     void applyVote({ rating: -1, reasons: [], comment: null }, async () => {
       const result = await saveMessageFeedback(serverId, { rating: -1 })
       setModalOpen(true)
-      setModalGeneration((g) => g + 1)
       return result
     })
   }
@@ -234,7 +228,7 @@ function AssistantActions({ message, isStreaming }: { message: Message; isStream
       reasons,
       comment: comment || null,
     })
-    setMessageFeedback(clientId, result)
+    setMessageFeedback(serverId, result)
     setModalOpen(false)
   }
 
@@ -263,14 +257,14 @@ function AssistantActions({ message, isStreaming }: { message: Message; isStream
         />
       </div>
       {error && <p className="mt-1 text-[0.7rem] text-destructive">{error}</p>}
-      {serverId && (
+      {/* Mounted only while open, right after a fresh 👎 save — state always
+       *  starts empty, so there is nothing to re-seed from props. */}
+      {modalOpen && (
         <DislikeFeedbackModal
-          key={modalGeneration}
-          open={modalOpen}
-          messageHasMotion={!!motionJobId}
-          messageHasSpeech={!!speech}
-          initialReasons={feedback?.reasons ?? []}
-          initialComment={feedback?.comment ?? ''}
+          // A motion was requested for this turn: either it already rendered
+          // (motionJobId) or is pending/unavailable/failed (motionNotice) —
+          // live turns mostly carry the latter, restored ones the former.
+          messageHasMotion={!!(motionJobId || motionNotice)}
           onSubmit={handleModalSubmit}
           onCancel={() => setModalOpen(false)}
         />

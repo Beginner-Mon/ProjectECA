@@ -41,9 +41,15 @@ export interface ChatContextType {
   switchToSession: (sessionId: string) => Promise<void>
   deleteSessionAction: (sessionId: string) => Promise<void>
   markSessionsClean: () => void
-  /** Set (or clear, with `null`) one message's saved vote by its client id —
-   *  the optimistic update AssistantActions makes before/after the feedback API. */
-  setMessageFeedback: (clientId: string, feedback: MessageFeedback | null) => void
+  /** Set (or clear, with `null`) one message's saved vote by its server id
+   *  (`message.serverId`, a UUID) — the optimistic update AssistantActions
+   *  makes before/after the feedback API. Keyed by serverId rather than the
+   *  client `id`: restored/switched messages get positional client ids
+   *  (`switched-3`) that repeat across sessions, so a client-id match could
+   *  land on a different session's message after a late update resolves
+   *  post-switch. A serverId is a real UUID, so a stale update from a
+   *  session the user has since left simply matches nothing. */
+  setMessageFeedback: (serverId: string, feedback: MessageFeedback | null) => void
   // Audio recording (frontend only, click toggle)
   /** Voice input (dictation) is listening. Speech lands in `input`. */
   isRecording: boolean

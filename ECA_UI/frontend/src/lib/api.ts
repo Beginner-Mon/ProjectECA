@@ -59,8 +59,12 @@ export type FeedbackReason =
   | 'other'
 
 /**
- * Display order in the dislike modal. `motion_issue` / `voice_issue` are
- * shown only when the message has a motion / a voice clip.
+ * Display order in the dislike modal. Only `motion_issue` is conditional —
+ * shown when the message had a motion. `voice_issue` is always offered: the
+ * speaker button can synthesise or replay audio for any assistant message
+ * (cache or a fresh POST /tts) independent of whether the live turn happened
+ * to stream one, so gating it on that would hide it for most restored
+ * messages even though they can still be played and criticised.
  */
 export const FEEDBACK_REASONS: readonly FeedbackReason[] = [
   'incorrect',

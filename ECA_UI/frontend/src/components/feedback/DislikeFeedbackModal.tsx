@@ -8,11 +8,7 @@ import { canSubmit, visibleReasons } from './dislikeFeedbackLogic'
 const MAX_COMMENT_LENGTH = 1000
 
 interface DislikeFeedbackModalProps {
-  open: boolean
   messageHasMotion: boolean
-  messageHasSpeech: boolean
-  initialReasons: FeedbackReason[]
-  initialComment: string
   onSubmit: (reasons: FeedbackReason[], comment: string) => Promise<void>
   onCancel: () => void
 }
@@ -23,45 +19,48 @@ interface DislikeFeedbackModalProps {
  * Portals to `document.body`: the chat panel sits inside a floating panel
  * with a CSS transform (floating-ui), and `fixed inset-0` inside that
  * ancestor would be clipped to the panel instead of covering the viewport.
- * Same reasoning as `ui/confirm-dialog.tsx`.
+ * Same reasoning as `ui/confirm-dialog.tsx`. The portaled root carries
+ * `data-dialog-layer` so FloatingNavBar's outside-click handler recognises a
+ * press inside it as belonging to the panel that opened it, not a click that
+ * should close that panel.
  *
  * The vote itself (rating=-1) is already saved by the time this opens —
  * Cancel only discards reasons/comment, it never touches the vote.
  *
- * The caller (AssistantActions) remounts this component with a fresh `key`
- * every time it opens, so `initialReasons`/`initialComment` are read once, in
- * the `useState` initialisers below — no effect re-seeds local state on
- * `open`, which would mean calling setState synchronously inside an effect.
+ * The caller renders this component only while the modal is open (no `open`
+ * prop here), so a fresh mount always starts with empty state — nothing to
+ * re-seed from props.
  */
 export default function DislikeFeedbackModal({
-  open,
   messageHasMotion,
-  messageHasSpeech,
-  initialReasons,
-  initialComment,
   onSubmit,
   onCancel,
 }: DislikeFeedbackModalProps) {
   const { t } = useTranslation()
-  const [reasons, setReasons] = useState<FeedbackReason[]>(initialReasons)
-  const [comment, setComment] = useState(initialComment)
+  const [reasons, setReasons] = useState<FeedbackReason[]>([])
+  const [comment, setComment] = useState('')
   const [submitting, setSubmitting] = useState(false)
   const [error, setError] = useState<string | null>(null)
 
+  // Esc, the overlay and X all route through this. While a submit is in
+  // flight none of them may close the modal: that would hide a later error
+  // and throw away reasons/comment the user already entered.
+  const cancel = useCallback(() => {
+    if (submitting) return
+    onCancel()
+  }, [submitting, onCancel])
+
   const handleKeyDown = useCallback(
     (e: KeyboardEvent) => {
-      if (e.key === 'Escape') onCancel()
+      if (e.key === 'Escape') cancel()
     },
-    [onCancel],
+    [cancel],
   )
 
   useEffect(() => {
-    if (!open) return
     document.addEventListener('keydown', handleKeyDown)
     return () => document.removeEventListener('keydown', handleKeyDown)
-  }, [open, handleKeyDown])
-
-  if (!open) return null
+  }, [handleKeyDown])
 
   const toggleReason = (reason: FeedbackReason) => {
     setReasons((prev) =>
@@ -75,23 +74,23 @@ export default function DislikeFeedbackModal({
     setError(null)
     try {
       await onSubmit(reasons, comment.trim())
-      // On success the caller flips `open` to false; nothing to reset here —
-      // a later open remounts this component fresh (see the doc comment above).
+      // On success the caller stops rendering this component; nothing to
+      // reset here.
     } catch {
       setError(t('feedback.error_save'))
       setSubmitting(false)
     }
   }
 
-  const chips = visibleReasons(messageHasMotion, messageHasSpeech).map((code) => ({
+  const chips = visibleReasons(messageHasMotion).map((code) => ({
     code,
     label: t(`feedback.reasons.${code}`),
   }))
 
   const node = (
-    <div className="fixed inset-0 z-[10001] flex items-center justify-center p-4">
-      {/* overlay — clicking it cancels, same as X and Esc */}
-      <div className="absolute inset-0 bg-black/50 backdrop-blur-sm" onClick={onCancel} />
+    <div data-dialog-layer className="fixed inset-0 z-[10001] flex items-center justify-center p-4">
+      {/* overlay — clicking it cancels, same as X and Esc (except mid-submit) */}
+      <div className="absolute inset-0 bg-black/50 backdrop-blur-sm" onClick={cancel} />
       <div className="relative w-full max-w-md rounded-2xl bg-card border border-border/50 shadow-[0_16px_64px_rgba(0,0,0,0.4)] flex flex-col overflow-hidden animate-panel-in max-h-[85vh]">
         <div className="flex items-start gap-2 px-4 py-3 border-b border-border/40 shrink-0">
           <div className="flex-1 min-w-0">
@@ -99,8 +98,9 @@ export default function DislikeFeedbackModal({
             <p className="text-xs text-muted-foreground mt-0.5">{t('feedback.modal_subtitle')}</p>
           </div>
           <button
-            onClick={onCancel}
-            className="p-1.5 rounded-lg text-muted-foreground hover:text-foreground hover:bg-secondary/60 transition-colors shrink-0"
+            onClick={cancel}
+            disabled={submitting}
+            className="p-1.5 rounded-lg text-muted-foreground hover:text-foreground hover:bg-secondary/60 transition-colors shrink-0 disabled:opacity-50"
             aria-label={t('common.close')}
           >
             <X className="w-4 h-4" />
@@ -154,7 +154,7 @@ export default function DislikeFeedbackModal({
 
         <div className="flex justify-end gap-2 px-4 py-3 border-t border-border/40 shrink-0">
           <button
-            onClick={onCancel}
+            onClick={cancel}
             disabled={submitting}
             className="h-8 px-4 rounded-lg text-xs font-medium text-muted-foreground hover:text-foreground hover:bg-secondary/60 transition-colors disabled:opacity-50"
           >

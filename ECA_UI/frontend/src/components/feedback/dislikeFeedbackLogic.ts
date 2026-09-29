@@ -3,20 +3,19 @@ import { FEEDBACK_REASONS, type FeedbackReason } from '@/lib/api'
 /**
  * Which reason chips this message's modal should offer.
  *
- * `motion_issue` and `voice_issue` only make sense when the reply actually
- * had a motion / a voice clip — offering them otherwise is a chip that can
- * never apply.
+ * `motion_issue` only makes sense when the reply actually had a motion —
+ * offering it otherwise is a chip that can never apply. `voice_issue` has no
+ * such gate: the speaker button keeps its own clip independent of `speech`
+ * (cache, or a fresh POST /tts), and a restored message never carries
+ * `speech` at all even though it can still be played and criticised — so it
+ * is always offered.
  *
  * Pulled out of DislikeFeedbackModal.tsx: `react-refresh/only-export-components`
  * forbids a component file from also exporting plain functions, so the logic
  * that needs testing without rendering React lives here instead.
  */
-export function visibleReasons(hasMotion: boolean, hasSpeech: boolean): FeedbackReason[] {
-  return FEEDBACK_REASONS.filter((reason) => {
-    if (reason === 'motion_issue') return hasMotion
-    if (reason === 'voice_issue') return hasSpeech
-    return true
-  })
+export function visibleReasons(hasMotion: boolean): FeedbackReason[] {
+  return FEEDBACK_REASONS.filter((reason) => reason !== 'motion_issue' || hasMotion)
 }
 
 /**

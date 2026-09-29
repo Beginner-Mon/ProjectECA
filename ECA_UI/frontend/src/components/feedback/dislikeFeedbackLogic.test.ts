@@ -3,32 +3,26 @@ import { describe, expect, it } from 'vitest'
 import { canSubmit, visibleReasons } from './dislikeFeedbackLogic'
 
 describe('visibleReasons', () => {
-  it('always includes the reasons that apply to every reply', () => {
-    const always = ['incorrect', 'unsafe', 'not_relevant', 'incomplete', 'hard_to_follow', 'wrong_language', 'other']
-    const reasons = visibleReasons(false, false)
+  it('always includes the reasons that apply to every reply, including voice_issue', () => {
+    const always = [
+      'incorrect', 'unsafe', 'not_relevant', 'incomplete', 'hard_to_follow',
+      'wrong_language', 'voice_issue', 'other',
+    ]
+    const reasons = visibleReasons(false)
     for (const code of always) expect(reasons).toContain(code)
   })
 
   it('hides motion_issue when the reply has no motion', () => {
-    expect(visibleReasons(false, true)).not.toContain('motion_issue')
+    expect(visibleReasons(false)).not.toContain('motion_issue')
   })
 
   it('shows motion_issue when the reply has a motion', () => {
-    expect(visibleReasons(true, false)).toContain('motion_issue')
+    expect(visibleReasons(true)).toContain('motion_issue')
   })
 
-  it('hides voice_issue when the reply has no speech clip', () => {
-    expect(visibleReasons(true, false)).not.toContain('voice_issue')
-  })
-
-  it('shows voice_issue when the reply has a speech clip', () => {
-    expect(visibleReasons(false, true)).toContain('voice_issue')
-  })
-
-  it('shows both when the reply has motion and speech', () => {
-    const reasons = visibleReasons(true, true)
-    expect(reasons).toContain('motion_issue')
-    expect(reasons).toContain('voice_issue')
+  it('shows voice_issue regardless of motion', () => {
+    expect(visibleReasons(true)).toContain('voice_issue')
+    expect(visibleReasons(false)).toContain('voice_issue')
   })
 })
 

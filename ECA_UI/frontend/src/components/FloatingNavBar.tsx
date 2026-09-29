@@ -433,7 +433,12 @@ export default function FloatingNavBar() {
       if (
         target.closest('.floating-nav-bar') ||
         target.closest('.floating-panel') ||
-        target.closest('.confirm-dialog')
+        target.closest('.confirm-dialog') ||
+        // Portaled dialogs opened from inside a panel (e.g. the dislike
+        // feedback modal) render outside .floating-panel in the DOM tree and
+        // must not count as an outside click, or their first press closes
+        // the panel that opened them.
+        target.closest('[data-dialog-layer]')
       ) {
         return
       }

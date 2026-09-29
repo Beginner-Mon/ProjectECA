@@ -424,12 +424,19 @@ export function ChatProvider({ children }: { children: ReactNode }) {
     setSessionsDirty(false)
   }, [])
 
-  /** Set (or clear, with `null`) one message's saved vote by its client id.
-   *  Used both for the optimistic update before the API call and to apply the
-   *  server's answer once it returns. */
-  const setMessageFeedback = useCallback((clientId: string, fb: MessageFeedback | null) => {
+  /** Set (or clear, with `null`) one message's saved vote by its server id
+   *  (a UUID). Used both for the optimistic update before the API call and to
+   *  apply the server's answer once it returns.
+   *
+   *  Keyed by serverId, not the client `id`: restored/switched messages get
+   *  positional client ids (`switched-3`) that repeat across sessions, so an
+   *  update resolving after a session switch could otherwise land on a
+   *  different session's message. A stale serverId from a session the user
+   *  has since left matches nothing here, which makes the update a no-op
+   *  instead of a wrong write. */
+  const setMessageFeedback = useCallback((serverId: string, fb: MessageFeedback | null) => {
     setMessages((prev) =>
-      prev.map((m) => (m.id === clientId ? { ...m, feedback: fb } : m))
+      prev.map((m) => (m.serverId === serverId ? { ...m, feedback: fb } : m))
     )
   }, [])
 
@@ -764,7 +771,11 @@ export function ChatProvider({ children }: { children: ReactNode }) {
         setMessages((prev) =>
           prev.map((msg) =>
             msg.id === assistantMsgId
-              ? { ...msg, content: copy.error_stream }
+              // A session_persisted before the failure may already have set
+              // serverId/feedback on this bubble; clear both along with the
+              // content, or the feedback buttons show on an error message the
+              // user can no longer see, voting on an answer that isn't there.
+              ? { ...msg, content: copy.error_stream, serverId: undefined, feedback: null }
               : msg
           )
         )

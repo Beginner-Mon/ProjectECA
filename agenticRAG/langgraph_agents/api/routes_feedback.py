@@ -37,26 +37,57 @@ FeedbackReason = Literal[
 
 _MAX_REASONS = 9
 
-# One statement, and it is both the ownership check and the write. The WHERE
-# clause on messages (id + role='assistant') is what makes "no such message",
-# "not mine" (row-level security on messages hides it — 007_rls.py) and "it's
-# a user message, not an assistant reply" all collapse into the same outcome:
-# zero rows selected, so the INSERT ... SELECT inserts nothing and RETURNING
-# yields None. There is no second query that could disagree with this one
-# about who owns the message.
+# One statement, and it is both the ownership check and the write. Ownership
+# is checked TWICE, deliberately: row-level security (007_rls.py / 012's
+# message_feedback policy) is the primary guard, and the explicit
+# `c.user_id = $5::uuid` predicate is the second layer — same convention as
+# routes_crud.py's delete_session ("WHERE user_id = $1::uuid AND ...") and
+# db/gdpr.py. RLS alone is only as strong as the DSN: a connection that ever
+# runs as the table owner or a BYPASSRLS role (a slipped local/docker config,
+# a future migration script reusing this query) would bypass it silently, and
+# the explicit predicate is what still stops the write in that case. The WHERE
+# clause (id + role='assistant' + c.user_id) is what makes "no such message",
+# "not mine" and "it's a user message, not an assistant reply" all collapse
+# into the same outcome: zero rows selected, so the INSERT ... SELECT inserts
+# nothing and RETURNING yields None.
 _UPSERT = """
     INSERT INTO message_feedback (message_id, rating, reasons, comment)
-    SELECT m.id, $2, $3::text[], $4 FROM messages m
-    WHERE m.id = $1::uuid AND m.role = 'assistant'
+    SELECT m.id, $2, $3::text[], $4
+    FROM messages m
+    JOIN conversations c ON c.session_id = m.session_id
+    WHERE m.id = $1::uuid AND m.role = 'assistant' AND c.user_id = $5::uuid
     ON CONFLICT (message_id) DO UPDATE
       SET rating = EXCLUDED.rating, reasons = EXCLUDED.reasons,
           comment = EXCLUDED.comment, updated_at = now()
     RETURNING message_id, rating, reasons, comment, updated_at
 """
 
-# RLS on message_feedback (the FOR ALL policy in 012) already limits this to
-# the caller's own rows, so there is nothing further to scope here.
-_DELETE = "DELETE FROM message_feedback WHERE message_id = $1::uuid"
+# Same two-layer reasoning as _UPSERT above: RLS on message_feedback is the
+# primary guard, `c.user_id = $2::uuid` is the explicit second layer. USING
+# joins in messages/conversations purely to reach user_id — message_feedback
+# itself has neither column.
+_DELETE = """
+    DELETE FROM message_feedback f
+    USING messages m, conversations c
+    WHERE f.message_id = $1::uuid
+      AND m.id = f.message_id
+      AND c.session_id = m.session_id
+      AND c.user_id = $2::uuid
+"""
+
+
+def _parse_deleted_count(status: str) -> int:
+    """Parse asyncpg's command tag ("DELETE 0", "DELETE 1", ...) into a count.
+
+    Defensive: a status string that doesn't parse (asyncpg changes format,
+    a mock in a test) must not crash the request over what is only a log
+    field. 0 is the safe default — it undercounts rather than claiming a
+    deletion that may not have happened.
+    """
+    try:
+        return int(status.rsplit(" ", 1)[-1])
+    except (AttributeError, ValueError):
+        return 0
 
 
 class MessageFeedbackIn(BaseModel):
@@ -118,7 +149,7 @@ async def upsert_message_feedback(
 ):
     pg = get_pg_client()
     row = await pg.fetchrow(
-        _UPSERT, str(message_id), body.rating, body.reasons, body.comment,
+        _UPSERT, str(message_id), body.rating, body.reasons, body.comment, uid,
     )
     if row is None:
         # Covers three cases the caller cannot tell apart, on purpose: the id
@@ -146,14 +177,18 @@ async def clear_message_feedback(
     message_id: uuid.UUID,
     uid: str = Depends(current_user_id),
 ) -> Response:
-    """Always 204. Idempotent: RLS hides other users' rows, so there is no way
-    to distinguish "a row was cleared" from "there was nothing to clear" —
-    and no reason a caller needs to."""
+    """Always 204. Idempotent: RLS (plus the explicit c.user_id predicate in
+    _DELETE) hides other users' rows, so there is no way to distinguish "a row
+    was cleared" from "there was nothing to clear" — and no reason a caller
+    needs to. `deleted` in the log is 0 for the latter case, 1 for the former;
+    it is diagnostic only, never part of the response."""
     pg = get_pg_client()
-    await pg.execute(_DELETE, str(message_id))
+    status = await pg.execute(_DELETE, str(message_id), uid)
+    deleted = _parse_deleted_count(status)
 
     logger.info("feedback_message_cleared", extra={
         "user_id": uid,
         "message_id": str(message_id),
+        "deleted": deleted,
     })
     return Response(status_code=204)

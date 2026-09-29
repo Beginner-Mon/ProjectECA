@@ -99,9 +99,9 @@ def test_thumbs_up_upserts_with_empty_reasons_and_no_comment():
     }
     # A 👍 always writes reasons=[] and comment=None — that is what clears an
     # earlier 👎's reasons/comment on the next upsert.
-    # call_args.args = (query, message_id, rating, reasons, comment)
+    # call_args.args = (query, message_id, rating, reasons, comment, uid)
     args = pg.fetchrow.call_args.args
-    assert args[2:] == (1, [], None)
+    assert args[2:] == (1, [], None, UID_A)
 
 
 @pytest.mark.unit
@@ -116,11 +116,12 @@ def test_thumbs_down_with_reasons_and_stripped_comment():
         })
 
     assert r.status_code == 200
-    # call_args.args = (query, message_id, rating, reasons, comment)
+    # call_args.args = (query, message_id, rating, reasons, comment, uid)
     args = pg.fetchrow.call_args.args
     assert args[2] == -1
     assert args[3] == ["incorrect", "unsafe"]  # deduped
     assert args[4] == "text"  # stripped
+    assert args[5] == UID_A
 
 
 @pytest.mark.unit
@@ -132,7 +133,83 @@ def test_delete_returns_204_and_calls_execute_once():
     assert r.status_code == 204
     assert r.content == b""
     pg.execute.assert_called_once()
+    # call_args.args = (query, message_id, uid)
     assert pg.execute.call_args.args[1] == MESSAGE_ID
+    assert pg.execute.call_args.args[2] == UID_A
+
+
+# ── Defense in depth: explicit owner predicate, not just RLS ────────────
+
+
+@pytest.mark.unit
+def test_upsert_sql_has_explicit_owner_predicate():
+    """RLS is the primary guard; c.user_id = $5 is the second layer that still
+    holds if a DSN ever connects as the table owner or a BYPASSRLS role."""
+    from langgraph_agents.api.routes_feedback import _UPSERT
+    assert "JOIN conversations c ON c.session_id = m.session_id" in _UPSERT
+    assert "c.user_id = $5::uuid" in _UPSERT
+
+
+@pytest.mark.unit
+def test_upsert_binds_uid_as_fifth_param():
+    pg = _mock_pg(fetchrow_return=_row(1, [], None))
+    with patch("langgraph_agents.api.routes_feedback.get_pg_client", return_value=pg):
+        _post(TestClient(_app(UID_A)), {"rating": 1})
+    assert pg.fetchrow.call_args.args[-1] == UID_A
+
+
+@pytest.mark.unit
+def test_delete_sql_has_explicit_owner_predicate():
+    from langgraph_agents.api.routes_feedback import _DELETE
+    assert "USING messages m, conversations c" in _DELETE
+    assert "c.user_id = $2::uuid" in _DELETE
+
+
+@pytest.mark.unit
+def test_delete_binds_uid_as_second_param():
+    pg = _mock_pg()
+    with patch("langgraph_agents.api.routes_feedback.get_pg_client", return_value=pg):
+        TestClient(_app(UID_A)).delete(f"/me/feedback/messages/{MESSAGE_ID}")
+    assert pg.execute.call_args.args[-1] == UID_A
+
+
+# ── DELETE: deleted count in the log ─────────────────────────────────────
+
+
+@pytest.mark.unit
+def test_delete_logs_zero_when_nothing_removed(caplog):
+    pg = _mock_pg(execute_return="DELETE 0")
+    with caplog.at_level(logging.INFO):
+        with patch("langgraph_agents.api.routes_feedback.get_pg_client", return_value=pg):
+            r = TestClient(_app(UID_A)).delete(f"/me/feedback/messages/{MESSAGE_ID}")
+    assert r.status_code == 204
+    records = [rec for rec in caplog.records if rec.getMessage() == "feedback_message_cleared"]
+    assert len(records) == 1
+    assert records[0].deleted == 0
+
+
+@pytest.mark.unit
+def test_delete_logs_one_when_a_row_was_removed(caplog):
+    pg = _mock_pg(execute_return="DELETE 1")
+    with caplog.at_level(logging.INFO):
+        with patch("langgraph_agents.api.routes_feedback.get_pg_client", return_value=pg):
+            r = TestClient(_app(UID_A)).delete(f"/me/feedback/messages/{MESSAGE_ID}")
+    assert r.status_code == 204
+    records = [rec for rec in caplog.records if rec.getMessage() == "feedback_message_cleared"]
+    assert len(records) == 1
+    assert records[0].deleted == 1
+
+
+@pytest.mark.unit
+def test_parse_deleted_count_is_defensive():
+    """Never raise over a status string it doesn't recognise — it's a log field."""
+    from langgraph_agents.api.routes_feedback import _parse_deleted_count
+    assert _parse_deleted_count("DELETE 0") == 0
+    assert _parse_deleted_count("DELETE 1") == 1
+    assert _parse_deleted_count("DELETE 12") == 12
+    assert _parse_deleted_count("") == 0
+    assert _parse_deleted_count(None) == 0
+    assert _parse_deleted_count("garbage") == 0
 
 
 # ── POST: validation (422) ──────────────────────────────────────────────
@@ -333,11 +410,14 @@ async def test_cross_user_feedback_is_404_and_owner_can_read_back():
             from langgraph_agents.api.routes_feedback import _UPSERT
 
             # User B votes on user A's assistant message -> 404 shape (0 rows).
+            # $5 is the caller's own uid (user_b), exactly as the route passes
+            # its `uid` — both RLS and the explicit c.user_id predicate block
+            # this, independently of each other.
             async with conn.transaction():
                 await conn.execute(
                     "SELECT set_config('app.user_id', $1, true)", str(user_b),
                 )
-                row = await conn.fetchrow(_UPSERT, assistant_msg, 1, [], None)
+                row = await conn.fetchrow(_UPSERT, assistant_msg, 1, [], None, user_b)
                 assert row is None, "user B must not be able to feedback on user A's message"
 
             # User A upserts and reads it back.
@@ -345,7 +425,9 @@ async def test_cross_user_feedback_is_404_and_owner_can_read_back():
                 await conn.execute(
                     "SELECT set_config('app.user_id', $1, true)", str(user_a),
                 )
-                row = await conn.fetchrow(_UPSERT, assistant_msg, -1, ["unsafe"], "careful")
+                row = await conn.fetchrow(
+                    _UPSERT, assistant_msg, -1, ["unsafe"], "careful", user_a,
+                )
                 assert row is not None
                 assert row["rating"] == -1
                 assert row["reasons"] == ["unsafe"]

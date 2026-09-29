@@ -161,3 +161,60 @@ def test_no_timestamp_yields_no_deadline():
     a motion that is not there costs a poll and a wrong message, while treating
     a live one as gone costs a replay the user can trigger again."""
     assert motion_expires_at(None) is None
+
+
+# ── id + feedback (task T2, message-feedback plan §2.3/§4.A) ────────────────
+
+
+@pytest.mark.unit
+def test_id_present_when_row_carries_one():
+    """`id` appears on the wire whenever the row has one — the frontend needs
+    it to attach a 👍/👎 vote to the right message."""
+    row = _Row(role="assistant", content="đây", token_count=12, extras=None,
+               id="a1b2c3d4-0000-0000-0000-000000000001")
+    shaped = _shape_message(row, _ago(minutes=5))
+    assert shaped["id"] == "a1b2c3d4-0000-0000-0000-000000000001"
+
+
+@pytest.mark.unit
+def test_id_absent_when_row_has_none():
+    """Callers that hand in a row without `id` (this file's other rows) must
+    not blow up — same guard style as `_extras`."""
+    row = _Row(role="assistant", content="đây", token_count=12, extras=None)
+    shaped = _shape_message(row, _ago(minutes=5))
+    assert "id" not in shaped
+
+
+@pytest.mark.unit
+def test_feedback_present_only_when_rating_is_not_none():
+    """`feedback` mirrors the motion-keys rule: present only when a
+    message_feedback row was actually joined in (rating IS NOT NULL from the
+    LEFT JOIN) — most messages have no vote at all."""
+    voted = _Row(role="assistant", content="đây", token_count=12, extras=None,
+                 feedback_rating=-1, feedback_reasons=["incorrect", "unsafe"],
+                 feedback_comment="sai roi")
+    unvoted = _Row(role="assistant", content="đây", token_count=12, extras=None,
+                   feedback_rating=None, feedback_reasons=None, feedback_comment=None)
+    no_join_columns = _Row(role="assistant", content="đây", token_count=12, extras=None)
+
+    shaped_voted = _shape_message(voted, _ago(minutes=5))
+    shaped_unvoted = _shape_message(unvoted, _ago(minutes=5))
+    shaped_no_join = _shape_message(no_join_columns, _ago(minutes=5))
+
+    assert shaped_voted["feedback"] == {
+        "rating": -1, "reasons": ["incorrect", "unsafe"], "comment": "sai roi",
+    }
+    assert "feedback" not in shaped_unvoted
+    assert "feedback" not in shaped_no_join
+
+
+@pytest.mark.unit
+def test_meta_never_exposed_on_the_wire():
+    """`extras.meta` (turn context snapshot) is for ops SQL only — it must
+    never appear in the shaped message, unlike `extras.motion`."""
+    row = _Row(role="assistant", content="đây", token_count=12,
+               extras='{"motion": {"job_id": "a72fb4b3"}, "meta": {"request_id": "req-1", "persona_id": "anne"}}')
+    shaped = _shape_message(row, _ago(minutes=5))
+    assert shaped["motion_job_id"] == "a72fb4b3"
+    assert "meta" not in shaped
+    assert "request_id" not in shaped

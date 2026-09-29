@@ -578,6 +578,71 @@ def test_sse_chat_session_persisted_before_done(api_client, monkeypatch):
         assert max(non_done_indices) < done_index
 
 
+@pytest.mark.unit
+def test_sse_chat_session_persisted_includes_assistant_message_id(api_client, monkeypatch):
+    """`session_persisted` must carry the assistant row's real id (task T2,
+    message-feedback plan §2.3) — the frontend attaches a 👍/👎 vote to it.
+    Also verifies the turn-context `meta` (plan §4.A) reaching
+    write_session_turn: request_id (so a vote traces back to CloudWatch logs)
+    and latency_ms, plus persona/locale passed straight from the request."""
+    client, _, mock_graph = api_client
+    mock_graph.astream = _make_fake_astream_stage_only()
+    _set_graph(mock_graph)
+
+    import langgraph_agents.api.main as api_module
+    captured = {}
+
+    async def fake_write(*args, **kwargs):
+        captured.update(kwargs)
+        return "11111111-2222-3333-4444-555555555555"
+
+    monkeypatch.setattr(api_module, "write_session_turn", fake_write)
+
+    resp = client.post(
+        "/chat",
+        json={"query": "Xin chào", "persona_id": "anne", "locale": "vi"},
+    )
+    events = _parse_sse_stream(resp.content)
+    persisted = next(e for e in events if e["event"] == "session_persisted")
+    assert persisted["data"]["assistant_message_id"] == (
+        "11111111-2222-3333-4444-555555555555"
+    )
+
+    meta = captured.get("meta")
+    assert meta is not None, "write_session_turn must be called with meta="
+    assert isinstance(meta.get("request_id"), str) and meta["request_id"]
+    assert isinstance(meta.get("latency_ms"), int)
+    assert meta.get("persona_id") == "anne"
+    assert meta.get("ui_locale") == "vi"
+
+
+@pytest.mark.unit
+def test_sse_chat_session_persisted_assistant_message_id_none_when_write_returns_none(
+    api_client, monkeypatch,
+):
+    """Backend-compat case: a write_session_turn that still returns None (e.g.
+    the old signature, or a caller that never got the RETURNING change) must
+    not crash the stream — assistant_message_id is simply null on the wire,
+    and the frontend already treats a missing id as "hide the thumb"."""
+    client, _, mock_graph = api_client
+    mock_graph.astream = _make_fake_astream_stage_only()
+    _set_graph(mock_graph)
+
+    import langgraph_agents.api.main as api_module
+
+    async def fake_write(*args, **kwargs):
+        return None
+
+    monkeypatch.setattr(api_module, "write_session_turn", fake_write)
+
+    resp = client.post("/chat", json={"query": "Xin chào"})
+    assert resp.status_code == 200
+    events = _parse_sse_stream(resp.content)
+    persisted = next(e for e in events if e["event"] == "session_persisted")
+    assert persisted["data"]["assistant_message_id"] is None
+    assert events[-1]["event"] == "done"
+
+
 # ── Session persist failure does not break stream ──────────────────
 
 

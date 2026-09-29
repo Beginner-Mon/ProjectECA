@@ -606,7 +606,21 @@ async def _stream_chat(req, request_id, config, state, background_tasks, request
     # Eager session write
     if final_state.get("final_answer"):
         try:
-            await write_session_turn(
+            # Turn context snapshot (plan §4.A) — written into the assistant
+            # row's extras.meta, never logged as-is. It exists so a 👎 vote can
+            # be traced back to request_id (→ CloudWatch) without a second
+            # table, and so ops SQL can group by persona/locale/grader result.
+            meta = {
+                "request_id": request_id,
+                "persona_id": req.persona_id,
+                "ui_locale": req.locale,
+                "output_mode": req.output_mode,
+                "web_search": req.web_search,
+                "required_outputs": final_state.get("required_outputs"),
+                "grader_result": final_state.get("grader_result"),
+                "latency_ms": int((time.time() - t0) * 1000),
+            }
+            assistant_message_id = await write_session_turn(
                 user_id=resolved_user_id,
                 session_id=req.session_id,
                 user_query=req.query,
@@ -615,8 +629,12 @@ async def _stream_chat(req, request_id, config, state, background_tasks, request
                 grader_result=final_state.get("grader_result", "pass"),
                 motion_job_id=final_state.get("motion_job_id"),
                 motion_prompt=final_state.get("motion_prompt"),
+                meta=meta,
             )
-            yield encode_event("session_persisted", {"session_id": req.session_id})
+            yield encode_event(
+                "session_persisted",
+                {"session_id": req.session_id, "assistant_message_id": assistant_message_id},
+            )
         except Exception as exc:
             logger.warning("session_persist_failed", extra={"error": str(exc)})
 

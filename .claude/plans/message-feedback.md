@@ -96,9 +96,16 @@ Nút 👍/👎 trên câu trả lời đã có trong UI (`ChatMessage.tsx:128-18
   | `incomplete` | Thiếu thông tin / chưa đủ chi tiết | luôn |
   | `hard_to_follow` | Khó hiểu hoặc quá dài | luôn |
   | `wrong_language` | Trả lời sai ngôn ngữ | luôn |
-  | `motion_issue` | Động tác 3D không đúng | chỉ khi message có `motionJobId` |
-  | `voice_issue` | Giọng đọc có vấn đề | chỉ khi message có `speech` |
+  | `motion_issue` | Động tác 3D không đúng | chỉ khi lượt đó có yêu cầu motion (`motionJobId` hoặc `motionNotice`) |
+  | `voice_issue` | Giọng đọc có vấn đề | luôn |
   | `other` | Khác | luôn |
+
+  > Sửa sau code review 29/09:
+  > - Bản đầu ẩn `voice_issue` khi message không có `speech`, nhưng tín hiệu đó sai cả hai chiều:
+  >   - nút loa giữ clip riêng, nên user có nghe nhưng message vẫn không có `speech`;
+  >   - message restore không bao giờ có `speech`;
+  >   - lượt voice bị lỗi TTS vẫn có `speech` dù không phát được gì.
+  > - Không có tín hiệu "đã thực sự nghe" đáng tin, nên chip này luôn hiện.
 
 - **Ô lý do:** textarea tuỳ chọn, tối đa **1000 ký tự**, có bộ đếm. Placeholder nhắc *"Đừng ghi thông tin cá nhân nhạy cảm"*.
 - **Nút [Gửi]:**
@@ -435,6 +442,10 @@ Ghi lại để không mất. **Không implement trong v1.**
 
 ## 8. Việc mở cho Owner (không chặn v1)
 - Thời hạn lưu feedback tối đa (retention).
+
+**Giới hạn đã biết của v1 (code review 29/09, chấp nhận, không sửa):**
+- **Chặn click chồng chỉ nằm trong component.** Cờ `saving` của `AssistantActions` mất khi chat panel desktop unmount/mount lại. Nếu user bấm vote, đóng rồi mở lại panel trong ~1s và bấm tiếp, response đến muộn có thể ghi đè trạng thái mới hơn. Hiếm; sửa đúng cách cần theo dõi request đang chạy theo `serverId` ở cấp context.
+- **Query history luôn `LEFT JOIN message_feedback`**, kể cả lúc warm-up STM của `/chat` (bỏ qua kết quả feedback). Chi phí là một join trên PK, không thêm round trip. Hệ quả thật là **thứ tự deploy**: migration 012 phải chạy trước code (xem §5 Deploy).
 
 **Phát hiện ngoài phạm vi (báo N, không sửa ở đây):** `PATCH /me/preferences` đang tồn tại, nhưng preflight
 CORS của API GW không cho PATCH (`rest_api_stack.py:138`). Cần kiểm tra đồng bộ preferences có đang

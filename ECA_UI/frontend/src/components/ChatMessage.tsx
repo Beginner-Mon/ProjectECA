@@ -3,7 +3,7 @@ import { useTranslation } from 'react-i18next'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
 import { Copy, ThumbsUp, ThumbsDown, Volume2, Check, Pause, Square, Loader2 } from 'lucide-react'
-import { DEFAULT_PERSONA_ID } from '../lib/api'
+import { DEFAULT_PERSONA_ID, type MessageFeedback } from '@/lib/api'
 import {
   CLIP_ABORTED,
   CLIP_UNDECODABLE,
@@ -52,6 +52,13 @@ export interface Message {
   motionExpiresAt?: string
   /** What the user asked for, so the replay picker can label it. */
   motionLabel?: string
+  /** The message's database id (from SSE `session_persisted.assistant_message_id`,
+   *  or from history). Absent for the greeting, the stream-error bubble, and
+   *  turns that haven't persisted yet — feedback buttons show only once this
+   *  is set. `id` above stays the client/React key and never changes to this. */
+  serverId?: string
+  /** The caller's saved vote on this message, when one exists. */
+  feedback?: MessageFeedback | null
 }
 
 interface ChatMessageProps {

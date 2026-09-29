@@ -44,6 +44,41 @@ import type { MotionStatus } from './motionJob'
  */
 export const DEFAULT_PERSONA_ID = 'anne'
 
+// ── Message feedback ─────────────────────────────────────────────────────────
+
+/** Why a reply got a 👎. Codes travel in English; labels are looked up through i18n. */
+export type FeedbackReason =
+  | 'incorrect'
+  | 'unsafe'
+  | 'not_relevant'
+  | 'incomplete'
+  | 'hard_to_follow'
+  | 'wrong_language'
+  | 'motion_issue'
+  | 'voice_issue'
+  | 'other'
+
+/**
+ * Display order in the dislike modal. `motion_issue` / `voice_issue` are
+ * shown only when the message has a motion / a voice clip.
+ */
+export const FEEDBACK_REASONS: readonly FeedbackReason[] = [
+  'incorrect',
+  'unsafe',
+  'not_relevant',
+  'incomplete',
+  'hard_to_follow',
+  'wrong_language',
+  'motion_issue',
+  'voice_issue',
+  'other',
+]
+
+export interface MessageFeedback {
+  rating: 1 | -1
+  reasons: FeedbackReason[]
+  comment: string | null
+}
 
 // ── Auth helpers ──────────────────────────────────────────────────────────────
 
@@ -335,10 +370,14 @@ export async function deleteSession(sessionId: string) {
 // ── On-demand TTS ──────────────────────────────────────────────────────────────
 
 export interface SessionMessage {
+  /** The message's database id. Optional: an older backend does not send it. */
+  id?: string
   role: 'user' | 'assistant'
   content: string
   timestamp: string
   tokens?: number
+  /** The caller's saved vote on this message, when one exists. */
+  feedback?: MessageFeedback
   /** Present only when this turn rendered a motion. Assistant rows only. */
   motion_job_id?: string
   /**
@@ -452,6 +491,37 @@ export async function createUserMemory(factText: string, category?: string) {
 export async function deleteUserMemory(factId: string) {
   const { data } = await http.delete(`/me/memory/${encodeURIComponent(factId)}`)
   return data
+}
+
+// ── Message feedback CRUD ────────────────────────────────────────────────────
+
+/**
+ * Save (or change) the caller's vote on one assistant message.
+ *
+ * Upsert: the same call is used for a first vote, changing the rating, or
+ * adding/editing reasons — the caller never needs to know whether a row
+ * already exists. 404 if the message does not exist, is not the caller's, or
+ * is not an assistant message.
+ */
+export async function saveMessageFeedback(
+  messageId: string,
+  input: { rating: 1 | -1; reasons?: FeedbackReason[]; comment?: string | null },
+): Promise<MessageFeedback> {
+  const { data } = await http.post(`/me/feedback/messages/${encodeURIComponent(messageId)}`, input)
+  return {
+    rating: data.rating,
+    reasons: data.reasons,
+    comment: data.comment,
+  }
+}
+
+/**
+ * Clear the caller's vote on one assistant message. Idempotent — 204 whether
+ * or not a vote existed. 404 if the message is not the caller's own
+ * assistant message.
+ */
+export async function clearMessageFeedback(messageId: string): Promise<void> {
+  await http.delete(`/me/feedback/messages/${encodeURIComponent(messageId)}`)
 }
 
 // ── Zero-cost sandbox billing ────────────────────────────────────────────────

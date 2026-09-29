@@ -276,11 +276,18 @@ function AudioButton({
    * spun and ~25 seconds of synthesis were thrown away, the button came back
    * as a plain speaker, and the next click paid for it all again. The request
    * now outlives this component (speechSource keeps it), so coming back finds
-   * it — still loading, or ready to play. */
-  useEffect(() => {
-    const found = liveSpeech(text, personaId || selectedVrmId || DEFAULT_PERSONA_ID)
+   * it — still loading, or ready to play.
+   *
+   * Done during render when the key changes rather than in an effect: React
+   * re-renders straight away instead of committing a frame without the clip. */
+  const speechPersona = personaId || selectedVrmId || DEFAULT_PERSONA_ID
+  const speechKey = `${speechPersona}\u0000${text}`
+  const [attachedKey, setAttachedKey] = useState<string | null>(null)
+  if (attachedKey !== speechKey) {
+    setAttachedKey(speechKey)
+    const found = liveSpeech(text, speechPersona)
     if (found) setOwnClip(found)
-  }, [text, personaId, selectedVrmId])
+  }
 
   const handleToggle = () => {
     // Before any await: Safari and iOS WebViews start an AudioContext only

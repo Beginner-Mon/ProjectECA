@@ -10,7 +10,7 @@ import {
 import type { Message } from '../components/ChatMessage'
 import {
   getSession, listSessions, deleteSession, streamChat, fetchMotionStatus, DEFAULT_PERSONA_ID,
-  type SessionMessage,
+  type SessionMessage, type MessageFeedback,
 } from '../lib/api'
 import { CLIP_ABORTED, SpeechClip, speechPlayer, unlockSpeechAudio } from '../lib/speechPlayer'
 import { routeSpeechEvent } from '../lib/speechSource'
@@ -324,6 +324,10 @@ export function ChatProvider({ children }: { children: ReactNode }) {
             // was actually asked for. Older rows never recorded that prompt,
             // so fall back to the message immediately before the answer.
             motionLabel: m.role === 'assistant' ? (m.motion_prompt || history[i - 1]?.content) : undefined,
+            // The database id, so feedback buttons can show and the modal has
+            // something to POST to. `id` above stays the client/React key.
+            serverId: m.id,
+            feedback: m.feedback ?? null,
           })),
         )
 
@@ -420,6 +424,15 @@ export function ChatProvider({ children }: { children: ReactNode }) {
     setSessionsDirty(false)
   }, [])
 
+  /** Set (or clear, with `null`) one message's saved vote by its client id.
+   *  Used both for the optimistic update before the API call and to apply the
+   *  server's answer once it returns. */
+  const setMessageFeedback = useCallback((clientId: string, fb: MessageFeedback | null) => {
+    setMessages((prev) =>
+      prev.map((m) => (m.id === clientId ? { ...m, feedback: fb } : m))
+    )
+  }, [])
+
   const endThinking = useCallback(() => {
     if (!thinkingRef.current) return
     thinkingRef.current = false
@@ -464,6 +477,8 @@ export function ChatProvider({ children }: { children: ReactNode }) {
             role: m.role,
             content: m.content,
             timestamp: new Date(m.timestamp),
+            serverId: m.id,
+            feedback: m.feedback ?? null,
           })),
         )
       } else {
@@ -598,6 +613,14 @@ export function ChatProvider({ children }: { children: ReactNode }) {
       // waits in the clip for the speaker button.
       playSpeech: (clip) => {
         void speechPlayer.play(clip, avatarRef.current)
+      },
+      // The row's real id, once the backend has one. Feedback buttons gate on
+      // this being set, so it targets THIS turn's message specifically rather
+      // than whichever assistant bubble happens to be latest.
+      attachServerId: (id) => {
+        setMessages((prev) =>
+          prev.map((msg) => (msg.id === assistantMsgId ? { ...msg, serverId: id } : msg))
+        )
       },
     })
 
@@ -804,6 +827,7 @@ export function ChatProvider({ children }: { children: ReactNode }) {
       switchToSession,
       deleteSessionAction,
       markSessionsClean,
+      setMessageFeedback,
       isRecording,
       recordingDuration,
       recordingError,
@@ -811,7 +835,7 @@ export function ChatProvider({ children }: { children: ReactNode }) {
       startRecord,
       stopRecord,
     }),
-    [messages, input, isTyping, isGenerating, stageLabel, ui, webSearch, voiceReply, isRestoring, isSwitching, startNewSession, handleSend, handleStop, imageUrls, addImage, removeImage, sessionList, sessionsDirty, activeSessionId, refreshSessions, switchToSession, deleteSessionAction, markSessionsClean, isRecording, recordingDuration, recordingError, dictationSupported, startRecord, stopRecord],
+    [messages, input, isTyping, isGenerating, stageLabel, ui, webSearch, voiceReply, isRestoring, isSwitching, startNewSession, handleSend, handleStop, imageUrls, addImage, removeImage, sessionList, sessionsDirty, activeSessionId, refreshSessions, switchToSession, deleteSessionAction, markSessionsClean, setMessageFeedback, isRecording, recordingDuration, recordingError, dictationSupported, startRecord, stopRecord],
   )
 
   return <ChatContext.Provider value={value}>{children}</ChatContext.Provider>

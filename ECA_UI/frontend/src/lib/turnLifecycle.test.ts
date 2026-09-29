@@ -14,6 +14,7 @@ function harness(opts: { voice?: boolean } = {}) {
   const ui = { generating: true, current: true, releases: 0, dirtyMarks: 0 }
   const speech = opts.voice === false ? undefined : new SpeechClip()
   const played: SpeechClip[] = []
+  const attachedIds: string[] = []
   const handle = createTurnLifecycle(speech, {
     isCurrent: () => ui.current,
     releaseComposing: () => {
@@ -29,8 +30,11 @@ function harness(opts: { voice?: boolean } = {}) {
     playSpeech: (clip) => {
       played.push(clip)
     },
+    attachServerId: (id) => {
+      attachedIds.push(id)
+    },
   })
-  return { ui, speech, played, handle }
+  return { ui, speech, played, attachedIds, handle }
 }
 
 const START = { voice_version: 'abc', codec: 'opus', sample_rate: 48000 }
@@ -38,7 +42,7 @@ const chunk = (seq: number) => ({ seq, codec: 'opus', audio: btoa(`chunk-${seq}`
 
 describe('turn lifecycle', () => {
   it('tokens → session_persisted → speech_start → chunks → speech_end → done', () => {
-    const { ui, speech, played, handle } = harness()
+    const { ui, speech, played, attachedIds, handle } = harness()
 
     // Tokens are ChatContext's own business, not this handler's.
     expect(handle('token', { content: 'Xin chào' })).toBe(false)
@@ -49,6 +53,8 @@ describe('turn lifecycle', () => {
     expect(ui.generating).toBe(false)
     expect(ui.releases).toBe(1)
     expect(ui.dirtyMarks).toBe(1)
+    // No assistant_message_id on this event (old backend shape) — nothing to attach.
+    expect(attachedIds).toEqual([])
     // And the release left the speech alone: not failed, not aborted.
     expect(speech!.status).toBe('pending')
 
@@ -119,5 +125,42 @@ describe('turn lifecycle', () => {
     const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
     for (const type of ['stage', 'token', 'motion']) expect(handle(type, {})).toBe(false)
     warn.mockRestore()
+  })
+
+  it('attaches the server id from session_persisted when the backend sends one', () => {
+    const { attachedIds, handle } = harness()
+    handle('session_persisted', { session_id: 's1', assistant_message_id: 'msg-123' })
+    expect(attachedIds).toEqual(['msg-123'])
+  })
+
+  it('does not attach and changes nothing else when assistant_message_id is null', () => {
+    const { ui, attachedIds, handle } = harness()
+    handle('session_persisted', { session_id: 's1', assistant_message_id: null })
+    expect(attachedIds).toEqual([])
+    // The rest of the event's behaviour is unaffected by the missing field.
+    expect(ui.generating).toBe(false)
+    expect(ui.releases).toBe(1)
+    expect(ui.dirtyMarks).toBe(1)
+  })
+
+  it('does not attach when the hook itself is not supplied (old caller shape)', () => {
+    const ui = { generating: true, current: true, releases: 0, dirtyMarks: 0 }
+    const handle = createTurnLifecycle(undefined, {
+      isCurrent: () => ui.current,
+      releaseComposing: () => {
+        ui.generating = false
+        ui.releases++
+      },
+      markSessionsDirty: () => {
+        ui.dirtyMarks++
+      },
+      routeSpeech: () => {},
+      playSpeech: () => {},
+      // attachServerId intentionally omitted.
+    })
+    expect(() =>
+      handle('session_persisted', { session_id: 's1', assistant_message_id: 'msg-123' }),
+    ).not.toThrow()
+    expect(ui.releases).toBe(1)
   })
 })

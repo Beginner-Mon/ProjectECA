@@ -3,7 +3,13 @@ import { useTranslation } from 'react-i18next'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
 import { Copy, ThumbsUp, ThumbsDown, Volume2, Check, Pause, Square, Loader2 } from 'lucide-react'
-import { DEFAULT_PERSONA_ID, type MessageFeedback } from '@/lib/api'
+import {
+  DEFAULT_PERSONA_ID,
+  saveMessageFeedback,
+  clearMessageFeedback,
+  type FeedbackReason,
+  type MessageFeedback,
+} from '@/lib/api'
 import {
   CLIP_ABORTED,
   CLIP_UNDECODABLE,
@@ -14,6 +20,8 @@ import {
 } from '../lib/speechPlayer'
 import { cancelSpeech, liveSpeech, openSpeech } from '../lib/speechSource'
 import { useMotion } from '../hooks/useMotion'
+import { useChat } from '../hooks/useChat'
+import DislikeFeedbackModal from './feedback/DislikeFeedbackModal'
 
 export interface Message {
   id: string
@@ -103,12 +111,7 @@ export default function ChatMessage({ message, isStreaming }: ChatMessageProps) 
             {message.motionNotice}
           </p>
         )}
-        <AssistantActions
-          content={message.content}
-          speech={message.speech}
-          personaId={message.personaId}
-          isStreaming={isStreaming}
-        />
+        <AssistantActions message={message} isStreaming={isStreaming} />
       </div>
     )
   }
@@ -132,58 +135,147 @@ export default function ChatMessage({ message, isStreaming }: ChatMessageProps) 
   )
 }
 
-function AssistantActions({
-  content,
-  speech,
-  personaId,
-  isStreaming,
-}: {
-  content: string
-  speech?: SpeechClip
-  personaId?: string
-  isStreaming?: boolean
-}) {
+/**
+ * Copy, 👍/👎 and the speaker, under one assistant reply.
+ *
+ * The thumbs read their color from `message.feedback` (the server's saved
+ * vote), not local state — that is what makes the vote survive a reload or a
+ * session switch, where a fresh component mounts with the history's answer
+ * already in `message`. They render only once `message.serverId` is set: the
+ * greeting, the stream-error bubble and a turn that hasn't persisted yet have
+ * no row to vote on.
+ */
+function AssistantActions({ message, isStreaming }: { message: Message; isStreaming?: boolean }) {
   const { t } = useTranslation()
+  const { setMessageFeedback } = useChat()
+  const { id: clientId, content, speech, personaId, serverId, feedback, motionJobId } = message
   const { copied, handleCopy } = useCopy(content)
-  const [liked, setLiked] = useState(false)
-  const [disliked, setDisliked] = useState(false)
+  const [saving, setSaving] = useState(false)
+  const [error, setError] = useState<string | null>(null)
+  const [modalOpen, setModalOpen] = useState(false)
+  /** Bumped every time the modal opens, and passed to it as `key`. The modal
+   *  reads its initial reasons/comment once, in useState initialisers — a
+   *  changed key remounts it fresh instead of an effect re-seeding state on
+   *  `open` (which would mean calling setState synchronously in an effect). */
+  const [modalGeneration, setModalGeneration] = useState(0)
 
   if (isStreaming) return null
 
-  const handleLike = () => {
-    setLiked((v) => !v)
-    if (!liked) setDisliked(false)
-  }
-
-  const handleDislike = () => {
-    setDisliked((v) => !v)
-    if (!disliked) setLiked(false)
-  }
+  const liked = feedback?.rating === 1
+  const disliked = feedback?.rating === -1
 
   const btnClass =
     'p-1 rounded-md text-muted-foreground hover:text-foreground hover:bg-secondary/60'
 
   const iconSize = 'size-4'
 
+  /**
+   * Optimistic vote change: apply `next` to context first, fire `call`, and on
+   * failure restore whatever was there before and show an inline error. `call`
+   * may return the server's own row (a POST) or nothing (a DELETE) — when it
+   * returns one, that replaces the optimistic guess, since a rating=+1 save
+   * also clears any old reasons/comment server-side.
+   */
+  const applyVote = async (
+    next: MessageFeedback | null,
+    call: () => Promise<MessageFeedback | void>,
+  ) => {
+    if (saving || !serverId) return
+    setError(null)
+    const previous = feedback ?? null
+    setMessageFeedback(clientId, next)
+    setSaving(true)
+    try {
+      const result = await call()
+      if (result) setMessageFeedback(clientId, result)
+    } catch {
+      setMessageFeedback(clientId, previous)
+      setError(t('feedback.error_save'))
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  const handleLike = () => {
+    if (!serverId) return
+    if (liked) {
+      void applyVote(null, () => clearMessageFeedback(serverId))
+    } else {
+      // Neutral or disliked before this click: either way a plain +1, with
+      // reasons/comment reset — the server does that reset itself, but the
+      // optimistic guess mirrors it so the color is right before it answers.
+      void applyVote({ rating: 1, reasons: [], comment: null }, () =>
+        saveMessageFeedback(serverId, { rating: 1 }),
+      )
+    }
+  }
+
+  const handleDislike = () => {
+    if (!serverId) return
+    if (disliked) {
+      void applyVote(null, () => clearMessageFeedback(serverId))
+      return
+    }
+    // Saved immediately regardless of whether this was neutral or liked
+    // before: the vote is the valuable signal, and the modal — opened only
+    // once the save lands — is optional on top of it (plan §1.2).
+    void applyVote({ rating: -1, reasons: [], comment: null }, async () => {
+      const result = await saveMessageFeedback(serverId, { rating: -1 })
+      setModalOpen(true)
+      setModalGeneration((g) => g + 1)
+      return result
+    })
+  }
+
+  const handleModalSubmit = async (reasons: FeedbackReason[], comment: string) => {
+    if (!serverId) return
+    const result = await saveMessageFeedback(serverId, {
+      rating: -1,
+      reasons,
+      comment: comment || null,
+    })
+    setMessageFeedback(clientId, result)
+    setModalOpen(false)
+  }
+
   return (
-    <div className="flex items-center gap-1 mt-1.5">
-      <button className={btnClass} onClick={handleCopy} title={t('common.copy')}>
-        {copied ? <Check className={iconSize} /> : <Copy className={iconSize} />}
-      </button>
-      <button className={btnClass} onClick={handleLike} title={t('chat.like')}>
-        <ThumbsUp className={`${iconSize} ${liked ? 'text-green-500' : ''}`} />
-      </button>
-      <button className={btnClass} onClick={handleDislike} title={t('chat.dislike')}>
-        <ThumbsDown className={`${iconSize} ${disliked ? 'text-blue-500' : ''}`} />
-      </button>
-      <AudioButton
-        speech={speech}
-        personaId={personaId}
-        text={content}
-        btnClass={btnClass}
-        iconSize={iconSize}
-      />
-    </div>
+    <>
+      <div className="flex items-center gap-1 mt-1.5">
+        <button className={btnClass} onClick={handleCopy} title={t('common.copy')}>
+          {copied ? <Check className={iconSize} /> : <Copy className={iconSize} />}
+        </button>
+        {serverId && (
+          <>
+            <button className={btnClass} onClick={handleLike} disabled={saving} title={t('chat.like')}>
+              <ThumbsUp className={`${iconSize} ${liked ? 'text-green-500' : ''}`} />
+            </button>
+            <button className={btnClass} onClick={handleDislike} disabled={saving} title={t('chat.dislike')}>
+              <ThumbsDown className={`${iconSize} ${disliked ? 'text-blue-500' : ''}`} />
+            </button>
+          </>
+        )}
+        <AudioButton
+          speech={speech}
+          personaId={personaId}
+          text={content}
+          btnClass={btnClass}
+          iconSize={iconSize}
+        />
+      </div>
+      {error && <p className="mt-1 text-[0.7rem] text-destructive">{error}</p>}
+      {serverId && (
+        <DislikeFeedbackModal
+          key={modalGeneration}
+          open={modalOpen}
+          messageHasMotion={!!motionJobId}
+          messageHasSpeech={!!speech}
+          initialReasons={feedback?.reasons ?? []}
+          initialComment={feedback?.comment ?? ''}
+          onSubmit={handleModalSubmit}
+          onCancel={() => setModalOpen(false)}
+        />
+      )}
+    </>
   )
 }
 

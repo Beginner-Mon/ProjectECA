@@ -516,9 +516,11 @@ export async function saveMessageFeedback(
 }
 
 /**
- * Clear the caller's vote on one assistant message. Idempotent — 204 whether
- * or not a vote existed. 404 if the message is not the caller's own
- * assistant message.
+ * Clear the caller's vote on one assistant message.
+ *
+ * Always 204, whether or not a vote existed, and whether or not the message
+ * itself exists or belongs to the caller — RLS simply hides rows that are not
+ * the caller's, so there is nothing to 404 on. Idempotent.
  */
 export async function clearMessageFeedback(messageId: string): Promise<void> {
   await http.delete(`/me/feedback/messages/${encodeURIComponent(messageId)}`)

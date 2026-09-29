@@ -1,6 +1,7 @@
 import { createContext, useContext } from 'react'
 import type { Message } from '../components/ChatMessage'
 import type { UiStrings } from '../lib/characterCopy'
+import type { MessageFeedback } from '../lib/api'
 
 export interface SessionItem {
   session_id: string
@@ -40,6 +41,9 @@ export interface ChatContextType {
   switchToSession: (sessionId: string) => Promise<void>
   deleteSessionAction: (sessionId: string) => Promise<void>
   markSessionsClean: () => void
+  /** Set (or clear, with `null`) one message's saved vote by its client id —
+   *  the optimistic update AssistantActions makes before/after the feedback API. */
+  setMessageFeedback: (clientId: string, feedback: MessageFeedback | null) => void
   // Audio recording (frontend only, click toggle)
   /** Voice input (dictation) is listening. Speech lands in `input`. */
   isRecording: boolean

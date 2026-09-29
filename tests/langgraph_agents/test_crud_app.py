@@ -76,6 +76,8 @@ def test_crud_app_does_not_import_the_heavy_stack():
     ("GET", "/me/memory"),
     ("POST", "/me/memory"),
     ("DELETE", "/me/memory/00000000-0000-0000-0000-000000000009"),
+    ("POST", "/me/feedback/messages/00000000-0000-0000-0000-000000000009"),
+    ("DELETE", "/me/feedback/messages/00000000-0000-0000-0000-000000000009"),
 ])
 def test_every_crud_route_requires_a_token(method, path):
     """No route serves an unauthenticated caller, in any environment.

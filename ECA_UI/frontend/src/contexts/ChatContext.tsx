@@ -800,7 +800,7 @@ export function ChatProvider({ children }: { children: ReactNode }) {
     // request. Without it the closure keeps whichever locale was active when the
     // callback was created, and the backend would keep serving the old
     // character voice and the old safety-warning language.
-  }, [webSearch, voiceReply, selectedVrmId, locale, transitionTo, endThinking, playMotionFile, ensureSessionId, avatarRef, cancelDictation])
+  }, [webSearch, voiceReply, selectedVrmId, locale, transitionTo, endThinking, playMotionFile, ensureSessionId, avatarRef, cancelDictation, consumePreviousAvatar])
 
   useEffect(() => {
     return () => {

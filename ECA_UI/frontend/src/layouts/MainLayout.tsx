@@ -3,6 +3,7 @@ import { useTranslation } from 'react-i18next'
 import { Music2 } from 'lucide-react'
 import EcaLogo from '../components/EcaLogo'
 import FloatingNavBar from '../components/FloatingNavBar'
+import KofiButton from '../components/KofiButton'
 import { MotionProvider } from '../contexts/MotionContext'
 import { useMotion } from '../hooks/useMotion'
 import { ChatProvider } from '../contexts/ChatContext'
@@ -50,6 +51,9 @@ export default function MainLayout() {
             <AudioToggle />
           </span>
         </div>
+
+        {/* Ko-fi support link, top-right (web only, and only when configured). */}
+        <KofiButton />
 
         {/* Full-screen content */}
         <div className="w-full h-full">

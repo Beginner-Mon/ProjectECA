@@ -1,10 +1,10 @@
 import { FEEDBACK_REASONS, type FeedbackReason } from '@/lib/api'
 
 /**
- * Which reason chips this message's modal should offer.
+ * Which reasons this message's dropdown should offer.
  *
  * `motion_issue` only makes sense when the reply actually had a motion —
- * offering it otherwise is a chip that can never apply. `voice_issue` has no
+ * offering it otherwise is an option that can never apply. `voice_issue` has no
  * such gate: the speaker button keeps its own clip independent of `speech`
  * (cache, or a fresh POST /tts), and a restored message never carries
  * `speech` at all even though it can still be played and criticised — so it
@@ -20,8 +20,9 @@ export function visibleReasons(hasMotion: boolean): FeedbackReason[] {
 
 /**
  * Submit is allowed once the user has said something beyond the bare 👎
- * already saved when the modal opened — at least one chip, or non-blank text.
+ * already saved when the modal opened — a reason chosen, or non-blank text.
+ * `reason` is '' while the dropdown still shows its placeholder.
  */
-export function canSubmit(reasons: FeedbackReason[], comment: string): boolean {
-  return reasons.length > 0 || comment.trim().length > 0
+export function canSubmit(reason: FeedbackReason | '', comment: string): boolean {
+  return reason !== '' || comment.trim().length > 0
 }

@@ -153,6 +153,8 @@ function AssistantActions({ message, isStreaming }: { message: Message; isStream
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [modalOpen, setModalOpen] = useState(false)
+  /** The reason-less 👎 save still in flight while the modal is open. */
+  const votePromiseRef = useRef<Promise<void> | null>(null)
 
   if (isStreaming) return null
 
@@ -211,24 +213,28 @@ function AssistantActions({ message, isStreaming }: { message: Message; isStream
       void applyVote(null, () => clearMessageFeedback(serverId))
       return
     }
-    // Saved immediately regardless of whether this was neutral or liked
-    // before: the vote is the valuable signal, and the modal — opened only
-    // once the save lands — is optional on top of it (plan §1.2).
-    void applyVote({ rating: -1, reasons: [], comment: null }, async () => {
-      const result = await saveMessageFeedback(serverId, { rating: -1 })
-      setModalOpen(true)
-      return result
-    })
+    // The modal opens at once; a Neon round trip is ~1s and waiting for it
+    // made the box appear late. The vote is saved in the background and its
+    // promise kept, because the modal's submit must not overtake it.
+    setModalOpen(true)
+    votePromiseRef.current = applyVote({ rating: -1, reasons: [], comment: null }, () =>
+      saveMessageFeedback(serverId, { rating: -1 }),
+    )
   }
 
   const handleModalSubmit = async (reasons: FeedbackReason[], comment: string) => {
     if (!serverId) return
+    // Wait for the reason-less save first (applyVote never rejects): if it
+    // landed after this POST, its upsert would wipe the reasons just sent.
+    await votePromiseRef.current
     const result = await saveMessageFeedback(serverId, {
       rating: -1,
       reasons,
       comment: comment || null,
     })
+    // An upsert, so it also creates the row if the first save had failed.
     setMessageFeedback(serverId, result)
+    setError(null)
     setModalOpen(false)
   }
 

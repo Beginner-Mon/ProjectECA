@@ -217,6 +217,8 @@
     "error_save": "Không lưu được phản hồi của bạn — thử lại nhé",
     "modal_subtitle": "Lượt bình chọn của bạn đã được lưu. Thêm lý do giúp chúng tôi cải thiện — không bắt buộc.",
     "modal_title": "Điều gì chưa ổn?",
+    "reason_label": "Lý do",
+    "reason_placeholder": "Chọn lý do…",
     "reasons": {
       "hard_to_follow": "Khó hiểu hoặc quá dài",
       "incomplete": "Thiếu thông tin / chưa đủ chi tiết",

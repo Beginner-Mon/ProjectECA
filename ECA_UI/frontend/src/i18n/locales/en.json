@@ -217,6 +217,8 @@
     "error_save": "Couldn't save your feedback — try again",
     "modal_subtitle": "Your vote is saved. Adding a reason helps us improve — optional.",
     "modal_title": "What went wrong?",
+    "reason_label": "Reason",
+    "reason_placeholder": "Choose a reason…",
     "reasons": {
       "hard_to_follow": "Hard to understand or too long",
       "incomplete": "Missing information or not detailed enough",

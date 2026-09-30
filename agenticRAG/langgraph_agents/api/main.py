@@ -608,7 +608,7 @@ async def _stream_chat(req, request_id, config, state, background_tasks, request
     # Eager session write
     if final_state.get("final_answer"):
         try:
-            # Turn context snapshot (plan §4.A) — written into the assistant
+            # Turn context snapshot — written into the assistant
             # row's extras.meta, never logged as-is. It exists so a 👎 vote can
             # be traced back to request_id (→ CloudWatch) without a second
             # table, and so ops SQL can group by persona/locale/grader result.

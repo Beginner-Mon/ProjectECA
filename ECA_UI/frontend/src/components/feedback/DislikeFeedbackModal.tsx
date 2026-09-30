@@ -24,8 +24,9 @@ interface DislikeFeedbackModalProps {
  * press inside it as belonging to the panel that opened it, not a click that
  * should close that panel.
  *
- * The vote itself (rating=-1) is already saved by the time this opens —
- * Cancel only discards reasons/comment, it never touches the vote.
+ * The vote itself (rating=-1) is being saved as this opens (the caller fires
+ * it without waiting) — Cancel only discards the reason/comment, it never
+ * touches the vote.
  *
  * The caller renders this component only while the modal is open (no `open`
  * prop here), so a fresh mount always starts with empty state — nothing to
@@ -37,7 +38,7 @@ export default function DislikeFeedbackModal({
   onCancel,
 }: DislikeFeedbackModalProps) {
   const { t } = useTranslation()
-  const [reasons, setReasons] = useState<FeedbackReason[]>([])
+  const [reason, setReason] = useState<FeedbackReason | ''>('')
   const [comment, setComment] = useState('')
   const [submitting, setSubmitting] = useState(false)
   const [error, setError] = useState<string | null>(null)
@@ -62,18 +63,13 @@ export default function DislikeFeedbackModal({
     return () => document.removeEventListener('keydown', handleKeyDown)
   }, [handleKeyDown])
 
-  const toggleReason = (reason: FeedbackReason) => {
-    setReasons((prev) =>
-      prev.includes(reason) ? prev.filter((r) => r !== reason) : [...prev, reason],
-    )
-  }
-
   const handleSubmit = async () => {
-    if (submitting || !canSubmit(reasons, comment)) return
+    if (submitting || !canSubmit(reason, comment)) return
     setSubmitting(true)
     setError(null)
     try {
-      await onSubmit(reasons, comment.trim())
+      // The API still takes an array; the dropdown makes it at most one.
+      await onSubmit(reason ? [reason] : [], comment.trim())
       // On success the caller stops rendering this component; nothing to
       // reset here.
     } catch {
@@ -82,7 +78,7 @@ export default function DislikeFeedbackModal({
     }
   }
 
-  const chips = visibleReasons(messageHasMotion).map((code) => ({
+  const options = visibleReasons(messageHasMotion).map((code) => ({
     code,
     label: t(`feedback.reasons.${code}`),
   }))
@@ -112,25 +108,25 @@ export default function DislikeFeedbackModal({
             <div className="text-sm text-destructive bg-destructive/10 py-2 px-3 rounded-lg">{error}</div>
           )}
 
-          <div className="flex flex-wrap gap-2">
-            {chips.map(({ code, label }) => {
-              const selected = reasons.includes(code)
-              return (
-                <button
-                  key={code}
-                  type="button"
-                  onClick={() => toggleReason(code)}
-                  aria-pressed={selected}
-                  className={`px-3 py-1.5 rounded-full text-xs font-medium border transition-colors ${
-                    selected
-                      ? 'bg-primary/10 text-primary border-primary'
-                      : 'text-muted-foreground border-border/50 hover:border-foreground hover:text-foreground'
-                  }`}
-                >
+          <div>
+            <label className="text-xs text-muted-foreground mb-1.5 block" htmlFor="feedback-reason">
+              {t('feedback.reason_label')}
+            </label>
+            <select
+              id="feedback-reason"
+              value={reason}
+              onChange={(e) => setReason(e.target.value as FeedbackReason | '')}
+              className="w-full rounded-lg border border-border/50 bg-background px-3 py-2 text-sm text-foreground cursor-pointer focus:outline-none focus:ring-2 focus:ring-primary/40"
+            >
+              <option value="" disabled className="bg-card text-muted-foreground">
+                {t('feedback.reason_placeholder')}
+              </option>
+              {options.map(({ code, label }) => (
+                <option key={code} value={code} className="bg-card text-foreground">
                   {label}
-                </button>
-              )
-            })}
+                </option>
+              ))}
+            </select>
           </div>
 
           <div>
@@ -143,8 +139,8 @@ export default function DislikeFeedbackModal({
               onChange={(e) => setComment(e.target.value.slice(0, MAX_COMMENT_LENGTH))}
               maxLength={MAX_COMMENT_LENGTH}
               placeholder={t('feedback.comment_placeholder')}
-              rows={3}
-              className="w-full rounded-lg border border-border/50 bg-background px-3 py-2 text-sm text-foreground resize-none focus:outline-none focus:ring-2 focus:ring-primary/40"
+              rows={5}
+              className="w-full rounded-lg border border-border/50 bg-background px-3 py-2 text-sm text-foreground resize-none focus:outline-none focus:ring-2 focus:ring-primary/40 min-h-[7.5rem]"
             />
             <p className="text-[0.7rem] text-muted-foreground mt-1 text-right">
               {t('feedback.char_count', { count: comment.length, max: MAX_COMMENT_LENGTH })}
@@ -162,7 +158,7 @@ export default function DislikeFeedbackModal({
           </button>
           <button
             onClick={handleSubmit}
-            disabled={submitting || !canSubmit(reasons, comment)}
+            disabled={submitting || !canSubmit(reason, comment)}
             className="h-8 px-4 rounded-lg text-xs font-medium bg-primary text-primary-foreground hover:bg-primary/90 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
           >
             {submitting ? t('feedback.submitting') : t('feedback.submit')}

@@ -113,3 +113,8 @@ models/
 
 # Ad-hoc VieNeu sample clips generated while testing TTS streaming locally
 SpeechLLm/sample_*.ogg
+
+# Word documents — personal worklogs made from the COS40006 template stay out of
+# the repo — and the ~$ lock files Word leaves next to an open document.
+*.docx
+~$*

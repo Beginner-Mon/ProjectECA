@@ -27,23 +27,23 @@ describe('visibleReasons', () => {
 })
 
 describe('canSubmit', () => {
-  it('is false with no reasons and no comment', () => {
-    expect(canSubmit([], '')).toBe(false)
+  it('is false with no reason and no comment', () => {
+    expect(canSubmit('', '')).toBe(false)
   })
 
   it('is false for whitespace-only comment', () => {
-    expect(canSubmit([], '   \n\t ')).toBe(false)
+    expect(canSubmit('', '   \n\t ')).toBe(false)
   })
 
-  it('is true with at least one reason chip selected', () => {
-    expect(canSubmit(['incorrect'], '')).toBe(true)
+  it('is true with a reason chosen', () => {
+    expect(canSubmit('incorrect', '')).toBe(true)
   })
 
   it('is true with non-blank comment text alone', () => {
-    expect(canSubmit([], 'the exercise looked wrong')).toBe(true)
+    expect(canSubmit('', 'the exercise looked wrong')).toBe(true)
   })
 
   it('is true with both a reason and a comment', () => {
-    expect(canSubmit(['unsafe'], 'could hurt my back')).toBe(true)
+    expect(canSubmit('unsafe', 'could hurt my back')).toBe(true)
   })
 })

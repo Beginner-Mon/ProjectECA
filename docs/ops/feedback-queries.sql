@@ -3,7 +3,7 @@
 --
 -- What this is: three read-only queries for reviewing users' 👍/👎 feedback
 -- on assistant answers. Paste each one into the Neon console's SQL editor
--- and run it there — there is no admin UI for this yet (plan §4.C).
+-- and run it there — there is no admin UI for this yet.
 --
 -- Runs as the owner role, which is NOT subject to RLS (007_rls.py does not
 -- FORCE row security on message_feedback or messages), so these queries see

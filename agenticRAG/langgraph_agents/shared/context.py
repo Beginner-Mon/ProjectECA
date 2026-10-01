@@ -29,6 +29,52 @@ def estimate_tokens(text: str) -> int:
     return len(text) // 4 if text else 0
 
 
+# ── Prompt budgets (plan T11) ───────────────────────────────────────────
+
+_CONTEXT_BUDGET_DEFAULTS = {
+    # Code defaults = hành vi cũ khi config thiếu. Config hiện tại
+    # (config/langgraph.yaml) mang số mới của plan — thêm key là đổi hành vi.
+    "persona": 600,
+    "identity_core": 100,
+    "about_you": 225,      # _ABOUT_YOU_CHAR_BUDGET cũ (900 chars)
+    "body_state": 40,
+    "evidence": 1000,       # _EVIDENCE_CHAR_BUDGET cũ (4000 chars)
+    "history": 1500,        # _STM_TOKEN_BUDGET cũ
+    "voice_card": 280,
+}
+
+
+def _load_context_budgets() -> dict:
+    try:
+        import yaml
+        from pathlib import Path
+
+        config_path = (
+            Path(__file__).resolve().parents[3] / "config" / "langgraph.yaml"
+        )
+        if not config_path.exists():
+            return {}
+        with open(config_path, "r", encoding="utf-8") as f:
+            cfg = yaml.safe_load(f) or {}
+        return (cfg.get("langgraph", {}) or {}).get("context_budgets", {}) or {}
+    except Exception:
+        return {}
+
+
+def context_budget(key: str) -> int:
+    """Token budget cho một khối prompt: config, thiếu thì giá trị cũ."""
+    try:
+        value = _load_context_budgets().get(key)
+        return int(value) if value is not None else _CONTEXT_BUDGET_DEFAULTS[key]
+    except (KeyError, TypeError, ValueError):
+        return _CONTEXT_BUDGET_DEFAULTS[key]
+
+
+def budget_chars(key: str) -> int:
+    """Budget ra chars theo tỉ lệ ước lượng (~4 chars/token)."""
+    return context_budget(key) * 4
+
+
 def estimate_context_tokens(
     system_prompt: str = "",
     user_facts: list[str] | None = None,

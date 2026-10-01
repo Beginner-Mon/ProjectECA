@@ -28,6 +28,7 @@ from langchain_core.runnables import RunnableConfig
 
 from langgraph.config import get_stream_writer
 from langgraph_agents.shared import reply_emotion
+from langgraph_agents.shared.context import budget_chars, estimate_tokens
 from langgraph_agents.sources import source_for_tool
 from langgraph_agents.state import AgentState, ErrorSeverity
 from langgraph_agents.llm import get_chat_model, get_fallback_chat_model, extract_cache_tokens
@@ -200,7 +201,8 @@ Instructions:
 # ── Helpers ──────────────────────────────────────────────────────────────
 
 _EVIDENCE_PER_MESSAGE_CAP = 1500
-_EVIDENCE_CHAR_BUDGET = 4000
+# Trần evidence/about-you đọc từ config qua budget_chars() (plan T11); số cũ
+# giữ làm default khi config thiếu (shared/context.py::_CONTEXT_BUDGET_DEFAULTS).
 
 
 def _evidence_messages(messages: list) -> list:
@@ -250,9 +252,10 @@ def _extract_tool_results(messages: list) -> str:
 
     parts: list[str] = []
     used = 0
+    evidence_budget = budget_chars("evidence")
     for m in reversed(tools):
         content = str(m.content)[:_EVIDENCE_PER_MESSAGE_CAP]
-        if parts and used + len(content) > _EVIDENCE_CHAR_BUDGET:
+        if parts and used + len(content) > evidence_budget:
             break
         parts.append(f"{_evidence_title(m)}\n{content}")
         used += len(content)
@@ -374,9 +377,6 @@ def _build_body_state_note(messages: list) -> str:
     return ""
 
 
-_ABOUT_YOU_CHAR_BUDGET = 900
-
-
 def _build_about_you(messages: list) -> str:
     """What the character knows about itself, from recall_self (plan T8f).
 
@@ -400,7 +400,7 @@ def _build_about_you(messages: list) -> str:
             if isinstance(r, dict) and r.get("content"):
                 title = (r.get("title") or "").strip()
                 parts.append(f"{title}: {r['content']}" if title else r["content"])
-        content = "\n".join(parts)[:_ABOUT_YOU_CHAR_BUDGET]
+        content = "\n".join(parts)[:budget_chars("about_you")]
         if content.strip():
             return (
                 "\n\n## About you\n"
@@ -680,6 +680,21 @@ async def synthesizer_node(state: AgentState, config: RunnableConfig) -> dict:
 
     cache_hit_tokens, cache_miss_tokens = extract_cache_tokens(ai_msg)
 
+    # Prompt-block sizes for budget tracking (plan T11). usage_metadata carries
+    # the provider's real token counts; estimate_tokens is the local ~4
+    # chars/token rule whose accuracy V4 measures.
+    usage = getattr(ai_msg, "usage_metadata", None) or {}
+    history_chars = sum(len(str(getattr(m, "content", "") or "")) for m in history)
+    prompt_blocks = {
+        "persona": len(persona_system),
+        "body_state": len(body_note),
+        "about_you": len(about_you),
+        "task": len(task_system),
+        "evidence": len(tool_results),
+        "history": history_chars,
+        "voice_card": len(voice_card),
+    }
+
     elapsed_ms = round((time.perf_counter() - t0) * 1000)
     logger.info("node_complete", extra={
         "node": "synthesizer", "request_id": request_id,
@@ -689,6 +704,9 @@ async def synthesizer_node(state: AgentState, config: RunnableConfig) -> dict:
         "cache_hit_tokens": cache_hit_tokens,
         "cache_miss_tokens": cache_miss_tokens,
         "llm_fallback_used": used_fallback,
+        "prompt_blocks": prompt_blocks,
+        "input_tokens": usage.get("input_tokens", 0),
+        "output_tokens": usage.get("output_tokens", 0),
     })
 
     return {

@@ -406,8 +406,11 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
 
 async def amain(args: argparse.Namespace) -> int:
     from langgraph_agents.shared.env import load_env
+    from langgraph_agents.shared.logging import configure_root_logger
 
     load_env()
+    # JSON log ra stderr để đo prompt_blocks / input_tokens (T11).
+    configure_root_logger()
     # Tool memory_search/resume_last_session chạy trong pg.transaction(),
     # cần app.user_id đã bind (như api/main.py bind từ Bearer token).
     # Không bind = RLS từ chối đúng như tài liệu trong db/postgres.py.

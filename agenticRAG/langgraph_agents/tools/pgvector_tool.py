@@ -28,6 +28,33 @@ logger = get_logger("langgraph.tools")
 # ── YouTube transcript cap (D28: budget ~3k tokens ≈ 12000 chars) ─────────
 _YT_CHAR_CAP = 12_000
 
+# Thư viện bài tập = documents có source_type này (plan T5). Trùng SOURCE_TYPE
+# trong scripts/ingest_kb_pgvector.py:81 — đổi một trong hai mà quên bên còn
+# lại thì kb_search trả rỗng (không lỗi, D23) và mọi lượt lâm sàng thành refuse.
+LIBRARY_SOURCE_TYPES = ("exercise_db",)
+
+
+def _kb_min_similarity() -> float | None:
+    """Ngưỡng similarity cho kb_search, từ config (plan T5).
+
+    None = không lọc (hành vi cũ). Giá trị do số đo T1 quyết — phân bố (c) và
+    (d) chồng lấn nên hiện chưa đặt trong config; chỉ lọc khi Tri chốt số.
+    """
+    try:
+        import yaml
+        from pathlib import Path
+
+        config_path = Path(__file__).resolve().parents[3] / "config" / "langgraph.yaml"
+        if not config_path.exists():
+            return None
+        with open(config_path, "r", encoding="utf-8") as f:
+            cfg = yaml.safe_load(f) or {}
+        value = (cfg.get("langgraph", {}) or {}).get("retrieval", {}) or {}
+        threshold = value.get("kb_min_similarity")
+        return float(threshold) if threshold is not None else None
+    except Exception:
+        return None
+
 
 def _to_uuid(value: str) -> str:
     """Coerce user-supplied string into a deterministic UUID."""
@@ -74,12 +101,16 @@ async def kb_search(query: str, top_k: int = 5) -> list[dict]:
                    d.source_type, d.title
             FROM kb_embeddings ke
             JOIN documents d ON ke.document_id = d.id
+            WHERE d.source_type = ANY($3)
             ORDER BY ke.embedding <=> $1
             LIMIT $2
             """,
             query_vec,
             top_k,
+            list(LIBRARY_SOURCE_TYPES),
         )
+
+        min_sim = _kb_min_similarity()
 
         results = [
             {
@@ -90,6 +121,7 @@ async def kb_search(query: str, top_k: int = 5) -> list[dict]:
                 "chunk_index": r["chunk_index"],
             }
             for r in rows
+            if min_sim is None or float(r["similarity"]) >= min_sim
         ]
 
         logger.info("kb_search_done", extra={

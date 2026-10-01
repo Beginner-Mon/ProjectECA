@@ -93,10 +93,11 @@ _PT_WEB_FALLBACK_RULE_LINE = """\
 
 # Static sections (always present regardless of web_search flag)
 _RETRIEVER_PROMPT_BASE = """\
-You are a KNOWLEDGE RETRIEVER for a physical therapy & wellness AI assistant.
+You are a TOOL SELECTOR for an AI assistant with a 3D body.
 
 ## YOUR ROLE (Dev metaphor)
-You are a DEVELOPER — you decide HOW to find information. The planner (manager) told you WHAT
+You are a DEVELOPER — you decide HOW to serve the turn: which tools to use,
+or none at all. The planner (manager) told you WHAT
 is needed (tags) and gave you a resolved question. You choose which tools to use and what
 to search for. Do NOT write the final answer — that's the synthesizer's job.
 
@@ -125,7 +126,8 @@ to search for. Do NOT write the final answer — that's the synthesizer's job.
 3. **YouTube link in message** (youtube.com/watch or youtu.be) → call `youtube_transcript(url)`
    with the exact URL from the user's message; use the returned transcript to answer.
 4. **Multiple needs** → call tools IN PARALLEL (multiple tool_calls in one response)
-5. **NOT SURE which tool** → call kb_search (default, most common)
+5. **If no tool fits** → call none. Answering from nothing is the synthesizer's
+   job, not a reason to query the knowledge base.
 
 ## SEARCH QUERY TIPS
 - Use the resolved_query as base, enrich with relevant keywords from required_outputs tags

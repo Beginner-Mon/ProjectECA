@@ -205,15 +205,27 @@ async def build_graph_async():
         "error_handler": "error_handler",
     })
 
-    # ── Retriever ⇄ tools loop (max 2 rounds) ────────────────────────
-    # After loop: → kimodo (if needs_motion) or → synthesizer
+    # ── Retriever → tools, một lượt (plan T7: một cổng) ───────────────
+    # Sau tools KHÔNG quay lại retriever_agent nữa: đi kimodo nếu needs_motion,
+    # ngược lại synthesizer. Vòng agent thứ hai cũ là một lời gọi LLM vô ích
+    # (không thấy kết quả tool, yêu cầu nào cũng chạm trần 2 vòng).
+    # Retry của grader vẫn qua retriever_agent (cạnh grader → retriever_agent
+    # giữ nguyên) — đó là lượt agent mới có feedback, không phải lượt thừa.
     g.add_conditional_edges("retriever_agent", route_after_retriever, {
         "tools": "tools",
         "kimodo": "kimodo",
         "synthesizer": "synthesizer",
         "error_handler": "error_handler",
     })
-    g.add_edge("tools", "retriever_agent")
+    # Một cổng (plan T7): sau tools đi tiếp, KHÔNG quay lại retriever_agent.
+    # Vòng LLM thứ hai cũ không được đưa kết quả tool và mọi tool nó yêu cầu
+    # bị bỏ vì chạm trần 2 vòng — một lời gọi vô ích mỗi lượt có tool.
+    # Retry của grader không đổi: grader → retriever_agent vẫn còn nguyên.
+    g.add_conditional_edges("tools", route_after_retriever_or_tools, {
+        "kimodo": "kimodo",
+        "synthesizer": "synthesizer",
+        "error_handler": "error_handler",
+    })
 
     # ── Kimodo → synthesizer ──────────────────────────────────────────
     g.add_edge("kimodo", "synthesizer")

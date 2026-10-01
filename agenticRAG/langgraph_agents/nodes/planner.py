@@ -81,8 +81,8 @@ class PlanOutput(BaseModel):
     # TRỤC 3 — routing bits
     needs_retrieval: bool = Field(
         default=False,
-        description="Does answering need external knowledge lookup? "
-                    "Retriever decides which tools (kb/web/memory).",
+        description="True when answering needs a tool: looking something up, "
+                    "recalling, or doing something. The tool agent decides which.",
     )
     needs_motion: bool = Field(
         default=False,
@@ -139,7 +139,8 @@ Rules:
 - If no coreference to resolve, use the original query as-is
 
 ### 3. routing bits
-- needs_retrieval=true: question needs external knowledge (KB, web, or memory search)
+- needs_retrieval=true: answering needs a tool — looking something up,
+  recalling, or doing something. The tool agent decides which.
   Examples: PT exercises, health facts, news, real-time info, recalling past sessions
 - needs_retrieval=false: greeting, casual chat, or static safety response (red_flag needs no lookup)
 - needs_motion=true: user explicitly asks to SEE or VISUALIZE a movement — to be shown it,

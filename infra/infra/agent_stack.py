@@ -334,6 +334,9 @@ class AgentStack(Stack):
             "COGNITO_APP_CLIENT_ID": cognito_client_id,
             "ALLOWED_ORIGINS": ",".join(allowed_origins),
             "LOG_LEVEL": "INFO",
+            # Tắt emotion tag trong câu trả lời (shared/reply_emotion.py).
+            # Code emotion giữ nguyên, chỉ tắt bằng cờ (plan agent-context T0).
+            "VVA_REPLY_EMOTION": "0",
             # No cache. Short-term memory is a cache over PostgreSQL, and
             # the plan is to run without one for a month and measure the
             # Neon CU-hours it would have saved before paying for anything.

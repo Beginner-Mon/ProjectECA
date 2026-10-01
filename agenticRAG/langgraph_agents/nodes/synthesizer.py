@@ -139,14 +139,16 @@ Instructions:
 """
 
 _REFUSE_TASK = """## This turn
-You cannot answer this one. Say so honestly and point the user somewhere useful.
+You have no reliable source for the guidance the user asked for. Do not make
+up exercise or health guidance. Say so for that part only.
 
 {language_rule}
 {safety_rules}
 
 ## Situation
-The user asked a question that is OUTSIDE your wellness advisory scope
-and/or no reliable sources were found. You MUST NOT fabricate an answer.
+The guidance the user asked for has no reliable source: the question is
+OUTSIDE your wellness advisory scope and/or nothing trustworthy was found.
+Speak only to that part — anything else in the turn you can still answer.
 
 ## Required deliverables (tags)
 {required_outputs}
@@ -155,7 +157,7 @@ and/or no reliable sources were found. You MUST NOT fabricate an answer.
 {resolved_query}
 
 Instructions:
-- Be honest: explain WHY you cannot answer (out of scope / no sources)
+- Be honest: explain WHY you cannot give that guidance (out of scope / no sources)
 - If referral_advice tag is present: strongly recommend seeing a medical professional
 - If no sources were found: state this clearly, suggest the user rephrase or ask a professional
 - Keep it brief
@@ -324,6 +326,55 @@ def _build_avatar_switch_note(
     )
 
 
+def _build_body_state_note(messages: list) -> str:
+    """What this character's own 3D body is doing this turn (plan T4).
+
+    Reads the newest motion-source message (kimodo node today, show_movement
+    tool after T9) and returns a short first-person-able block. Empty when
+    there is no motion message or its payload is broken — blocks with no
+    data never enter the prompt (~10K token window).
+
+    Never names machinery: when the body cannot perform, the character says
+    so as itself, with no technical reason.
+    """
+    import json
+
+    motion_msg = None
+    for m in messages:
+        if not isinstance(m, ToolMessage):
+            continue
+        src = source_for_tool(m.name or "")
+        if src is not None and src.id == "motion":
+            motion_msg = m
+    if motion_msg is None:
+        return ""
+
+    try:
+        data = json.loads(str(motion_msg.content))
+    except (json.JSONDecodeError, TypeError):
+        return ""
+    if not isinstance(data, dict):
+        return ""
+
+    state = data.get("state")
+    if state in ("queued", "cache_hit"):
+        prompt = str(data.get("prompt", "") or "").strip()
+        eta = data.get("eta_seconds")
+        time_clause = f", in about {eta} seconds" if eta else ""
+        return (
+            "\n\n## Your body this turn\n"
+            f"You are about to show \"{prompt}\" with your own body{time_clause}. "
+            "Speak as the one doing it."
+        )
+    if state in ("unavailable", "busy"):
+        return (
+            "\n\n## Your body this turn\n"
+            "You are not able to show a movement right now. Do not promise to, "
+            "and give no technical reason. You may describe it in words instead."
+        )
+    return ""
+
+
 # ── Mode derivation (D29: emerge from signals, no enum) ─────────────────
 
 def _derive_mode(state: AgentState) -> str:
@@ -424,7 +475,12 @@ async def synthesizer_node(state: AgentState, config: RunnableConfig) -> dict:
 
     # Persona prompt (D30: applies to ALL modes)
     persona_system = build_persona_prompt(persona, mode)
-    system = f"{persona_system}\n\n---\n\n{task_system}"
+    # Body state sits between persona and task (plan T4; T8 slots About-you
+    # after it). Absent when there is no motion message, so chat turns keep
+    # the exact prompt they had before.
+    body_note = _build_body_state_note(state.get("messages", []))
+    middle = f"{body_note}\n\n" if body_note else ""
+    system = f"{persona_system}\n\n---\n\n{middle}{task_system}"
 
     llm = get_chat_model("synthesizer")
 

@@ -423,7 +423,7 @@ async def preload_personas_from_db() -> int:
 _MODE_HINTS = {
     "chat":        "This turn is a casual greeting or general chat — be brief and warm.",
     "clarify":     "This turn is asking the user a clarification question — be concise and inviting.",
-    "refuse":      "This turn is refusing to answer (out of scope / no reliable sources) — be polite, explain why, and refer to a professional.",
+    "refuse":      "This turn is declining only the guidance it has no reliable source for — be polite, explain why for that part, and refer to a professional.",
     "synthesize":  "This turn is delivering factual content from retrieved sources — keep claims accurate, cite sources when available, and preserve all safety warnings verbatim.",
 }
 

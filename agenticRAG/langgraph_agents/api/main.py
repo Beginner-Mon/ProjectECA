@@ -50,6 +50,7 @@ from langgraph_agents.api.schemas import (
 )
 from langgraph_agents.api.sse import encode_event, stream_response
 from langgraph_agents.graph import build_graph_async
+from langgraph_agents.sources import source_for_tool
 from langgraph_agents.nodes._persona_loader import (
     get_persona, get_ui_string, preload_personas_from_db,
 )
@@ -105,6 +106,30 @@ _STAGE_NODES = {
     "memory", "planner", "retriever_agent", "synthesizer",
     "grader", "error_handler",
 }
+
+
+def _stage_sources(node_output: dict) -> list[str]:
+    """Source ids (plan T2) agent này định tra, theo thứ tự gọi, không trùng.
+
+    Đọc từ tool_calls của AIMessage trong output của retriever_agent. Nguồn
+    không có stage_key (self, motion) không lên UI — nhãn trạng thái chỉ nói
+    về tra cứu.
+    """
+    seen: list[str] = []
+    for m in node_output.get("messages", []) or []:
+        calls = getattr(m, "tool_calls", None)
+        if isinstance(m, dict):
+            calls = m.get("tool_calls")
+        for tc in calls or []:
+            name = tc.get("name") if isinstance(tc, dict) else getattr(tc, "name", None)
+            if not name:
+                continue
+            src = source_for_tool(name)
+            if src is None or src.stage_key is None:
+                continue
+            if src.id not in seen:
+                seen.append(src.id)
+    return seen
 
 
 def tts_enabled() -> bool:
@@ -567,7 +592,10 @@ async def _stream_chat(req, request_id, config, state, background_tasks, request
                 extra: dict = {}
                 if node_name == "planner" and isinstance(node_output, dict):
                     extra["required_outputs"] = node_output.get("required_outputs")
+                    extra["needs_retrieval"] = node_output.get("needs_retrieval", False)
                     extra["needs_clarification"] = node_output.get("needs_clarification", False)
+                if node_name == "retriever_agent" and isinstance(node_output, dict):
+                    extra["sources"] = _stage_sources(node_output)
                 if node_name == "grader" and isinstance(node_output, dict):
                     extra["result"] = node_output.get("grader_result")
 

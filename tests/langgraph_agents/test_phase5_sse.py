@@ -263,6 +263,79 @@ def test_sse_chat_emits_retriever_stage(api_client, monkeypatch):
     assert "planner" in nodes_seen
 
 
+# ── Stage sources (plan T6): nhãn trạng thái theo nguồn thật ─────────
+
+
+def _make_fake_astream_with_tool_calls(tool_names):
+    """retriever_agent yield AIMessage mang tool_calls cho trước."""
+    from langchain_core.messages import AIMessage
+
+    async def fake_stream(state, config, stream_mode=None):
+        yield ("updates", {"memory": {}})
+        yield ("updates", {"planner": {
+            "required_outputs": ["scope_disclaimer"],
+            "needs_retrieval": True,
+            "needs_clarification": False,
+        }})
+        calls = [{"name": n, "args": {}, "id": f"call-{i}",
+                  "type": "tool_call"}
+                 for i, n in enumerate(tool_names)]
+        yield ("updates", {"retriever_agent": {
+            "messages": [AIMessage(content="", tool_calls=calls)],
+        }})
+        yield ("updates", {"synthesizer": {
+            "final_answer": "Xong.",
+            "intent": "exercise_recommendation",
+            "total_tokens": 10,
+        }})
+
+    return fake_stream
+
+
+def _stage_data(api_client, mock_graph, tool_names):
+    from langgraph_agents.api.main import create_app  # noqa: F401 (giữ fixture)
+    client, _, _ = api_client
+    mock_graph.astream = _make_fake_astream_with_tool_calls(tool_names)
+    _set_graph(mock_graph)
+    resp = client.post("/chat", json={"query": "Bài tập cho đau lưng"})
+    assert resp.status_code == 200
+    events = _parse_sse_stream(resp.content)
+    return [e["data"] for e in events if e["event"] == "stage"]
+
+
+@pytest.mark.unit
+def test_planner_stage_carries_needs_retrieval(api_client, monkeypatch):
+    client, _, mock_graph = api_client
+    stages = _stage_data(api_client, mock_graph, ["kb_search"])
+    planner = next(s for s in stages if s.get("node") == "planner")
+    assert planner["needs_retrieval"] is True
+
+
+@pytest.mark.unit
+def test_retriever_stage_sources_library(api_client, monkeypatch):
+    client, _, mock_graph = api_client
+    stages = _stage_data(api_client, mock_graph, ["kb_search"])
+    ret = next(s for s in stages if s.get("node") == "retriever_agent")
+    assert ret["sources"] == ["library"]
+
+
+@pytest.mark.unit
+def test_retriever_stage_sources_memory_deduped_ordered(api_client, monkeypatch):
+    client, _, mock_graph = api_client
+    stages = _stage_data(api_client, mock_graph,
+                         ["memory_search", "kb_search", "memory_search"])
+    ret = next(s for s in stages if s.get("node") == "retriever_agent")
+    assert ret["sources"] == ["memory", "library"]
+
+
+@pytest.mark.unit
+def test_retriever_stage_sources_empty_without_tool_calls(api_client, monkeypatch):
+    client, _, mock_graph = api_client
+    stages = _stage_data(api_client, mock_graph, [])
+    ret = next(s for s in stages if s.get("node") == "retriever_agent")
+    assert ret["sources"] == []
+
+
 # ── Speech mode ────────────────────────────────────────────────────
 #
 # feature/tts-streaming: SpeechLLm now streams NDJSON lines

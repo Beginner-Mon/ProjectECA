@@ -20,6 +20,7 @@ import { clearSessionPointer, readSessionPointer, stampSessionPointer } from '..
 import { useMotion } from '../hooks/useMotion'
 import { ChatContext, type ChatContextType, type SessionItem } from '../hooks/useChat'
 import { uiStringsFor, getGreetingForSlot, getTimeSlot, buildGreetingKey, type UiStrings } from '../lib/characterCopy'
+import { stageLabelFor } from '../lib/stageLabel'
 import { resolveGreeting, type CapturedGreeting } from '../lib/greeting'
 import { useLocale } from '../hooks/useLocale'
 
@@ -553,14 +554,15 @@ export function ChatProvider({ children }: { children: ReactNode }) {
       return [...prev, userMsg]
     })
     setInput('')
-    // Hiển thị stage ngay để tránh 3 chấm đầu, dùng text pulse thay vì dots
+    // Hiển thị stage ngay để tránh 3 chấm đầu, dùng text pulse thay vì dots.
+    // Trung tính (thinking) — nhãn nguồn thật tới sau qua sự kiện stage (T6).
     setIsTyping(false)
-    setStageLabel(uiRef.current.stage_searching)
+    setStageLabel(stageLabelFor(null, uiRef.current, null))
     // Fallback: nếu backend không emit retriever (chat thuần hoặc miss event)
-    // thì sau 2.5s tự chuyển sang COMPOSING để không treo ở SEARCHING
+    // thì sau 2.5s tự chuyển từ THINKING sang COMPOSING để không treo
     if (stageTimeoutRef.current) clearTimeout(stageTimeoutRef.current)
     stageTimeoutRef.current = setTimeout(() => {
-      setStageLabel((prev) => (prev === uiRef.current.stage_searching ? uiRef.current.stage_composing : prev))
+      setStageLabel((prev) => (prev === uiRef.current.stage_thinking ? uiRef.current.stage_composing : prev))
     }, 2500)
     setIsGenerating(true)
     thinkingRef.current = true
@@ -632,12 +634,11 @@ export function ChatProvider({ children }: { children: ReactNode }) {
     })
 
     /* Captured once per send rather than read per event: switching character
-     * mid-stream must not swap the label under a reply already being written,
+     * mid-stream must not swap the copy under a reply already being written,
      * and the error line below has to match the character who greeted the
-     * user. */
+     * user. (Nhãn stage là ngoại lệ: stageLabelFor đọc uiRef.current trực
+     * tiếp để mỗi sự kiện dùng copy mới nhất.) */
     const copy = uiRef.current
-    const STAGE_SEARCHING = copy.stage_searching
-    const STAGE_COMPOSING = copy.stage_composing
 
     try {
       await streamChat(
@@ -660,17 +661,17 @@ export function ChatProvider({ children }: { children: ReactNode }) {
         (type, data) => {
           if (lifecycle(type, data)) return
           if (type === 'stage') {
-            const { node, status } = data as { node: string; status: string }
+            const { node, status, sources } = data as { node: string; status: string; sources?: string[] }
             if (node === 'planner' && status === 'complete') {
               setIsTyping(false)
-              setStageLabel(STAGE_SEARCHING)
+              setStageLabel((prev) => stageLabelFor({ node, status }, uiRef.current, prev))
             } else if (node === 'retriever_agent' && status === 'complete') {
               if (stageTimeoutRef.current) clearTimeout(stageTimeoutRef.current)
-              setStageLabel(STAGE_COMPOSING)
+              setStageLabel((prev) => stageLabelFor({ node, status, sources }, uiRef.current, prev))
             } else if (node === 'synthesizer' && status === 'started') {
               // Giữ COMPOSING tới token đầu để che TTFT, không tắt ở đây
               if (stageTimeoutRef.current) clearTimeout(stageTimeoutRef.current)
-              setStageLabel(STAGE_COMPOSING)
+              setStageLabel((prev) => stageLabelFor({ node, status }, uiRef.current, prev))
             }
           } else if (type === 'emotion') {
             // Reply-driven emotion: sent ahead of the text, already filtered by

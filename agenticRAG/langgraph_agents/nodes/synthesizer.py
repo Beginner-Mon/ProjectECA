@@ -375,6 +375,43 @@ def _build_body_state_note(messages: list) -> str:
     return ""
 
 
+_ABOUT_YOU_CHAR_BUDGET = 900
+
+
+def _build_about_you(messages: list) -> str:
+    """What the character knows about itself, from recall_self (plan T8f).
+
+    Newest usable result wins. Capped so the block never eats the ~10K token
+    window. Empty when the tool found nothing — the identity core (T8a) still
+    tells the character not to invent.
+    """
+    import json
+
+    for m in reversed(messages):
+        if not isinstance(m, ToolMessage) or (m.name or "") != "recall_self":
+            continue
+        try:
+            data = json.loads(str(m.content))
+        except (json.JSONDecodeError, TypeError):
+            continue
+        if not isinstance(data, dict) or not data.get("found"):
+            continue
+        parts = []
+        for r in data.get("results", []) or []:
+            if isinstance(r, dict) and r.get("content"):
+                title = (r.get("title") or "").strip()
+                parts.append(f"{title}: {r['content']}" if title else r["content"])
+        content = "\n".join(parts)[:_ABOUT_YOU_CHAR_BUDGET]
+        if content.strip():
+            return (
+                "\n\n## About you\n"
+                "This is what you know about yourself. Say it in the first person, "
+                "as your own\nknowledge. Never say you looked it up.\n"
+                f"{content}"
+            )
+    return ""
+
+
 # ── Mode derivation (D29: emerge from signals, no enum) ─────────────────
 
 def _derive_mode(state: AgentState) -> str:
@@ -479,7 +516,9 @@ async def synthesizer_node(state: AgentState, config: RunnableConfig) -> dict:
     # after it). Absent when there is no motion message, so chat turns keep
     # the exact prompt they had before.
     body_note = _build_body_state_note(state.get("messages", []))
-    middle = f"{body_note}\n\n" if body_note else ""
+    about_you = _build_about_you(state.get("messages", []))
+    middle_blocks = [b for b in (body_note, about_you) if b]
+    middle = ("\n\n".join(middle_blocks) + "\n\n") if middle_blocks else ""
     system = f"{persona_system}\n\n---\n\n{middle}{task_system}"
 
     llm = get_chat_model("synthesizer")

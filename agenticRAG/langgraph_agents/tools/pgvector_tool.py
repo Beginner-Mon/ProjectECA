@@ -34,11 +34,10 @@ _YT_CHAR_CAP = 12_000
 LIBRARY_SOURCE_TYPES = ("exercise_db",)
 
 
-def _kb_min_similarity() -> float | None:
-    """Ngưỡng similarity cho kb_search, từ config (plan T5).
+def _retrieval_threshold(key: str) -> float | None:
+    """Một ngưỡng similarity trong `langgraph.retrieval` (plan T5/T8e).
 
-    None = không lọc (hành vi cũ). Giá trị do số đo T1 quyết — phân bố (c) và
-    (d) chồng lấn nên hiện chưa đặt trong config; chỉ lọc khi Tri chốt số.
+    None = không lọc (hành vi cũ). Giá trị do số đo quyết, không đoán.
     """
     try:
         import yaml
@@ -50,10 +49,24 @@ def _kb_min_similarity() -> float | None:
         with open(config_path, "r", encoding="utf-8") as f:
             cfg = yaml.safe_load(f) or {}
         value = (cfg.get("langgraph", {}) or {}).get("retrieval", {}) or {}
-        threshold = value.get("kb_min_similarity")
+        threshold = value.get(key)
         return float(threshold) if threshold is not None else None
     except Exception:
         return None
+
+
+def _kb_min_similarity() -> float | None:
+    """Ngưỡng similarity cho kb_search, từ config (plan T5).
+
+    None = không lọc (hành vi cũ). Giá trị do số đo T1 quyết — phân bố (c) và
+    (d) chồng lấn nên hiện chưa đặt trong config; chỉ lọc khi Tri chốt số.
+    """
+    return _retrieval_threshold("kb_min_similarity")
+
+
+def _self_min_similarity() -> float | None:
+    """Ngưỡng riêng cho recall_self (plan T8e). None = không lọc."""
+    return _retrieval_threshold("self_min_similarity")
 
 
 def _to_uuid(value: str) -> str:
@@ -435,6 +448,74 @@ async def youtube_transcript(url: str) -> dict:
         "video_id": video_id, "chars": len(full_text), "truncated": truncated,
     })
     return {"found": True, "video_id": video_id, "transcript": full_text, "truncated": truncated}
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# recall_self — what the character knows about itself (plan T8e)
+# ═══════════════════════════════════════════════════════════════════════════
+
+@tool
+async def recall_self(query: str, config: RunnableConfig = None) -> dict:
+    """Search what you know about yourself: appearance, clothes,
+    tastes, history. Use when the user asks about you.
+
+    Args:
+        query: What the user asked about you (appearance, height, ...).
+
+    Returns:
+        {found: true, results: [{title, kind, content, similarity}]}
+        OR {found: false} if no sheet rows match (NOT error — D23).
+
+    The character is never a parameter: the slug comes from the turn's
+    persona_id, gated twice — this WHERE clause and the RLS policy on
+    app.character (migration 013).
+    """
+    persona_id = (config or {}).get("configurable", {}).get("persona_id", "anne")
+
+    try:
+        embed_svc = get_embedding_service()
+        pg = get_pg_client()
+        await pg.connect()
+
+        query_vec = await embed_svc.aembed_query(query)
+
+        rows = await pg.fetch(
+            """
+            SELECT ck.title, ck.kind, ck.content,
+                   1 - (ck.embedding <=> $1) AS similarity
+            FROM character_knowledge ck
+            WHERE ck.character_slug = $2
+            ORDER BY ck.embedding <=> $1
+            LIMIT 3
+            """,
+            query_vec,
+            persona_id,
+        )
+
+        min_sim = _self_min_similarity()
+
+        results = [
+            {
+                "title": r["title"] or "",
+                "kind": r["kind"],
+                "content": r["content"],
+                "similarity": round(float(r["similarity"]), 4),
+            }
+            for r in rows
+            if min_sim is None or float(r["similarity"]) >= min_sim
+        ]
+
+        if not results:
+            return {"found": False}
+
+        logger.info("recall_self_done", extra={
+            "persona_id": persona_id, "results": len(results),
+        })
+        return {"found": True, "results": results}
+
+    except Exception as exc:
+        logger.error("recall_self_error", extra={"error": str(exc)})
+        raise
 
 
 # ── Exports ───────────────────────────────────────────────────────────────

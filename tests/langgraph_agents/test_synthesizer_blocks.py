@@ -9,6 +9,7 @@ from langchain_core.messages import ToolMessage
 
 from langgraph_agents.nodes.synthesizer import (
     _REFUSE_TASK,
+    _build_about_you,
     _build_body_state_note,
     _check_tool_ambiguous,
     _extract_tool_results,
@@ -162,3 +163,70 @@ async def test_refuse_with_queued_motion_carries_body_note():
     assert "## Your body this turn" in prompt
     assert "cartwheel" in prompt
     assert "You cannot answer this one" not in prompt
+
+
+# ── T8f: khối About you ─────────────────────────────────────────────
+
+def _self_tm(payload) -> ToolMessage:
+    content = payload if isinstance(payload, str) else json.dumps(payload)
+    return ToolMessage(content=content, tool_call_id="tc-self",
+                       name="recall_self")
+
+
+def test_about_you_first_person_never_looked_up():
+    block = _build_about_you([_self_tm(
+        {"found": True, "results": [
+            {"title": "Appearance", "kind": "sheet",
+             "content": "Short hair.", "similarity": 0.9}]})])
+    assert "## About you" in block
+    assert "first person" in block
+    assert "Never say you looked it up" in block
+    assert "Short hair." in block
+
+
+def test_about_you_caps_at_900_chars():
+    block = _build_about_you([_self_tm(
+        {"found": True, "results": [
+            {"title": "T", "kind": "sheet",
+             "content": "x" * 2000, "similarity": 0.9}]})])
+    assert "## About you" in block
+    assert block.count("x") <= 900
+
+
+def test_about_you_empty_without_usable_result():
+    assert _build_about_you([]) == ""
+    assert _build_about_you([_self_tm({"found": False})]) == ""
+    assert _build_about_you([_self_tm("{not json")]) == ""
+    assert _build_about_you([_tm("kb_search", _KB)]) == ""
+
+
+@pytest.mark.unit
+@pytest.mark.asyncio
+async def test_synthesizer_prompt_carries_about_you():
+    from langgraph_agents.nodes import synthesizer as syn_mod
+
+    state = {
+        "messages": [_self_tm(
+            {"found": True, "results": [
+                {"title": "Appearance", "kind": "sheet",
+                 "content": "Short hair.", "similarity": 0.9}]})],
+        "resolved_query": "who are you",
+        "required_outputs": [],
+        "needs_clarification": False,
+        "total_tokens": 0,
+    }
+    config = {"configurable": {
+        "request_id": "r", "persona_id": "anne", "query": "who are you",
+        "locale": "en",
+    }}
+    captured: dict = {}
+    with patch.object(syn_mod, "get_chat_model",
+                      return_value=_capturing_llm(captured)):
+        await syn_mod.synthesizer_node(state, config)
+
+    assert captured.get("msgs"), "synthesizer never called the LLM"
+    prompt = "\n".join(
+        str(getattr(m, "content", "")) for m in captured["msgs"])
+    assert "## About you" in prompt
+    assert "Short hair." in prompt
+    assert "Never say you looked it up" in prompt

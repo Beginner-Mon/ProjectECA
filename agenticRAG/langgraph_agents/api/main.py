@@ -322,6 +322,11 @@ def create_app() -> FastAPI:
             logger.warning("stm_warmup_failed", extra={"error": str(exc)})
 
         state = {"messages": [], "errors": [], "retry_count": 0, "total_tokens": 0}
+        # Whose sheet this turn may read (plan T8b). Bound here — next to the
+        # config, not in auth — because the character comes from the request
+        # (catalog-validated persona_id), not from the token.
+        from langgraph_agents.db.postgres import bind_request_character
+        bind_request_character(req.persona_id)
         config = {"configurable": {
             "user_id": uid,
             "session_id": req.session_id,

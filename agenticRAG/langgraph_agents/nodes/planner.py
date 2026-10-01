@@ -161,6 +161,9 @@ up, not a translation of it.
 Query: "hello"
 -> {"required_outputs":[],"resolved_query":"hello","needs_retrieval":false,"needs_motion":false,"needs_clarification":false}
 
+Query: "who are you" (about the character itself — the self-knowledge tool serves it)
+-> {"required_outputs":[],"resolved_query":"who are you","needs_retrieval":true,"needs_motion":false,"needs_clarification":false}
+
 Query: "i get chest pain when i exercise"
 -> {"required_outputs":["red_flag_screen","referral_advice"],"resolved_query":"chest pain during exercise","needs_retrieval":false,"needs_motion":false,"needs_clarification":false}
 

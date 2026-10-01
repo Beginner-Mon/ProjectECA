@@ -41,21 +41,28 @@ from langgraph_agents.tools.pgvector_tool import (
     memory_search as _memory_search,
     resume_last_session as _resume_last_session,
     youtube_transcript as _youtube_transcript,
+    recall_self as _recall_self,
 )
+from langgraph_agents.nodes._persona_loader import _persona_has_sheet
 
-RETRIEVER_BASE_TOOLS = [_kb_search, _memory_search, _resume_last_session, _youtube_transcript]
+RETRIEVER_BASE_TOOLS = [_kb_search, _memory_search, _resume_last_session,
+                        _youtube_transcript, _recall_self]
 
 
-async def _build_tools(web_search_enabled: bool = True) -> list:
+async def _build_tools(web_search_enabled: bool = True,
+                       persona_id: str = "anne") -> list:
     """Assemble tool list: kb_search + memory_search + resume_last_session + MCP tools.
 
     memory_search + resume_last_session always available.
     web_search (search_medical) is filtered by user toggle (D27).
+    recall_self is offered only when this turn's character has a sheet.md
+    (plan T8e) — without facts about itself the tool has nothing to return.
     """
     from langgraph_agents.mcp.client import get_mcp_tools
     mcp_tools = await get_mcp_tools()
 
-    tools = [*RETRIEVER_BASE_TOOLS]
+    tools = [t for t in RETRIEVER_BASE_TOOLS
+             if t.name != "recall_self" or _persona_has_sheet(persona_id)]
 
     for t in mcp_tools:
         # Filter: motion tools NOT in retriever (D26)
@@ -91,6 +98,18 @@ _PT_WEB_FALLBACK_RULE_LINE = """\
    prefer them; search_medical is just insurance against a sparse/empty internal KB.
 """
 
+# Self-knowledge tool description + decision rule — injected only when this
+# turn's character has a sheet.md (plan T8e). The tool is also withheld from
+# the bound tool list then, so the rule never points at a missing tool.
+_SELF_TOOL_BLOCK = """\
+- **recall_self(query)**: Search what you know about yourself: appearance,
+  clothes, tastes, history. Use when the user asks about you.
+"""
+
+_SELF_RULE_LINE = """\
+3b. **About you** (who you are, looks, clothes, tastes, history) → recall_self
+"""
+
 # Static sections (always present regardless of web_search flag)
 _RETRIEVER_PROMPT_BASE = """\
 You are a TOOL SELECTOR for an AI assistant with a 3D body.
@@ -116,7 +135,7 @@ to search for. Do NOT write the final answer — that's the synthesizer's job.
 - **youtube_transcript(url)**: Fetch the spoken transcript of a YouTube video.
   Use ONLY when the user's message contains a YouTube link (youtube.com/watch?v= or youtu.be/).
   Pass the URL verbatim from the user's message. Speech-only — does NOT understand visuals.
-
+{self_tool_block}\
 ## DECISION RULES
 1. **PT/wellness topic** (exercises, stretches, anatomy, physiotherapy) → kb_search FIRST
 {pt_fallback_rule_line}\
@@ -125,6 +144,7 @@ to search for. Do NOT write the final answer — that's the synthesizer's job.
    continue previous work) → memory_search
 3. **YouTube link in message** (youtube.com/watch or youtu.be) → call `youtube_transcript(url)`
    with the exact URL from the user's message; use the returned transcript to answer.
+{self_rule_line}\
 4. **Multiple needs** → call tools IN PARALLEL (multiple tool_calls in one response)
 5. **If no tool fits** → call none. Answering from nothing is the synthesizer's
    job, not a reason to query the knowledge base.
@@ -206,6 +226,7 @@ def _build_retriever_system_prompt(
     retry_note: str,
     required_outputs: str,
     resolved_query: str,
+    self_tool_available: bool = False,
 ) -> str:
     """Build the retriever system prompt.
 
@@ -218,6 +239,10 @@ def _build_retriever_system_prompt(
     since round 2's tool_calls get force-dropped by the P2 hard cap (route_after_retriever)
     regardless of content — there is no "wait for kb empty, then fall back" round available.
     False for high-safety tags (red_flag_screen/referral_advice): hard no-source refusal only.
+
+    self_tool_available (T8e): the recall_self description and rule 3b appear
+    only when this turn's character has a sheet.md — and the tool is withheld
+    from the bound list otherwise, so the rule never points at a missing tool.
     """
     use_fallback = web_search_enabled and allow_web_fallback
     empty_handling = _EMPTY_HANDLING_WITH_WEB_FALLBACK if use_fallback else _EMPTY_HANDLING_DEFAULT
@@ -225,6 +250,8 @@ def _build_retriever_system_prompt(
         web_search_tool_block=_WEB_SEARCH_TOOL_BLOCK if web_search_enabled else "",
         pt_fallback_rule_line=_PT_WEB_FALLBACK_RULE_LINE if use_fallback else "",
         web_search_rule_line=_WEB_SEARCH_RULE_LINE if web_search_enabled else "",
+        self_tool_block=_SELF_TOOL_BLOCK if self_tool_available else "",
+        self_rule_line=_SELF_RULE_LINE if self_tool_available else "",
         empty_handling=empty_handling,
         retry_note=retry_note,
         required_outputs=required_outputs,
@@ -275,7 +302,10 @@ async def retriever_agent_node(state: AgentState, config: RunnableConfig) -> dic
         "web_fallback_allowed": web_search_enabled and allow_web_fallback,
     })
 
-    tools = await _build_tools(web_search_enabled=web_search_enabled)
+    tools = await _build_tools(
+        web_search_enabled=web_search_enabled,
+        persona_id=config["configurable"].get("persona_id", "anne"),
+    )
 
     system = _build_retriever_system_prompt(
         web_search_enabled=web_search_enabled,
@@ -283,6 +313,8 @@ async def retriever_agent_node(state: AgentState, config: RunnableConfig) -> dic
         retry_note=retry_note,
         required_outputs=", ".join(required_outputs) if required_outputs else "(none — general/chat)",
         resolved_query=resolved_query,
+        self_tool_available=_persona_has_sheet(
+            config["configurable"].get("persona_id", "anne")),
     )
 
     llm = get_chat_model("retriever").bind_tools(tools)

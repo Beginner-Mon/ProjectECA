@@ -37,6 +37,7 @@ DEFAULT_LANG = "en"
 # the user's language — the same way every other instruction in the prompt works.
 _CORE_SECTIONS = (
     "identity", "personality", "behavioral_rules", "response_formatting",
+    "exercise_rules",
 )
 
 # Sections the model IMITATES, or that are inserted verbatim into something a
@@ -229,6 +230,7 @@ def _parse_sections(content: str) -> dict:
         "voice": sections.get("voice", ""),
         "examples": sections.get("examples", ""),
         "behavioral_rules": sections.get("behavioral_rules", ""),
+        "exercise_rules": sections.get("exercise_rules", ""),
         "response_formatting": sections.get("response_formatting", ""),
         "safety_templates": safety_templates,
         "ui_strings": ui_strings,
@@ -570,13 +572,22 @@ def build_persona_prompt(persona: dict, mode: str) -> str:
         if always:
             always_block = f"\n\n## Always\n{always}"
 
+    # Exercise rules (plan T10): prescription law lives here, loaded only
+    # when the turn is not casual chat. Personas without the section render
+    # as before (.get default).
+    exercise_block = ""
+    if mode != "chat":
+        exercise_rules = (persona.get("exercise_rules") or "").strip()
+        if exercise_rules:
+            exercise_block = f"\n\n## Exercise Rules\n{exercise_rules}"
+
     return f"""You are {persona['identity']}{always_block}
 
 ## Your Personality
 {persona['personality']}{voice_block}
 
 ## Rules
-{persona['behavioral_rules']}
+{persona['behavioral_rules']}{exercise_block}
 
 ## Formatting
 {persona['response_formatting']}{hint_block}"""

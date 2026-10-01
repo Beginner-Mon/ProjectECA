@@ -194,7 +194,6 @@ Instructions:
 - Respond naturally, the way you would speak
 - Keep under 50 words for greetings, under 100 for follow-up chat
 - Do NOT add clinical advice unless the user explicitly asks
-- You may offer PT/wellness help in 1 short line if natural
 """
 
 

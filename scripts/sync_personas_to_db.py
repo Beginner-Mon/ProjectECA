@@ -56,7 +56,8 @@ sys.path.insert(0, str(REPO_ROOT / "agenticRAG"))
 # `locales`. Reported separately so a diff says WHICH language changed rather
 # than just "locales".
 _REPORTED_CORE = (
-    "title", "identity", "personality", "behavioral_rules", "response_formatting",
+    "title", "identity", "personality", "behavioral_rules", "exercise_rules",
+    "response_formatting",
 )
 _REPORTED_OVERLAY = ("voice", "examples", "safety_templates", "ui_strings")
 

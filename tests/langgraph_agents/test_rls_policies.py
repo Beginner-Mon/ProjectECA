@@ -300,3 +300,58 @@ def test_013_downgrade_removes_what_upgrade_added():
     assert "DROP POLICY IF EXISTS character_knowledge_owner" in down
     assert 'ALTER TABLE IF EXISTS "character_knowledge" DISABLE ROW LEVEL SECURITY' in down
     assert "DROP TABLE IF EXISTS character_knowledge" in down
+
+
+# ── Against the database (needs H3: migration 013 on Neon) ─────────────────
+
+
+@pytest.mark.integration
+@pytest.mark.asyncio
+async def test_013_character_isolation_live(app_dsn_or_skip):
+    """anne không đọc được dòng của nhân vật khác; quên bind thì lỗi.
+
+    Seed bằng slug giả (__test_a/__test_b) dưới quyền owner rồi xóa sạch —
+    không động vào dữ liệu thật (Tri duyệt hình thức này).
+    """
+    import asyncpg
+
+    import os
+
+    owner_dsn = os.getenv("VVA_PG_DSN_OWNER")
+    if not owner_dsn:
+        pytest.skip("VVA_PG_DSN_OWNER not configured")
+
+    vec = "[" + ",".join(["0.0"] * 384) + "]"
+    owner = await asyncpg.connect(owner_dsn)
+    try:
+        for slug in ("__test_a", "__test_b"):
+            await owner.execute(
+                "INSERT INTO character_knowledge "
+                "(character_slug, kind, title, content, chunk_index, embedding) "
+                "VALUES ($1, 'sheet', 'T', 'c', 0, $2::vector)",
+                slug, vec,
+            )
+
+        app = await asyncpg.connect(app_dsn_or_skip)
+        try:
+            # Không bind → lỗi (policy không có missing_ok), không phải 0 dòng.
+            with pytest.raises(asyncpg.PostgresError):
+                await app.fetch("SELECT count(*) FROM character_knowledge")
+
+            # Bind __test_a → chỉ thấy dòng __test_a.
+            await app.execute("SELECT set_config('app.character', '__test_a', false)")
+            rows = await app.fetch(
+                "SELECT DISTINCT character_slug FROM character_knowledge")
+            assert [r["character_slug"] for r in rows] == ["__test_a"]
+
+            # Bind nhân vật khác → không thấy dòng __test_a.
+            await app.execute("SELECT set_config('app.character', '__test_b', false)")
+            rows = await app.fetch(
+                "SELECT DISTINCT character_slug FROM character_knowledge")
+            assert [r["character_slug"] for r in rows] == ["__test_b"]
+        finally:
+            await app.close()
+    finally:
+        await owner.execute(
+            "DELETE FROM character_knowledge WHERE character_slug IN ('__test_a', '__test_b')")
+        await owner.close()

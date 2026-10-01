@@ -28,6 +28,7 @@ from langchain_core.runnables import RunnableConfig
 
 from langgraph.config import get_stream_writer
 from langgraph_agents.shared import reply_emotion
+from langgraph_agents.sources import source_for_tool
 from langgraph_agents.state import AgentState, ErrorSeverity
 from langgraph_agents.llm import get_chat_model, get_fallback_chat_model, extract_cache_tokens
 from langgraph_agents.nodes._persona_loader import (
@@ -201,6 +202,32 @@ _EVIDENCE_PER_MESSAGE_CAP = 1500
 _EVIDENCE_CHAR_BUDGET = 4000
 
 
+def _evidence_messages(messages: list) -> list:
+    """ToolMessages that count as retrieved evidence (plan T3).
+
+    Sources flagged is_evidence=False (self, motion) are body/self state,
+    not lookup results — the synthesizer reads them through their own
+    prompt blocks (T4/T8), never as evidence.
+    """
+    out = []
+    for m in messages:
+        if not isinstance(m, ToolMessage):
+            continue
+        src = source_for_tool(m.name or "")
+        if src is not None and not src.is_evidence:
+            continue
+        out.append(m)
+    return out
+
+
+def _evidence_title(m: ToolMessage) -> str:
+    """Section header naming WHERE the evidence comes from (plan T2/T3)."""
+    src = source_for_tool(m.name or "")
+    if src is None:
+        return "[From another source]"
+    return f"[From {src.label}]"
+
+
 def _extract_tool_results(messages: list) -> str:
     """Format ToolMessage content from retriever tool calls, newest kept first.
 
@@ -218,15 +245,15 @@ def _extract_tool_results(messages: list) -> str:
     At least one tool result always survives, however long it is — a single
     oversized document should be truncated, not silently omitted.
     """
-    tools = [m for m in messages if isinstance(m, ToolMessage)]
+    tools = _evidence_messages(messages)
 
     parts: list[str] = []
     used = 0
-    for offset, m in enumerate(reversed(tools)):
+    for m in reversed(tools):
         content = str(m.content)[:_EVIDENCE_PER_MESSAGE_CAP]
         if parts and used + len(content) > _EVIDENCE_CHAR_BUDGET:
             break
-        parts.append(f"[Tool {len(tools) - offset}: {m.name}]\n{content}")
+        parts.append(f"{_evidence_title(m)}\n{content}")
         used += len(content)
 
     parts.reverse()
@@ -235,30 +262,28 @@ def _extract_tool_results(messages: list) -> str:
 
 def _has_tool_results(messages: list) -> bool:
     """Check if any ToolMessage has non-empty, non-error results."""
-    for m in messages:
-        if isinstance(m, ToolMessage):
-            content = str(m.content)
-            # Empty result (D23: {found: false} or [])
-            if content in ("", "[]", "{}", '{"found": false}'):
-                continue
-            # Error result
-            if '"error"' in content or '"error":' in content:
-                continue
-            return True
+    for m in _evidence_messages(messages):
+        content = str(m.content)
+        # Empty result (D23: {found: false} or [])
+        if content in ("", "[]", "{}", '{"found": false}'):
+            continue
+        # Error result
+        if '"error"' in content or '"error":' in content:
+            continue
+        return True
     return False
 
 
 def _check_tool_ambiguous(messages: list) -> bool:
     """Check if any tool returned ambiguity metadata (D22: dynamic clarify)."""
     import json
-    for m in messages:
-        if isinstance(m, ToolMessage):
-            try:
-                data = json.loads(str(m.content))
-                if isinstance(data, dict) and data.get("ambiguous"):
-                    return True
-            except (json.JSONDecodeError, TypeError):
-                pass
+    for m in _evidence_messages(messages):
+        try:
+            data = json.loads(str(m.content))
+            if isinstance(data, dict) and data.get("ambiguous"):
+                return True
+        except (json.JSONDecodeError, TypeError):
+            pass
     return False
 
 

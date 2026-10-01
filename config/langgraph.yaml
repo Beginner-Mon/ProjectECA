@@ -25,7 +25,7 @@ langgraph:
   # Code đọc qua shared/context.py::context_budget, giữ giá trị cũ khi thiếu.
   context_budgets:
     persona: 600
-    identity_core: 100
+    identity_core: 120
     about_you: 250
     body_state: 40
     evidence: 1200

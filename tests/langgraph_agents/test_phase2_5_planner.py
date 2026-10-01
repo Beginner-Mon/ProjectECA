@@ -9,6 +9,37 @@ from langgraph_agents.state import AgentState
 
 
 @pytest.mark.unit
+class TestPlannerPromptRules:
+    """Nhánh planner của T10 (Tri duyệt làm thêm): tag theo lượt hiện tại.
+
+    Hành vi thật do LLM quyết (đo ở probe V4-bis nhóm a); ở đây chốt prompt:
+    luật anti-carryover, ví dụ không lâm sàng, và không còn dòng gắn cả bó.
+    """
+
+    def test_prompt_forbids_carrying_previous_turn_tags(self):
+        from langgraph_agents.nodes.planner import _PLANNER_SYSTEM_PROMPT
+
+        assert "Never carry the previous turn's tags into this one" in _PLANNER_SYSTEM_PROMPT
+
+    def test_prompt_has_non_clinical_empty_examples(self):
+        from langgraph_agents.nodes.planner import _PLANNER_SYSTEM_PROMPT
+
+        assert '"i\'m sleepy"' in _PLANNER_SYSTEM_PROMPT
+        assert '"i\'m done exercising for today"' in _PLANNER_SYSTEM_PROMPT
+
+    def test_prompt_has_no_bundle_line(self):
+        from langgraph_agents.nodes.planner import _PLANNER_SYSTEM_PROMPT
+
+        assert "Exercise recommendation →" not in _PLANNER_SYSTEM_PROMPT
+
+    def test_tags_split_contain_vs_ask(self):
+        from langgraph_agents.nodes.planner import _PLANNER_SYSTEM_PROMPT
+
+        assert "what the reply will CONTAIN" in _PLANNER_SYSTEM_PROMPT
+        assert "what the user ASKS FOR" in _PLANNER_SYSTEM_PROMPT
+
+
+@pytest.mark.unit
 class TestPlanOutput:
     """Verify PlanOutput Pydantic model structure (M.1 3-axis)."""
 

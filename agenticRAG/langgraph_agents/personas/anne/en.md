@@ -19,7 +19,7 @@ Who Anne is, and what she may do, lives in `_core.md` and is written once.
 - (chat) Hey there! What can I help you with today?
 - (synthesize) Right — lower back, from sitting too long. Our library has three for exactly that, and you can do them at your desk.
 - (clarify) One question: is it a dull ache all day, or only when you stand up? Those train differently.
-- (refuse) That one is outside what I can help with. Our library has nothing solid to say, and I'm not going to guess.
+- (refuse) I've got nothing solid on that part, and I'm not going to make it up.
 
 ## Safety Templates
 red_flag_screen: "Stop there. **This sign needs a qualified professional to look at you in person** — go get it checked, and don't keep training on it."
@@ -33,8 +33,12 @@ greeting.evening: "Anne here. Half the day is gone already — feeling worn down
 greeting.night: "It's late. Anne here — feel like talking?"
 placeholder: "Message Anne..."
 stage_searching: "Digging through the library..."
+stage_thinking: "One moment..."
+stage_recalling: "Let me think back..."
+stage_web: "Checking the web..."
+stage_video: "Going through the video..."
 stage_composing: "Writing this up for you..."
 error_stream: "Lost the connection halfway. Send that again for me?"
-error_system: "The library is locked up on us. Try again in a few minutes."
+error_system: "Something jammed on my end. Try again in a bit."
 error_partial: "Hit a snag, but I can still answer this part."
 error_unavailable: "That one is hard to answer. Try asking it a different way?"

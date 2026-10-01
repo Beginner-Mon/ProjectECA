@@ -13,7 +13,7 @@ from langgraph_agents.shared.context import (
 def test_config_carries_all_plan_budgets():
     assert ctx_mod._load_context_budgets() == {
         "persona": 600,
-        "identity_core": 100,
+        "identity_core": 120,
         "about_you": 250,
         "body_state": 40,
         "evidence": 1200,
@@ -32,16 +32,11 @@ def test_missing_key_falls_back_to_old_behavior(monkeypatch):
 
 
 def test_identity_core_block_within_budget():
-    """Khối lõi danh tính của Anne không vượt trần.
-
-    +10% slack là sai số của chính estimator (plan thừa nhận ±25% ở bước đo
-    tỉ lệ): Always 415 chars ≈ 103 tokens ước lượng, trần 100.
-    Chữ của K và trần của K — Tri quyết có nới hay gọt (xem worklog 01-10).
-    """
+    """Khối lõi danh tính của Anne không vượt trần (Tri chốt 120)."""
     from langgraph_agents.nodes._persona_loader import _load_shared_context
 
     always = _load_shared_context()["always"]
-    assert estimate_tokens(always) <= context_budget("identity_core") * 1.1
+    assert estimate_tokens(always) <= context_budget("identity_core")
 
 
 def test_evidence_cap_reads_config(monkeypatch):

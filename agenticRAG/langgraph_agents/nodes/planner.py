@@ -124,13 +124,21 @@ Tags you can assign (ONLY these, no inventing):
     motion_descriptor — motion visualization needs movement+joint description
 
 Rules:
-- Empty list [] = casual chat/greeting/general (no contract, grader skipped — D8)
-- Clinical answer ALWAYS needs at least [scope_disclaimer] (safety)
-- Chest pain, numbness, dizziness, loss of bladder/bowel control, fainting
-  → MUST include [red_flag_screen, referral_advice]
-- Exercise recommendation → [scope_disclaimer, exercise_protocol, exercise_steps, contraindication]
-- A request to SEE a movement → [motion_descriptor] + needs_motion=true
-- Out of wellness scope (diagnosis, medication, test interpretation) → [referral_advice]
+- Empty list [] = the message asks for none of the things below (greeting,
+  small talk, how the user feels, questions about you).
+- These tags depend on what the reply will CONTAIN, asked or not:
+    red_flag_screen + referral_advice — chest pain, numbness, dizziness, loss of
+      bladder/bowel control, fainting
+    referral_advice   — out of wellness scope (diagnosis, medication, test interpretation)
+    scope_disclaimer  — the reply gives exercise or health guidance
+    contraindication  — the reply recommends an exercise
+    evidence_citation — the reply gives exercise or health information
+- These tags depend on what the user ASKS FOR:
+    exercise_steps    — how to perform a movement
+    exercise_protocol — how much, how often, a schedule
+    motion_descriptor — to see a movement
+- Judge the CURRENT message. "Recent context" is only for resolving "it" or
+  "that one". Never carry the previous turn's tags into this one.
 
 ### 2. resolved_query — cleaned question (1 sentence)
 - Resolve pronouns using conversation context (a pronoun or "that one" → the subject it refers to)
@@ -168,7 +176,7 @@ Query: "i get chest pain when i exercise"
 -> {"required_outputs":["red_flag_screen","referral_advice"],"resolved_query":"chest pain during exercise","needs_retrieval":false,"needs_motion":false,"needs_clarification":false}
 
 Query: "exercises for an L4-L5 disc herniation"
--> {"required_outputs":["scope_disclaimer","exercise_protocol","exercise_steps","contraindication"],"resolved_query":"physiotherapy exercises for an L4-L5 disc herniation","needs_retrieval":true,"needs_motion":false,"needs_clarification":false}
+-> {"required_outputs":["scope_disclaimer","contraindication","evidence_citation"],"resolved_query":"physiotherapy exercises for an L4-L5 disc herniation","needs_retrieval":true,"needs_motion":false,"needs_clarification":false}
 
 Query: "exercises" (missing body region - critical)
 -> {"required_outputs":[],"resolved_query":"exercises","needs_retrieval":false,"needs_motion":false,"needs_clarification":true}
@@ -177,10 +185,16 @@ Query: "gold price today" (outside wellness, but answerable from sources)
 -> {"required_outputs":["evidence_citation"],"resolved_query":"gold price today","needs_retrieval":true,"needs_motion":false,"needs_clarification":false}
 
 Query: "show me the squat movement"
--> {"required_outputs":["scope_disclaimer","motion_descriptor","exercise_steps"],"resolved_query":"squat movement","needs_retrieval":true,"needs_motion":true,"needs_clarification":false}
+-> {"required_outputs":["scope_disclaimer","motion_descriptor"],"resolved_query":"squat movement","needs_retrieval":true,"needs_motion":true,"needs_clarification":false}
 
 Query: "i asked about neck exercises last week, remind me" (recall past session)
--> {"required_outputs":["scope_disclaimer","exercise_protocol","exercise_steps"],"resolved_query":"neck exercises asked about last week","needs_retrieval":true,"needs_motion":false,"needs_clarification":false}
+-> {"required_outputs":["scope_disclaimer","evidence_citation"],"resolved_query":"neck exercises asked about last week","needs_retrieval":true,"needs_motion":false,"needs_clarification":false}
+
+Query: "i'm sleepy" (how the user feels — no tags, even after an exercise turn)
+-> {"required_outputs":[],"resolved_query":"i'm sleepy","needs_retrieval":false,"needs_motion":false,"needs_clarification":false}
+
+Query: "i'm done exercising for today" (no ask — no tags)
+-> {"required_outputs":[],"resolved_query":"i'm done exercising for today","needs_retrieval":false,"needs_motion":false,"needs_clarification":false}
 
 Query: "can you prescribe something for the pain" (outside wellness scope)
 -> {"required_outputs":["referral_advice"],"resolved_query":"medication for pain","needs_retrieval":false,"needs_motion":false,"needs_clarification":false}

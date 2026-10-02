@@ -23,7 +23,6 @@ def _base_state_config(**overrides):
         "required_outputs": [],
         "resolved_query": "",
         "needs_retrieval": False,
-        "needs_motion": False,
         "needs_clarification": False,
     }
     config = {
@@ -134,7 +133,6 @@ class TestPlanOutput:
         assert plan.required_outputs == []
         assert plan.resolved_query == ""
         assert plan.needs_retrieval is False
-        assert plan.needs_motion is False
         assert plan.needs_clarification is False
 
     def test_plan_output_3_axis(self):
@@ -143,13 +141,11 @@ class TestPlanOutput:
             required_outputs=["exercise_protocol", "scope_disclaimer"],
             resolved_query="bài tập cho L4-L5",
             needs_retrieval=True,
-            needs_motion=False,
             needs_clarification=False,
         )
         assert len(plan.required_outputs) == 2
         assert "exercise_protocol" in plan.required_outputs
         assert plan.needs_retrieval is True
-        assert plan.needs_motion is False
 
     def test_plan_output_json_mode(self):
         """Verify PlanOutput can serialize/deserialize (json_mode compat)."""
@@ -158,12 +154,12 @@ class TestPlanOutput:
             required_outputs=["red_flag_screen", "referral_advice"],
             resolved_query="đau ngực khi tập",
             needs_retrieval=False,
-            needs_motion=False,
         )
         d = plan.model_dump()
         plan2 = PlanOutput(**d)
         assert plan2.required_outputs == plan.required_outputs
         assert plan2.resolved_query == plan.resolved_query
+        assert "needs_motion" not in d
 
 
 # ═══════════════════════════════════════════════════════════════════════════

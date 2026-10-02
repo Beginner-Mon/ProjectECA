@@ -48,7 +48,6 @@ class TestPlanOutput:
         assert plan.required_outputs == []
         assert plan.resolved_query == ""
         assert plan.needs_retrieval is False
-        assert plan.needs_motion is False
         assert plan.needs_clarification is False
 
     def test_3_axis_populated(self):
@@ -56,20 +55,17 @@ class TestPlanOutput:
             required_outputs=["exercise_protocol", "scope_disclaimer"],
             resolved_query="bai tap cho L4-L5",
             needs_retrieval=True,
-            needs_motion=False,
             needs_clarification=False,
         )
         assert len(plan.required_outputs) == 2
         assert "exercise_protocol" in plan.required_outputs
         assert plan.needs_retrieval is True
-        assert plan.needs_motion is False
 
     def test_json_mode_roundtrip(self):
         plan = PlanOutput(
             required_outputs=["red_flag_screen", "referral_advice"],
             resolved_query="dau nguc khi tap",
             needs_retrieval=False,
-            needs_motion=False,
         )
         d = plan.model_dump()
         plan2 = PlanOutput(**d)
@@ -104,9 +100,13 @@ class TestPlanOutput:
         assert "bai tap" in plan.resolved_query
         assert plan.required_outputs == []
 
-    def test_needs_motion_flag(self):
-        plan = PlanOutput(needs_motion=True, resolved_query="squat demo")
-        assert plan.needs_motion is True
+    def test_motion_runs_on_tag_not_flag(self):
+        """S2: không còn cờ needs_motion — motion_descriptor tag là cổng."""
+        from langgraph_agents.routing import wants_motion
+
+        plan = PlanOutput(required_outputs=["motion_descriptor"],
+                          resolved_query="squat demo")
+        assert wants_motion({"required_outputs": plan.required_outputs}) is True
         assert plan.needs_retrieval is False
 
     def test_needs_clarification_flag(self):
@@ -276,7 +276,6 @@ class TestPlanOutputSerialization:
             required_outputs=["exercise_protocol"],
             resolved_query="test",
             needs_retrieval=True,
-            needs_motion=False,
             needs_clarification=False,
         )
         json_str = plan.model_dump_json()

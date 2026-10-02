@@ -107,7 +107,7 @@ class TestP1EmbeddingOffline:
 class TestP2RetrieverRoundCap:
     """Verify route_after_retriever enforces MAX_RETRIEVER_ROUNDS=2."""
 
-    def _make_state(self, retriever_rounds: int, has_tool_calls: bool = True, needs_motion: bool = False):
+    def _make_state(self, retriever_rounds: int, has_tool_calls: bool = True, with_motion_tag: bool = False):
         from langchain_core.messages import AIMessage
         from langgraph_agents.state import AgentState
 
@@ -119,7 +119,7 @@ class TestP2RetrieverRoundCap:
             "retry_count": 0,
             "total_tokens": 0,
             "retriever_rounds": retriever_rounds,
-            "needs_motion": needs_motion,
+            "required_outputs": ["motion_descriptor"] if with_motion_tag else [],
         }
         return state
 
@@ -142,9 +142,9 @@ class TestP2RetrieverRoundCap:
         assert route_after_retriever(state) == "synthesizer"
 
     def test_round_2_with_motion_forces_kimodo(self):
-        """Round 2 (at cap), needs_motion=True → kimodo (not synthesizer)."""
+        """Round 2 (at cap), motion tag → kimodo (not synthesizer)."""
         from langgraph_agents.routing import route_after_retriever
-        state = self._make_state(retriever_rounds=2, has_tool_calls=True, needs_motion=True)
+        state = self._make_state(retriever_rounds=2, has_tool_calls=True, with_motion_tag=True)
         assert route_after_retriever(state) == "kimodo"
 
     def test_round_0_no_tool_calls_to_synthesizer(self):

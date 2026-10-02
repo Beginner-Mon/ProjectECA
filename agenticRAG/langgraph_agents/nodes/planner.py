@@ -59,7 +59,7 @@ class PlanOutput(BaseModel):
     required_outputs  = deliverables (WHAT) — grader reads this
     resolved_query    = cleaned question — synthesizer reads this
     needs_retrieval   = gate for retriever node
-    needs_motion      = hard gate for Kimodo node (D3, D26)
+    (S2: motion runs on the motion_descriptor tag — no second flag.)
     """
 
     # TRỤC 1 — required_outputs: DELIVERABLE checklist
@@ -83,11 +83,6 @@ class PlanOutput(BaseModel):
         default=False,
         description="True when answering needs a tool: looking something up, "
                     "recalling, or doing something. The tool agent decides which.",
-    )
-    needs_motion: bool = Field(
-        default=False,
-        description="Does the user want to SEE/visualize a movement? "
-                    "Hard gate for Kimodo GPU node (D3).",
     )
 
     # ── Clarify (static — planner knows before retrieval) ─────────────
@@ -136,7 +131,9 @@ Rules:
 - These tags depend on what the user ASKS FOR:
     exercise_steps    — how to perform a movement
     exercise_protocol — how much, how often, a schedule
-    motion_descriptor — to see a movement
+    motion_descriptor — the user explicitly asks to SEE a movement: to be shown it,
+      to watch it, or to have it demonstrated, performed or animated. Asking how to do
+      something, or whether you can, is not asking to see it.
 - Judge the CURRENT message. "Recent context" is only for resolving "it" or
   "that one". Never carry the previous turn's tags into this one.
 
@@ -151,8 +148,6 @@ Rules:
   recalling, or doing something. The tool agent decides which.
   Examples: PT exercises, health facts, news, real-time info, recalling past sessions
 - needs_retrieval=false: greeting, casual chat, or static safety response (red_flag needs no lookup)
-- needs_motion=true: user explicitly asks to SEE or VISUALIZE a movement — to be shown it,
-  to have it demonstrated, simulated, animated, or rendered in 3D
 
 ### Clarify (static)
 - needs_clarification=true ONLY when planner can detect missing critical info WITHOUT querying:
@@ -167,37 +162,37 @@ Keep `resolved_query` in the user's own language: it is their question tidied
 up, not a translation of it.
 
 Query: "hello"
--> {"required_outputs":[],"resolved_query":"hello","needs_retrieval":false,"needs_motion":false,"needs_clarification":false}
+-> {"required_outputs":[],"resolved_query":"hello","needs_retrieval":false,"needs_clarification":false}
 
 Query: "who are you" (about the character itself — the self-knowledge tool serves it)
--> {"required_outputs":[],"resolved_query":"who are you","needs_retrieval":true,"needs_motion":false,"needs_clarification":false}
+-> {"required_outputs":[],"resolved_query":"who are you","needs_retrieval":true,"needs_clarification":false}
 
 Query: "i get chest pain when i exercise"
--> {"required_outputs":["red_flag_screen","referral_advice"],"resolved_query":"chest pain during exercise","needs_retrieval":false,"needs_motion":false,"needs_clarification":false}
+-> {"required_outputs":["red_flag_screen","referral_advice"],"resolved_query":"chest pain during exercise","needs_retrieval":false,"needs_clarification":false}
 
 Query: "exercises for an L4-L5 disc herniation"
--> {"required_outputs":["scope_disclaimer","contraindication","evidence_citation"],"resolved_query":"physiotherapy exercises for an L4-L5 disc herniation","needs_retrieval":true,"needs_motion":false,"needs_clarification":false}
+-> {"required_outputs":["scope_disclaimer","contraindication","evidence_citation"],"resolved_query":"physiotherapy exercises for an L4-L5 disc herniation","needs_retrieval":true,"needs_clarification":false}
 
 Query: "exercises" (missing body region - critical)
--> {"required_outputs":[],"resolved_query":"exercises","needs_retrieval":false,"needs_motion":false,"needs_clarification":true}
+-> {"required_outputs":[],"resolved_query":"exercises","needs_retrieval":false,"needs_clarification":true}
 
 Query: "gold price today" (outside wellness, but answerable from sources)
--> {"required_outputs":["evidence_citation"],"resolved_query":"gold price today","needs_retrieval":true,"needs_motion":false,"needs_clarification":false}
+-> {"required_outputs":["evidence_citation"],"resolved_query":"gold price today","needs_retrieval":true,"needs_clarification":false}
 
 Query: "show me the squat movement"
--> {"required_outputs":["scope_disclaimer","motion_descriptor"],"resolved_query":"squat movement","needs_retrieval":true,"needs_motion":true,"needs_clarification":false}
+-> {"required_outputs":["scope_disclaimer","motion_descriptor"],"resolved_query":"squat movement","needs_retrieval":true,"needs_clarification":false}
 
 Query: "i asked about neck exercises last week, remind me" (recall past session)
--> {"required_outputs":["scope_disclaimer","evidence_citation"],"resolved_query":"neck exercises asked about last week","needs_retrieval":true,"needs_motion":false,"needs_clarification":false}
+-> {"required_outputs":["scope_disclaimer","evidence_citation"],"resolved_query":"neck exercises asked about last week","needs_retrieval":true,"needs_clarification":false}
 
 Query: "i'm sleepy" (how the user feels — no tags, even after an exercise turn)
--> {"required_outputs":[],"resolved_query":"i'm sleepy","needs_retrieval":false,"needs_motion":false,"needs_clarification":false}
+-> {"required_outputs":[],"resolved_query":"i'm sleepy","needs_retrieval":false,"needs_clarification":false}
 
 Query: "i'm done exercising for today" (no ask — no tags)
--> {"required_outputs":[],"resolved_query":"i'm done exercising for today","needs_retrieval":false,"needs_motion":false,"needs_clarification":false}
+-> {"required_outputs":[],"resolved_query":"i'm done exercising for today","needs_retrieval":false,"needs_clarification":false}
 
 Query: "can you prescribe something for the pain" (outside wellness scope)
--> {"required_outputs":["referral_advice"],"resolved_query":"medication for pain","needs_retrieval":false,"needs_motion":false,"needs_clarification":false}
+-> {"required_outputs":["referral_advice"],"resolved_query":"medication for pain","needs_retrieval":false,"needs_clarification":false}
 
 ## INPUT NOTE
 Users write in any language, and may omit diacritics, accents or tone marks -
@@ -213,8 +208,8 @@ async def planner_node(state: AgentState, config: RunnableConfig) -> dict:
     """Planner node — classify intent into 3-axis PlanOutput (M.1).
 
     Reads: messages (context assembled by memory node) + config.query
-    Outputs: required_outputs, resolved_query, needs_retrieval, needs_motion,
-             needs_clarification
+    Outputs: required_outputs, resolved_query, needs_retrieval,
+             needs_clarification (S2: motion runs on the motion_descriptor tag)
     """
     t0 = time.perf_counter()
     request_id = config["configurable"].get("request_id", "-")
@@ -251,7 +246,6 @@ async def planner_node(state: AgentState, config: RunnableConfig) -> dict:
             "required_outputs": [],
             "resolved_query": query,
             "needs_retrieval": False,
-            "needs_motion": False,
             "needs_clarification": True,
             "errors": [{
                 "node": "planner",
@@ -348,7 +342,6 @@ async def planner_node(state: AgentState, config: RunnableConfig) -> dict:
                 "required_outputs": [],
                 "resolved_query": query,
                 "needs_retrieval": False,
-                "needs_motion": False,
                 "needs_clarification": True,
                 "errors": [{
                     "node": "planner",
@@ -375,7 +368,6 @@ async def planner_node(state: AgentState, config: RunnableConfig) -> dict:
             "required_outputs": [],
             "resolved_query": query,
             "needs_retrieval": False,
-            "needs_motion": False,
             "needs_clarification": True,
             "errors": [{
                 "node": "planner",
@@ -414,7 +406,6 @@ async def planner_node(state: AgentState, config: RunnableConfig) -> dict:
         "elapsed_ms": elapsed_ms,
         "tags": valid_tags,
         "needs_retrieval": plan.needs_retrieval,
-        "needs_motion": plan.needs_motion,
         "needs_clarification": needs_clarification,
         "cache_hit_tokens": cache_hit_tokens,
         "cache_miss_tokens": cache_miss_tokens,
@@ -425,6 +416,5 @@ async def planner_node(state: AgentState, config: RunnableConfig) -> dict:
         "required_outputs": valid_tags,
         "resolved_query": resolved_query,
         "needs_retrieval": plan.needs_retrieval and not needs_clarification,
-        "needs_motion": plan.needs_motion and not needs_clarification,
         "needs_clarification": needs_clarification,
     }

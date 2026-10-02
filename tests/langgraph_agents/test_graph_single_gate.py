@@ -82,7 +82,7 @@ async def _run_turn(needs_retrieval: bool) -> dict:
     from langgraph_agents.tools import pgvector_tool
 
     plan = PlanOutput(required_outputs=[], resolved_query="dau lung",
-                      needs_retrieval=needs_retrieval, needs_motion=False,
+                      needs_retrieval=needs_retrieval,
                       needs_clarification=False)
     counter: dict = {}
 

@@ -215,7 +215,7 @@ async def _run_probe_safe(graph: Any, probe: dict, **kwargs) -> dict[str, Any]:
             "lang": probe.get("lang", "vi"), "query": probe["query"],
             "motion_state": kwargs.get("motion_state"),
             "planner_tags": [], "needs_retrieval": None,
-            "needs_motion": None, "needs_clarification": None,
+            "needs_motion": False, "needs_clarification": None,
             "tools_called": [], "node_runs": {}, "synth_mode": "?",
             "grader_result": None, "similarity_top1": None, "elapsed_s": 0.0,
             "answer": "", "mentions_exercise": None,
@@ -338,7 +338,9 @@ async def _run_probe(
         "query": query, "motion_state": motion_state,
         "planner_tags": planner_out.get("required_outputs", []),
         "needs_retrieval": planner_out.get("needs_retrieval"),
-        "needs_motion": planner_out.get("needs_motion"),
+        # S2: cột motion suy từ tag (cờ needs_motion đã xóa).
+        "needs_motion": "motion_descriptor" in (
+            planner_out.get("required_outputs") or []),
         "needs_clarification": planner_out.get("needs_clarification"),
         "tools_called": tool_calls,
         "node_runs": {n: node_runs.get(n, 0) for n in _LLM_NODES},
@@ -570,7 +572,8 @@ async def _run_selector_probe(probe: dict, *, label: str, history: list) -> dict
             "query": query, "motion_state": probe.get("motion_state"),
             "planner_tags": tags,
             "needs_retrieval": plan_out.get("needs_retrieval"),
-            "needs_motion": plan_out.get("needs_motion"),
+            # S2: cột motion suy từ tag (cờ needs_motion đã xóa).
+            "needs_motion": "motion_descriptor" in (tags or []),
             "needs_clarification": plan_out.get("needs_clarification"),
             "tools_called": tool_calls,
             "node_runs": {"planner": 1, "retriever_agent": 1, "synthesizer": 0},
@@ -590,7 +593,7 @@ async def _run_selector_probe(probe: dict, *, label: str, history: list) -> dict
             "lang": probe.get("lang", "vi"), "query": probe["query"],
             "motion_state": probe.get("motion_state"),
             "planner_tags": [], "needs_retrieval": None,
-            "needs_motion": None, "needs_clarification": None,
+            "needs_motion": False, "needs_clarification": None,
             "tools_called": [], "node_runs": {}, "synth_mode": "?",
             "grader_result": None, "similarity_top1": None, "elapsed_s": 0.0,
             "answer": "", "mentions_exercise": None,

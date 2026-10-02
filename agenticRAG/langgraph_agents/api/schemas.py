@@ -32,6 +32,8 @@ class ChatResponse(BaseModel):
     final_answer: str
     required_outputs: list[str] = Field(default_factory=list)
     needs_retrieval: bool = False
+    # S2: kept for API compat only — derived from the motion_descriptor tag,
+    # no longer a planner flag.
     needs_motion: bool = False
     needs_clarification: bool = False
     speech_task_id: Optional[str] = None

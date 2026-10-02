@@ -11,6 +11,7 @@ from langgraph_agents.nodes.synthesizer import (
     _REFUSE_TASK,
     _build_about_you,
     _build_body_state_note,
+    _build_tag_instructions,
     _check_tool_ambiguous,
     _extract_tool_results,
     _has_tool_results,
@@ -54,6 +55,43 @@ def test_kb_and_web_have_distinct_titles():
                                 _tm("search_medical", _WEB)])
     assert "ECA's exercise library" in ev
     assert "the web" in ev
+
+
+_NHS = [{"content": "NHS advice on back pain.", "similarity": 0.85,
+         "source_type": "nhs_uk", "document_title": "NHS Back",
+         "chunk_index": 0}]
+
+
+def test_nhs_segment_never_titled_eca_library():
+    """B5: đoạn nhs_uk mang nhãn NHS, không bao giờ nhãn thư viện ECA."""
+    ev = _extract_tool_results([_tm("kb_search", _NHS)])
+    assert "NHS health guidance" in ev
+    assert "ECA's exercise library" not in ev
+
+
+def test_library_segment_never_titled_nhs():
+    """B5: và ngược lại."""
+    ev = _extract_tool_results([_tm("kb_search", _KB)])
+    assert "ECA's exercise library" in ev
+    assert "NHS health guidance" not in ev
+
+
+def test_mixed_kb_segments_get_two_titles():
+    """B5: một lượt có cả hai loại thì có hai tiêu đề khác nhau."""
+    ev = _extract_tool_results([_tm("kb_search", _KB + _NHS)])
+    assert "ECA's exercise library" in ev
+    assert "NHS health guidance" in ev
+    assert "NHS Back" in ev  # document_title kèm theo đoạn
+
+
+def test_strange_source_type_stays_excluded():
+    """B5: source_type ngoài hai loại vẫn bị loại khỏi evidence."""
+    weird = [{"content": "Random wiki.", "similarity": 0.9,
+              "source_type": "wikipedia", "document_title": "Wiki",
+              "chunk_index": 0}]
+    ev = _extract_tool_results([_tm("kb_search", weird)])
+    assert "Random wiki." not in ev
+    assert "Wiki" not in ev
 
 
 def test_unknown_tool_gets_generic_title():
@@ -164,6 +202,75 @@ async def test_refuse_with_queued_motion_carries_body_note():
     assert "## Your body this turn" in prompt
     assert "cartwheel" in prompt
     assert "You cannot answer this one" not in prompt
+
+
+# ── B3: hướng dẫn theo đúng tag của lượt ──────────────────────────────
+
+def test_tag_instructions_only_lists_turn_tags():
+    assert "sets, reps" in _build_tag_instructions(["exercise_protocol"])
+    assert "sets, reps" not in _build_tag_instructions(["exercise_steps"])
+    assert "sets, reps" not in _build_tag_instructions([])
+    assert "ordered steps" in _build_tag_instructions(["exercise_steps"])
+    assert "ordered steps" not in _build_tag_instructions(["exercise_protocol"])
+
+
+@pytest.mark.unit
+@pytest.mark.asyncio
+async def test_synthesizer_prompt_omits_protocol_without_tag():
+    """Lượt không có exercise_protocol: prompt không chứa sets/reps."""
+    from langgraph_agents.nodes import synthesizer as syn_mod
+
+    state = {
+        "messages": [_tm("kb_search", _KB)],
+        "resolved_query": "dau lung duoi thi tap gi",
+        "required_outputs": ["scope_disclaimer", "contraindication",
+                             "evidence_citation"],
+        "needs_clarification": False,
+        "total_tokens": 0,
+    }
+    config = {"configurable": {
+        "request_id": "r", "persona_id": "anne", "query": "dau lung",
+        "locale": "vi",
+    }}
+    captured: dict = {}
+    with patch.object(syn_mod, "get_chat_model",
+                      return_value=_capturing_llm(captured)):
+        await syn_mod.synthesizer_node(state, config)
+
+    assert captured.get("msgs"), "synthesizer never called the LLM"
+    prompt = "\n".join(
+        str(getattr(m, "content", "")) for m in captured["msgs"])
+    assert "sets, reps" not in prompt
+    assert "mention sources" in prompt  # evidence_citation có trong lượt
+
+
+@pytest.mark.unit
+@pytest.mark.asyncio
+async def test_synthesizer_prompt_includes_protocol_with_tag():
+    """Lượt có exercise_protocol: prompt chứa sets/reps."""
+    from langgraph_agents.nodes import synthesizer as syn_mod
+
+    state = {
+        "messages": [_tm("kb_search", _KB)],
+        "resolved_query": "bai do tap may hiep",
+        "required_outputs": ["scope_disclaimer", "exercise_protocol",
+                             "evidence_citation"],
+        "needs_clarification": False,
+        "total_tokens": 0,
+    }
+    config = {"configurable": {
+        "request_id": "r", "persona_id": "anne", "query": "may hiep",
+        "locale": "vi",
+    }}
+    captured: dict = {}
+    with patch.object(syn_mod, "get_chat_model",
+                      return_value=_capturing_llm(captured)):
+        await syn_mod.synthesizer_node(state, config)
+
+    assert captured.get("msgs"), "synthesizer never called the LLM"
+    prompt = "\n".join(
+        str(getattr(m, "content", "")) for m in captured["msgs"])
+    assert "sets, reps" in prompt
 
 
 # ── T8f: khối About you ─────────────────────────────────────────────

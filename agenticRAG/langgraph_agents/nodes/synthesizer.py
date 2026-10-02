@@ -110,6 +110,35 @@ def _build_safety_rules(persona: dict, required_outputs: list) -> str:
     return "## SAFETY — required this turn (D32, D33)\n" + "\n".join(lines) + "\n"
 
 
+# ── Per-tag instructions (B3: chỉ tag của lượt mới được hướng dẫn) ──────
+
+# Tách từ _SYNTHESIZE_TASK: mỗi dòng "For <tag>" trước đây có mặt ở MỌI lượt
+# (kèm ví dụ sets/reps cụ thể) nên lượt không hỏi liều lượng vẫn tự cho số.
+# _build_tag_instructions chỉ trả dòng của tag có trong lượt — cùng cách
+# _build_safety_rules đang làm. Không thêm luật mới.
+_TAG_INSTRUCTIONS = {
+    "exercise_protocol":
+        '- For exercise_protocol: include sets, reps, frequency '
+        '(e.g. "3 sets of 10 reps, 2-3 times a week")',
+    "exercise_steps":
+        "- For exercise_steps: provide ≥2 ordered steps",
+    "contraindication":
+        "- For contraindication: list conditions where the exercise "
+        "should NOT be done",
+    "motion_descriptor":
+        "- For motion_descriptor: describe the movement + joints involved clearly",
+    "evidence_citation":
+        "- For evidence_citation: mention sources (document title, web source)",
+}
+
+
+def _build_tag_instructions(required_outputs: list) -> str:
+    """Dòng hướng dẫn của đúng các tag trong lượt; rỗng khi không có tag nào."""
+    return "\n".join(
+        _TAG_INSTRUCTIONS[t] for t in _TAG_INSTRUCTIONS if t in required_outputs
+    )
+
+
 # ── Mode-specific prompts ────────────────────────────────────────────────
 
 _SYNTHESIZE_TASK = """## This turn
@@ -130,11 +159,7 @@ Answer the user's wellness question from the evidence below.
 Instructions:
 - Cover ALL required_outputs tags in your response
 - Base your answer on the retrieved evidence — cite sources when available
-- For exercise_protocol: include sets, reps, frequency (e.g. "3 sets of 10 reps, 2-3 times a week")
-- For exercise_steps: provide ≥2 ordered steps
-- For contraindication: list conditions where the exercise should NOT be done
-- For motion_descriptor: describe the movement + joints involved clearly
-- For evidence_citation: mention sources (document title, web source)
+{tag_instructions}
 - Do not pad or repeat safety disclaimers — state each once.
 - Length and layout are set by your own Formatting rules, not by this list.
 """
@@ -231,6 +256,42 @@ def _evidence_title(m: ToolMessage) -> str:
     return f"[From {src.label}]"
 
 
+def _split_message_parts(m: ToolMessage) -> list[tuple[str, str]]:
+    """Tách một ToolMessage thành các cặp (tiêu đề, nội dung).
+
+    Mặc định một message = một cặp. Riêng kb_search tách theo từng đoạn
+    dựa trên source_type của đoạn (B5): exercise_db và nhs_uk mang hai tiêu
+    đề khác nhau, kèm document_title. Đoạn có source_type lạ bị bỏ
+    (đã bị loại ở SQL, đây là chốt chặn thứ hai).
+    """
+    if (m.name or "") != "kb_search":
+        return [(_evidence_title(m), str(m.content))]
+    import json
+
+    from langgraph_agents.sources import kb_segment_label
+
+    try:
+        data = json.loads(str(m.content))
+    except (json.JSONDecodeError, TypeError):
+        return [(_evidence_title(m), str(m.content))]
+    if not isinstance(data, list):
+        return [(_evidence_title(m), str(m.content))]
+    if not data:
+        return [(_evidence_title(m), str(m.content))]
+    parts: list[tuple[str, str]] = []
+    for seg in data:
+        if not isinstance(seg, dict):
+            continue
+        label = kb_segment_label(seg.get("source_type", ""))
+        if label is None:
+            continue
+        doc = seg.get("document_title") or ""
+        title = f"[From {label}]" if not doc else f"[From {label}: {doc}]"
+        parts.append((title, str(seg.get("content", ""))))
+    # Toàn đoạn lạ → message không đóng góp gì (không hiện JSON thô).
+    return parts
+
+
 def _extract_tool_results(messages: list) -> str:
     """Format ToolMessage content from retriever tool calls, newest kept first.
 
@@ -247,17 +308,24 @@ def _extract_tool_results(messages: list) -> str:
 
     At least one tool result always survives, however long it is — a single
     oversized document should be truncated, not silently omitted.
+
+    B5: kb_search messages are split per segment first (titles differ by
+    source_type); the budget below counts split pieces, newest first.
     """
     tools = _evidence_messages(messages)
+
+    pieces: list[tuple[str, str]] = []
+    for m in tools:
+        pieces.extend(_split_message_parts(m))
 
     parts: list[str] = []
     used = 0
     evidence_budget = budget_chars("evidence")
-    for m in reversed(tools):
-        content = str(m.content)[:_EVIDENCE_PER_MESSAGE_CAP]
+    for title, text in reversed(pieces):
+        content = text[:_EVIDENCE_PER_MESSAGE_CAP]
         if parts and used + len(content) > evidence_budget:
             break
-        parts.append(f"{_evidence_title(m)}\n{content}")
+        parts.append(f"{title}\n{content}")
         used += len(content)
 
     parts.reverse()
@@ -482,6 +550,9 @@ async def synthesizer_node(state: AgentState, config: RunnableConfig) -> dict:
     # Safety rules: only the tags actually required this turn (D32, D33)
     safety_rules = _build_safety_rules(persona, required_outputs)
 
+    # Tag instructions: only the tags actually required this turn (B3)
+    tag_instructions = _build_tag_instructions(required_outputs)
+
     if mode == "clarify":
         task_system = _CLARIFY_TASK.format(
             language_rule=_LANGUAGE_RULE,
@@ -502,6 +573,7 @@ async def synthesizer_node(state: AgentState, config: RunnableConfig) -> dict:
             required_outputs=tags_str,
             tool_results=tool_results or "(no evidence)",
             resolved_query=resolved_query,
+            tag_instructions=tag_instructions,
         )
     else:  # chat
         task_system = _CHAT_TASK.format(

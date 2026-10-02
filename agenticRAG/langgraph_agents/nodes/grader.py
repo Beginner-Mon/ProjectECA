@@ -67,6 +67,22 @@ def _has_disclaimer(text: str) -> bool:
         r"(?:tham khảo|chỉ mang tính)\s*(?:tham khảo|giáo dục)",
         r"(?:wellness|educational|informational)\s*(?:advice|purpose)",
         r"(?:không phải|không thể)\s*(?:thay thế|coi là)\s*(?:lời khuyên y tế|chẩn đoán)",
+        # B2: "not (as) a replacement/substitute for … clinical/medical/
+        # doctor('s) examination/advice/diagnosis" (Anne/Bronya/Miki EN).
+        r"not\s+(?:as\s+)?a\s+(?:replacement|substitute)\s+for\s+"
+        r"(?:a\s+|an\s+|the\s+)?[\w\s']{0,40}?"
+        r"(?:clinical|medical|doctor(?:'s)?)\s+"
+        r"(?:examination|exam|advice|diagnosis|diagnoses|consultation)",
+        # B2: "does not replace … medical examination/diagnosis" (default EN).
+        r"(?:does not|doesn't|do not|don't|is not|isn't)\s+replace\s+"
+        r"[\w\s]{0,40}?(?:clinical|medical|professional)\s+"
+        r"(?:medical\s+)?(?:examination|exam|advice|diagnosis|diagnoses)",
+        # B2: "can't stand in for a doctor" (Hatsune EN).
+        r"(?:can't|cannot|can ?not)\s+stand in for a (?:doctor|physician)",
+        # B2: "không thay bác sĩ" (Hatsune VI).
+        r"không thay\s+(?:bác sĩ|chuyên gia)",
+        # B2: "chẩn đoán của bác sĩ" sau phủ định thay thế (Miki VI).
+        r"chẩn đoán của bác sĩ",
     ]
     return any(re.search(p, text, re.IGNORECASE) for p in patterns)
 

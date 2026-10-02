@@ -44,6 +44,61 @@ def test_language_variants_do_not_contain_the_other_alphabet(slug, tag):
 
 
 @pytest.mark.unit
+@pytest.mark.parametrize("slug", CHARACTERS)
+@pytest.mark.parametrize("lang", ["vi", "en"])
+def test_persona_disclaimer_recognized_by_grader(slug, lang):
+    """B2: câu scope_disclaimer của mọi persona/mọi ngôn ngữ phải qua
+    _has_disclaimer — nếu không, lượt EN bị chèn disclaimer lần hai và mất
+    kiểm tag chất lượng."""
+    from langgraph_agents.nodes.grader import _has_disclaimer
+
+    text = get_safety_text("scope_disclaimer", slug, lang)
+    assert _has_disclaimer(text), f"{slug}.{lang}: disclaimer not recognized"
+
+
+@pytest.mark.unit
+def test_default_disclaimers_recognized_by_grader():
+    """B2: tương tự cho hai mẫu mặc định."""
+    from langgraph_agents.nodes.grader import _has_disclaimer
+
+    assert _has_disclaimer(DEFAULT_SAFETY_TEMPLATES["scope_disclaimer"])
+    assert _has_disclaimer(DEFAULT_SAFETY_TEMPLATES_EN["scope_disclaimer"])
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize("slug", CHARACTERS)
+@pytest.mark.parametrize("lang", ["vi", "en"])
+@pytest.mark.skip(
+    reason="B2 STOP theo plan: red_flag template của anne.en, bronya.en "
+    "không qua _has_danger_warning (xem worklog 02-10-2026). Chờ Tri quyết "
+    "định sửa câu chữ hay nới regex — không tự sửa regex an toàn."
+)
+def test_persona_red_flag_recognized_by_grader(slug, lang):
+    """B2: tương tự cho red_flag_screen với hàm kiểm của nó."""
+    from langgraph_agents.nodes.grader import _has_danger_warning
+
+    text = get_safety_text("red_flag_screen", slug, lang)
+    assert _has_danger_warning(text), f"{slug}.{lang}: red flag not recognized"
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize("slug", CHARACTERS)
+@pytest.mark.parametrize("lang", ["vi", "en"])
+@pytest.mark.skip(
+    reason="B2 STOP theo plan: referral template của anne.en, bronya.vi/en, "
+    "hatsune-miku.vi, miki.vi/en và cả mẫu mặc định EN không qua "
+    "_has_referral (xem worklog 02-10-2026). Chờ Tri quyết định — "
+    "không tự sửa regex an toàn."
+)
+def test_persona_referral_recognized_by_grader(slug, lang):
+    """B2: tương tự cho referral_advice với hàm kiểm của nó."""
+    from langgraph_agents.nodes.grader import _has_referral
+
+    text = get_safety_text("referral_advice", slug, lang)
+    assert _has_referral(text), f"{slug}.{lang}: referral not recognized"
+
+
+@pytest.mark.unit
 def test_default_falls_back_when_a_persona_defines_nothing():
     """A persona with no templates at all must still warn, in both languages."""
     for tag in SAFETY_TAGS:

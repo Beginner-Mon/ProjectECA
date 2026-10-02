@@ -200,12 +200,23 @@ async def lifespan(application: FastAPI):
     # Character personas live in the DB (characters.persona) but get_persona is
     # synchronous, so they are read once here rather than per request. Returns 0
     # and logs when the DB is unreachable; personas/*.md then serve every lookup.
-    personas_loaded = await preload_personas_from_db()
+    # VVA_PERSONA_SOURCE=files skips this preload entirely so local development
+    # can try an un-synced persona straight from personas/*.md (the DB shadows
+    # the files, and a fresh persona is only synced right before ship).
+    persona_source = os.getenv("VVA_PERSONA_SOURCE", "db")
+    if persona_source == "files":
+        personas_loaded = 0
+        logger.info("persona_source_files", extra={
+            "event": "persona_source", "source": "files",
+        })
+    else:
+        personas_loaded = await preload_personas_from_db()
 
     logger.info("startup_complete", extra={
         "event": "lifespan_complete",
         "graph_loaded": _graph is not None,
         "personas_loaded": personas_loaded,
+        "persona_source": persona_source,
         "config_source": env_source(),
     })
     yield

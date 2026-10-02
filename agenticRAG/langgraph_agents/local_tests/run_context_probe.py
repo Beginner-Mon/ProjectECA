@@ -560,18 +560,7 @@ async def _run_selector_probe(probe: dict, *, label: str, history: list) -> dict
             self_tool_available=_persona_has_sheet("anne"),
         )
         llm = get_chat_model("retriever").bind_tools(tools)
-        # HumanMessage giữ đúng câu chữ mà retriever_agent_node đang dùng ở HEAD.
-        # Sau S1 đổi sang "Request: ..." thì hàm này tự theo vì đọc cùng helper.
-        from langgraph_agents.nodes import retriever_agent as _ra_mod
-        import inspect as _inspect
-
-        human_text = f"Find information for: {resolved}"
-        try:
-            _src = _inspect.getsource(_ra_mod.retriever_agent_node)
-            if '"Request: {resolved_query}"' in _src or "'Request:" in _src:
-                human_text = f"Request: {resolved}"
-        except Exception:
-            pass
+        human_text = f"Request: {resolved}"
         ai_msg = await llm.ainvoke([_SM(content=system), _HM(content=human_text)])
         tool_calls = [tc.get("name") for tc in
                       (getattr(ai_msg, "tool_calls", None) or [])
@@ -626,6 +615,13 @@ async def amain(args: argparse.Namespace) -> int:
     from langgraph_agents.db.postgres import bind_request_user
 
     bind_request_user(str(uuid.uuid5(uuid.NAMESPACE_DNS, "probe-agent-context")))
+    # recall_self (T8b) đọc app.character qua RLS — prod bind ở api/main.py
+    # theo từng request; runner đo bằng persona cố định nên bind "anne" ở đây.
+    # Thiếu dòng này mọi lượt gọi recall_self crash với
+    # 'unrecognized configuration parameter "app.character"' (V5a).
+    from langgraph_agents.db.postgres import bind_request_character
+
+    bind_request_character("anne")
     # VVA_REPLY_EMOTION=0 ở local làm sai kiểm tra anne_voice_ok? Không:
     # kiểm tra đó chỉ xét mình/emoji/~, không xét emotion tag (đã strip).
     # Giữ nguyên cờ để đo đúng hiện trạng prod.

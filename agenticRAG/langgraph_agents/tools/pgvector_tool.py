@@ -82,7 +82,12 @@ def _to_uuid(value: str) -> str:
 # kb_search — public knowledge base (kb_embeddings table)
 # ═══════════════════════════════════════════════════════════════════════════
 
-@tool
+@tool(description=(
+    "Search ECA's exercise and health knowledge base. Use for questions "
+    "about exercises, stretches, anatomy, physiotherapy techniques and "
+    "health facts. The knowledge base is written in English: write the query "
+    "in English, using the name of the exercise, muscle or joint."
+))
 async def kb_search(query: str, top_k: int = 5) -> list[dict]:
     """Search the internal PT/wellness knowledge base.
 
@@ -152,7 +157,12 @@ async def kb_search(query: str, top_k: int = 5) -> list[dict]:
 # memory_search — user's past session summaries (summaries table, 2-step)
 # ═══════════════════════════════════════════════════════════════════════════
 
-@tool
+@tool(description=(
+    "Search this user's earlier conversations with you. Use when the user "
+    "refers back to something said before, names a past time (last week, "
+    "yesterday), or asks you to repeat something. `since_days` limits the "
+    "search to recent days."
+))
 async def memory_search(
     query: str,
     since_days: Optional[int] = None,
@@ -273,7 +283,10 @@ async def memory_search(
 # resume_last_session — tool riêng cho "tiếp tục session vừa rồi" (M.6)
 # ═══════════════════════════════════════════════════════════════════════════
 
-@tool
+@tool(description=(
+    "Load the user's most recent earlier session. Use when the user wants "
+    "to continue where they left off, rather than recall one fact."
+))
 async def resume_last_session(
     since_days: Optional[int] = None,
     config: RunnableConfig = None,
@@ -398,7 +411,11 @@ async def resume_last_session(
 # youtube_transcript — fetch spoken transcript of a YouTube video (no DB write)
 # ═══════════════════════════════════════════════════════════════════════════
 
-@tool
+@tool(description=(
+    "Fetch the spoken transcript of a YouTube video. Use when the user's "
+    "message contains a YouTube link; pass the URL exactly as written. "
+    "Speech only: it does not see the video."
+))
 async def youtube_transcript(url: str) -> dict:
     """Fetch the spoken transcript of a YouTube video the user pasted.
 
@@ -454,7 +471,10 @@ async def youtube_transcript(url: str) -> dict:
 # recall_self — what the character knows about itself (plan T8e)
 # ═══════════════════════════════════════════════════════════════════════════
 
-@tool
+@tool(description=(
+    "Look up what you know about yourself: appearance, clothes, tastes, "
+    "history. Use when the user asks about you."
+))
 async def recall_self(query: str, config: RunnableConfig = None) -> dict:
     """Search what you know about yourself: appearance, clothes,
     tastes, history. Use when the user asks about you.

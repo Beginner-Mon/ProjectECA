@@ -2,7 +2,7 @@
 
 P1: embedding offline load (local_files_only)
 P2: hard cap retriever loop at MAX_RETRIEVER_ROUNDS=2
-P3: conditional prompt omits search_medical when off; execution guard blocks it
+P3: S1 — selector prompt names no tool; execution guard blocks web when off
 """
 
 import pytest
@@ -204,10 +204,16 @@ class TestP2RetrieverRoundCap:
 
 @pytest.mark.unit
 class TestP3WebSearchPrompt:
-    """Verify _build_retriever_system_prompt omits/includes search_medical block."""
+    """S1 (thay P3-cũ): prompt chọn tool không nhắc tên tool nào.
 
-    def test_prompt_omits_search_medical_when_off(self):
-        """With web_search_enabled=False, 'search_medical' must not appear in prompt."""
+    Lý do sửa (commit S1): bảng luật viết tay bị xóa — prompt chỉ còn nguyên
+    tắc chung + một dòng chính sách web không tên tool. Web toggle vẫn là cổng
+    chính nhưng thực thi ở _build_tools và chốt chặn guard, không phải bằng
+    cách nhắc tên tool trong prompt.
+    """
+
+    def test_prompt_names_no_tool_when_off(self):
+        """Web off: không tên tool nào trong prompt (kể cả search_medical)."""
         from langgraph_agents.nodes.retriever_agent import _build_retriever_system_prompt
         prompt = _build_retriever_system_prompt(
             web_search_enabled=False,
@@ -216,12 +222,12 @@ class TestP3WebSearchPrompt:
             required_outputs="test",
             resolved_query="thời tiết hôm nay",
         )
-        assert "search_medical" not in prompt, (
-            "Prompt must NOT mention search_medical when web_search is off"
-        )
+        for name in ("kb_search", "memory_search", "resume_last_session",
+                     "youtube_transcript", "recall_self", "search_medical"):
+            assert name not in prompt, f"tool {name!r} leaked into prompt (web off)"
 
-    def test_prompt_includes_search_medical_when_on(self):
-        """With web_search_enabled=True, 'search_medical' must appear in prompt."""
+    def test_prompt_names_no_tool_when_on(self):
+        """Web on: prompt cũng không nhắc tên tool nào — model đọc mô tả tool."""
         from langgraph_agents.nodes.retriever_agent import _build_retriever_system_prompt
         prompt = _build_retriever_system_prompt(
             web_search_enabled=True,
@@ -230,25 +236,32 @@ class TestP3WebSearchPrompt:
             required_outputs="test",
             resolved_query="thời tiết hôm nay",
         )
-        assert "search_medical" in prompt, (
-            "Prompt MUST mention search_medical when web_search is on"
-        )
+        for name in ("kb_search", "memory_search", "resume_last_session",
+                     "youtube_transcript", "recall_self", "search_medical"):
+            assert name not in prompt, f"tool {name!r} leaked into prompt (web on)"
 
-    def test_prompt_always_includes_kb_search(self):
-        """kb_search must be in prompt regardless of web_search flag."""
+    def test_web_policy_line_only_when_on_and_low_risk(self):
+        """Dòng chính sách web chỉ có khi web bật + lượt không tag an toàn."""
         from langgraph_agents.nodes.retriever_agent import _build_retriever_system_prompt
-        for flag in (True, False):
+        on_low = _build_retriever_system_prompt(
+            web_search_enabled=True,
+            allow_web_fallback=True,
+            retry_note="",
+            required_outputs="ex",
+            resolved_query="bài tập squat",
+        )
+        assert "allows web search" in on_low
+        for kwargs in ({"web_search_enabled": False, "allow_web_fallback": True},
+                       {"web_search_enabled": True, "allow_web_fallback": False},
+                       {"web_search_enabled": False, "allow_web_fallback": False}):
             prompt = _build_retriever_system_prompt(
-                web_search_enabled=flag,
-                allow_web_fallback=True,
-                retry_note="",
-                required_outputs="ex",
-                resolved_query="bài tập squat",
+                retry_note="", required_outputs="ex",
+                resolved_query="bài tập squat", **kwargs,
             )
-            assert "kb_search" in prompt, f"kb_search missing when web_search_enabled={flag}"
+            assert "allows web search" not in prompt, f"web policy leaked ({kwargs})"
 
-    def test_prompt_omits_real_time_decision_rule_when_off(self):
-        """The 'Real-time/external' decision rule line must be absent when web off."""
+    def test_prompt_has_no_handwritten_routing_rules(self):
+        """Không còn mục định tuyến viết tay nào trong prompt."""
         from langgraph_agents.nodes.retriever_agent import _build_retriever_system_prompt
         prompt = _build_retriever_system_prompt(
             web_search_enabled=False,
@@ -257,19 +270,22 @@ class TestP3WebSearchPrompt:
             required_outputs="",
             resolved_query="weather",
         )
-        assert "Real-time/external" not in prompt
+        for marker in ("TOOLS AVAILABLE", "DECISION RULES", "SEARCH QUERY TIPS",
+                       "EMPTY vs ERROR", "Real-time/external", "1b.", "FIRST"):
+            assert marker not in prompt, f"old routing marker {marker!r} still in prompt"
 
 
 @pytest.mark.unit
 class TestD34KbEmptyWebFallback:
-    """Verify DECISION RULES / EMPTY-handling switch based on allow_web_fallback (D34).
+    """S1 (thay D34-cũ): điều kiện allow_web_fallback chỉ còn điều khiển một
+    dòng chính sách web không tên tool (D34 giữ nguyên trong code).
 
-    Fallback must fire as a PARALLEL round-1 call (rule 1b), not a sequential
-    "wait for kb empty, then retry" — route_after_retriever force-drops round 2's
-    tool_calls unconditionally (P2 hard cap), so a sequential retry can never execute.
+    Lý do sửa (commit S1): luật "gọi kb + web TOGETHER" viết tay bị xóa cùng
+    toàn bộ DECISION RULES. Toggle web + tag an toàn vẫn là cổng (test node
+    bên dưới), nhưng prompt không còn luật 1b.
     """
 
-    def test_fallback_text_present_when_web_on_and_low_risk(self):
+    def test_web_policy_present_when_web_on_and_low_risk(self):
         from langgraph_agents.nodes.retriever_agent import _build_retriever_system_prompt
         prompt = _build_retriever_system_prompt(
             web_search_enabled=True,
@@ -278,12 +294,13 @@ class TestD34KbEmptyWebFallback:
             required_outputs="exercise_steps",
             resolved_query="giãn cơ vai gáy dân văn phòng",
         )
-        assert "TOGETHER in this same round" in prompt
-        assert "1b." in prompt
+        assert "allows web search" in prompt
+        assert "search_medical" not in prompt
+        assert "kb_search" not in prompt
 
-    def test_fallback_text_absent_when_high_safety(self):
-        """High-safety tags (red_flag_screen/referral_advice) must never see the fallback rule,
-        even when web_search is on."""
+    def test_web_policy_absent_when_high_safety(self):
+        """High-safety tags (red_flag_screen/referral_advice) không có dòng web,
+        ngay cả khi web_search bật."""
         from langgraph_agents.nodes.retriever_agent import _build_retriever_system_prompt
         prompt = _build_retriever_system_prompt(
             web_search_enabled=True,
@@ -292,12 +309,10 @@ class TestD34KbEmptyWebFallback:
             required_outputs="red_flag_screen",
             resolved_query="đau ngực khi tập thể dục",
         )
-        assert "TOGETHER in this same round" not in prompt
-        assert "1b." not in prompt
-        assert "that's OK, synthesizer will handle no-source" in prompt
+        assert "allows web search" not in prompt
 
-    def test_fallback_text_absent_when_web_off_even_if_low_risk(self):
-        """Toggle stays the master gate — fallback text never appears when web is off."""
+    def test_web_policy_absent_when_web_off_even_if_low_risk(self):
+        """Toggle vẫn là cổng chính — web off thì không có dòng chính sách."""
         from langgraph_agents.nodes.retriever_agent import _build_retriever_system_prompt
         prompt = _build_retriever_system_prompt(
             web_search_enabled=False,
@@ -306,8 +321,7 @@ class TestD34KbEmptyWebFallback:
             required_outputs="exercise_steps",
             resolved_query="giãn cơ vai gáy dân văn phòng",
         )
-        assert "TOGETHER in this same round" not in prompt
-        assert "1b." not in prompt
+        assert "allows web search" not in prompt
 
     @pytest.mark.asyncio
     async def test_node_computes_allow_web_fallback_false_for_red_flag(self, monkeypatch):

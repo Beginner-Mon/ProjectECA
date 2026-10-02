@@ -19,6 +19,12 @@ async def _selector_tools_and_prompt(web_search_enabled: bool,
         _build_retriever_system_prompt, _build_tools,
     )
 
+    # Hermetic: test khác có thể để mock trong cache MCP toàn cục
+    # (test_mcp_breaker_records_success_and_closes từng làm vậy) — test này
+    # đo danh sách tool THẬT nên dọn cache trước.
+    from langgraph_agents.mcp.client import close_mcp_client
+
+    await close_mcp_client()
     tools = await _build_tools(web_search_enabled=web_search_enabled,
                                persona_id="anne")
     prompt = _build_retriever_system_prompt(
@@ -40,7 +46,9 @@ async def test_selector_prompt_names_no_tool():
     tool mới (in-process/MCP) không phải sửa test này lẫn prompt.
     """
     from langgraph_agents.nodes import retriever_agent as ra
+    from langgraph_agents.mcp.client import close_mcp_client
 
+    await close_mcp_client()
     for web_on in (False, True):
         tools = await ra._build_tools(web_search_enabled=web_on,
                                       persona_id="anne")
@@ -66,7 +74,9 @@ async def test_tool_descriptions_are_for_the_model():
     """Mô tả mỗi tool: không rỗng, ≤400 ký tự, không mã D, không dấu
     tiếng Việt, không Args:/Returns:. Ghi chú dev nằm trong docstring/comment."""
     from langgraph_agents.nodes import retriever_agent as ra
+    from langgraph_agents.mcp.client import close_mcp_client
 
+    await close_mcp_client()
     tools = await ra._build_tools(web_search_enabled=True, persona_id="anne")
     assert tools
     for t in tools:

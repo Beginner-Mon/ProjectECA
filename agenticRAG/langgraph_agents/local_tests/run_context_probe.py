@@ -75,6 +75,62 @@ def _first_sentence(answer: str, limit: int = 200) -> str:
             return s[:limit]
     return ""
 
+
+# ── Task 5: dose_not_in_evidence + safety_line_repeated ───────────────────
+
+# Cụm "số + đơn vị liều lượng" trong câu trả lời (có/không dấu).
+_DOSE_RE = re.compile(
+    r"(\d+(?:[.,]\d+)?(?:\s*[-–—]\s*\d+(?:[.,]\d+)?)?)\s*"
+    r"(hiệp|hiep|lần|lan|sets?|reps?|giây|giay|seconds?)",
+    re.IGNORECASE,
+)
+
+_SAFETY_TAGS = ("red_flag_screen", "referral_advice", "scope_disclaimer")
+
+
+def _dose_clusters(answer: str) -> list[str]:
+    """Mọi cụm liều lượng trong câu trả lời (nguyên văn, Task 5)."""
+    return [m.group(0) for m in _DOSE_RE.finditer(answer or "")]
+
+
+def _check_dose_not_in_evidence(answer: str, evidence_text: str) -> list[str]:
+    """Cụm liều lượng nào có con số không xuất hiện trong evidence của lượt.
+
+    Heuristic cho K/Tri đọc lại: mỗi số trong cụm phải có mặt trong văn bản
+    evidence (đúng văn bản model đã thấy — đã qua budget cap của evidence).
+    """
+    flagged: list[str] = []
+    for cluster in _dose_clusters(answer):
+        numbers = re.findall(r"\d+", cluster)
+        if numbers and not all(n in (evidence_text or "") for n in numbers):
+            flagged.append(cluster)
+    return flagged
+
+
+def _check_safety_repeated(answer: str, tags: list,
+                           persona_id: str = "anne",
+                           lang: str = "vi") -> dict[str, int]:
+    """Câu mẫu persona xuất hiện quá một lần trong câu trả lời (Task 5).
+
+    Chỉ xét các tag an toàn của lượt; locale suy từ ngôn ngữ của câu hỏi.
+    """
+    from langgraph_agents.nodes.grader import get_safety_text
+
+    repeated: dict[str, int] = {}
+    for tag in tags or []:
+        if tag not in _SAFETY_TAGS:
+            continue
+        try:
+            template = get_safety_text(tag, persona_id, lang)
+        except Exception:
+            continue
+        if not template:
+            continue
+        n = (answer or "").count(template)
+        if n > 1:
+            repeated[tag] = n
+    return repeated
+
 # ── Motion override (cờ --motion-state; sau T9 trỏ sang tool show_movement) ──
 
 _MOTION_OVERRIDE: dict[str, Any] = {"state": None}
@@ -223,6 +279,8 @@ async def _run_probe_safe(graph: Any, probe: dict, **kwargs) -> dict[str, Any]:
             "has_citation": None, "anne_voice_ok": None,
             "technical_reason": None, "kimodo_ran": False,
             "speaks_as_performer": None, "first_sentence": "",
+            "evidence_text": "", "dose_not_in_evidence": [],
+            "safety_line_repeated": {},
             "error": f"{type(exc).__name__}: {exc}",
         }
 
@@ -333,6 +391,14 @@ async def _run_probe(
     except Exception:
         synth_mode = "?"
 
+    # Task 5: evidence đúng văn bản model đã thấy (qua budget cap).
+    from langgraph_agents.nodes.synthesizer import _extract_tool_results
+
+    try:
+        evidence_text = _extract_tool_results(merged["messages"])
+    except Exception:
+        evidence_text = ""
+
     result = {
         "id": probe["id"], "group": probe["group"], "lang": lang,
         "query": query, "motion_state": motion_state,
@@ -355,6 +421,12 @@ async def _run_probe(
     performer, first = _check_performer(final_answer, motion_state)
     result["speaks_as_performer"] = performer
     result["first_sentence"] = first
+    result["evidence_text"] = evidence_text
+    result["dose_not_in_evidence"] = _check_dose_not_in_evidence(
+        final_answer, evidence_text)
+    result["safety_line_repeated"] = _check_safety_repeated(
+        final_answer, planner_out.get("required_outputs", []),
+        persona_id="anne", lang=lang)
     return result
 
 
@@ -443,6 +515,32 @@ def _render_report(label: str, results: list[dict],
             cell = "—" if perf is None else ("✓" if perf else "✗")
             first = (r.get("first_sentence") or "").replace("|", "/")
             lines.append(f"| {r['id']} | {cell} | {first} |")
+    # Task 5: liều lượng ngoài evidence (nhóm d) + câu an toàn lặp.
+    d_rows = [r for r in results if r["group"] == "d"]
+    if d_rows:
+        lines += ["", "## Liều lượng ngoài evidence (nhóm d)", "",
+                  "Mỗi cụm số+hiệp/lần/sets/reps/giây phải có con số trong "
+                  "evidence của lượt. Ghi nguyên văn cụm bị đánh dấu.",
+                  "",
+                  "| id | cụm ngoài evidence |",
+                  "|---|---|"]
+        for r in d_rows:
+            flagged = r.get("dose_not_in_evidence") or []
+            cell = "—" if not flagged else "; ".join(
+                c.replace("|", "/") for c in flagged)
+            lines.append(f"| {r['id']} | {cell} |")
+    repeated = [(r["id"], r.get("safety_line_repeated") or {})
+                for r in results if r.get("safety_line_repeated")]
+    lines += ["", "## Câu an toàn lặp (mẫu persona > 1 lần)", "",
+              "| id | tag × số lần |",
+              "|---|---|"]
+    if repeated:
+        for pid, rep in repeated:
+            lines.append(f"| {pid} | "
+                         + ", ".join(f"{t} ×{n}" for t, n in rep.items())
+                         + " |")
+    else:
+        lines.append("| — | 0 lượt |")
     lines += ["", "## Bảng tổng hợp", "",
               "| id | tags | retr | motion | tools | runs P/R/S | mode | "
               + " | ".join(_CHECK_COLS)
@@ -480,6 +578,13 @@ def _render_report(label: str, results: list[dict],
             lines.append(f"- kimodo_ran={r.get('kimodo_ran')}; "
                          f"speaks_as_performer={r.get('speaks_as_performer')}; "
                          f"câu đầu: {r.get('first_sentence', '')}")
+        if r.get("dose_not_in_evidence"):
+            lines.append("- dose_not_in_evidence: "
+                         + "; ".join(r["dose_not_in_evidence"]))
+        if r.get("safety_line_repeated"):
+            lines.append("- safety_line_repeated: "
+                         + ", ".join(f"{t} ×{n}" for t, n in
+                                     r["safety_line_repeated"].items()))
         lines.append("")
         lines.append("```")
         lines.append((r["answer"] or "(rỗng)")[:800])
@@ -585,6 +690,8 @@ async def _run_selector_probe(probe: dict, *, label: str, history: list) -> dict
             "has_citation": None, "anne_voice_ok": None,
             "technical_reason": None, "kimodo_ran": False,
             "speaks_as_performer": None, "first_sentence": "",
+            "evidence_text": "", "dose_not_in_evidence": [],
+            "safety_line_repeated": {},
         }
     except Exception as exc:  # noqa: BLE001
         traceback.print_exc()
@@ -601,6 +708,8 @@ async def _run_selector_probe(probe: dict, *, label: str, history: list) -> dict
             "has_citation": None, "anne_voice_ok": None,
             "technical_reason": None, "kimodo_ran": False,
             "speaks_as_performer": None, "first_sentence": "",
+            "evidence_text": "", "dose_not_in_evidence": [],
+            "safety_line_repeated": {},
             "error": f"{type(exc).__name__}: {exc}",
         }
 

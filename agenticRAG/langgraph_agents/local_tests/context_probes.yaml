@@ -232,6 +232,14 @@ probes:
     group: d
     lang: en
     query: "what did I ask about last time"
+  - id: d5_en
+    group: d
+    lang: en
+    query: "how many sets for the lower back curl"
+  - id: d5_vi
+    group: d
+    lang: vi
+    query: "bài lower back curl tập mấy hiệp"
 
   # ── Nhóm (e): an toàn lâm sàng — kỳ vọng: cảnh báo đứng đầu, như trước ──
   - id: e1_vi

@@ -58,6 +58,23 @@ _EMOJI_RE = re.compile(
     "[\U0001F300-\U0001FAFF\u2600-\u27BF\u2B00-\u2BFF\uFE0F\u200D]"
 )
 
+# speaks_as_performer (M0): lượt motion queued — câu trả lời mời xem hoặc
+# nói mình đang/sắp làm (ngôi người biểu diễn), không phải từ chối.
+_PERFORMER_RE = re.compile(
+    r"xem|nhìn|mình đang|mình sắp|mình sẽ|mình làm mẫu|để mình làm"
+    r"|watch|look|let me show|show you|showing|here'?s|here is"
+    r"|i'?m (doing|showing)|i will show",
+    re.IGNORECASE,
+)
+
+
+def _first_sentence(answer: str, limit: int = 200) -> str:
+    for line in (answer or "").splitlines():
+        s = line.strip()
+        if s:
+            return s[:limit]
+    return ""
+
 # ── Motion override (cờ --motion-state; sau T9 trỏ sang tool show_movement) ──
 
 _MOTION_OVERRIDE: dict[str, Any] = {"state": None}
@@ -148,7 +165,7 @@ def _parse_json_obj(text: str) -> Any:
 
 # ── Kiểm tra tự động (plan §T1) ─────────────────────────────────────────
 
-def _check_answer(answer: str, lang: str) -> dict[str, Any]:
+def _check_answer(answer: str, lang: str, probe_id: str = "") -> dict[str, Any]:
     from langgraph_agents.nodes.grader import (
         _has_sets_reps_frequency, _has_source,
     )
@@ -160,6 +177,10 @@ def _check_answer(answer: str, lang: str) -> dict[str, Any]:
         "has_citation": bool(_has_source(answer)),
         "technical_reason": bool(_TECHNICAL_REASON_RE.search(answer)),
     }
+    # M0: dẫn nguồn và sets/reps chỉ tính trên d1–d3 (d4 là câu hỏi trí nhớ).
+    if probe_id.startswith("d4"):
+        checks["has_sets_reps"] = None
+        checks["has_citation"] = None
     if lang == "vi":
         checks["anne_voice_ok"] = (
             "mình" in answer
@@ -169,6 +190,16 @@ def _check_answer(answer: str, lang: str) -> dict[str, Any]:
     else:
         checks["anne_voice_ok"] = None
     return checks
+
+
+def _check_performer(answer: str, motion_state: str | None) -> tuple[Any, str]:
+    """M0: chỉ tính cho lượt motion queued. Trả (True/False/None, câu đầu)."""
+    first = _first_sentence(answer)
+    if motion_state != "queued":
+        return None, first
+    if not answer:
+        return False, first
+    return bool(_PERFORMER_RE.search(answer)), first
 
 
 # ── Chạy một probe ──────────────────────────────────────────────────────
@@ -190,7 +221,8 @@ async def _run_probe_safe(graph: Any, probe: dict, **kwargs) -> dict[str, Any]:
             "answer": "", "mentions_exercise": None,
             "calls_library_source": None, "has_sets_reps": None,
             "has_citation": None, "anne_voice_ok": None,
-            "technical_reason": None,
+            "technical_reason": None, "kimodo_ran": False,
+            "speaks_as_performer": None, "first_sentence": "",
             "error": f"{type(exc).__name__}: {exc}",
         }
 
@@ -315,8 +347,12 @@ async def _run_probe(
         "similarity_top1": similarity_top1,
         "elapsed_s": round(time.perf_counter() - t0, 1),
         "answer": final_answer,
+        "kimodo_ran": any(n == "generate_motion" for n, _c, _cid in tool_messages),
     }
-    result.update(_check_answer(final_answer, lang))
+    result.update(_check_answer(final_answer, lang, probe["id"]))
+    performer, first = _check_performer(final_answer, motion_state)
+    result["speaks_as_performer"] = performer
+    result["first_sentence"] = first
     return result
 
 
@@ -339,18 +375,78 @@ def _fmt_cell(col: str, v: Any) -> str:
     return str(v)
 
 
-def _render_report(label: str, results: list[dict]) -> str:
+def _group_tool_summary(results: list[dict]) -> list[str]:
+    """M0: mỗi nhóm một dòng — tập tool được gọi, dạng x/y."""
+    order: list[str] = []
+    for r in results:
+        if r["group"] not in order:
+            order.append(r["group"])
+    lines: list[str] = []
+    for g in order:
+        rows = [r for r in results if r["group"] == g]
+        n = len(rows)
+        parts = [f"no-tool {sum(1 for r in rows if not r['tools_called'])}/{n}"]
+        tools_seen: list[str] = []
+        for r in rows:
+            for t in r["tools_called"]:
+                if t not in tools_seen:
+                    tools_seen.append(t)
+        for t in sorted(tools_seen):
+            c = sum(1 for r in rows if t in r["tools_called"])
+            parts.append(f"{t} {c}/{n}")
+        lines.append(f"| {g} | {n} | {', '.join(parts)} |")
+    return lines
+
+
+def _group_kimodo_summary(results: list[dict]) -> list[str]:
+    """M0: Kimodo chạy theo nhóm — x/y lượt có ToolMessage generate_motion."""
+    order: list[str] = []
+    for r in results:
+        if r["group"] not in order:
+            order.append(r["group"])
+    lines: list[str] = []
+    for g in order:
+        rows = [r for r in results if r["group"] == g]
+        n = len(rows)
+        c = sum(1 for r in rows if r.get("kimodo_ran"))
+        lines.append(f"| {g} | {c}/{n} |")
+    return lines
+
+
+def _render_report(label: str, results: list[dict],
+                   selector_only: bool = False) -> str:
+    mode_note = ("selector-only (planner + 1 lượt chọn tool, "
+                 "không chạy tool/synthesizer)") if selector_only else "graph thật"
     lines = [f"# context-probe-{label}", "",
              f"Runner: `local_tests/run_context_probe.py`, persona `anne`, "
-             f"LLM thật, {len(results)} lượt.", "",
+             f"LLM thật, {len(results)} lượt ({mode_note}).", "",
              "Ký hiệu: ✗ = có/trúng kiểm tra, · = không, — = không áp dụng. "
              "Riêng anne_voice_ok: ✓ = đạt, ✗ = hỏng.",
-             "", "## Bảng tổng hợp", "",
-             "| id | tags | retr | motion | tools | runs P/R/S | mode | "
-             + " | ".join(_CHECK_COLS)
-             + " | sim_top1 |",
-             "|---|---|---|---|---|---|---|"
-             + "|".join(["---"] * len(_CHECK_COLS)) + "|---|"]
+             "has_citation/has_sets_reps chỉ tính trên d1–d3 (d4 là câu hỏi trí nhớ).",
+             "", "## Chọn tool theo nhóm", "",
+             "| nhóm | n | tool=x/y |",
+             "|---|---|---|"]
+    lines += _group_tool_summary(results)
+    lines += ["", "## Kimodo chạy theo nhóm", "",
+              "| nhóm | kimodo chạy |",
+              "|---|---|"]
+    lines += _group_kimodo_summary(results)
+    queued = [r for r in results if r.get("motion_state") == "queued"]
+    if queued:
+        lines += ["", "## Lượt motion queued — speaks_as_performer", "",
+                  "| id | performer | câu đầu |",
+                  "|---|---|---|"]
+        for r in queued:
+            perf = r.get("speaks_as_performer")
+            cell = "—" if perf is None else ("✓" if perf else "✗")
+            first = (r.get("first_sentence") or "").replace("|", "/")
+            lines.append(f"| {r['id']} | {cell} | {first} |")
+    lines += ["", "## Bảng tổng hợp", "",
+              "| id | tags | retr | motion | tools | runs P/R/S | mode | "
+              + " | ".join(_CHECK_COLS)
+              + " | sim_top1 |",
+              "|---|---|---|---|---|---|---|"
+              + "|".join(["---"] * len(_CHECK_COLS)) + "|---|"]
     for r in results:
         runs = (f"{r['node_runs'].get('planner', 0)}/"
                 f"{r['node_runs'].get('retriever_agent', 0)}/"
@@ -378,6 +474,10 @@ def _render_report(label: str, results: list[dict]) -> str:
                      f"runs P/R/S={r['node_runs']}; mode={r['synth_mode']}; "
                      f"grader={r['grader_result']}; "
                      f"sim_top1={r['similarity_top1']}; {r['elapsed_s']}s")
+        if r.get("motion_state") == "queued" or r.get("kimodo_ran"):
+            lines.append(f"- kimodo_ran={r.get('kimodo_ran')}; "
+                         f"speaks_as_performer={r.get('speaks_as_performer')}; "
+                         f"câu đầu: {r.get('first_sentence', '')}")
         lines.append("")
         lines.append("```")
         lines.append((r["answer"] or "(rỗng)")[:800])
@@ -399,9 +499,118 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
     p.add_argument("--lang", default="", help="Chỉ chạy ngôn ngữ này (vi|en).")
     p.add_argument("--motion-state", default="",
                    help="Ghi đè motion cho mọi probe nhóm c.")
+    p.add_argument("--selector-only", action="store_true",
+                   help="M0: mỗi câu chỉ chạy planner + 1 lượt LLM chọn tool "
+                        "(đúng prompt/tool thật, đọc tool_calls, "
+                        "không chạy tool/synthesizer).")
     p.add_argument("--out", default="",
                    help="Đường dẫn file báo cáo (mặc định docs/tracking/context-probe-<label>.md).")
     return p.parse_args(argv)
+
+
+async def _run_selector_probe(probe: dict, *, label: str, history: list) -> dict[str, Any]:
+    """M0 --selector-only: planner thật + 1 lượt LLM chọn tool thật.
+
+    Không chạy tool, không chạy synthesizer. Đọc tool_calls từ AIMessage.
+    """
+    import uuid as _uuid
+
+    from langchain_core.messages import HumanMessage as _HM, SystemMessage as _SM
+
+    from langgraph_agents.llm import get_chat_model
+    from langgraph_agents.nodes._persona_loader import _persona_has_sheet
+    from langgraph_agents.nodes.planner import planner_node
+    from langgraph_agents.nodes.retriever_agent import (
+        _build_retriever_system_prompt, _build_tools,
+    )
+
+    query = probe["query"]
+    lang = probe.get("lang", "vi")
+    t0 = time.perf_counter()
+    try:
+        session_uuid = str(_uuid.uuid5(_uuid.NAMESPACE_DNS,
+                                       f"probe-{label}-{probe['id']}"))
+        config = {"configurable": {
+            "user_id": "probe-agent-context",
+            "session_id": session_uuid,
+            "query": query,
+            "persona_id": "anne",
+            "previous_persona_id": None,
+            "output_mode": "text",
+            "request_id": f"probe-{_uuid.uuid4().hex[:8]}",
+            "token_limit": None,
+            "web_search": False,
+            "locale": "vi" if lang == "vi" else "en",
+        }}
+        state = {"messages": list(history), "errors": [],
+                 "retry_count": 0, "total_tokens": 0}
+        plan_out = await planner_node(state, config)
+        tags = plan_out.get("required_outputs", [])
+        resolved = plan_out.get("resolved_query") or query
+        web_on = bool(config["configurable"].get("web_search", False))
+        allow_fallback = not ({"red_flag_screen", "referral_advice"} & set(tags))
+        tools = await _build_tools(web_search_enabled=web_on,
+                                   persona_id="anne")
+        system = _build_retriever_system_prompt(
+            web_search_enabled=web_on,
+            allow_web_fallback=allow_fallback,
+            retry_note="",
+            required_outputs=", ".join(tags) if tags else "(none — general/chat)",
+            resolved_query=resolved,
+            self_tool_available=_persona_has_sheet("anne"),
+        )
+        llm = get_chat_model("retriever").bind_tools(tools)
+        # HumanMessage giữ đúng câu chữ mà retriever_agent_node đang dùng ở HEAD.
+        # Sau S1 đổi sang "Request: ..." thì hàm này tự theo vì đọc cùng helper.
+        from langgraph_agents.nodes import retriever_agent as _ra_mod
+        import inspect as _inspect
+
+        human_text = f"Find information for: {resolved}"
+        try:
+            _src = _inspect.getsource(_ra_mod.retriever_agent_node)
+            if '"Request: {resolved_query}"' in _src or "'Request:" in _src:
+                human_text = f"Request: {resolved}"
+        except Exception:
+            pass
+        ai_msg = await llm.ainvoke([_SM(content=system), _HM(content=human_text)])
+        tool_calls = [tc.get("name") for tc in
+                      (getattr(ai_msg, "tool_calls", None) or [])
+                      if isinstance(tc, dict) and tc.get("name")]
+        return {
+            "id": probe["id"], "group": probe["group"], "lang": lang,
+            "query": query, "motion_state": probe.get("motion_state"),
+            "planner_tags": tags,
+            "needs_retrieval": plan_out.get("needs_retrieval"),
+            "needs_motion": plan_out.get("needs_motion"),
+            "needs_clarification": plan_out.get("needs_clarification"),
+            "tools_called": tool_calls,
+            "node_runs": {"planner": 1, "retriever_agent": 1, "synthesizer": 0},
+            "synth_mode": "selector-only",
+            "grader_result": None, "similarity_top1": None,
+            "elapsed_s": round(time.perf_counter() - t0, 1),
+            "answer": "", "mentions_exercise": None,
+            "calls_library_source": None, "has_sets_reps": None,
+            "has_citation": None, "anne_voice_ok": None,
+            "technical_reason": None, "kimodo_ran": False,
+            "speaks_as_performer": None, "first_sentence": "",
+        }
+    except Exception as exc:  # noqa: BLE001
+        traceback.print_exc()
+        return {
+            "id": probe["id"], "group": probe["group"],
+            "lang": probe.get("lang", "vi"), "query": probe["query"],
+            "motion_state": probe.get("motion_state"),
+            "planner_tags": [], "needs_retrieval": None,
+            "needs_motion": None, "needs_clarification": None,
+            "tools_called": [], "node_runs": {}, "synth_mode": "?",
+            "grader_result": None, "similarity_top1": None, "elapsed_s": 0.0,
+            "answer": "", "mentions_exercise": None,
+            "calls_library_source": None, "has_sets_reps": None,
+            "has_citation": None, "anne_voice_ok": None,
+            "technical_reason": None, "kimodo_ran": False,
+            "speaks_as_performer": None, "first_sentence": "",
+            "error": f"{type(exc).__name__}: {exc}",
+        }
 
 
 async def amain(args: argparse.Namespace) -> int:
@@ -435,14 +644,22 @@ async def amain(args: argparse.Namespace) -> int:
     by_id = {p["id"]: p for p in probes}
 
     _install_motion_override()
-    from langgraph_agents.graph import build_graph_async
+    graph = None
+    if not args.selector_only:
+        from langgraph_agents.graph import build_graph_async
 
-    graph = await build_graph_async()
+        graph = await build_graph_async()
 
     results: list[dict] = []
     # Lịch sử theo phiên cho probe có `after` (cùng lang, chạy trước).
     histories: dict[str, list] = {}
     ran: set[str] = set()
+
+    async def _run_one(p: dict, history: list, motion_state: str | None) -> dict:
+        if args.selector_only:
+            return await _run_selector_probe(p, label=args.label, history=history)
+        return await _run_probe_safe(graph, p, label=args.label,
+                                     history=history, motion_state=motion_state)
 
     for p in selected:
         if p["id"] in ran:
@@ -456,8 +673,7 @@ async def amain(args: argparse.Namespace) -> int:
             if prev_id not in ran:
                 prev = by_id[prev_id]
                 print(f"[{prev_id}] {prev['query']}", flush=True)
-                pr = await _run_probe_safe(graph, prev, label=args.label,
-                                           history=[], motion_state=None)
+                pr = await _run_one(prev, [], None)
                 results.append(pr)
                 ran.add(prev_id)
                 histories[prev_id] = [
@@ -469,8 +685,7 @@ async def amain(args: argparse.Namespace) -> int:
             history = list(histories[prev_id])
         motion_state = (args.motion_state or p.get("motion_state") or None)
         print(f"[{p['id']}] {p['query']}", flush=True)
-        r = await _run_probe_safe(graph, p, label=args.label,
-                                  history=history, motion_state=motion_state)
+        r = await _run_one(p, history, motion_state)
         results.append(r)
         ran.add(p["id"])
         histories[p["id"]] = history + [HumanMessage(content=p["query"]),
@@ -481,7 +696,8 @@ async def amain(args: argparse.Namespace) -> int:
     out = args.out or str(_TRACKING_DIR / f"context-probe-{args.label}.md")
     Path(out).parent.mkdir(parents=True, exist_ok=True)
     with open(out, "w", encoding="utf-8") as f:
-        f.write(_render_report(args.label, results))
+        f.write(_render_report(args.label, results,
+                               selector_only=args.selector_only))
     json_out = str(Path(out).with_suffix("")) + ".json"
     with open(json_out, "w", encoding="utf-8") as f:
         json.dump(results, f, ensure_ascii=False, indent=1)

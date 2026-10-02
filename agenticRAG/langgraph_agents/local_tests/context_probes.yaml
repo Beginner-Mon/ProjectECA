@@ -130,6 +130,70 @@ probes:
     lang: en
     query: "show me the squat movement"
     motion_state: busy
+  - id: c5_en
+    group: c
+    lang: en
+    query: "can you show me how to squat"
+    motion_state: queued
+  - id: c6_en
+    group: c
+    lang: en
+    query: "show me how to do a lunge"
+    motion_state: queued
+  - id: c7_en
+    group: c
+    lang: en
+    query: "demonstrate a plank for me"
+    motion_state: queued
+  - id: c8_en
+    group: c
+    lang: en
+    query: "let me see a cartwheel"
+    motion_state: queued
+  - id: c9_en
+    group: c
+    lang: en
+    query: "what does a deadlift look like? do it for me"
+    motion_state: queued
+  - id: c5_vi
+    group: c
+    lang: vi
+    query: "bạn làm mẫu động tác plank cho mình xem đi"
+    motion_state: queued
+  - id: c6_vi
+    group: c
+    lang: vi
+    query: "squat thế nào, làm cho mình xem với"
+    motion_state: queued
+  - id: c7_vi
+    group: c
+    lang: vi
+    query: "mình muốn xem bạn tập squat"
+    motion_state: queued
+  - id: c8_vi
+    group: c
+    lang: vi
+    query: "biểu diễn động tác chống đẩy đi"
+    motion_state: queued
+  - id: c9_vi
+    group: c
+    lang: vi
+    query: "làm thử động tác gập bụng cho mình coi"
+    motion_state: queued
+
+  # ── Nhóm (c0): đối chứng — hỏi cách làm / khả năng, kỳ vọng: Kimodo KHÔNG chạy ──
+  - id: c0_1_en
+    group: c0
+    lang: en
+    query: "how do I do a squat"
+  - id: c0_1_vi
+    group: c0
+    lang: vi
+    query: "tập squat như thế nào"
+  - id: c0_2_vi
+    group: c0
+    lang: vi
+    query: "bạn có nhảy được không"
 
   # ── Nhóm (d): hỏi kiến thức bài tập — kỳ vọng: có citation, sets/reps đúng chỗ ──
   - id: d1_vi

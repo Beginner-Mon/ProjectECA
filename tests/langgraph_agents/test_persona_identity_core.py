@@ -21,8 +21,8 @@ def test_shared_is_not_a_persona():
         get_persona("_shared")
 
 
-def test_persona_without_sheet_has_no_always_block():
-    assert not pl._persona_has_sheet("anne")
+def test_persona_without_sheet_has_no_always_block(monkeypatch):
+    monkeypatch.setattr(pl, "_persona_has_sheet", lambda _slug: False)
     prompt = build_persona_prompt(get_persona("anne", "en"), "chat")
     assert "## Always" not in prompt
 

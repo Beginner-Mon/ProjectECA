@@ -15,6 +15,7 @@ from langgraph_agents.nodes.synthesizer import (
     _extract_tool_results,
     _has_tool_results,
 )
+from langgraph_agents.shared.context import budget_chars
 
 
 def _tm(name: str, payload) -> ToolMessage:
@@ -184,13 +185,13 @@ def test_about_you_first_person_never_looked_up():
     assert "Short hair." in block
 
 
-def test_about_you_caps_at_900_chars():
+def test_about_you_caps_at_budget_chars():
     block = _build_about_you([_self_tm(
         {"found": True, "results": [
             {"title": "T", "kind": "sheet",
              "content": "x" * 2000, "similarity": 0.9}]})])
     assert "## About you" in block
-    assert block.count("x") <= 900
+    assert block.count("x") <= budget_chars("about_you")
 
 
 def test_about_you_empty_without_usable_result():

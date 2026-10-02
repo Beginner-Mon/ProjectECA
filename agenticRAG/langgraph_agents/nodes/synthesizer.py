@@ -118,8 +118,9 @@ def _build_safety_rules(persona: dict, required_outputs: list) -> str:
 # _build_safety_rules đang làm. Không thêm luật mới.
 _TAG_INSTRUCTIONS = {
     "exercise_protocol":
-        '- For exercise_protocol: include sets, reps, frequency '
-        '(e.g. "3 sets of 10 reps, 2-3 times a week")',
+        "- For exercise_protocol: give the sets, reps and frequency the evidence "
+        "states, and name the source. Where the evidence does not state one of "
+        "them, say so. Do not supply numbers of your own.",
     "exercise_steps":
         "- For exercise_steps: provide ≥2 ordered steps",
     "contraindication":

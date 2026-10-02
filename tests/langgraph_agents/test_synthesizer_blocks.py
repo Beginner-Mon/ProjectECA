@@ -273,6 +273,36 @@ async def test_synthesizer_prompt_includes_protocol_with_tag():
     assert "sets, reps" in prompt
 
 
+@pytest.mark.unit
+@pytest.mark.asyncio
+async def test_protocol_instruction_forbids_own_numbers():
+    """Task 4a: dòng protocol không có ví dụ số, cấm tự đặt số."""
+    from langgraph_agents.nodes import synthesizer as syn_mod
+
+    state = {
+        "messages": [_tm("kb_search", _KB)],
+        "resolved_query": "bai do tap may hiep",
+        "required_outputs": ["scope_disclaimer", "exercise_protocol",
+                             "evidence_citation"],
+        "needs_clarification": False,
+        "total_tokens": 0,
+    }
+    config = {"configurable": {
+        "request_id": "r", "persona_id": "anne", "query": "may hiep",
+        "locale": "vi",
+    }}
+    captured: dict = {}
+    with patch.object(syn_mod, "get_chat_model",
+                      return_value=_capturing_llm(captured)):
+        await syn_mod.synthesizer_node(state, config)
+
+    assert captured.get("msgs"), "synthesizer never called the LLM"
+    prompt = "\n".join(
+        str(getattr(m, "content", "")) for m in captured["msgs"])
+    assert "Do not supply numbers of your own" in prompt
+    assert "3 sets of 10 reps" not in prompt
+
+
 # ── T8f: khối About you ─────────────────────────────────────────────
 
 def _self_tm(payload) -> ToolMessage:

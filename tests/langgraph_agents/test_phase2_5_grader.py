@@ -212,8 +212,20 @@ class TestGraderNode:
     async     def test_grader_retry_exhausted_pass_with_warning(self):
         """When retry_count >= 1, quality retry should become pass_with_warning."""
         from langgraph_agents.nodes.grader import grader_node
+        from langchain_core.messages import ToolMessage
+        import json as _json
+
+        # Evidence CÓ số để protocol thật sự bị kiểm (Task 4b: không evidence
+        # thì tag được bỏ qua, lượt này sẽ pass chứ không retry).
+        ev = _json.dumps([{
+            "content": "3 sets of 10 reps, 2-3 times a week.", "similarity": 0.9,
+            "source_type": "exercise_db", "document_title": "Back",
+            "chunk_index": 0,
+        }])
         state: AgentState = {
-            "messages": [], "errors": [], "retry_count": 1,
+            "messages": [ToolMessage(content=ev, tool_call_id="tc-kb",
+                                     name="kb_search")],
+            "errors": [], "retry_count": 1,
             "total_tokens": 0,
             "required_outputs": ["exercise_protocol"],
             "final_answer": "Tap squat tot.",
@@ -244,6 +256,74 @@ class TestGraderNode:
                 "evidence_citation", "motion_descriptor",
             ],
             "final_answer": full_answer,
+        }
+        result = await grader_node(state, GRADER_CONFIG)
+        assert result["grader_result"] == "pass"
+
+
+@pytest.mark.unit
+class TestProtocolEvidenceConditional:
+    """Task 4b: exercise_protocol chỉ bị đòi phần mà evidence có."""
+
+    def _kb_msg(self, chunks):
+        import json as _json
+
+        from langchain_core.messages import ToolMessage
+
+        return ToolMessage(content=_json.dumps(chunks),
+                           tool_call_id="tc-kb", name="kb_search")
+
+    def _chunk(self, content):
+        return {"content": content, "similarity": 0.9,
+                "source_type": "exercise_db", "document_title": "Back",
+                "chunk_index": 0}
+
+    @pytest.mark.asyncio
+    async def test_no_numbers_in_evidence_means_pass(self):
+        """Evidence không có số + trả lời trung thực → pass, không retry."""
+        from langgraph_agents.nodes.grader import grader_node
+
+        state: AgentState = {
+            "messages": [self._kb_msg([
+                self._chunk("Cat-cow gently mobilizes the spine.")])],
+            "errors": [], "retry_count": 0,
+            "total_tokens": 0,
+            "required_outputs": ["exercise_protocol"],
+            "final_answer": "Nguon khong ghi so hiep cho bai nay.",
+        }
+        result = await grader_node(state, GRADER_CONFIG)
+        assert result["grader_result"] == "pass"
+        assert "retry_count" not in result
+
+    @pytest.mark.asyncio
+    async def test_numbers_in_evidence_still_required(self):
+        """Evidence có số + trả lời thiếu số → retry như trước."""
+        from langgraph_agents.nodes.grader import grader_node
+
+        state: AgentState = {
+            "messages": [self._kb_msg([
+                self._chunk("3 sets of 10 reps, 2-3 times a week.")])],
+            "errors": [], "retry_count": 0,
+            "total_tokens": 0,
+            "required_outputs": ["exercise_protocol"],
+            "final_answer": "Tap bai nay nhe.",
+        }
+        result = await grader_node(state, GRADER_CONFIG)
+        assert result["grader_result"] == "retry"
+        assert "exercise_protocol" in result.get("grader_feedback", "")
+
+    @pytest.mark.asyncio
+    async def test_sets_only_evidence_needs_no_frequency(self):
+        """Evidence chỉ có số lần mỗi hiệp + trả lời nêu số đó → pass."""
+        from langgraph_agents.nodes.grader import grader_node
+
+        state: AgentState = {
+            "messages": [self._kb_msg([
+                self._chunk("8-15 lần mỗi hiệp.")])],
+            "errors": [], "retry_count": 0,
+            "total_tokens": 0,
+            "required_outputs": ["exercise_protocol"],
+            "final_answer": "8-15 lần mỗi hiệp theo thư viện.",
         }
         result = await grader_node(state, GRADER_CONFIG)
         assert result["grader_result"] == "pass"

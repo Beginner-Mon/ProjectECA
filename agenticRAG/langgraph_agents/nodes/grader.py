@@ -117,18 +117,26 @@ def _has_disclaimer(text: str) -> bool:
     return any(re.search(p, text, re.IGNORECASE) for p in patterns)
 
 
-def _has_sets_reps_frequency(text: str) -> bool:
-    """Check for exercise protocol: sets + reps + frequency."""
-    has_sets_reps = bool(re.search(
+def _has_sets_reps(text: str) -> bool:
+    """Có số hiệp/lần (nửa đầu của _has_sets_reps_frequency — Task 4b)."""
+    return bool(re.search(
         r"\d+\s*(?:lần|hiệp|reps?|sets?|lần lặp)",
         text, re.IGNORECASE,
     ))
-    has_frequency = bool(re.search(
+
+
+def _has_frequency(text: str) -> bool:
+    """Có tần suất (nửa sau của _has_sets_reps_frequency — Task 4b)."""
+    return bool(re.search(
         r"(?:\d+\s*(?:lần|buổi|ngày|tuần|times?|days?|week))|"
         r"(?:mỗi ngày|hàng ngày|hằng ngày|mỗi tuần|hàng tuần|daily|weekly)",
         text, re.IGNORECASE,
     ))
-    return has_sets_reps and has_frequency
+
+
+def _has_sets_reps_frequency(text: str) -> bool:
+    """Check for exercise protocol: sets + reps + frequency."""
+    return _has_sets_reps(text) and _has_frequency(text)
 
 
 def _has_ordered_steps(text: str) -> bool:
@@ -411,6 +419,36 @@ def _grade_tags(final_answer: str, required_outputs: list[str]) -> dict:
 
 # ── Node ─────────────────────────────────────────────────────────────────
 
+def _evidence_text(messages: list) -> str:
+    """Văn bản evidence của lượt (Task 4b): nội dung các ToolMessage có nguồn
+    is_evidence=True — cùng ngữ nghĩa lọc với synthesizer._evidence_messages
+    (tool lạ không rõ nguồn vẫn được tính)."""
+    from langgraph_agents.sources import source_for_tool
+
+    parts = []
+    for m in messages:
+        if not isinstance(m, ToolMessage):
+            continue
+        src = source_for_tool(m.name or "")
+        if src is not None and not src.is_evidence:
+            continue
+        parts.append(str(m.content or ""))
+    return "\n".join(parts)
+
+
+def _grade_protocol_parts(answer: str, evidence_text: str) -> list[str]:
+    """Phần liều lượng mà evidence CÓ nhưng câu trả lời thiếu (Task 4b).
+
+    Trả [] khi evidence không ghi phần nào (tag không bị kiểm ở lượt đó) hoặc
+    khi câu trả lời đã đủ phần evidence có.
+    """
+    missing = []
+    if _has_sets_reps(evidence_text) and not _has_sets_reps(answer):
+        missing.append("sets_reps")
+    if _has_frequency(evidence_text) and not _has_frequency(answer):
+        missing.append("frequency")
+    return missing
+
 async def grader_node(state: AgentState, config: RunnableConfig) -> dict:
     """Tag-driven grader node — M.3.
 
@@ -435,7 +473,33 @@ async def grader_node(state: AgentState, config: RunnableConfig) -> dict:
         })
         return {"grader_result": "pass"}
 
-    result = _grade_tags(final_answer, required_outputs)
+    result = _grade_tags(final_answer, [t for t in required_outputs
+                                      if t != "exercise_protocol"])
+
+    # Task 4b: exercise_protocol chỉ bị đòi phần mà evidence có. Evidence
+    # không ghi phần nào → tag không bị kiểm ở lượt đó.
+    if "exercise_protocol" in required_outputs:
+        evidence_text = _evidence_text(state.get("messages", []))
+        ev_sets = _has_sets_reps(evidence_text)
+        ev_freq = _has_frequency(evidence_text)
+        if not ev_sets and not ev_freq:
+            logger.info("protocol_unsupported_by_evidence", extra={
+                "node": "grader",
+                "request_id": config["configurable"].get("request_id", "-"),
+            })
+        else:
+            missing = _grade_protocol_parts(final_answer, evidence_text)
+            if missing:
+                if "exercise_protocol" not in result["quality_missing"]:
+                    result["quality_missing"].append("exercise_protocol")
+                _, _, fb = TAG_RULES["exercise_protocol"]
+                piece = f"[exercise_protocol] {fb}"
+                result["feedback"] = (
+                    f"{result['feedback']} {piece}".strip()
+                    if result.get("feedback") else piece
+                )
+                if result["result"] == "pass":
+                    result["result"] = "retry"
 
     # The site language the user chose, not a guess at the answer's language.
     #

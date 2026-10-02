@@ -68,11 +68,6 @@ def test_default_disclaimers_recognized_by_grader():
 @pytest.mark.unit
 @pytest.mark.parametrize("slug", CHARACTERS)
 @pytest.mark.parametrize("lang", ["vi", "en"])
-@pytest.mark.skip(
-    reason="B2 STOP theo plan: red_flag template của anne.en, bronya.en "
-    "không qua _has_danger_warning (xem worklog 02-10-2026). Chờ Tri quyết "
-    "định sửa câu chữ hay nới regex — không tự sửa regex an toàn."
-)
 def test_persona_red_flag_recognized_by_grader(slug, lang):
     """B2: tương tự cho red_flag_screen với hàm kiểm của nó."""
     from langgraph_agents.nodes.grader import _has_danger_warning
@@ -84,18 +79,64 @@ def test_persona_red_flag_recognized_by_grader(slug, lang):
 @pytest.mark.unit
 @pytest.mark.parametrize("slug", CHARACTERS)
 @pytest.mark.parametrize("lang", ["vi", "en"])
-@pytest.mark.skip(
-    reason="B2 STOP theo plan: referral template của anne.en, bronya.vi/en, "
-    "hatsune-miku.vi, miki.vi/en và cả mẫu mặc định EN không qua "
-    "_has_referral (xem worklog 02-10-2026). Chờ Tri quyết định — "
-    "không tự sửa regex an toàn."
-)
 def test_persona_referral_recognized_by_grader(slug, lang):
     """B2: tương tự cho referral_advice với hàm kiểm của nó."""
     from langgraph_agents.nodes.grader import _has_referral
 
     text = get_safety_text("referral_advice", slug, lang)
     assert _has_referral(text), f"{slug}.{lang}: referral not recognized"
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize("tag,checker", [
+    ("red_flag_screen", "_has_danger_warning"),
+    ("referral_advice", "_has_referral"),
+    ("scope_disclaimer", "_has_disclaimer"),
+])
+@pytest.mark.parametrize("lang", ["vi", "en"])
+def test_default_templates_recognized_by_grader(tag, checker, lang):
+    """Task 3: cả các mẫu mặc định hai ngôn ngữ cũng phải qua hàm kiểm."""
+    import langgraph_agents.nodes.grader as grader_mod
+
+    fn = getattr(grader_mod, checker)
+    defaults = (DEFAULT_SAFETY_TEMPLATES if lang == "vi"
+                else DEFAULT_SAFETY_TEMPLATES_EN)
+    assert fn(defaults[tag]), f"default.{lang}.{tag}: not recognized"
+
+
+# ── Bảng âm tính (Task 3): nhắc tới bác sĩ/dừng lại thôi thì chưa đủ ──────
+
+_REFERRAL_NEGATIVES = [
+    "I'm not a doctor.",
+    "Mình không phải bác sĩ.",
+    "I have no medical training.",
+    "Bác sĩ của bạn đã cho tập lại chưa?",
+    "My doctor friend likes squats.",
+]
+
+_DANGER_NEGATIVES = [
+    "Stop me if I'm going too fast.",
+    "Let's stop here for today.",
+    "Hôm nay dừng ở đây nhé.",
+]
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize("text", _REFERRAL_NEGATIVES)
+def test_referral_rejects_mere_mentions(text):
+    """Task 3: thiếu hành động-nhu cầu hoặc thiếu đối tượng y tế → không qua."""
+    from langgraph_agents.nodes.grader import _has_referral
+
+    assert not _has_referral(text), f"false positive: {text!r}"
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize("text", _DANGER_NEGATIVES)
+def test_danger_rejects_mere_stops(text):
+    """Task 3: dừng chuyện/dừng hôm nay (không phải dừng tập/khám) → không qua."""
+    from langgraph_agents.nodes.grader import _has_danger_warning
+
+    assert not _has_danger_warning(text), f"false positive: {text!r}"
 
 
 @pytest.mark.unit

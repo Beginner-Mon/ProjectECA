@@ -45,16 +45,46 @@ def _has_danger_warning(text: str) -> bool:
         r"(?:đi khám|gặp bác sĩ|chuyên gia y tế|cấp cứu)",
         r"(?:chest pain|danger|warning|emergency|seek medical)",
         r"⚠",
+        # Task 3: lệnh dừng tập (Anne/Bronya EN) — "Stop there/now",
+        # không khớp "Stop me/here" (bảng âm tính).
+        r"stop\s+(?:training|exercising|now|there|the exercise)",
+        # Task 3: lệnh đi kiểm tra — "go get it checked", "see a doctor",
+        # "needs a doctor/qualified professional".
+        r"go\s+get\s+it\s+(?:checked|looked\s+at)",
+        r"get\s+it\s+(?:checked|looked\s+at)",
+        r"see\s+a\s+doctor",
+        r"needs?\s+a\s+(?:doctor|qualified professional)",
     ]
     return any(re.search(p, text, re.IGNORECASE) for p in patterns)
 
 
 def _has_referral(text: str) -> bool:
-    """Check for referral/consultation recommendation."""
+    """Check for referral/consultation recommendation.
+
+    Task 3: mỗi mẫu mới đòi CẢ HAI — một hành động/nhu cầu VÀ một đối tượng
+    y tế. Nhắc tới bác sĩ thôi ("My doctor friend likes squats") thì không đủ.
+    """
+    _MEDICAL_OBJECT = r"(?:doctor|GP|physician|specialist|medical professional|health professional|bác sĩ|chuyên gia y tế)"
     patterns = [
         r"(?:khuyên|nên|hãy)\s*(?:bạn\s*)?(?:đi khám|gặp|hỏi|tham khảo)\s*(?:ý kiến\s*)?(?:bác sĩ|chuyên gia|bác sĩ chuyên khoa|chuyên viên y tế)",
         r"(?:consult|see|visit|refer)\s*(?:a\s*)?(?:doctor|physician|specialist|medical professional)",
         r"(?:không thể|không đủ)\s*(?:chẩn đoán|kê đơn|điều trị)",
+        # Task 3: see/consult/consulting/visit + đối tượng y tế
+        # ("see a doctor", "consulting a doctor", "Go see a specialist").
+        r"(?:see|consult|consulting|visit)\s+(?:a\s+|the\s+)?" + _MEDICAL_OBJECT,
+        # Task 3: examined by / get checked by / go to + đối tượng y tế
+        # ("examined by a specialist").
+        r"(?:examined by|get checked by|go to)\s+(?:a\s+|the\s+)?" + _MEDICAL_OBJECT,
+        # Task 3: nhu cầu (needs) + đối tượng y tế.
+        r"needs?\s+(?:a\s+|the\s+)?" + _MEDICAL_OBJECT,
+        # Task 3: "specialist diagnosis is required" (Bronya EN) — nhu cầu
+        # dưới dạng bị động + chuyên gia.
+        r"(?:specialist|doctor|physician|GP)\s+diagnosis\s+is\s+required",
+        # Task 3: cần/nên + bác sĩ/chuyên gia (Bronya VI "Cần bác sĩ…").
+        r"(?:cần|nên)\s+(?:bác sĩ|chuyên gia)\b",
+        # Task 3: gặp/được + bác sĩ/chuyên gia … khám (Hatsune VI "gặp bác sĩ
+        # … được khám", Miki VI "được bác sĩ … khám").
+        r"(?:gặp|được)\s+(?:bác sĩ|chuyên gia)[\w\s]{0,40}?khám",
     ]
     return any(re.search(p, text, re.IGNORECASE) for p in patterns)
 

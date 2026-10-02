@@ -28,10 +28,12 @@ logger = get_logger("langgraph.tools")
 # ── YouTube transcript cap (D28: budget ~3k tokens ≈ 12000 chars) ─────────
 _YT_CHAR_CAP = 12_000
 
-# Thư viện bài tập = documents có source_type này (plan T5). Trùng SOURCE_TYPE
+# Nguồn thuộc thư viện tra cứu (plan T5, mở rộng B5). Trùng SOURCE_TYPE
 # trong scripts/ingest_kb_pgvector.py:81 — đổi một trong hai mà quên bên còn
 # lại thì kb_search trả rỗng (không lỗi, D23) và mọi lượt lâm sàng thành refuse.
-LIBRARY_SOURCE_TYPES = ("exercise_db",)
+# nhs_uk (49 đoạn) có nhãn riêng ở sources.KB_SOURCE_TYPE_LABELS, không gộp
+# vào tên thư viện ECA. source_type khác vẫn bị loại ngay ở WHERE này.
+LIBRARY_SOURCE_TYPES = ("exercise_db", "nhs_uk")
 
 
 def _retrieval_threshold(key: str) -> float | None:

@@ -78,3 +78,19 @@ TOOL_SOURCES: dict[str, Source] = {
 def source_for_tool(name: str) -> Source | None:
     """Trả Source của tool, hoặc None với tool lạ (tiêu đề evidence dự phòng)."""
     return TOOL_SOURCES.get(name)
+
+
+# ── Nhãn theo từng đoạn KB (B5) ──────────────────────────────────────────
+# kb_search trả cả exercise_db và nhs_uk; tiêu đề evidence đặt theo
+# source_type của ĐOẠN (nodes/synthesizer._split_message_parts), kèm
+# document_title — không gọi NHS là "thư viện ECA".
+
+KB_SOURCE_TYPE_LABELS: dict[str, str] = {
+    "exercise_db": "ECA's exercise library",
+    "nhs_uk": "NHS health guidance",
+}
+
+
+def kb_segment_label(source_type: str) -> str | None:
+    """Nhãn evidence cho một đoạn KB; None = loại lạ, vẫn bị loại (B5)."""
+    return KB_SOURCE_TYPE_LABELS.get(source_type or "")

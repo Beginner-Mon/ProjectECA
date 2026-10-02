@@ -29,3 +29,13 @@ def test_non_evidence_sources():
     assert source_for_tool("recall_self").is_evidence is False
     assert source_for_tool("generate_motion").is_evidence is False
     assert source_for_tool("show_movement").is_evidence is False
+
+
+def test_kb_segment_labels_are_distinct():
+    """B5: exercise_db và nhs_uk có nhãn riêng; loại lạ → None (bị loại)."""
+    from langgraph_agents.sources import kb_segment_label
+
+    assert kb_segment_label("exercise_db") == "ECA's exercise library"
+    assert kb_segment_label("nhs_uk") == "NHS health guidance"
+    assert kb_segment_label("wikipedia") is None
+    assert kb_segment_label("") is None

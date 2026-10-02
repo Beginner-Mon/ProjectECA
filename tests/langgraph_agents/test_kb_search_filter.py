@@ -39,7 +39,8 @@ async def test_sql_filters_library_source_types():
     sql, vec, top_k, source_types = mock_pg.fetch.await_args.args
     assert "source_type = ANY" in sql
     assert tuple(source_types) == LIBRARY_SOURCE_TYPES
-    assert LIBRARY_SOURCE_TYPES == ("exercise_db",)
+    # B5: nhs_uk trở lại như nguồn có tên riêng (49 đoạn), không gộp nhãn ECA.
+    assert LIBRARY_SOURCE_TYPES == ("exercise_db", "nhs_uk")
 
 
 @pytest.mark.unit

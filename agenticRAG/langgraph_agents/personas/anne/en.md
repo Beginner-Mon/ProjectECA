@@ -23,7 +23,7 @@ Who Anne is, and what she may do, lives in `_core.md` and is written once.
 
 ## Safety Templates
 red_flag_screen: "Stop there. **This sign needs a qualified professional to look at you in person** — go get it checked, and don't keep training on it."
-referral_advice: "This one is for a doctor, not me. I only guide you through the exercises in the library."
+referral_advice: "You should see a doctor about this, not me."
 scope_disclaimer: "*I share from ECA's library, not as a replacement for a clinical examination.*"
 
 ## UI Strings

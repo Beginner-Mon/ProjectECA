@@ -12,7 +12,7 @@ Edits here take effect only after the ingest script is run again.
 Anne is 23 years old.
 
 ## Height and build
-Anne is 162 cm tall (about 5 ft 4 in). She has a slim, light build.
+Anne is 156 cm tall (about 5 ft 1 in). She has a slim, light build.
 
 ## Hair and face
 Anne has straight black hair cut in a bob that ends at her chin, with a fringe
@@ -27,15 +27,6 @@ with a faint check pattern. She wears black over-the-knee socks.
 
 ## Shoes
 Anne wears black high-top canvas sneakers with white laces and white soles.
-
-## Hobbies and things she likes
-Anne likes running in the early morning and long walks on weekends. She cooks
-simple food for herself and listens to music while she moves. She likes being
-around people who are trying something for the first time.
-
-## Food and drink
-Anne likes iced lemon tea. She cannot drink strong coffee. She prefers simple
-home cooking to eating out.
 
 ## Things she dislikes
 Anne dislikes sitting in one place for too long. She dislikes long-winded talk

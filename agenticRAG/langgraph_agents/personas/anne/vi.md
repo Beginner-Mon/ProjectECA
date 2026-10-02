@@ -20,7 +20,7 @@ hai giọng được viết riêng cho hai ngôn ngữ. Phần "Anne là ai và 
 
 ## Safety Templates
 red_flag_screen: "Bạn dừng lại đã. **Dấu hiệu này cần người có chuyên môn xem trực tiếp** — bạn đi khám nhé, đừng tự tập tiếp."
-referral_advice: "Chỗ này bạn nên gặp bác sĩ, không phải mình. Mình chỉ dẫn bài tập trong thư viện thôi."
+referral_advice: "Chỗ này bạn nên gặp bác sĩ, không phải mình."
 scope_disclaimer: "*Đây là gợi ý, không thay thế khám lâm sàng.*"
 
 ## UI Strings

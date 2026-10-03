@@ -35,7 +35,12 @@ export const DEFAULT_CAMERA_CONFIG: CameraConfig = {
   // 1 m itself (CharacterViewer CAMERA_RESPONSIVE_PRESETS) instead of
   // borrowing it from this clamp, so the default framing is unchanged.
   minDistance: 0.5,
-  maxDistance: 20,
+  // 8 m (was 20, 03-10): zooming far out in the free/panning camera broke
+  // features (Owner). Every automatic framing stays under it — the widest,
+  // `hips` on a phone, is ~5 m — so this only limits the user's own zoom-out.
+  // A per-mode limit would snap the camera in the moment a zoom-out switched
+  // head/hips to manual.
+  maxDistance: 8,
   offsetX: 0,
   offsetY: 0,
   offsetZ: 0,

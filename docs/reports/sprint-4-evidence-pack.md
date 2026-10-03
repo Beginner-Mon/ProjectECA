@@ -273,23 +273,23 @@ Summary (3–5 sentences): [to be written by Tony Lee]
 
 | Figure | What it shows | Suggested capturer | Used in report section | Captured? |
 |---|---|---|---|---|
-| 1 | GitHub commit history of the `release` branch | Tri | 6 | ☐ |
-| 2 | GitHub Insights → Commit activity for the reporting window | Tri | 6 | ☐ |
-| 3 | `docs/worklogs/` folder on GitHub (dated engineering logs) | Tri | 6 | ☐ |
-| 4 | Jira board, current state | Team | 6, 8 | ☐ |
-| 5 | Login page: email sign-in and Google sign-in | Tri | 6 (AUTH) | ☐ |
-| 6 | Export of `docs/architecture/cognito-auth-sequence.drawio` | Tri | 6 (AUTH) | ☐ |
-| 7 | Output of the row-level-security isolation test | Tri | 6 (AUTH), 8 | ☐ |
-| 8 | Chat with a streamed answer, sources and thumbs up/down | Tri | 6 (FE) | ☐ |
-| 9 | Mobile chat dock at phone width | Tri | 6 (FE) | ☐ |
-| 10 | Language switch (EN/VI) and avatar picker | Tri | 6 (FE) | ☐ |
-| 11 | Avatar playing a generated exercise motion | Team | 6 (KIM) | ☐ |
-| 12 | Export of `docs/architecture/aws-topology.drawio` | Tri | 6 (KIM, PLAT) | ☐ |
-| 13 | LangGraph flow diagram from `docs/architecture/langgraph-flow-persona.md` | Team | 6 (LG) | ☐ |
-| 14 | Context probe V7 result table (`docs/tracking/context-probe-V7.md`) | Tri | 6 (LG) | ☐ |
-| 15 | Backend test run summary (pytest) | Tri | 6 | ☐ |
-| 16 | Frontend test run summary (npm test) | Tri | 6 | ☐ |
-| 17 | Amplify console: successful build of `release`, with the live URL | Tri | 6 (PLAT) | ☐ |
-| 18 | ASVS 5.0 checklist summary (branch `owasp-check`) | Tri | 6 (AUTH), 8 | ☐ |
+| 1 | GitHub commit history of the `release` branch | Tri | 3 | ☐ |
+| 2 | GitHub Insights → Commit activity for the reporting window | Tri | 3 | ☐ |
+| 3 | `docs/worklogs/` folder on GitHub (dated engineering logs) | Tri | 3 | ☐ |
+| 4 | Jira board, current state | Team | 3, 5 | ☐ |
+| 5 | Login page: email sign-in and Google sign-in | Tri | 3 (AUTH) | ☐ |
+| 6 | Export of `docs/architecture/cognito-auth-sequence.drawio` | Tri | 3 (AUTH) | ☐ |
+| 7 | Output of the row-level-security isolation test | Tri | 3 (AUTH), 5 | ☐ |
+| 8 | Chat with a streamed answer, sources and thumbs up/down | Tri | 3 (FE) | ☐ |
+| 9 | Mobile chat dock at phone width | Tri | 3 (FE) | ☐ |
+| 10 | Language switch (EN/VI) and avatar picker | Tri | 3 (FE) | ☐ |
+| 11 | Avatar playing a generated exercise motion | Team | 3 (KIM) | ☐ |
+| 12 | Export of `docs/architecture/aws-topology.drawio` | Tri | 3 (KIM, PLAT) | ☐ |
+| 13 | LangGraph flow diagram from `docs/architecture/langgraph-flow-persona.md` | Team | 3 (LG) | ☐ |
+| 14 | Context probe V7 result table (`docs/tracking/context-probe-V7.md`) | Tri | 3 (LG) | ☐ |
+| 15 | Backend test run summary (pytest) | Tri | 3 | ☐ |
+| 16 | Frontend test run summary (npm test) | Tri | 3 | ☐ |
+| 17 | Amplify console: successful build of `release`, with the live URL | Tri | 3 (PLAT) | ☐ |
+| 18 | ASVS 5.0 checklist summary (branch `owasp-check`) | Tri | 3 (AUTH), 5 | ☐ |
 
 The GitHub Contributors graph is deliberately not in this list; the team decides whether to include it.

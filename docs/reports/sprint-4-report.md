@@ -16,23 +16,22 @@ Text in `[TEAM]` or `[…]` is still to be filled in by a person. Story points m
 
 | # | Item | Who | Section |
 |---|---|---|---|
-| 1 | Semester 1 risk register, so old risk IDs are kept | Tri provides the file | 5 |
-| 2 | Sprint 3 report, to reuse backlog IDs and fill the Sprint 3 row | Tri provides the file | 4.3, 7.3 |
-| 3 | Notes from the client demo: date, attendees, what was shown, feedback | Tri provides the notes | 7.1, 7.2, 7.5 |
-| 4 | Screenshot of the Jira board (Figure 4) and the other figures | Team | 6 |
-| 5 | Scrum master and roles for this sprint | Team | 4.2 |
-| 6 | Confirm every story point value and the acceptance criteria marked `[owner]` | Each owner | 4.4 |
-| 7 | Contribution summary table | Team, together | 2 |
-| 8 | Acknowledgment of Country | Each member | 1 |
-| 9 | Own contribution statement, written from the evidence pack | Nguyen, Tony Lee | 3.2, 3.3 |
-| 10 | Voice dictation: Tri's Week 2 worklog lists it, but the code is inside commit `c89f9295` authored by Tony Lee. Agree who reports it | Tri, Tony Lee | 3, 6.2 |
-| 11 | Many commits carry a `Co-Authored-By: Claude` line that is visible on GitHub. Agree how the use of AI tools is declared under the unit rules | Team | 8.4 |
-| 12 | The security audit branch `owasp-check` exists on one laptop only. Push it to GitHub, or the evidence for AUTH-07 cannot be checked | Tri | 6.2 |
-| 13 | Root causes marked *(to confirm)* | Team | 8.2 |
+| 1 | Semester 1 risk register, so old risk IDs are kept | Tri provides the file | 2 |
+| 2 | Sprint 3 report, to reuse backlog IDs and fill the Sprint 3 row | Tri provides the file | 1.3, 4.3 |
+| 3 | Notes from the client demo: date, attendees, what was shown, feedback | Tri provides the notes | 4.1, 4.2, 4.5 |
+| 4 | Screenshot of the Jira board (Figure 4) and the other figures | Team | 3 |
+| 5 | Scrum master and roles for this sprint | Team | 1.2 |
+| 6 | Confirm every story point value and the acceptance criteria marked `[owner]` | Each owner | 1.4 |
+| 7 | Contribution summary table | Team, together | Contribution summary |
+| 8 | Acknowledgment of Country | Each member | Acknowledgment |
+| 9 | Own contribution statement, written from the evidence pack | Nguyen, Tony Lee | Contribution details |
+| 10 | Root causes marked *(to confirm)* | Team | 5.2 |
+
+Section numbers follow the Word template, which numbers Sprint plan to Lessons learned as 1 to 6 and leaves the first three sections unnumbered.
 
 ---
 
-## 1. Acknowledgment of Country
+## Acknowledgment of Country
 
 `[TEAM: acknowledgment statement]`
 
@@ -42,7 +41,7 @@ Text in `[TEAM]` or `[…]` is still to be filled in by a person. Story points m
 | Nguyen | `[TEAM]` | `[TEAM]` |
 | Tony Lee | `[TEAM]` | `[TEAM]` |
 
-## 2. Contribution summary (this sprint)
+## Contribution summary (this sprint)
 
 To be completed by all members together.
 
@@ -52,35 +51,35 @@ To be completed by all members together.
 | Nguyen | | | | | | | | |
 | Tony Lee | | | | | | | | |
 
-## 3. Contribution details (this sprint)
+## Contribution details (this sprint)
 
-### 3.1 Tri Tran (104993926)
+### Tri Tran (104993926)
 
 In this period I built the sign-in system and the security around user data, created the new web frontend, and moved the 3D motion service and the AI agent onto AWS. In Sprint 4 itself I made the avatar speak on the live website, redesigned the chat for mobile phones, added thumbs up/down on each answer, and improved how the agent chooses its tools and quotes exercise doses. I recorded 90 hours in my weekly worklogs for weeks 1 and 2 (45 h each). My GitHub history shows 406 commits in the reporting window (merges excluded, duplicates removed).
 
 | Epic / area | What I delivered | Evidence |
 |---|---|---|
 | Auth | Email sign-up and sign-in with protected pages. Google sign-in and account linking. Removed the switch that could turn sign-in off, so the user's identity now comes only from the login token. Row-level security on the six user tables, with a separate database role for the app. One protected entry point for the API with request limits. A security audit against all 345 OWASP ASVS 5.0 requirements. | `08e8e4f3`, `dafb4bd0`, `8cb1bcc6`, `e2af651f`, `634c47ee`, `d4781fec`, `21f8f1dc`, `3fd6ea27`; worklog `18-08-2026.md`; branch `owasp-check`; Figures 5, 6, 7, 18 |
-| Frontend | New React 19 + Vite app hosted on Amplify. Avatar animation: no more T-pose flash, Mixamo retargeting, gesture dispatcher, smoother blending between animations. Character list, avatar background picker, preferences that follow the user across devices. Website language (English / Vietnamese) separate from the assistant's reply language. Mobile chat dock. Thumbs up/down with a reason form. Lint backlog cleared. | `50d87588`, `d948019f`, `1e2448d8`, `6f4c17f2`, `eb484f9d`, `fa8cd83e`, `484bb327`, `32bb9c03`, `cd7816bf`, `ef2faff7`, `50593a0b`, `53b3ff73`, `ee71f4a6`; Figures 8, 9, 10 |
+| Frontend | New React 19 + Vite app hosted on Amplify. Avatar animation: no more T-pose flash, Mixamo retargeting, gesture dispatcher, smoother blending between animations. Character list, avatar background picker, preferences that follow the user across devices. Website language (English / Vietnamese) separate from the assistant's reply language. Mobile chat dock. Voice input that types into the chat box (worked on with Tony Lee). Thumbs up/down with a reason form. Lint backlog cleared. | `50d87588`, `d948019f`, `1e2448d8`, `6f4c17f2`, `eb484f9d`, `fa8cd83e`, `484bb327`, `32bb9c03`, `cd7816bf`, `ef2faff7`, `c89f9295`, `50593a0b`, `53b3ff73`, `ee71f4a6`; worklog `25-09-2026.md`; weekly worklog week 2; Figures 8, 9, 10 |
 | Kimodo motion | Production design on a GPU server (g5.xlarge) and its container pipeline. Converter from Kimodo output to the BVH format the avatar plays. A job queue, a GPU worker with a heartbeat, and short-lived signed download links. Deployed and tested end to end: 7 seconds from request to finished motion. The avatar plays the generated motion and keeps it after a refresh. | `ec62f1b0`, `36f94493`, `659051de`, `c7bf7e4d`, `07a24ca1`, `189fc49f`, `bf00cd2e`, `4d28a612`, `c4f3faf4`, `1cdde23c`, `5eb08461`, `8b3b26c0`; worklog `28-08-2026.md`; Figures 11, 12 |
 | LangGraph agent | Hosted the agent on AWS Lambda (container image, infrastructure code, automated deployment, frontend switch-over). Agent-context rounds 1–3: the agent picks tools from their descriptions, quotes an exercise dose only when the evidence states it, and reads personas from files. A repeatable probe to measure each change, run eleven times (V0 to V7; 51 questions in the last run). | `069bb501`, `59d6bc6e`, `68963211`, `39437717`, `2b54aec8`, `654e8064`, `1a0f62d3`; worklogs `01-10-2026.md`, `02-10-2026.md`, `02-10-2026-round3.md`; Figures 13, 14 |
 | Platform & voice | Vietnamese text-to-speech streamed end to end, live on the website since 23/09. Found why the voice was choppy on the live site (slow network route) and fixed it by sending audio through the CDN. Fixed the agent running out of memory in production. Database table and API for message feedback. | `885ec019`, `818487d1`, `132825e1`, `0fb60503`, `594437ab`, `dc6ce970`, `161badcd`, `c7524390`; weekly worklogs weeks 1–2; worklog `14-09-2026.md` |
 
-### 3.2 Nguyen
+### Nguyen
 
 `[To be written by Nguyen — see evidence pack, section 3]`
 
-### 3.3 Tony Lee
+### Tony Lee
 
 `[To be written by Tony Lee — see evidence pack, section 4]`
 
-## 4. Sprint plan
+## 1. Sprint plan
 
-### 4.1 Sprint goal
+### 1.1 Sprint goal
 
 *(proposed — team to confirm)* By the end of week 3, a real user can use the deployed assistant from start to finish on a computer or a phone: sign in, ask about an exercise, hear the answer spoken, watch the avatar show the movement, and rate the answer. Every exercise dose in an answer comes from the knowledge base.
 
-### 4.2 Roles
+### 1.2 Roles
 
 | Role | Member | Responsibility this sprint |
 |---|---|---|
@@ -90,16 +89,16 @@ In this period I built the sign-in system and the security around user data, cre
 | Developer | Nguyen | `[Nguyen to confirm]` |
 | Developer | Tony Lee | `[Tony Lee to confirm]` |
 
-### 4.3 Sprint roadmap
+### 1.3 Sprint roadmap
 
 | Sprint | Dates | Goal | Output that feeds the next sprint |
 |---|---|---|---|
 | Sprint 3 | Semester 1, weeks 11–13 | `[from Sprint 3 report]` | `[from Sprint 3 report]` |
 | Carry-over | May – mid-September 2026 | Rebuild the backend on LangGraph, add sign-in, replace the motion engine, host everything on AWS | A deployed system at <https://release.d32nf9wwqqt016.amplifyapp.com>: sign-in, chat, knowledge search, motion pipeline |
-| Sprint 4 | 18/09 – 09/10/2026 (weeks 1–3) | See 4.1 | Voice live, mobile chat, message feedback, measured agent quality (probe V7), security audit result |
+| Sprint 4 | 18/09 – 09/10/2026 (weeks 1–3) | See 1.1 | Voice live, mobile chat, message feedback, measured agent quality (probe V7), security audit result |
 | Sprint 5 | `[TEAM: dates]` | Release the agent-context work, act on the security audit, make motion available without a manual GPU start, test on real phones | Items marked S5 in the backlog below |
 
-### 4.4 Sprint backlog
+### 1.4 Sprint backlog
 
 Priority uses MoSCoW. Estimates are story points on a 1/2/3/5/8 scale: 1 is about half a day, 2 about one day, 3 about two to three days, 5 about a week, 8 more than a week. All values are *(proposed)* from the real time span of the work and must be confirmed by the owner. "Sprint / week" shows when the item was worked on: Carry-over, S4-W1 (18–25/09), S4-W2 (26/09–02/10), S4-W3 (03–09/10), or S5 (planned next).
 
@@ -111,8 +110,8 @@ Priority uses MoSCoW. Estimates are story points on a 1/2/3/5/8 scale: 1 is abou
 | AUTH-04 | Auth | As a user who picked the wrong Google account, I can get back to my own account | Logging out ends the Cognito session; the Google account chooser always appears after logout | Must | 5 | Nguyen | Carry-over | AUTH-02 |
 | AUTH-05 | Auth | As a user, only I can read or change my data | No setting can turn sign-in off; the user ID comes from the token only; row-level security on the six user tables; a query for another user returns nothing | Must | 8 | Tri | Carry-over | AUTH-03, PLAT-01 |
 | AUTH-06 | Auth | As the operator, the API has one protected front door | API Gateway checks the Cognito token and limits request rate; the direct function address is closed | Must | 3 | Tri | Carry-over | AUTH-03 |
-| AUTH-07 | Auth | As the team, we know how the system stands against OWASP ASVS 5.0 | All 345 requirements have a verdict with evidence; a remediation plan in waves exists | Should | 5 | Tri | Carry-over | AUTH-05, AUTH-06 |
-| AUTH-08 | Auth | Security remediation, waves 1–6 | Each wave is deployed and tested; a checklist row changes only when its test evidence exists | Should | 8 | Tri | S5 | AUTH-07 |
+| AUTH-07 | Auth | As the team, we know how the system stands against OWASP ASVS 5.0 and have fixed the first wave | All 345 requirements have a verdict with evidence; a remediation plan in waves exists; the first wave of fixes is merged | Should | 5 | Tri | Carry-over, S4-W3 | AUTH-05, AUTH-06 |
+| AUTH-08 | Auth | Security remediation, waves 2–6 | Each wave is deployed and tested; a checklist row changes only when its test evidence exists | Should | 8 | Tri | S5 | AUTH-07 |
 | AUTH-09 | Auth | Picking the wrong Google account must not create a stray user | No new Cognito user and no mapping row are created; checked on the deployed user pool | Should | 3 | `[TEAM]` | S5 | AUTH-04 |
 | AUTH-10 | Auth | Data isolation is proven on the live database | An automated test with two users on the hosted database passes | Must | 2 | Tri | S4-W2 | AUTH-05 |
 | FE-01 | Frontend | As a user, I use a modern web app instead of the test page | React 19 + Vite app builds and is served by Amplify from the `release` branch | Must | 5 | Tri | Carry-over | — |
@@ -156,20 +155,20 @@ Priority uses MoSCoW. Estimates are story points on a 1/2/3/5/8 scale: 1 is abou
 | PLAT-06 | Platform | Recover a stuck hosted deployment and configure sign-in per environment | `[owner]` | Should | 3 | Nguyen | Carry-over | FE-01 |
 | PLAT-07 | Platform | Voice cloning and language detection | `[owner]` | Could | 3 | Nguyen | Carry-over | PLAT-03 |
 
-### 4.5 Story points by epic
+### 1.5 Story points by epic
 
 Computed from the proposed values above; it must be recomputed after owners confirm them.
 
-| Epic | Total | Done and released | Done on feature branch, not released | In progress (week 3) | Planned for Sprint 5 |
+| Epic | Total | Done and released | Done on feature branch, not released | In progress | Planned for Sprint 5 |
 |---|---|---|---|---|---|
-| Auth | 47 | 29 | 7 | 0 | 11 |
+| Auth | 47 | 29 | 2 | 5 | 11 |
 | Frontend | 66 | 55 | 0 | 3 | 8 |
 | Kimodo | 37 | 29 | 3 | 0 | 5 |
 | LangGraph | 58 | 40 | 8 | 5 | 5 |
 | Platform | 29 | 29 | 0 | 0 | 0 |
-| **All** | **237** | **182** | **18** | **8** | **29** |
+| **All** | **237** | **182** | **13** | **13** | **29** |
 
-### 4.6 Artifacts
+### 1.6 Artifacts
 
 | Artifact | Type | Owner | Attached as |
 |---|---|---|---|
@@ -183,28 +182,28 @@ Computed from the proposed values above; it must be recomputed after owners conf
 | Engineering worklogs (69 dated files) | Progress record | Team | `docs/worklogs/` (Figure 3) |
 | Automated test suites | Tests | Team | Run summaries (Figures 15, 16) |
 
-## 5. Risk management plan
+## 2. Risk management plan
 
-### 5.1 What changed since Semester 1
+### 2.1 What changed since Semester 1
 
 `[One paragraph after reading the Semester 1 register: which old risks are closed, which changed rating, and why.]`
 
 Every risk below comes from something that actually happened in this period, so each has a dated trigger. Scales: likelihood and impact from 1 (low) to 5 (high); rating = likelihood × impact; 15 or more is high, 8–14 medium, 7 or less low.
 
-### 5.2 Risk register
+### 2.2 Risk register
 
 | ID | Category | Risk | Trigger / evidence this period | L | I | Rating | Mitigation (to prevent) | Contingency (if it happens) | Owner | Status | Change since Sem 1 |
 |---|---|---|---|---|---|---|---|---|---|---|---|
 | `[R1…Rn]` | — | `[risks carried over from the Semester 1 register, with their old IDs]` | | | | | | | | | Unchanged / Updated / Closed |
-| R-P1 | Process | Finished work exists on one laptop only and is lost or cannot be reviewed | 12/09: a bulk `git restore` wiped a full day of uncommitted work. Until 30/09 the feature branch on GitHub was 18 commits behind. `owasp-check` is still not on GitHub | 4 | 4 | 16 | Commit the same day; push the feature branch before `release` (five-step ship flow); automated helpers are forbidden to run restore, reset or stash | Rebuild from tool transcripts (on 12/09 this recovered 32 files) | Tri | Open | New |
-| R-P2 | Process | The task board does not show the real work, so progress is not visible to the supervisor and client | Jira has fewer tasks than were done; the real record is 69 dated worklogs in the repository | 5 | 3 | 15 | Every Sprint 5 backlog item gets a Jira key; board updated at each team meeting | Rebuild the status from the backlog table in section 4.4 | `[Scrum master]` | Open | New |
+| R-P1 | Process | Finished work exists on one laptop only and is lost or cannot be reviewed | 12/09: a bulk `git restore` wiped a full day of uncommitted work. Until 30/09 the feature branch on GitHub was 18 commits behind | 4 | 4 | 16 | Commit the same day; push the feature branch before `release` (five-step ship flow); no bulk restore, reset or stash in a shared working folder | Rebuild from local session logs (on 12/09 this recovered 32 files) | Tri | Open | New |
+| R-P2 | Process | The task board does not show the real work, so progress is not visible to the supervisor and client | Jira has fewer tasks than were done; the real record is 69 dated worklogs in the repository | 5 | 3 | 15 | Every Sprint 5 backlog item gets a Jira key; board updated at each team meeting | Rebuild the status from the backlog table in section 1.4 | `[Scrum master]` | Open | New |
 | R-P3 | Process | Project documents describe a system that no longer exists | The status file said "no AWS credentials" while production was live, and said row-level security was inactive when it was active | 4 | 3 | 12 | One dated worklog is the source of truth; "is it deployed?" is answered only from `origin/release` | Stop and re-check against the live system before acting on a document | `[TEAM]` | Open | New |
 | R-P4 | Process | A dependency lockfile change breaks the hosted build | Hosted deployment #21 failed; the same lockfile problem came back three times | 3 | 4 | 12 | Node and npm versions pinned; install with `npm ci` only | Restore the last lockfile that built | Tri | Mitigated | New |
 | R-P5 | Process | The deployment pipeline is broken and nobody notices | 29/08 – 05/09: nothing reached production for a week after the repository was renamed | 2 | 5 | 10 | Check the hosted build after every push to `release` and write the build number in the worklog | Reconnect the repository in the hosting console | Tri | Mitigated | New |
 | R-P6 | Process | A design choice is accepted without measuring, then rebuilt | GPU cold start assumed 38 seconds, measured about 5 minutes; load balancer built for Kimodo, then removed | 3 | 3 | 9 | Each plan includes a measuring step before the build (as done for voice and for agent context) | Re-plan the item with the measured value | Team | Mitigated | New |
 | R-P7 | Process | Work is pushed to `release` by accident and deployed | 28/09: a local branch was created from `origin/release`, so every Sync/Push went straight to `release` | 2 | 4 | 8 | Never work on `release`; cut a feature branch first; upstream removed from that branch | Revert on `release` and redeploy | Team | Mitigated | New |
 | R-H1 | People | Knowledge of AWS and deployment sits with one member | Deployment and infrastructure commits come from one account; at least one other member's machine has no AWS access (`docs/tracking/status.md`) | 4 | 5 | 20 | Runbooks in `docs/ops/`; a read-only AWS policy for a second member; a second member performs the next release | The member with access deploys while pairing by screen share | Tri | Open | New |
-| R-H2 | People | It is unclear who did a piece of work, which affects individual marks | One commit (`c89f9295`) contains work by two members | 3 | 3 | 9 | One author per commit; co-author line when pairing | Agree the split in the team meeting and record it | Team | Open | New |
+| R-H2 | People | It is unclear who did a piece of work, which affects individual marks | One commit (`c89f9295`) contains work by two members | 3 | 3 | 9 | One author per commit; name both members in the commit message when pairing | Agree the split in the team meeting and record it | Team | Open | New |
 | R-H3 | People | Members' machines behave differently, so tests fail for the wrong reason | The wrong Python interpreter gave 8 false failing tests; one laptop cannot run Docker or Redis | 3 | 3 | 9 | The backend prints its interpreter and missing packages at start; a no-Redis mode exists | Run the suite on the member's machine that matches production | Team | Mitigated | New |
 | R-T1 | Project | The agent runs out of memory in production | 14/09: 5 of 5 knowledge or motion questions failed at 1024 MB | 3 | 5 | 15 | Memory raised to 2048 MB; watch peak memory after each release | Raise memory again; move the embedding model out of the function | Tri | Mitigated | New |
 | R-T2 | Project | The voice service is near its memory limit and slower than real time | Measured peak 2932 of 3008 MB; speech about 1.5 times slower than real time | 3 | 3 | 9 | Reply capped at 600 characters for speech; audio buffered before play | Turn voice off for the session; text answer still works | Tri | Open | New |
@@ -212,17 +211,17 @@ Every risk below comes from something that actually happened in this period, so 
 | R-T4 | Project | The knowledge base is emptied by a failed re-load | 05/08: the load script crashed after its reset step and left the table empty | 2 | 5 | 10 | The script now embeds first, then deletes and inserts in one transaction, and refuses to run while the backend is up | Re-load from the source documents (2918 rows) | `[TEAM]` | Closed | New |
 | R-T5 | Project | One user sees another user's health-related conversation | In a test on the pooled database connection, 98 of 200 reads saw another user's ID with a plain `SET`; the app also shipped a switch that could turn sign-in off | 2 | 5 | 10 | Row-level security on six tables that fails with an error if no user is set; `set_config(…, true)` leaked 0 of 200; the switch was deleted; live two-user test (AUTH-10) | Take the API offline, rotate database credentials, notify affected users | Tri | Mitigated | New |
 | R-T6 | Project | The assistant gives an exercise dose or advice that the evidence does not support | Probe V6 failed three dose checks. V7: 0 of 10 doses outside the evidence, but 7 grader retries against a limit of 3 | 3 | 5 | 15 | A dose is written only if the retrieved evidence states it; fixed safety wording; the probe is run before each release | Roll back to the previous agent version on `release` | Tri | Open (LG-10) | New |
-| R-T7 | Project | Known security gaps stay open | The ASVS 5.0 audit baseline is 93 FAIL and 47 PARTIAL out of 345; the first fixes are on a branch that is not merged | 4 | 4 | 16 | Remediation in six waves, each with tests before the checklist changes | Restrict the site to the team and client until wave 1 is deployed | Tri | Open (AUTH-08) | New |
+| R-T7 | Project | Known security gaps stay open | The ASVS 5.0 audit baseline is 93 FAIL and 47 PARTIAL out of 345; remediation is in progress on branch `owasp-check` | 4 | 4 | 16 | Remediation in six waves, each with tests before the checklist changes | Restrict the site to the team and client until wave 1 is deployed | Tri | Open (AUTH-07, AUTH-08) | New |
 | R-T8 | Project | Voice input sends the user's speech to a third party without clear notice | Dictation uses the browser's speech service (Google, Microsoft or Apple, depending on the browser) | 3 | 4 | 12 | Show a notice before first use and make dictation opt-in | Disable dictation | `[TEAM]` | Open | New |
 | R-T9 | Project | The mobile app cannot be delivered | No Android or iOS build has run on a device; mobile sign-in needs a domain the team does not have | 4 | 3 | 12 | Use the responsive website on phones (FE-09) as the mobile deliverable for now | Agree with the client that the mobile app is out of scope | `[TEAM]` | Open (FE-14) | New |
 | R-T10 | Project | The language-model provider is slow or down, so answers take too long | Latency study in `docs/fixes/latency-optimization-1234.md` | 3 | 3 | 9 | Timeout, retry and a fallback provider; answer length bounded; prompt caching checked | Tell the user the service is busy instead of waiting | `[TEAM]` | Mitigated | New |
 | R-T11 | Project | AWS cost grows beyond a student budget | A g5.xlarge costs about $1 per hour while idle; a load balancer bills every hour | 3 | 3 | 9 | GPU kept at zero and started by hand; queue instead of a load balancer (a 16-minute GPU test cost about $0.27) | Shut the GPU group down and serve cached motions only | Tri | Mitigated | New |
 
-## 6. Sprint progress
+## 3. Sprint progress
 
 One member commits under two git names, "Tony Lee" and "Le Hac Du". Both are the same person.
 
-### 6.1 Where each epic started and where it is now
+### 3.1 Where each epic started and where it is now
 
 | Epic | Start of the period (end of April) | Now (03/10/2026) | Still open |
 |---|---|---|---|
@@ -232,7 +231,7 @@ One member commits under two git names, "Tony Lee" and "Le Hac Du". Both are the
 | LangGraph agent | An older orchestrator with Firebase, ChromaDB and Celery | An eight-step LangGraph agent on AWS Lambda with a hosted database; 905 automated tests | Agent-context work (35 commits) not yet on `release`; grader redesign |
 | Platform & voice | Local database; no hosted services | Hosted database in the same region as the agent; Vietnamese voice live since 23/09 | Voice near its memory limit |
 
-### 6.2 Progress tracking
+### 3.2 Progress tracking
 
 Status values: **Released** (on `origin/release` and live), **Done, not released** (finished on a branch other than `release`), **In progress**, **Not started**, **Blocked**. Commit hashes can be opened on GitHub. Worklog names are files in `docs/worklogs/`.
 
@@ -244,7 +243,7 @@ Status values: **Released** (on `origin/release` and live), **Done, not released
 | AUTH-04 | Released | `96c671ae`, `6271376b`, `b332aafe`; `docs/auth-google-incident.md` | Nguyen | One case left open, moved to AUTH-09 |
 | AUTH-05 | Released | `634c47ee`, `7f078c71`; `18-08-2026.md`; Figure 7 | Tri | A test on the pooled connection changed the design (see R-T5) |
 | AUTH-06 | Released | `d4781fec`, `21f8f1dc`; Figure 12 | Tri | — |
-| AUTH-07 | Done, not released | Branch `owasp-check` (`0dfadee7`, `1f3b754b`) — **not on GitHub yet**; `docs/plans/asvs-remediation-plan.md`; Figure 18 | Tri | Audit finished; first fixes were partly backed out on 18/09 (`8f79fff2`) |
+| AUTH-07 | In progress | Branch `owasp-check` (`0dfadee7`, `1f3b754b`); `docs/plans/asvs-remediation-plan.md`; Figure 18 | Tri | Audit of all 345 requirements is finished; the first wave of fixes is under way, and part of it was backed out on 18/09 (`8f79fff2`) to be redone |
 | AUTH-08 | In progress | `docs/plans/asvs-remediation-plan.md` | Tri | Planned for Sprint 5 |
 | AUTH-09 | Not started | `09-09-2026.md` | — | Planned for Sprint 5 |
 | AUTH-10 | Done, not released | `3fd6ea27`; `01-10-2026.md` | Tri | — |
@@ -259,14 +258,14 @@ Status values: **Released** (on `origin/release` and live), **Done, not released
 | FE-09 | Released | `cd7816bf`, `ef2faff7`; weekly worklog week 2; Figure 9 | Tri | Started in week 1, finished in week 2 after team feedback |
 | FE-10 | Released | `bf9bb0d2`, `23e5e59a`, `59335e49`, `c89f9295`, `f2b21a7f`, `e4b17aad`, `ce1948b2` | Tony Lee | Some commits reached `release` through a mis-set upstream (see R-P7) |
 | FE-11 | Released | `3bb05e8c`, `50593a0b`, `53b3ff73`, `161badcd`, `c7524390`; Figure 8 | Tri | — |
-| FE-12 | Released | `885ec019`, `0fb60503`, `594437ab`; weekly worklogs weeks 1–2 | Tri | Dictation attribution to be agreed (open item 10) |
+| FE-12 | Released | `885ec019`, `0fb60503`, `594437ab`, `c89f9295`; `25-09-2026.md`; weekly worklogs weeks 1–2 | Tri, Tony Lee | Voice input was first built as a recorder, then replaced with browser dictation |
 | FE-13 | In progress | `9798a4f6`, `cda73fef` (on GitHub, not on `release`) | Tony Lee | Week 3 |
 | FE-14 | Blocked | `74c7e303` (project scaffold only); `docs/mobile-app-links.md` | Tri | No device build tools and no domain; planned for Sprint 5 |
 | FE-15 | Not started | — | — | Planned for Sprint 5 |
 | KIM-01 | Released | `20-05-2026.md` | Team | — |
 | KIM-02 | Released | `ec62f1b0`, `36f94493`, `659051de`; `29-06-2026.md` | Tri | CI image split in two after a disk overflow |
 | KIM-03 | Released | `31fd49eb`, `c7bf7e4d` | Tri | — |
-| KIM-04 | Released | `07a24ca1`, `189fc49f`, `bf00cd2e`, `4d28a612`; Figure 12 | Tri | Replaced the planned load balancer (see 7.4) |
+| KIM-04 | Released | `07a24ca1`, `189fc49f`, `bf00cd2e`, `4d28a612`; Figure 12 | Tri | Replaced the planned load balancer (see 4.4) |
 | KIM-05 | Released | `c4f3faf4`; `28-08-2026.md` (7 s request to done; 63,592-byte file) | Tri | Five failed deployments before it worked; cold start 5 minutes, not 38 seconds |
 | KIM-06 | Released | `1cdde23c`, `5eb08461`, `352e1cf8`; Figure 11 | Tri | — |
 | KIM-07 | Done, not released | `8b3b26c0`; `02-10-2026.md` | Tri | A first design (a "show movement" tool) reached only 50% and was dropped |
@@ -289,7 +288,7 @@ Status values: **Released** (on `origin/release` and live), **Done, not released
 | PLAT-06 | Released | `5071a530`, `d6893571`, `4c539c13` | Nguyen | — |
 | PLAT-07 | Released | `73219019` | Nguyen | — |
 
-### 6.3 Milestone timeline
+### 3.3 Milestone timeline
 
 | Date | Milestone | Epic | Who (git author) | Evidence |
 |---|---|---|---|---|
@@ -311,7 +310,7 @@ Status values: **Released** (on `origin/release` and live), **Done, not released
 | 27–29/08 | Motion queue, GPU test end to end, avatar plays the motion | Kimodo | Tri | `07a24ca1`, `c4f3faf4`, `1cdde23c` |
 | 29/08–05/09 | Hosted build broken for a week, then repaired | Process | — | `05-09-2026.md` |
 | 01–05/09 | Preferences, avatar background, website language | Frontend | Tri | `484bb327`, `fa8cd83e`, `32bb9c03` |
-| 12/09 | A day of uncommitted work lost and rebuilt | Process | — | see 8.2 |
+| 12/09 | A day of uncommitted work lost and rebuilt | Process | — | see 5.2 |
 | 14–15/09 | Agent out-of-memory failure fixed | Platform | Tri | `dc6ce970`; `14-09-2026.md` |
 | 15–18/09 | Security audit against OWASP ASVS 5.0 | Auth | Tri | branch `owasp-check` |
 | 23/09 | Avatar speaks on the live site | Platform | Tri | `132825e1`, `0fb60503` |
@@ -320,7 +319,7 @@ Status values: **Released** (on `origin/release` and live), **Done, not released
 | 29–30/09 | Thumbs up/down on each answer | Frontend | Tri | `161badcd`, `53b3ff73` |
 | 01–03/10 | Agent-context rounds 1–3 measured with probes V0–V7 | LangGraph | Tri | `39437717` … `1a0f62d3` |
 
-### 6.4 Metrics
+### 3.4 Metrics
 
 Commits per month (GitHub, merges excluded, duplicates removed; Figures 1 and 2):
 
@@ -357,7 +356,7 @@ Agent quality, probe V7 (51 questions; `02-10-2026-round3.md`, Figure 14):
 
 Across the earlier rounds, small talk that still pushed an exercise fell from 7 of 8 answers (V0) to 1 of 8 (V4-bis), against a target of 10% or less (`01-10-2026.md`).
 
-### 6.5 How the team worked together
+### 3.5 How the team worked together
 
 Rows show backlog items where the commits of more than one member build on each other.
 
@@ -370,13 +369,13 @@ Rows show backlog items where the commits of more than one member build on each 
 | PLAT-01, LG-06 | Nguyen: database moved to Neon (`d7851fb7`) | Tri: agent hosted in the same region (`069bb501`) |
 | FE-08 | Tri: lint backlog fix (`ee71f4a6`) | Tony Lee: last lint errors cleared (`2b3ea54a`) |
 
-### 6.6 Task board
+### 3.6 Task board
 
-`[Figure 4: Jira board.]` The Jira board does not contain all of the work in the table above. During this period the team recorded work in dated worklogs inside the repository (Figure 3), and these, together with the commit history, are the complete record. Section 8.2 explains why this happened and section 9 sets the action to fix it.
+`[Figure 4: Jira board.]` The Jira board does not contain all of the work in the table above. During this period the team recorded work in dated worklogs inside the repository (Figure 3), and these, together with the commit history, are the complete record. Section 5.2 explains why this happened and section 6 sets the action to fix it.
 
-## 7. Sprint review (critical review of the product)
+## 4. Sprint review (critical review of the product)
 
-### 7.1 Demonstration session
+### 4.1 Demonstration session
 
 | Date | Attendees | Format | Facilitated by |
 |---|---|---|---|
@@ -384,7 +383,7 @@ Rows show backlog items where the commits of more than one member build on each 
 
 `[Two or three sentences on how the session was run: agenda sent beforehand, who presented which part, how questions were handled, how feedback was recorded.]`
 
-### 7.2 What was demonstrated and what the client said
+### 4.2 What was demonstrated and what the client said
 
 | # | Feature shown | Shown by | Client feedback | Deliverable? (Y/N) | Follow-up (backlog ID) |
 |---|---|---|---|---|---|
@@ -393,7 +392,7 @@ Rows show backlog items where the commits of more than one member build on each 
 | 3 | | | | | |
 | 4 | | | | | |
 
-### 7.3 Plan against actual
+### 4.3 Plan against actual
 
 The plan below is the priority list the product owner set on 30/07 (`docs/tracking/status.md`). `[Add the Sprint 3 plan rows when the Sprint 3 report is available.]`
 
@@ -407,7 +406,7 @@ The plan below is the priority list the product owner set on 30/07 (`docs/tracki
 | `[TEAM]` | Backend sends the avatar's emotion | `[TEAM to confirm]` | | The reply-emotion setting was switched off at the start of the agent-context work (`39437717`) |
 | LG-08 | Agent-context quality gates | Rounds 1–3 done; four V7 gates missed | Not released | Grader retries rose from 3 to 7; redesign moved to Sprint 5 (LG-10) |
 
-### 7.4 Decisions that changed during the period
+### 4.4 Decisions that changed during the period
 
 | Decision | Original | Changed to | Reason |
 |---|---|---|---|
@@ -420,24 +419,24 @@ The plan below is the priority list the product owner set on 30/07 (`docs/tracki
 | Separating test and production sign-in | A switch that turned sign-in off | Each environment trusts its own user pool; no switch | A switch that disables sign-in should not exist in production code (`18-08-2026.md`) |
 | Database hosting | Local PostgreSQL | Neon, then moved to the agent's region | Hosted service; latency |
 
-### 7.5 Critical analysis
+### 4.5 Critical analysis
 
-**What is deliverable.** Everything marked "Released" in section 6.2 is on the `release` branch and running at the public address: 182 of 237 proposed story points. A user can sign in, chat, hear the answer, see a generated exercise on the avatar when the GPU is on, and rate the answer.
+**What is deliverable.** Everything marked "Released" in section 3.2 is on the `release` branch and running at the public address: 182 of 237 proposed story points. A user can sign in, chat, hear the answer, see a generated exercise on the avatar when the GPU is on, and rate the answer.
 
 **What is not yet deliverable, and why.**
 
 - *Finished but not released.* The agent-context work (LG-08), the tag-driven motion (KIM-07) and the live isolation test (AUTH-10) sit on the feature branch, 35 commits ahead of `release`. They are held back on purpose: probe V7 missed four gates, and releasing an agent that retries its safety check more often would be a step back for users.
-- *Audited but not fixed.* The security audit gave an honest baseline of 93 failing and 47 partial requirements out of 345. Finding them is progress, but the fixes are not deployed, and the audit branch is not yet on GitHub.
+- *Audited but not fixed.* The security audit gave an honest baseline of 93 failing and 47 partial requirements out of 345. Finding them is progress, but the fixes are still in progress on their own branch (AUTH-07) and are not deployed.
 - *Depends on a manual step.* Motion works only after someone starts the GPU and waits about five minutes. This is acceptable for a planned demo and not acceptable for a real user.
 - *Never tested on a device.* The mobile app project exists but no build has run on a phone. The responsive website is the working mobile option today.
 
-**What the plan got wrong.** Several early design choices were built and then removed (section 7.4). Each removal was correct, but each cost time. The common cause was deciding before measuring; section 8.2 analyses this.
+**What the plan got wrong.** Several early design choices were built and then removed (section 4.4). Each removal was correct, but each cost time. The common cause was deciding before measuring; section 5.2 analyses this.
 
 `[One paragraph on the client's feedback: which comments confirm the direction, which change priorities, and which backlog items they create.]`
 
-## 8. Retrospect (critical review of the process)
+## 5. Retrospect (critical review of the process)
 
-### 8.1 What went well
+### 5.1 What went well
 
 | Strength | Evidence |
 |---|---|
@@ -447,11 +446,11 @@ The plan below is the priority list the product owner set on 30/07 (`docs/tracki
 | Measuring before releasing | Voice measured live before it was switched on; agent changes measured with eleven probe runs (V0 to V7) |
 | Problems were written up, not hidden | `docs/auth-google-incident.md`, `14-09-2026.md`, `05-09-2026.md` |
 
-### 8.2 Process challenges and their causes
+### 5.2 Process challenges and their causes
 
 | Challenge | Root cause | Impact | How it was addressed | Process change |
 |---|---|---|---|---|
-| A full day of work was lost on 12/09 | The work stayed uncommitted all day in a working folder shared by several parallel sessions, and one of them ran a bulk restore | One day of voice-streaming work across backend, frontend and CI | 32 files were rebuilt from tool transcripts | Commit the same day on a feature branch; helpers may not run restore, reset or stash |
+| A full day of work was lost on 12/09 | The work stayed uncommitted all day in a working folder used for several tasks at once, and a bulk restore was run in it | One day of voice-streaming work across backend, frontend and CI | 32 files were rebuilt from local session logs | Commit the same day on a feature branch; no bulk restore, reset or stash in a shared working folder |
 | The feature branch on GitHub fell 18 commits behind | A shortcut (`git push origin HEAD:release`) deployed the work but updated only the `release` branch | Eleven separate changes had no review page and no backup | The branch was pushed and the shortcut banned | Five-step ship flow: commit, test, push the feature branch, merge into `release`, push `release` |
 | Nothing reached production from 29/08 to 05/09 | The repository was renamed, which left the hosting service connected to an old repository ID. The error message pointed to permissions, which hid the real cause | A week of finished work not visible to the client | The repository was reconnected | Check the hosted build after each release push and record the build number |
 | The hosted build broke three times on the same lockfile problem | Installing with a different npm version rewrote the lockfile, and merges brought the bad version back | Failed deployments | Node and npm pinned; `npm ci` only | The lockfile is never regenerated with a fresh install |
@@ -459,10 +458,10 @@ The plan below is the priority list the product owner set on 30/07 (`docs/tracki
 | The Jira board does not match the work done | *(to confirm)* The team logged work in the repository next to the code, so Jira became a second place to update and was skipped | The supervisor and client cannot see progress from the board | This report rebuilds the backlog from commits and worklogs | Every Sprint 5 item has a Jira key; board updated at each meeting |
 | Status documents misled the team | One long status file was updated by hand with no owner and no check against the live system | Time lost investigating things that were already done; a wrong note said data protection was inactive | A banner now points to the latest dated worklog | "Is it deployed?" is answered only from `origin/release` |
 | Features were built and then removed | The first design was fixed before cost and speed were measured (approval step, Celery, load balancer; cold start assumed 38 s, measured 5 minutes) | Rework | Re-plan (v2.4) with smaller steps | Each plan has a measuring step before the build |
-| One commit holds two members' work | Changes from two people were in the same working folder when the commit was made | Unclear individual contribution | Listed as an open item for this report | One author per commit; co-author line when pairing |
+| One commit holds two members' work | Changes from two people were in the same working folder when the commit was made | Unclear individual contribution | Both members report the shared item (FE-12) | One author per commit; name both members in the commit message when pairing |
 | Tests failed for the wrong reason on some machines | Different Python interpreters and missing local services between laptops | Eight false failures; time lost | The backend now prints its interpreter and missing packages at start | Run the suite with the documented interpreter before reporting a failure |
 
-### 8.3 Privacy and security review (Australian Privacy Principles)
+### 5.3 Privacy and security review (Australian Privacy Principles)
 
 The assistant handles conversations about injuries and exercise, which is health information and therefore sensitive information under the Privacy Act. No real patient data was used in development. `[TEAM to confirm]`
 
@@ -476,26 +475,26 @@ The assistant handles conversations about injuries and exercise, which is health
 | APP 11 — security of personal information | Unauthorised access to conversations | Sign-in on every API call; row-level security on six tables that fails closed; no switch to turn sign-in off; request limits; download links that expire; spoken audio cached per user and cleared at sign-out; ASVS 5.0 audit | 93 failing and 47 partial ASVS requirements to fix (AUTH-08) |
 | APP 12 and 13 — access and correction; deletion | A user may ask for their data or for its removal | Account-deletion routes exist but are switched off | Switch them on once they also remove the sign-in account `[TEAM to confirm]` |
 
-### 8.4 Team code of conduct and use of AI tools
+### 5.4 Team code of conduct
 
 | Rule from the team code of conduct | Followed? | Note |
 |---|---|---|
 | `[TEAM]` | | |
 | `[TEAM]` | | |
-| `[TEAM: statement on the use of AI coding assistants, in line with the unit rules]` | | |
+| `[TEAM]` | | |
 
-## 9. Lessons learned and actions for the next sprint
+## 6. Lessons learned and actions for the next sprint
 
 | # | Lesson from this sprint | What showed it | Action | Owner | When | How we know it is done |
 |---|---|---|---|---|---|---|
-| 1 | Work that is not on GitHub is not safe | A day of work lost on 12/09; 18 commits behind; `owasp-check` still local | Push `owasp-check` now; push the feature branch at the end of every working day | Tri; every member | Now; daily | `git rev-list --count origin/<branch>..<branch>` is 0 at the end of the day |
+| 1 | Work that is not on GitHub is not safe | A day of work lost on 12/09; the feature branch 18 commits behind on GitHub | Commit the same day and push the working branch at the end of every working day | Every member | Daily | `git rev-list --count origin/<branch>..<branch>` is 0 at the end of the day |
 | 2 | A release is not finished until the hosted build is green | A week with nothing reaching production | After each push to `release`, write the build number and result in the worklog | Whoever pushes | Every release | Every release entry in the worklog has a build number |
 | 3 | Measure first, then build | Cold start 38 s assumed, 5 minutes measured; load balancer built then removed | Every plan in `docs/plans/` has a "measured" line before the build steps | Plan author | From Sprint 5 | No plan is approved without it |
-| 4 | One place for task status | Jira did not match the work | Enter the Sprint 5 backlog in Jira with the IDs from section 4.4; update at each meeting | `[Scrum master]` | Sprint 5, week 1 | Jira "Done" equals the tracking table at the next report |
+| 4 | One place for task status | Jira did not match the work | Enter the Sprint 5 backlog in Jira with the IDs from section 1.4; update at each meeting | `[Scrum master]` | Sprint 5, week 1 | Jira "Done" equals the tracking table at the next report |
 | 5 | A status document must be dated and checked | The status file said production was blocked while it was live | Replace the body of the status file with a link to the latest worklog; correct the project notes that still list removed features | `[TEAM]` | Sprint 5, week 1 | The status file has no statement older than one sprint |
 | 6 | Deployment knowledge must be shared | One member holds AWS access | A second member performs the next release with the runbook | Tri and one other member | Sprint 5 | One release is completed by someone other than Tri |
 | 7 | A feature that needs a manual start will fail in a demo | GPU off by default, 5-minute cold start | Start the GPU 10 minutes before any demo; decide on automatic start (KIM-08) | Tri; Team | Next demo; Sprint 5 | Motion works on the first request in the next demo |
 | 8 | Safety changes need a number, not an opinion | The probe showed 0 unsupported doses but 7 grader retries | Run the 51-question probe before merging agent work to `release`; redesign the grader (LG-10) | Tri | Sprint 5 | Grader retries at or below 3; unsupported doses stay at 0 |
-| 9 | Each commit should have one author | Commit `c89f9295` holds two members' work | Commit own changes separately; add a co-author line when pairing | Every member | From now | No open attribution item in the next report |
+| 9 | Each commit should have one author | Commit `c89f9295` holds two members' work | Commit own changes separately; name both members in the commit message when pairing | Every member | From now | No open attribution item in the next report |
 | 10 | Privacy has to be designed before real users arrive | Health conversations, overseas servers, dictation through a third party | Write the privacy notice and consent step; make dictation opt-in | `[TEAM]` | Sprint 5 | Notice shown at sign-up; dictation off until accepted |
 | 11 | "Mobile" must be tested on a phone | No device build has run | Test the responsive site on two real phones; decide with the client whether the installed app stays in scope | `[TEAM]` | Sprint 5, week 2 | Test notes with screenshots from two devices |

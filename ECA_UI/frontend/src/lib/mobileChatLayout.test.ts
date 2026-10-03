@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { chatHeightLimit, chatRailTop, clampChatHeight, moveChatDrag } from './mobileChatLayout'
+import { chatHeightLimit, chatRailTop, clampChatHeight, dockRightInset, isLandscape, moveChatDrag } from './mobileChatLayout'
 
 describe('mobile conversation sizing', () => {
   it('allows intermediate sizes but never exceeds 35vh or goes below zero', () => {
@@ -63,5 +63,32 @@ describe('right-side mobile rail', () => {
       expect(railTop).toBeGreaterThanOrEqual(topInset + 8)
       expect(railTop + railHeight + 8).toBeLessThanOrEqual(dockTop)
     }
+  })
+})
+
+describe('landscape phone (audit 30-09)', () => {
+  it('is decided by the layout viewport, so a keyboard cannot flip a portrait phone', () => {
+    expect(isLandscape(667, 375)).toBe(true)
+    expect(isLandscape(390, 844)).toBe(false)
+  })
+
+  it('leaves the rail room beside the dock', () => {
+    // rail 52 px at 8 px from the edge, 8 px gap, minus the card's own 12 px margin
+    expect(dockRightInset(52)).toBe(56)
+    expect(dockRightInset(0)).toBe(4)
+  })
+
+  it('gives the messages far more room when the rail is beside the dock (measured 667x375)', () => {
+    const stacked = chatHeightLimit(375, 375, 118, 189)
+    const beside = chatHeightLimit(375, 375, 118, 0)
+    expect(stacked).toBeLessThan(60)
+    expect(beside).toBeCloseTo(375 * 0.35)
+  })
+
+  it('keeps a closed dock clear of the rail on a short screen (was a 37 px overlap)', () => {
+    const railHeight = 189
+    const closedDockTop = 245
+    const top = chatRailTop(0, 375, railHeight, closedDockTop)
+    expect(top + railHeight).toBeLessThanOrEqual(closedDockTop)
   })
 })

@@ -333,18 +333,60 @@ def _extract_tool_results(messages: list) -> str:
     return "\n\n".join(parts) if parts else ""
 
 
+def _classify_tool_result(content: str) -> str:
+    """'empty' | 'error' | 'hits' — the one rule both mode and logging use."""
+    # Empty result (D23: {found: false} or [])
+    if content in ("", "[]", "{}", '{"found": false}'):
+        return "empty"
+    if '"error"' in content:
+        return "error"
+    return "hits"
+
+
 def _has_tool_results(messages: list) -> bool:
     """Check if any ToolMessage has non-empty, non-error results."""
-    for m in _evidence_messages(messages):
-        content = str(m.content)
-        # Empty result (D23: {found: false} or [])
-        if content in ("", "[]", "{}", '{"found": false}'):
-            continue
-        # Error result
-        if '"error"' in content or '"error":' in content:
-            continue
-        return True
-    return False
+    return any(
+        _classify_tool_result(str(m.content)) == "hits"
+        for m in _evidence_messages(messages)
+    )
+
+
+def _top_similarity(content: str) -> float | None:
+    """Best `similarity` in a tool result, if it carries any.
+
+    kb_search's cutoff (`kb_min_similarity`, plan T5) is optional and may be
+    unset, so "hits" alone does not mean the library covered the question.
+    This number does, and it is what that cutoff should be tuned against.
+    """
+    import json
+    try:
+        data = json.loads(content)
+    except (json.JSONDecodeError, TypeError):
+        return None
+    rows = data.get("results") if isinstance(data, dict) else data
+    if not isinstance(rows, list):
+        return None
+    scores = [r["similarity"] for r in rows
+              if isinstance(r, dict) and isinstance(r.get("similarity"), (int, float))]
+    return max(scores) if scores else None
+
+
+def _evidence_summary(messages: list) -> list[dict]:
+    """One entry per tool call: why a turn refused, or what it answered from.
+
+    Tells a library gap (hits, low similarity) from a retrieval fault (error)
+    from a retriever that never searched (empty list).
+    """
+    summary = []
+    for m in messages:
+        if isinstance(m, ToolMessage):
+            content = str(m.content)
+            entry = {"tool": m.name, "status": _classify_tool_result(content)}
+            top = _top_similarity(content)
+            if top is not None:
+                entry["top_similarity"] = top
+            summary.append(entry)
+    return summary
 
 
 def _check_tool_ambiguous(messages: list) -> bool:
@@ -535,6 +577,7 @@ async def synthesizer_node(state: AgentState, config: RunnableConfig) -> dict:
         "mode": mode, "persona_id": persona_id,
         "tags": required_outputs,
         "query_preview": resolved_query[:80],
+        "evidence": _evidence_summary(state.get("messages", [])),
     })
 
     # ── Build prompts ─────────────────────────────────────────────────

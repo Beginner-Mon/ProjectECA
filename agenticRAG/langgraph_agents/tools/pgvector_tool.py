@@ -146,6 +146,7 @@ async def kb_search(query: str, top_k: int = 5) -> list[dict]:
 
         logger.info("kb_search_done", extra={
             "query": query[:80], "results": len(results),
+            "top_similarity": results[0]["similarity"] if results else None,
         })
         return results
 

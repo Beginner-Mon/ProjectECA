@@ -35,9 +35,9 @@ export default function ChatPanel({ hideInput = false, active = true }: { hideIn
   }, [messages, isTyping, stageLabel, active])
 
   return (
-    <div className={`flex flex-col h-full md:border-r border-border/40 ${hideInput ? 'bg-transparent' : 'bg-card relative z-10'}`}>
+    <div className={`flex flex-col h-full desktop:border-r border-border/40 ${hideInput ? 'bg-transparent' : 'bg-card relative z-10'}`}>
       {/* ── Header ── */}
-      <header className="hidden md:flex items-center gap-3 px-5 py-4 border-b border-border/40 bg-card shrink-0">
+      <header className="hidden desktop:flex items-center gap-3 px-5 py-4 border-b border-border/40 bg-card shrink-0">
         <div className="flex-1 min-w-0">
           <h1 className="text-sm font-semibold text-foreground tracking-tight">
             {t('chat.title')}
@@ -60,7 +60,7 @@ export default function ChatPanel({ hideInput = false, active = true }: { hideIn
 
       {/* ── Messages ── */}
       <ScrollArea className="flex-1 min-h-0 px-2">
-        <div className="pt-2 pb-0 md:pt-4 md:pb-0 space-y-1 md:space-y-2 max-w-full overflow-x-hidden">
+        <div className="pt-2 pb-0 desktop:pt-4 desktop:pb-0 space-y-1 desktop:space-y-2 max-w-full overflow-x-hidden">
           {isSwitching ? (
             <div className="flex flex-col items-center justify-center py-16 gap-2 text-muted-foreground">
               <Loader2 className="w-5 h-5 animate-spin" />
@@ -77,7 +77,7 @@ export default function ChatPanel({ hideInput = false, active = true }: { hideIn
 
               {/* typing / stage indicator — text pulse từ backend, không Loader2 */}
               {(isTyping || stageLabel) && (
-                <div className="px-3 md:px-5 py-2 md:py-3 animate-message-in">
+                <div className="px-3 desktop:px-5 py-2 desktop:py-3 animate-message-in">
                   {stageLabel ? (
                     <p className="text-xs text-muted-foreground italic animate-pulse">{stageLabel}</p>
                   ) : (

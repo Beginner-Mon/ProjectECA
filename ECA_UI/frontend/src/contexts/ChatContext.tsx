@@ -16,7 +16,7 @@ import { CLIP_ABORTED, SpeechClip, speechPlayer, unlockSpeechAudio } from '../li
 import { routeSpeechEvent } from '../lib/speechSource'
 import { createTurnLifecycle } from '../lib/turnLifecycle'
 import { pollMotionJob } from '../lib/motionJob'
-import { clearSessionPointer, readSessionPointer, stampSessionPointer } from '../lib/chatSession'
+import { clearSessionPointer, forgetMissingSession, readSessionPointer, stampSessionPointer } from '../lib/chatSession'
 import { useMotion } from '../hooks/useMotion'
 import { ChatContext, type ChatContextType, type SessionItem } from '../hooks/useChat'
 import { uiStringsFor, getGreetingForSlot, getTimeSlot, buildGreetingKey, type UiStrings } from '../lib/characterCopy'
@@ -280,10 +280,11 @@ export function ChatProvider({ children }: { children: ReactNode }) {
 
   /* ── Restore the conversation this browser was last in ──────────────────
    *
-   * Runs once on mount. A 404 is the normal case, not an error: a brand-new
-   * session id has no row until the first turn is written, so we simply keep
-   * the greeting. Anything else is logged and also falls back to the greeting —
-   * a failed restore must never leave the user staring at an empty panel. */
+   * Runs once on mount. A 404 means the pointer outlived its conversation — the
+   * turn that stamped it never finished writing — so the pointer is dropped
+   * (forgetMissingSession) and the greeting stays. Anything else is logged and
+   * also falls back to the greeting — a failed restore must never leave the
+   * user staring at an empty panel. */
   useEffect(() => {
     let cancelled = false
 
@@ -295,6 +296,7 @@ export function ChatProvider({ children }: { children: ReactNode }) {
       return
     }
     const sessionId = sessionIdRef.current
+    const restoreStartedAt = Date.now()
 
     ;(async () => {
       try {
@@ -367,7 +369,12 @@ export function ChatProvider({ children }: { children: ReactNode }) {
         })
       } catch (e) {
         const status = (e as { response?: { status?: number } }).response?.status
-        if (status !== 404) console.warn('[session] restore failed:', e)
+        if (status !== 404) {
+          console.warn('[session] restore failed:', e)
+        } else if (forgetMissingSession(sessionId, restoreStartedAt) && !cancelled) {
+          sessionIdRef.current = null
+          setActiveSessionId(null)
+        }
       } finally {
         if (!cancelled) setIsRestoring(false)
       }

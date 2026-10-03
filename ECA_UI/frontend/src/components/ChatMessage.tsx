@@ -100,7 +100,7 @@ export default function ChatMessage({ message, isStreaming }: ChatMessageProps) 
 
     const cleaned = message.content.replace(/<\/?evidence_citation>/g, '')
     return (
-      <div className="px-3 md:px-5 py-2 md:py-3 animate-message-in w-full max-w-full">
+      <div className="px-3 desktop:px-5 py-2 desktop:py-3 animate-message-in w-full max-w-full">
         <div className="prose dark:prose-invert prose-p:leading-relaxed prose-strong:text-foreground prose-headings:text-foreground prose-pre:bg-secondary/50 prose-pre:border prose-pre:border-border/40 max-w-none text-sm text-foreground/90">
           <ReactMarkdown remarkPlugins={[remarkGfm]}>{cleaned}</ReactMarkdown>
         </div>
@@ -117,7 +117,7 @@ export default function ChatMessage({ message, isStreaming }: ChatMessageProps) 
   }
 
   return (
-    <div className="group flex px-2 md:px-4 py-1 animate-message-in flex-row-reverse w-full max-w-full">
+    <div className="group flex px-2 desktop:px-4 py-1 animate-message-in flex-row-reverse w-full max-w-full">
       <div className="w-fit max-w-[80%]">
         {(message.content || !message.audioUrl) && (
           <div className="min-w-0 rounded-2xl px-3 py-2 text-sm leading-relaxed bg-primary text-primary-foreground">

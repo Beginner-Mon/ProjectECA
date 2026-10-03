@@ -83,7 +83,7 @@ export default function MobileChatDock({ chatOpen, onOpenChange, maxHeight, dock
   return (
     <div
       ref={dockRef}
-      className="dark block md:hidden fixed bottom-0 inset-x-0 z-40 bg-transparent"
+      className="dark block desktop:hidden fixed bottom-0 inset-x-0 z-40 bg-transparent"
       style={{ paddingBottom: 'calc(0.75rem + env(safe-area-inset-bottom, 0px))' }}
     >
       {/* Replay chips sit ABOVE the whole conversation frame — handle included —

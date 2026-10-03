@@ -133,6 +133,35 @@ export function readSessionPointer(now: number = Date.now(), storage?: Storage):
 }
 
 /**
+ * Forget a pointer the server says has no conversation behind it — unless a
+ * message was sent under it after `since`.
+ *
+ * The pointer is stamped when a message is SENT; the row is written when the
+ * turn FINISHES. A stream that dies in between (network drop, tab closed,
+ * Lambda timeout) leaves a pointer to a conversation that was never written,
+ * and every reload for the next two hours asked GET /sessions/{id} and got 404.
+ *
+ * `since` is the race. Sending is not blocked while the restore is in flight,
+ * and a message sent in that window re-stamps the same id; clearing it then
+ * would split one conversation in two.
+ *
+ * Returns whether it cleared, so the caller knows to drop its in-memory id too.
+ */
+export function forgetMissingSession(id: string, since: number, storage?: Storage): boolean {
+  const s = safeStorage(storage)
+  if (!s) return false
+  let parsed: unknown
+  try {
+    parsed = JSON.parse(s.getItem(SESSION_KEY) ?? 'null')
+  } catch {
+    return false
+  }
+  if (!isPointer(parsed) || parsed.id !== id || parsed.at > since) return false
+  clearSessionPointer(s)
+  return true
+}
+
+/**
  * Point at this conversation, and restart its clock.
  *
  * Called on every send, not only the first, so an active conversation never

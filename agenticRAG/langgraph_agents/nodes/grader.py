@@ -38,48 +38,95 @@ logger = get_logger("langgraph.grader")
 # ── Rule check functions (heuristic marker-based, NOT LLM — D31) ─────────
 
 def _has_danger_warning(text: str) -> bool:
-    """Check for danger/red-flag warning markers."""
-    patterns = [
-        r"(?:nguy hiểm|nghiêm trọng|khẩn cấp|dấu hiệu)",
-        r"(?:ngừng|dừng)\s*(?:tập|ngay|lập tức)",
-        r"(?:đi khám|gặp bác sĩ|chuyên gia y tế|cấp cứu)",
-        r"(?:chest pain|danger|warning|emergency|seek medical)",
+    """Check for a red-flag warning: it names the danger AND says what to do now.
+
+    Either half alone is ordinary text. "Dấu hiệu bạn tập đúng là…",
+    "Warning: 5-day streak" and "nên gặp bác sĩ" about a 3-month-old ache all
+    passed when any one keyword was enough — 5 of 11 answers without a warning,
+    measured 29/09 with scripts/eval_grader_rules.py.
+
+    An emergency instruction (cấp cứu, call 999, A&E) or ⚠ is enough on its own:
+    nobody writes those casually, and this tag only runs when the planner has
+    already seen a danger sign in the question.
+    """
+    if not text:
+        return False
+    emergency = [
+        r"(?:cấp cứu|gọi\s*(?:số\s*)?115|đến bệnh viện ngay|đi khám ngay)",
+        r"(?:(?:call|dial)\s*(?:999|911|112)|\bA&E\b|emergency (?:room|department|services|care)"
+        r"|seek (?:urgent|immediate|emergency) (?:medical )?(?:help|care|attention))",
         r"⚠",
     ]
-    return any(re.search(p, text, re.IGNORECASE) for p in patterns)
+    if any(re.search(p, text, re.IGNORECASE) for p in emergency):
+        return True
+    serious = (r"(?:nguy hiểm|nghiêm trọng|khẩn cấp|dấu hiệu|triệu chứng"
+               r"|danger|serious|warning|red flag|sign of|symptom|chest pain)")
+    act = (r"(?:(?:ngừng|dừng)\s*(?:tập|ngay|lập tức|lại)|đi khám|gặp bác sĩ|gặp chuyên gia"
+           r"|stop (?:exercising|immediately|right away|now)|see (?:a |your )?(?:doctor|gp))")
+    return bool(re.search(serious, text, re.IGNORECASE) and re.search(act, text, re.IGNORECASE))
 
 
 def _has_referral(text: str) -> bool:
-    """Check for referral/consultation recommendation."""
+    """Check for referral/consultation recommendation.
+
+    The last three patterns were added 29/09 for referrals the first two could
+    not see — "nên đi khám" with no doctor after it, "see your GP", "a
+    physiotherapist can assess", "go to A&E": 6 of 9 missed, measured with
+    scripts/eval_grader_rules.py. A miss here staples a second referral onto an
+    answer that already had one.
+    """
+    professional = r"(?:doctor|physician|specialist|gp|physio(?:therapist)?|(?:medical|healthcare|health) (?:professional|provider))"
     patterns = [
         r"(?:khuyên|nên|hãy)\s*(?:bạn\s*)?(?:đi khám|gặp|hỏi|tham khảo)\s*(?:ý kiến\s*)?(?:bác sĩ|chuyên gia|bác sĩ chuyên khoa|chuyên viên y tế)",
         r"(?:consult|see|visit|refer)\s*(?:a\s*)?(?:doctor|physician|specialist|medical professional)",
         r"(?:không thể|không đủ)\s*(?:chẩn đoán|kê đơn|điều trị)",
+        r"đi khám|gặp\s*(?:bác sĩ|chuyên gia|chuyên viên)|khám chuyên khoa|gọi\s*(?:số\s*)?115|cấp cứu",
+        rf"(?:consult|see|visit|talk to|speak to|ask)\s+(?:a|an|your|the)\s+{professional}"
+        r"|\bA&E\b|(?:call|dial)\s*(?:999|911|112)|emergency (?:department|room|services)|urgent care",
+        rf"{professional}\s+(?:can|could|should|will)\s+(?:assess|check|examine|diagnose|help)",
     ]
     return any(re.search(p, text, re.IGNORECASE) for p in patterns)
 
 
 def _has_disclaimer(text: str) -> bool:
-    """Check for wellness scope disclaimer."""
+    """Check for wellness scope disclaimer.
+
+    The last three patterns were added 29/09: "không thay thế lời khuyên của
+    bác sĩ", "not medical advice", "mình không thể chẩn đoán" — 4 of 6 missed,
+    measured with scripts/eval_grader_rules.py.
+    """
     patterns = [
         r"(?:tư vấn|hướng dẫn)\s*(?:wellness|sức khỏe|thể chất)",
         r"(?:không thay thế|không phải là)\s*(?:cho\s*(?:việc\s*)?)?(?:thăm\s*)?(?:khám|chẩn đoán|điều trị)\s*(?:lâm sàng|y tế|y khoa)",
         r"(?:tham khảo|chỉ mang tính)\s*(?:tham khảo|giáo dục)",
         r"(?:wellness|educational|informational)\s*(?:advice|purpose)",
         r"(?:không phải|không thể)\s*(?:thay thế|coi là)\s*(?:lời khuyên y tế|chẩn đoán)",
+        r"(?:chỉ là|chỉ mang tính)\s*(?:thông tin\s*)?tham khảo"
+        r"|không thay thế\s*(?:cho\s*)?(?:việc\s*)?(?:thăm\s*)?(?:lời khuyên|ý kiến|khám)[^.\n]{0,30}(?:bác sĩ|y tế|chuyên gia)",
+        r"not (?:a substitute for |a replacement for )?(?:professional )?medical advice"
+        r"|(?:does not|doesn't|cannot|can't) replace (?:a |your )?(?:doctor|medical|professional)",
+        # First person only: "bạn không thể chẩn đoán nếu chỉ dựa vào cảm giác" is advice, not scope.
+        r"(?:mình|tôi|em|trợ lý|AI)\s*(?:không thể|không được phép)\s*chẩn đoán|\bI\s*(?:cannot|can't)\s*diagnose",
     ]
     return any(re.search(p, text, re.IGNORECASE) for p in patterns)
 
 
 def _has_sets_reps_frequency(text: str) -> bool:
-    """Check for exercise protocol: sets + reps + frequency."""
+    """Check for exercise protocol: sets + reps + frequency.
+
+    Frequency must say per day/week. It used to accept a bare "10 lần", so
+    "Lặp lại 10 lần" satisfied reps AND frequency from the same two words
+    (measured 29/09, scripts/eval_grader_rules.py).
+    """
     has_sets_reps = bool(re.search(
-        r"\d+\s*(?:lần|hiệp|reps?|sets?|lần lặp)",
+        r"\d+\s*(?:lần|hiệp|reps?|repetitions?|sets?|lần lặp)",
         text, re.IGNORECASE,
     ))
     has_frequency = bool(re.search(
-        r"(?:\d+\s*(?:lần|buổi|ngày|tuần|times?|days?|week))|"
-        r"(?:mỗi ngày|hàng ngày|hằng ngày|mỗi tuần|hàng tuần|daily|weekly)",
+        r"(?:\d+\s*buổi)|"
+        r"(?:\d+\s*(?:lần|times?|ngày|days?)\s*(?:mỗi|một|/|a|per|each)\s*(?:ngày|tuần|day|week))|"
+        r"(?:mỗi ngày|hàng ngày|hằng ngày|mỗi tuần|hàng tuần|cách ngày|daily|weekly"
+        r"|every (?:day|other day|week)|per week|a week)",
         text, re.IGNORECASE,
     ))
     return has_sets_reps and has_frequency
@@ -112,25 +159,68 @@ def _has_ordered_steps(text: str) -> bool:
 
 
 def _has_contraindication(text: str) -> bool:
-    """Check for contraindication/warning section."""
-    patterns = [
-        r"(?:chống chỉ định|không nên|tránh|thận trọng|không áp dụng|không tập)",
-        r"(?:không dành cho|không phù hợp)\s*(?:người|ai|trường hợp)",
-        r"(?:contraindication|precaution|warning|do not|cannot|avoid|caution)",
-        r"(?:nếu bạn|nếu có|người bị)\s*(?:đau|viêm|thoát vị|loãng xương|tim|huyết áp)",
-    ]
-    return any(re.search(p, text, re.IGNORECASE) for p in patterns)
+    """Check that the answer says WHO should not do it: a condition or a group.
+
+    "không nên", "tránh", "avoid", "do not" on their own are technique tips
+    ("tránh nín thở", "avoid rushing") and matched almost every answer: 7 of
+    12 without a contraindication passed, measured 29/09 with
+    scripts/eval_grader_rules.py. Now the prohibition and the condition have
+    to be in the same sentence, unless the answer says "chống chỉ định" or
+    "not suitable for" outright.
+    """
+    if not text:
+        return False
+    explicit = (r"chống chỉ định|contraindicat|không (?:dành|phù hợp)\s*(?:cho|với)?\s*(?:người|ai|trường hợp)"
+                r"|not (?:suitable|recommended|safe) for")
+    if re.search(explicit, text, re.IGNORECASE):
+        return True
+    prohibit = (r"không nên|tránh|không tập|thận trọng|cẩn thận|ngừng"
+                r"|should ?n[o']t|must not|do not|don't|avoid|be careful|caution|stop")
+    condition = (r"người (?:bị|đang|có|mắc|cao tuổi|lớn tuổi)|mang thai|bà bầu|thoát vị|loãng xương"
+                 r"|huyết áp|tim mạch|bệnh tim|tiểu đường|viêm|chấn thương|phẫu thuật|gãy|sưng|nhiễm trùng"
+                 r"|people with|anyone with|if you (?:have|are)|pregnan|osteoporosis|hernia|blood pressure"
+                 r"|heart (?:condition|disease|problem)|diabet|injur|surgery|inflam|arthritis|fracture|symptom")
+    return any(
+        re.search(prohibit, s, re.IGNORECASE) and re.search(condition, s, re.IGNORECASE)
+        for s in re.split(r"[.!?\n]+", text)
+    )
+
+
+# Names that count as a source when they appear. Case-sensitive on purpose: a
+# name is capitalised, running text ("who", "bệnh viện") is not. A source
+# missing from this list costs one quality retry, never a wrong pass — extend
+# it when the knowledge base gains a source.
+_NAMED_SOURCE = (
+    r"\b(?:NHS|WHO|CDC|NIH|NIA|NICE|ACSM|AHA|HHS|AAOS|APTA)\b"
+    r"|National Health Service|World Health Organization|Cochrane|PubMed|Mayo Clinic"
+    r"|Bộ Y [Tt]ế|Tổ chức Y tế Thế giới|Physical Activity Guidelines"
+    r"|(?:Viện|Hiệp hội|Đại học|Bệnh viện)\s+[A-ZĐ]"
+    r"|\b(?:University|Institute|Association|Society|College|Journal) of [A-Z]"
+    r"|[A-Z][a-z]+ (?:University|Institute|Association|Society|Journal)\b"
+)
 
 
 def _has_source(text: str) -> bool:
-    """Check for citation/source reference."""
+    """Check for a NAMED source: an organisation, document, URL or dated study.
+
+    "theo" is not a citation on its own — it is "tiếp theo", "theo dõi",
+    "theo mình thấy" — and "dẫn" matched every "hướng dẫn". With both in the
+    list every Vietnamese answer passed: 6 of 6 without a source, measured
+    29/09 with scripts/eval_grader_rules.py.
+    """
+    if not text:
+        return False
     patterns = [
-        r"(?:nguồn|theo|trích|dẫn|tài liệu|tham khảo|source|reference|according to)",
-        r"\[[\d,]+\]",                          # [1], [1,2,3]
-        r"\([\w\s]+\s*\d{4}\)",                 # (Author 2024)
-        r"(?:https?://|www\.)",                  # URL
+        r"(?:https?://|www\.)",                                          # URL
+        r"\b[\w-]+(?:\.[\w-]+)*\.(?:gov|org|edu|int|uk|vn|com|net)\b",   # nhs.uk, moh.gov.vn
+        r"(?:nguồn|source|references?|trích từ)\s*:\s*\S",              # an explicit "Nguồn: …" label
+        r"\[\d+(?:,\s*\d+)*\]",                                          # [1], [1, 2]
+        r"\([^()]*\b(?:19|20)\d{2}\)",                                   # (Author 2024)
+        r"(?:nghiên cứu|study|trial|meta-analysis)[^.\n]{0,40}\b(?:19|20)\d{2}\b",
     ]
-    return any(re.search(p, text, re.IGNORECASE) for p in patterns)
+    if any(re.search(p, text, re.IGNORECASE) for p in patterns):
+        return True
+    return bool(re.search(_NAMED_SOURCE, text))
 
 
 def _has_motion_fields(text: str) -> bool:

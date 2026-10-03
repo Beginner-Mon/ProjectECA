@@ -83,7 +83,7 @@ export default function MobileChatDock({ chatOpen, onOpenChange, maxHeight, dock
   return (
     <div
       ref={dockRef}
-      className="dark block md:hidden fixed bottom-0 inset-x-0 z-40 bg-transparent"
+      className="dark block desktop:hidden fixed bottom-0 inset-x-0 z-40 bg-transparent"
       style={{ paddingBottom: 'calc(0.75rem + env(safe-area-inset-bottom, 0px))' }}
     >
       <div className="mobile-chat-conversation mx-3 bg-white border border-border/40 rounded-2xl p-2 flex flex-col">

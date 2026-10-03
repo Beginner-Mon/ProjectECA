@@ -30,7 +30,11 @@ export const DEFAULT_CAMERA_CONFIG: CameraConfig = {
   // Always off by design — lookAt follow fights manual pan (see field doc).
   followTarget: false,
   enableZoom: true,
-  minDistance: 1,
+  // 0.5 m (was 1 m, 30-09): the head view sat exactly on the old 1 m floor,
+  // so zooming in from it did nothing at all. The head preset now states its
+  // 1 m itself (CharacterViewer CAMERA_RESPONSIVE_PRESETS) instead of
+  // borrowing it from this clamp, so the default framing is unchanged.
+  minDistance: 0.5,
   maxDistance: 20,
   offsetX: 0,
   offsetY: 0,

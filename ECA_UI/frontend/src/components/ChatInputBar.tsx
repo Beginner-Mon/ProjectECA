@@ -64,8 +64,8 @@ export default function ChatInputBar({ embedded = false }: { embedded?: boolean 
   }
 
   return (
-    <div className={embedded ? 'bg-transparent shrink-0' : 'px-3 pb-3 pt-0 md:px-4 md:pb-4 md:pt-0 bg-transparent shrink-0'}>
-      <div className={`mobile-chat-composer flex flex-col gap-0 md:gap-3 transition-colors relative ${embedded ? 'bg-transparent' : 'bg-white md:bg-transparent border border-border/40 rounded-2xl p-2 md:focus-within:ring-1 md:focus-within:ring-primary/50 md:focus-within:border-primary/50'}`}>
+    <div className={embedded ? 'bg-transparent shrink-0' : 'px-3 pb-3 pt-0 desktop:px-4 desktop:pb-4 desktop:pt-0 bg-transparent shrink-0'}>
+      <div className={`mobile-chat-composer flex flex-col gap-0 desktop:gap-3 transition-colors relative ${embedded ? 'bg-transparent' : 'bg-white desktop:bg-transparent border border-border/40 rounded-2xl p-2 desktop:focus-within:ring-1 desktop:focus-within:ring-primary/50 desktop:focus-within:border-primary/50'}`}>
         {imageUrls.length > 0 && (
           <div className="flex gap-1.5 overflow-x-auto mx-1 p-2">
             {imageUrls.map((url, i) => (

@@ -152,6 +152,7 @@
     "chat": "Trò chuyện",
     "drag_to_reposition": "Kéo để di chuyển",
     "go_home": "Về trang chủ",
+    "support_kofi": "Mời mình ly cà phê",
     "motion": "Chuyển động",
     "profile_settings": "Hồ sơ & Cài đặt",
     "sessions": "Phiên"
@@ -208,5 +209,29 @@
     "load_error": "Không tải được nhân vật: {{error}}",
     "loading_avatar": "Đang tải avatar 3D...",
     "loading_catalog": "Đang tải danh sách nhân vật..."
+  },
+  "feedback": {
+    "cancel": "Hủy",
+    "char_count": "{{count}}/{{max}} ký tự",
+    "comment_label": "Còn điều gì khác không? (không bắt buộc)",
+    "comment_placeholder": "Đừng ghi thông tin cá nhân nhạy cảm",
+    "error_save": "Không lưu được phản hồi của bạn — thử lại nhé",
+    "modal_subtitle": "Lượt bình chọn của bạn đã được lưu. Thêm lý do giúp chúng tôi cải thiện — không bắt buộc.",
+    "modal_title": "Điều gì chưa ổn?",
+    "reason_label": "Lý do",
+    "reason_placeholder": "Chọn lý do…",
+    "reasons": {
+      "hard_to_follow": "Khó hiểu hoặc quá dài",
+      "incomplete": "Thiếu thông tin / chưa đủ chi tiết",
+      "incorrect": "Thông tin không chính xác",
+      "motion_issue": "Động tác 3D không đúng",
+      "not_relevant": "Không đúng trọng tâm câu hỏi",
+      "other": "Khác",
+      "unsafe": "Có thể không an toàn / gây chấn thương",
+      "voice_issue": "Giọng đọc có vấn đề",
+      "wrong_language": "Trả lời sai ngôn ngữ"
+    },
+    "submit": "Gửi",
+    "submitting": "Đang gửi..."
   }
 }

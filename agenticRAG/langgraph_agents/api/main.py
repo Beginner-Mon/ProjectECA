@@ -43,12 +43,14 @@ from langgraph_agents.api.crud_app import add_cors
 from langgraph_agents.api.motion_status import motion_status
 from langgraph_agents.api.routes_characters import router as characters_router
 from langgraph_agents.api.routes_crud import router as crud_router
+from langgraph_agents.api.routes_feedback import router as feedback_router
 from langgraph_agents.api.routes_preferences import router as preferences_router
 from langgraph_agents.api.schemas import (
     ChatRequest, TTSRequest,
 )
 from langgraph_agents.api.sse import encode_event, stream_response
 from langgraph_agents.graph import build_graph_async
+from langgraph_agents.sources import source_for_tool
 from langgraph_agents.nodes._persona_loader import (
     get_persona, get_ui_string, preload_personas_from_db,
 )
@@ -104,6 +106,30 @@ _STAGE_NODES = {
     "memory", "planner", "retriever_agent", "synthesizer",
     "grader", "error_handler",
 }
+
+
+def _stage_sources(node_output: dict) -> list[str]:
+    """Source ids (plan T2) agent này định tra, theo thứ tự gọi, không trùng.
+
+    Đọc từ tool_calls của AIMessage trong output của retriever_agent. Nguồn
+    không có stage_key (self, motion) không lên UI — nhãn trạng thái chỉ nói
+    về tra cứu.
+    """
+    seen: list[str] = []
+    for m in node_output.get("messages", []) or []:
+        calls = getattr(m, "tool_calls", None)
+        if isinstance(m, dict):
+            calls = m.get("tool_calls")
+        for tc in calls or []:
+            name = tc.get("name") if isinstance(tc, dict) else getattr(tc, "name", None)
+            if not name:
+                continue
+            src = source_for_tool(name)
+            if src is None or src.stage_key is None:
+                continue
+            if src.id not in seen:
+                seen.append(src.id)
+    return seen
 
 
 def tts_enabled() -> bool:
@@ -174,12 +200,23 @@ async def lifespan(application: FastAPI):
     # Character personas live in the DB (characters.persona) but get_persona is
     # synchronous, so they are read once here rather than per request. Returns 0
     # and logs when the DB is unreachable; personas/*.md then serve every lookup.
-    personas_loaded = await preload_personas_from_db()
+    # VVA_PERSONA_SOURCE=files skips this preload entirely so local development
+    # can try an un-synced persona straight from personas/*.md (the DB shadows
+    # the files, and a fresh persona is only synced right before ship).
+    persona_source = os.getenv("VVA_PERSONA_SOURCE", "db")
+    if persona_source == "files":
+        personas_loaded = 0
+        logger.info("persona_source_files", extra={
+            "event": "persona_source", "source": "files",
+        })
+    else:
+        personas_loaded = await preload_personas_from_db()
 
     logger.info("startup_complete", extra={
         "event": "lifespan_complete",
         "graph_loaded": _graph is not None,
         "personas_loaded": personas_loaded,
+        "persona_source": persona_source,
         "config_source": env_source(),
     })
     yield
@@ -204,6 +241,7 @@ def create_app() -> FastAPI:
     application.include_router(characters_router)
     application.include_router(crud_router)
     application.include_router(preferences_router)
+    application.include_router(feedback_router)
 
     @application.get("/health")
     async def health():
@@ -295,6 +333,11 @@ def create_app() -> FastAPI:
             logger.warning("stm_warmup_failed", extra={"error": str(exc)})
 
         state = {"messages": [], "errors": [], "retry_count": 0, "total_tokens": 0}
+        # Whose sheet this turn may read (plan T8b). Bound here — next to the
+        # config, not in auth — because the character comes from the request
+        # (catalog-validated persona_id), not from the token.
+        from langgraph_agents.db.postgres import bind_request_character
+        bind_request_character(req.persona_id)
         config = {"configurable": {
             "user_id": uid,
             "session_id": req.session_id,
@@ -555,6 +598,7 @@ async def _stream_chat(req, request_id, config, state, background_tasks, request
                                 job_id = job_payload.get("job_id")
                                 if job_id:
                                     final_state["motion_job_id"] = job_id
+                                    final_state["motion_prompt"] = job_payload.get("prompt")
                     except Exception as exc:
                         logger.warning("kimodo_job_id_capture_failed", extra={"error": str(exc)})
 
@@ -564,7 +608,10 @@ async def _stream_chat(req, request_id, config, state, background_tasks, request
                 extra: dict = {}
                 if node_name == "planner" and isinstance(node_output, dict):
                     extra["required_outputs"] = node_output.get("required_outputs")
+                    extra["needs_retrieval"] = node_output.get("needs_retrieval", False)
                     extra["needs_clarification"] = node_output.get("needs_clarification", False)
+                if node_name == "retriever_agent" and isinstance(node_output, dict):
+                    extra["sources"] = _stage_sources(node_output)
                 if node_name == "grader" and isinstance(node_output, dict):
                     extra["result"] = node_output.get("grader_result")
 
@@ -605,7 +652,21 @@ async def _stream_chat(req, request_id, config, state, background_tasks, request
     # Eager session write
     if final_state.get("final_answer"):
         try:
-            await write_session_turn(
+            # Turn context snapshot — written into the assistant
+            # row's extras.meta, never logged as-is. It exists so a 👎 vote can
+            # be traced back to request_id (→ CloudWatch) without a second
+            # table, and so ops SQL can group by persona/locale/grader result.
+            meta = {
+                "request_id": request_id,
+                "persona_id": req.persona_id,
+                "ui_locale": req.locale,
+                "output_mode": req.output_mode,
+                "web_search": req.web_search,
+                "required_outputs": final_state.get("required_outputs"),
+                "grader_result": final_state.get("grader_result"),
+                "latency_ms": int((time.time() - t0) * 1000),
+            }
+            assistant_message_id = await write_session_turn(
                 user_id=resolved_user_id,
                 session_id=req.session_id,
                 user_query=req.query,
@@ -613,8 +674,13 @@ async def _stream_chat(req, request_id, config, state, background_tasks, request
                 total_tokens=final_state.get("total_tokens", 0),
                 grader_result=final_state.get("grader_result", "pass"),
                 motion_job_id=final_state.get("motion_job_id"),
+                motion_prompt=final_state.get("motion_prompt"),
+                meta=meta,
             )
-            yield encode_event("session_persisted", {"session_id": req.session_id})
+            yield encode_event(
+                "session_persisted",
+                {"session_id": req.session_id, "assistant_message_id": assistant_message_id},
+            )
         except Exception as exc:
             logger.warning("session_persist_failed", extra={"error": str(exc)})
 

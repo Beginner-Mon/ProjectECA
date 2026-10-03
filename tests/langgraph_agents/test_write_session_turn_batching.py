@@ -39,10 +39,20 @@ class _FakeConn:
 
     def __init__(self):
         self.execute_calls: list[tuple[str, tuple]] = []
+        self.fetch_calls: list[tuple[str, tuple]] = []
 
     async def execute(self, query: str, *args):
         self.execute_calls.append((query, args))
         return "INSERT 0 1"
+
+    async def fetch(self, query: str, *args):
+        """The messages INSERT now uses RETURNING id, role (task T2) — rows
+        shaped like asyncpg Records, dict-like access only (`row["id"]`)."""
+        self.fetch_calls.append((query, args))
+        return [
+            {"id": "11111111-0000-0000-0000-000000000001", "role": "user"},
+            {"id": "22222222-0000-0000-0000-000000000002", "role": "assistant"},
+        ]
 
 
 class _FakeTransactionCM:
@@ -100,12 +110,16 @@ def fake_pg_and_stm(monkeypatch):
 @pytest.mark.asyncio
 async def test_write_session_turn_holds_one_transaction_two_queries(fake_pg_and_stm):
     """One `pg.transaction()` (was: up to three separate pg.execute() calls,
-    each opening its own), and within it exactly two queries — not three."""
+    each opening its own), and within it exactly two queries — not three.
+
+    The messages INSERT is a `.fetch()` (RETURNING id, role — task T2), not
+    `.execute()`, but it is still ONE statement in the SAME transaction, so
+    the total statement count (execute + fetch) is still 2."""
     from langgraph_agents.db.session_store import write_session_turn
 
     fake_pg = fake_pg_and_stm
 
-    await write_session_turn(
+    assistant_id = await write_session_turn(
         user_id="11111111-1111-1111-1111-111111111111",
         session_id="22222222-2222-2222-2222-222222222222",
         user_query="hello",
@@ -117,9 +131,14 @@ async def test_write_session_turn_holds_one_transaction_two_queries(fake_pg_and_
         "write_session_turn must hold ONE transaction, not open a new one "
         "per statement (that is the 6.5-7.9s bug this guards)"
     )
-    assert len(fake_pg.conn.execute_calls) == 2, (
-        "expected exactly 2 queries inside the held transaction "
-        "(users+conversations CTE, then messages)"
+    assert len(fake_pg.conn.execute_calls) == 1, (
+        "expected exactly 1 execute() (users+conversations CTE)"
+    )
+    assert len(fake_pg.conn.fetch_calls) == 1, (
+        "expected exactly 1 fetch() (messages INSERT ... RETURNING)"
+    )
+    assert assistant_id == "22222222-0000-0000-0000-000000000002", (
+        "must return the assistant row's id from the RETURNING clause"
     )
 
 
@@ -142,7 +161,8 @@ async def test_write_session_turn_query_order_and_conflict_clauses(fake_pg_and_s
         total_tokens=5,
     )
 
-    (users_conv_sql, users_conv_args), (messages_sql, messages_args) = fake_pg.conn.execute_calls
+    (users_conv_sql, users_conv_args) = fake_pg.conn.execute_calls[0]
+    (messages_sql, messages_args) = fake_pg.conn.fetch_calls[0]
 
     assert "INSERT INTO users" in users_conv_sql
     assert "ON CONFLICT (id) DO NOTHING" in users_conv_sql
@@ -182,7 +202,122 @@ async def test_write_session_turn_motion_job_id_on_assistant_row_only(fake_pg_an
         motion_job_id="job-abc-123",
     )
 
-    _, (messages_sql, messages_args) = fake_pg.conn.execute_calls
+    (messages_sql, messages_args) = fake_pg.conn.fetch_calls[0]
     # $1=session_id, $2=user_query, $3=assistant_answer, $4=total_tokens, $5=extras
     assert messages_args[-1] is not None
     assert "job-abc-123" in messages_args[-1]
+
+
+@pytest.mark.unit
+@pytest.mark.asyncio
+async def test_write_session_turn_motion_prompt_on_assistant_row_only(fake_pg_and_stm):
+    """extras JSONB carries motion.prompt (the Kimodo resolved_query) when
+    given, on the assistant row only — the user row's extras stays NULL,
+    same as motion_job_id."""
+    from langgraph_agents.db.session_store import write_session_turn
+
+    fake_pg = fake_pg_and_stm
+
+    await write_session_turn(
+        user_id="11111111-1111-1111-1111-111111111111",
+        session_id="22222222-2222-2222-2222-222222222222",
+        user_query="show me a stretch",
+        assistant_answer="here's one",
+        total_tokens=7,
+        motion_job_id="job-abc-123",
+        motion_prompt="squat movement",
+    )
+
+    (messages_sql, messages_args) = fake_pg.conn.fetch_calls[0]
+    assert "squat movement" in messages_args[-1]
+
+    fake_pg.conn.fetch_calls.clear()
+    await write_session_turn(
+        user_id="11111111-1111-1111-1111-111111111111",
+        session_id="22222222-2222-2222-2222-222222222222",
+        user_query="hello",
+        assistant_answer="hi there",
+        total_tokens=5,
+    )
+    (messages_sql, messages_args) = fake_pg.conn.fetch_calls[0]
+    assert messages_args[-1] is None, "no motion at all — extras still NULL"
+
+
+@pytest.mark.unit
+@pytest.mark.asyncio
+async def test_write_session_turn_meta_merged_into_assistant_extras(fake_pg_and_stm):
+    """`meta` (turn context snapshot, plan §4.A) lands next to "motion" in the
+    assistant row's extras JSONB, and the user row's extras stays NULL."""
+    from langgraph_agents.db.session_store import write_session_turn
+
+    fake_pg = fake_pg_and_stm
+
+    await write_session_turn(
+        user_id="11111111-1111-1111-1111-111111111111",
+        session_id="22222222-2222-2222-2222-222222222222",
+        user_query="show me a stretch",
+        assistant_answer="here's one",
+        total_tokens=7,
+        motion_job_id="job-abc-123",
+        meta={"request_id": "req-1", "persona_id": "anne", "latency_ms": 42},
+    )
+
+    (messages_sql, messages_args) = fake_pg.conn.fetch_calls[0]
+    extras = messages_args[-1]
+    assert extras is not None
+    assert '"meta"' in extras
+    assert '"motion"' in extras
+    assert "req-1" in extras
+
+
+@pytest.mark.unit
+@pytest.mark.asyncio
+async def test_write_session_turn_meta_only_no_motion(fake_pg_and_stm):
+    """meta without any motion still gets written — extras is not gated on
+    motion_job_id being present."""
+    from langgraph_agents.db.session_store import write_session_turn
+
+    fake_pg = fake_pg_and_stm
+
+    await write_session_turn(
+        user_id="11111111-1111-1111-1111-111111111111",
+        session_id="22222222-2222-2222-2222-222222222222",
+        user_query="hello",
+        assistant_answer="hi there",
+        total_tokens=5,
+        meta={"request_id": "req-2"},
+    )
+
+    (messages_sql, messages_args) = fake_pg.conn.fetch_calls[0]
+    extras = messages_args[-1]
+    assert extras is not None
+    assert '"meta"' in extras
+    assert '"motion"' not in extras
+
+
+@pytest.mark.unit
+@pytest.mark.asyncio
+async def test_write_session_turn_user_row_extras_always_none(fake_pg_and_stm):
+    """The user row's extras stays NULL regardless of motion/meta — both are
+    assistant-only, per the VALUES list ($1..$4 for the user row, $5 for the
+    assistant row's extras)."""
+    from langgraph_agents.db.session_store import write_session_turn
+
+    fake_pg = fake_pg_and_stm
+
+    await write_session_turn(
+        user_id="11111111-1111-1111-1111-111111111111",
+        session_id="22222222-2222-2222-2222-222222222222",
+        user_query="hello",
+        assistant_answer="hi there",
+        total_tokens=5,
+        motion_job_id="job-xyz",
+        meta={"request_id": "req-3"},
+    )
+
+    (messages_sql, messages_args) = fake_pg.conn.fetch_calls[0]
+    # The user row's extras is the literal NULL in the VALUES-list SQL text,
+    # not a bound parameter — it can never carry motion/meta, regardless of
+    # what the assistant row's $5 (messages_args[-1]) ends up holding.
+    assert "'user',      $2, NULL, NULL" in messages_sql
+    assert messages_args[-1] is not None  # assistant row DID get extras

@@ -56,10 +56,11 @@ async def test_write_session_turn_persists_motion_job_id_on_assistant_row_only()
             assistant_answer="here's a shoulder stretch",
             total_tokens=5,
             motion_job_id="abc123deadbeef",
+            motion_prompt="raise both arms overhead",
         )
 
         rows = await pg.fetch(
-            "SELECT role, motion_job_id FROM messages "
+            "SELECT role, motion_job_id, extras FROM messages "
             "WHERE session_id = $1::uuid ORDER BY seq_id",
             session_id,
         )
@@ -67,6 +68,7 @@ async def test_write_session_turn_persists_motion_job_id_on_assistant_row_only()
         assert rows[0]["role"] == "user" and rows[0]["motion_job_id"] is None
         assert rows[1]["role"] == "assistant"
         assert rows[1]["motion_job_id"] == "abc123deadbeef"
+        assert "raise both arms overhead" in rows[1]["extras"]
     finally:
         await pg.execute("DELETE FROM conversations WHERE session_id = $1::uuid", session_id)
         await pg.execute("DELETE FROM users WHERE id = $1::uuid", _to_uuid(user_id))
@@ -87,9 +89,15 @@ def test_write_session_turn_accepts_optional_motion_job_id_kwarg():
     assert "motion_job_id" in sig.parameters
     param = sig.parameters["motion_job_id"]
     assert param.default is None
-    # trailing: every parameter after it must also have a default (i.e. it
+    assert "motion_prompt" in sig.parameters
+    assert sig.parameters["motion_prompt"].default is None
+    # every parameter from motion_job_id onward must have a default (i.e. it
     # doesn't insert itself ahead of a required positional and break the
     # existing positional-style call in api/main.py — though that call site
     # uses kwargs, so this is a belt-and-suspenders check).
     names = list(sig.parameters)
-    assert names.index("motion_job_id") == len(names) - 1
+    start = names.index("motion_job_id")
+    for name in names[start:]:
+        assert sig.parameters[name].default is not inspect.Parameter.empty, (
+            f"{name} (after motion_job_id) has no default"
+        )

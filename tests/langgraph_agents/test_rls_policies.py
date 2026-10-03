@@ -233,3 +233,125 @@ async def test_app_role_cannot_write_system_tables(app_dsn_or_skip):
             await conn.execute("DELETE FROM characters WHERE slug = 'nonexistent'")
     finally:
         await conn.close()
+
+
+# ── Guards on migration 013_character_knowledge (plan T8b) ─────────────────
+
+
+_MIGRATION_013 = (
+    Path(__file__).resolve().parents[2]
+    / "agenticRAG" / "langgraph_agents" / "alembic" / "versions"
+    / "013_character_knowledge.py"
+)
+
+
+def _statements_013(direction: str = "upgrade") -> list[str]:
+    spec = importlib.util.spec_from_file_location("migration_013", _MIGRATION_013)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+
+    assert module.down_revision == "012_message_feedback", (
+        f"013 must revise 012_message_feedback, got {module.down_revision!r}"
+    )
+
+    captured: list[str] = []
+    with patch.object(module.op, "execute", side_effect=captured.append):
+        getattr(module, direction)()
+    return captured
+
+
+@pytest.mark.unit
+def test_013_character_policy_has_no_missing_ok_argument():
+    """`current_setting('app.character')` takes exactly one argument.
+
+    With a second argument of true, a turn that forgot bind_request_character()
+    would read NOBODY's sheet instead of erroring — or worse, silently match
+    nothing and let the model invent the character. Same rule as 007.
+    """
+    offenders = [
+        sql for sql in _statements_013()
+        if re.search(r"current_setting\(\s*'app\.character'\s*,", sql)
+    ]
+    assert not offenders, (
+        "current_setting('app.character') was given a second argument: "
+        f"{offenders}. Drop the argument."
+    )
+
+
+@pytest.mark.unit
+def test_013_character_knowledge_rls_and_select_only():
+    sql = "\n".join(_statements_013())
+    assert 'ALTER TABLE "character_knowledge" ENABLE ROW LEVEL SECURITY' in sql
+    assert "CREATE POLICY character_knowledge_owner" in sql
+    assert "FOR SELECT" in sql
+    grants = [s for s in _statements_013() if s.startswith("GRANT")]
+    on_table = [g for g in grants if '"character_knowledge"' in g]
+    assert on_table, "character_knowledge is never granted to the application role"
+    for grant in on_table:
+        for verb in ("INSERT", "UPDATE", "DELETE", "TRUNCATE"):
+            assert verb not in grant, (
+                f"character_knowledge is reference data, but the app is granted {verb}: {grant}"
+            )
+
+
+@pytest.mark.unit
+def test_013_downgrade_removes_what_upgrade_added():
+    down = "\n".join(_statements_013("downgrade"))
+    assert "DROP POLICY IF EXISTS character_knowledge_owner" in down
+    assert 'ALTER TABLE IF EXISTS "character_knowledge" DISABLE ROW LEVEL SECURITY' in down
+    assert "DROP TABLE IF EXISTS character_knowledge" in down
+
+
+# ── Against the database (needs H3: migration 013 on Neon) ─────────────────
+
+
+@pytest.mark.integration
+@pytest.mark.asyncio
+async def test_013_character_isolation_live(app_dsn_or_skip):
+    """anne không đọc được dòng của nhân vật khác; quên bind thì lỗi.
+
+    Seed bằng slug giả (__test_a/__test_b) dưới quyền owner rồi xóa sạch —
+    không động vào dữ liệu thật (Tri duyệt hình thức này).
+    """
+    import asyncpg
+
+    import os
+
+    owner_dsn = os.getenv("VVA_PG_DSN_OWNER")
+    if not owner_dsn:
+        pytest.skip("VVA_PG_DSN_OWNER not configured")
+
+    vec = "[" + ",".join(["0.0"] * 384) + "]"
+    owner = await asyncpg.connect(owner_dsn)
+    try:
+        for slug in ("__test_a", "__test_b"):
+            await owner.execute(
+                "INSERT INTO character_knowledge "
+                "(character_slug, kind, title, content, chunk_index, embedding) "
+                "VALUES ($1, 'sheet', 'T', 'c', 0, $2::vector)",
+                slug, vec,
+            )
+
+        app = await asyncpg.connect(app_dsn_or_skip)
+        try:
+            # Không bind → lỗi (policy không có missing_ok), không phải 0 dòng.
+            with pytest.raises(asyncpg.PostgresError):
+                await app.fetch("SELECT count(*) FROM character_knowledge")
+
+            # Bind __test_a → chỉ thấy dòng __test_a.
+            await app.execute("SELECT set_config('app.character', '__test_a', false)")
+            rows = await app.fetch(
+                "SELECT DISTINCT character_slug FROM character_knowledge")
+            assert [r["character_slug"] for r in rows] == ["__test_a"]
+
+            # Bind nhân vật khác → không thấy dòng __test_a.
+            await app.execute("SELECT set_config('app.character', '__test_b', false)")
+            rows = await app.fetch(
+                "SELECT DISTINCT character_slug FROM character_knowledge")
+            assert [r["character_slug"] for r in rows] == ["__test_b"]
+        finally:
+            await app.close()
+    finally:
+        await owner.execute(
+            "DELETE FROM character_knowledge WHERE character_slug IN ('__test_a', '__test_b')")
+        await owner.close()

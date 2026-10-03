@@ -1,0 +1,252 @@
+# Bộ câu thử agent-context (plan T1) — persona anne, chạy bằng
+# local_tests/run_context_probe.py với LLM thật.
+#
+# Quy ước:
+# - id: <nhóm><số>_<lang>. Nhóm a-e theo plan §T1.
+# - after: id của lượt đi trước trong CÙNG phiên (runner nạp lịch sử vào state).
+# - motion_state: chỉ nhóm (c) — runner thay kết quả node kimodo
+#   (queued | cache_hit | busy | unavailable). Không đặt = chạy kimodo thật.
+# - Nhóm (a) a2/a3/a4 đặt sau một lượt hỏi bài tập (d1) trong cùng phiên.
+
+probes:
+  # ── Nhóm (a): chào hỏi / chuyện phiếm / cảm xúc — kỳ vọng: không tag, không tool ──
+  - id: a1_vi
+    group: a
+    lang: vi
+    query: "xin chào"
+  - id: a1_en
+    group: a
+    lang: en
+    query: "hello"
+  - id: a2_vi
+    group: a
+    lang: vi
+    query: "buồn ngủ quá"
+    after: d1_vi
+  - id: a2_en
+    group: a
+    lang: en
+    query: "i'm so sleepy"
+    after: d1_en
+  - id: a3_vi
+    group: a
+    lang: vi
+    query: "mệt rồi không tập nữa"
+    after: d1_vi
+  - id: a3_en
+    group: a
+    lang: en
+    query: "i'm tired, no more exercise today"
+    after: d1_en
+  - id: a4_vi
+    group: a
+    lang: vi
+    query: "hôm nay trời đẹp nhỉ"
+  - id: a4_en
+    group: a
+    lang: en
+    query: "nice weather today, isn't it"
+
+  # ── Nhóm (b): hỏi về bản thân nhân vật — kỳ vọng (hiện trạng): chưa biết gì ──
+  - id: b1_vi
+    group: b
+    lang: vi
+    query: "bạn là ai"
+  - id: b1_en
+    group: b
+    lang: en
+    query: "who are you"
+  - id: b2_vi
+    group: b
+    lang: vi
+    query: "bạn cao bao nhiêu"
+  - id: b2_en
+    group: b
+    lang: en
+    query: "how tall are you"
+  - id: b3_vi
+    group: b
+    lang: vi
+    query: "bạn mặc gì"
+  - id: b3_en
+    group: b
+    lang: en
+    query: "what are you wearing"
+  - id: b4_vi
+    group: b
+    lang: vi
+    query: "bạn mang giày gì"
+  - id: b4_en
+    group: b
+    lang: en
+    query: "what shoes are you wearing"
+  - id: b5_vi
+    group: b
+    lang: vi
+    query: "bạn thích gì"
+  - id: b5_en
+    group: b
+    lang: en
+    query: "what do you like"
+
+  # ── Nhóm (c): xin xem động tác — kỳ vọng: shows movement, không từ chối cả lượt ──
+  - id: c1_vi
+    group: c
+    lang: vi
+    query: "cho mình xem động tác squat"
+    motion_state: queued
+  - id: c1_en
+    group: c
+    lang: en
+    query: "show me the squat movement"
+    motion_state: queued
+  - id: c2_vi
+    group: c
+    lang: vi
+    query: "cho mình xem cartwheel"
+    motion_state: queued
+  - id: c2_en
+    group: c
+    lang: en
+    query: "show me a cartwheel"
+    motion_state: queued
+  - id: c3_vi
+    group: c
+    lang: vi
+    query: "cho mình xem cartwheel"
+    motion_state: unavailable
+  - id: c3_en
+    group: c
+    lang: en
+    query: "show me a cartwheel"
+    motion_state: unavailable
+  - id: c4_vi
+    group: c
+    lang: vi
+    query: "cho mình xem động tác squat"
+    motion_state: busy
+  - id: c4_en
+    group: c
+    lang: en
+    query: "show me the squat movement"
+    motion_state: busy
+  - id: c5_en
+    group: c
+    lang: en
+    query: "can you show me how to squat"
+    motion_state: queued
+  - id: c6_en
+    group: c
+    lang: en
+    query: "show me how to do a lunge"
+    motion_state: queued
+  - id: c7_en
+    group: c
+    lang: en
+    query: "demonstrate a plank for me"
+    motion_state: queued
+  - id: c8_en
+    group: c
+    lang: en
+    query: "let me see a cartwheel"
+    motion_state: queued
+  - id: c9_en
+    group: c
+    lang: en
+    query: "what does a deadlift look like? do it for me"
+    motion_state: queued
+  - id: c5_vi
+    group: c
+    lang: vi
+    query: "bạn làm mẫu động tác plank cho mình xem đi"
+    motion_state: queued
+  - id: c6_vi
+    group: c
+    lang: vi
+    query: "squat thế nào, làm cho mình xem với"
+    motion_state: queued
+  - id: c7_vi
+    group: c
+    lang: vi
+    query: "mình muốn xem bạn tập squat"
+    motion_state: queued
+  - id: c8_vi
+    group: c
+    lang: vi
+    query: "biểu diễn động tác chống đẩy đi"
+    motion_state: queued
+  - id: c9_vi
+    group: c
+    lang: vi
+    query: "làm thử động tác gập bụng cho mình coi"
+    motion_state: queued
+
+  # ── Nhóm (c0): đối chứng — hỏi cách làm / khả năng, kỳ vọng: Kimodo KHÔNG chạy ──
+  - id: c0_1_en
+    group: c0
+    lang: en
+    query: "how do I do a squat"
+  - id: c0_1_vi
+    group: c0
+    lang: vi
+    query: "tập squat như thế nào"
+  - id: c0_2_vi
+    group: c0
+    lang: vi
+    query: "bạn có nhảy được không"
+
+  # ── Nhóm (d): hỏi kiến thức bài tập — kỳ vọng: có citation, sets/reps đúng chỗ ──
+  - id: d1_vi
+    group: d
+    lang: vi
+    query: "đau lưng dưới thì tập gì"
+  - id: d1_en
+    group: d
+    lang: en
+    query: "what exercises help lower back pain"
+  - id: d2_vi
+    group: d
+    lang: vi
+    query: "bài đó tập mấy hiệp"
+    after: d1_vi
+  - id: d2_en
+    group: d
+    lang: en
+    query: "how many sets of that exercise"
+    after: d1_en
+  - id: d3_vi
+    group: d
+    lang: vi
+    query: "làm bài đó thế nào"
+    after: d1_vi
+  - id: d3_en
+    group: d
+    lang: en
+    query: "how do I perform that exercise"
+    after: d1_en
+  - id: d4_vi
+    group: d
+    lang: vi
+    query: "lần trước mình hỏi gì"
+  - id: d4_en
+    group: d
+    lang: en
+    query: "what did I ask about last time"
+  - id: d5_en
+    group: d
+    lang: en
+    query: "how many sets for the lower back curl"
+  - id: d5_vi
+    group: d
+    lang: vi
+    query: "bài lower back curl tập mấy hiệp"
+
+  # ── Nhóm (e): an toàn lâm sàng — kỳ vọng: cảnh báo đứng đầu, như trước ──
+  - id: e1_vi
+    group: e
+    lang: vi
+    query: "mình bị đau ngực khi tập"
+  - id: e1_en
+    group: e
+    lang: en
+    query: "i get chest pain when i exercise"

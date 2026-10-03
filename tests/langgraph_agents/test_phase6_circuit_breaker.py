@@ -139,6 +139,11 @@ async def test_mcp_breaker_records_success_and_closes():
             assert len(tools) == 1
             assert mod._mcp_breaker.state == "closed"
 
+    # Dọn cache: fake_tool (MagicMock) không được rò sang test khác qua
+    # _mcp_tools toàn cục — S1 (test_tool_selector_descriptions) đọc
+    # description của mọi tool trong danh sách thật.
+    _reset_mcp_breaker()
+
 
 # ── Planner integration: BreakerOpen → clarify ──────────────────────
 

@@ -3,7 +3,13 @@ import { useTranslation } from 'react-i18next'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
 import { Copy, ThumbsUp, ThumbsDown, Volume2, Check, Pause, Square, Loader2 } from 'lucide-react'
-import { DEFAULT_PERSONA_ID } from '../lib/api'
+import {
+  DEFAULT_PERSONA_ID,
+  saveMessageFeedback,
+  clearMessageFeedback,
+  type FeedbackReason,
+  type MessageFeedback,
+} from '@/lib/api'
 import {
   CLIP_ABORTED,
   CLIP_UNDECODABLE,
@@ -14,6 +20,8 @@ import {
 } from '../lib/speechPlayer'
 import { cancelSpeech, liveSpeech, openSpeech } from '../lib/speechSource'
 import { useMotion } from '../hooks/useMotion'
+import { useChat } from '../hooks/useChat'
+import DislikeFeedbackModal from './feedback/DislikeFeedbackModal'
 
 export interface Message {
   id: string
@@ -52,6 +60,13 @@ export interface Message {
   motionExpiresAt?: string
   /** What the user asked for, so the replay picker can label it. */
   motionLabel?: string
+  /** The message's database id (from SSE `session_persisted.assistant_message_id`,
+   *  or from history). Absent for the greeting, the stream-error bubble, and
+   *  turns that haven't persisted yet — feedback buttons show only once this
+   *  is set. `id` above stays the client/React key and never changes to this. */
+  serverId?: string
+  /** The caller's saved vote on this message, when one exists. */
+  feedback?: MessageFeedback | null
 }
 
 interface ChatMessageProps {
@@ -96,12 +111,7 @@ export default function ChatMessage({ message, isStreaming }: ChatMessageProps) 
             {message.motionNotice}
           </p>
         )}
-        <AssistantActions
-          content={message.content}
-          speech={message.speech}
-          personaId={message.personaId}
-          isStreaming={isStreaming}
-        />
+        <AssistantActions message={message} isStreaming={isStreaming} />
       </div>
     )
   }
@@ -125,58 +135,147 @@ export default function ChatMessage({ message, isStreaming }: ChatMessageProps) 
   )
 }
 
-function AssistantActions({
-  content,
-  speech,
-  personaId,
-  isStreaming,
-}: {
-  content: string
-  speech?: SpeechClip
-  personaId?: string
-  isStreaming?: boolean
-}) {
+/**
+ * Copy, 👍/👎 and the speaker, under one assistant reply.
+ *
+ * The thumbs read their color from `message.feedback` (the server's saved
+ * vote), not local state — that is what makes the vote survive a reload or a
+ * session switch, where a fresh component mounts with the history's answer
+ * already in `message`. They render only once `message.serverId` is set: the
+ * greeting, the stream-error bubble and a turn that hasn't persisted yet have
+ * no row to vote on.
+ */
+function AssistantActions({ message, isStreaming }: { message: Message; isStreaming?: boolean }) {
   const { t } = useTranslation()
+  const { setMessageFeedback } = useChat()
+  const { content, speech, personaId, serverId, feedback, motionJobId, motionNotice } = message
   const { copied, handleCopy } = useCopy(content)
-  const [liked, setLiked] = useState(false)
-  const [disliked, setDisliked] = useState(false)
+  const [saving, setSaving] = useState(false)
+  const [error, setError] = useState<string | null>(null)
+  const [modalOpen, setModalOpen] = useState(false)
+  /** The reason-less 👎 save still in flight while the modal is open. */
+  const votePromiseRef = useRef<Promise<void> | null>(null)
 
   if (isStreaming) return null
 
-  const handleLike = () => {
-    setLiked((v) => !v)
-    if (!liked) setDisliked(false)
-  }
-
-  const handleDislike = () => {
-    setDisliked((v) => !v)
-    if (!disliked) setLiked(false)
-  }
+  const liked = feedback?.rating === 1
+  const disliked = feedback?.rating === -1
 
   const btnClass =
     'p-1 rounded-md text-muted-foreground hover:text-foreground hover:bg-secondary/60'
 
   const iconSize = 'size-4'
 
+  /**
+   * Optimistic vote change: apply `next` to context first, fire `call`, and on
+   * failure restore whatever was there before and show an inline error. `call`
+   * may return the server's own row (a POST) or nothing (a DELETE) — when it
+   * returns one, that replaces the optimistic guess, since a rating=+1 save
+   * also clears any old reasons/comment server-side.
+   */
+  const applyVote = async (
+    next: MessageFeedback | null,
+    call: () => Promise<MessageFeedback | void>,
+  ) => {
+    if (saving || !serverId) return
+    setError(null)
+    const previous = feedback ?? null
+    setMessageFeedback(serverId, next)
+    setSaving(true)
+    try {
+      const result = await call()
+      if (result) setMessageFeedback(serverId, result)
+    } catch {
+      setMessageFeedback(serverId, previous)
+      setError(t('feedback.error_save'))
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  const handleLike = () => {
+    if (!serverId) return
+    if (liked) {
+      void applyVote(null, () => clearMessageFeedback(serverId))
+    } else {
+      // Neutral or disliked before this click: either way a plain +1, with
+      // reasons/comment reset — the server does that reset itself, but the
+      // optimistic guess mirrors it so the color is right before it answers.
+      void applyVote({ rating: 1, reasons: [], comment: null }, () =>
+        saveMessageFeedback(serverId, { rating: 1 }),
+      )
+    }
+  }
+
+  const handleDislike = () => {
+    if (!serverId) return
+    if (disliked) {
+      void applyVote(null, () => clearMessageFeedback(serverId))
+      return
+    }
+    // The modal opens at once; a Neon round trip is ~1s and waiting for it
+    // made the box appear late. The vote is saved in the background and its
+    // promise kept, because the modal's submit must not overtake it.
+    setModalOpen(true)
+    votePromiseRef.current = applyVote({ rating: -1, reasons: [], comment: null }, () =>
+      saveMessageFeedback(serverId, { rating: -1 }),
+    )
+  }
+
+  const handleModalSubmit = async (reasons: FeedbackReason[], comment: string) => {
+    if (!serverId) return
+    // Wait for the reason-less save first (applyVote never rejects): if it
+    // landed after this POST, its upsert would wipe the reasons just sent.
+    await votePromiseRef.current
+    const result = await saveMessageFeedback(serverId, {
+      rating: -1,
+      reasons,
+      comment: comment || null,
+    })
+    // An upsert, so it also creates the row if the first save had failed.
+    setMessageFeedback(serverId, result)
+    setError(null)
+    setModalOpen(false)
+  }
+
   return (
-    <div className="flex items-center gap-1 mt-1.5">
-      <button className={btnClass} onClick={handleCopy} title={t('common.copy')}>
-        {copied ? <Check className={iconSize} /> : <Copy className={iconSize} />}
-      </button>
-      <button className={btnClass} onClick={handleLike} title={t('chat.like')}>
-        <ThumbsUp className={`${iconSize} ${liked ? 'text-green-500' : ''}`} />
-      </button>
-      <button className={btnClass} onClick={handleDislike} title={t('chat.dislike')}>
-        <ThumbsDown className={`${iconSize} ${disliked ? 'text-blue-500' : ''}`} />
-      </button>
-      <AudioButton
-        speech={speech}
-        personaId={personaId}
-        text={content}
-        btnClass={btnClass}
-        iconSize={iconSize}
-      />
-    </div>
+    <>
+      <div className="flex items-center gap-1 mt-1.5">
+        <button className={btnClass} onClick={handleCopy} title={t('common.copy')}>
+          {copied ? <Check className={iconSize} /> : <Copy className={iconSize} />}
+        </button>
+        {serverId && (
+          <>
+            <button className={btnClass} onClick={handleLike} disabled={saving} title={t('chat.like')}>
+              <ThumbsUp className={`${iconSize} ${liked ? 'text-green-500' : ''}`} />
+            </button>
+            <button className={btnClass} onClick={handleDislike} disabled={saving} title={t('chat.dislike')}>
+              <ThumbsDown className={`${iconSize} ${disliked ? 'text-blue-500' : ''}`} />
+            </button>
+          </>
+        )}
+        <AudioButton
+          speech={speech}
+          personaId={personaId}
+          text={content}
+          btnClass={btnClass}
+          iconSize={iconSize}
+        />
+      </div>
+      {error && <p className="mt-1 text-[0.7rem] text-destructive">{error}</p>}
+      {/* Mounted only while open, right after a fresh 👎 save — state always
+       *  starts empty, so there is nothing to re-seed from props. */}
+      {modalOpen && (
+        <DislikeFeedbackModal
+          // A motion was requested for this turn: either it already rendered
+          // (motionJobId) or is pending/unavailable/failed (motionNotice) —
+          // live turns mostly carry the latter, restored ones the former.
+          messageHasMotion={!!(motionJobId || motionNotice)}
+          onSubmit={handleModalSubmit}
+          onCancel={() => setModalOpen(false)}
+        />
+      )}
+    </>
   )
 }
 
@@ -276,11 +375,18 @@ function AudioButton({
    * spun and ~25 seconds of synthesis were thrown away, the button came back
    * as a plain speaker, and the next click paid for it all again. The request
    * now outlives this component (speechSource keeps it), so coming back finds
-   * it — still loading, or ready to play. */
-  useEffect(() => {
-    const found = liveSpeech(text, personaId || selectedVrmId || DEFAULT_PERSONA_ID)
+   * it — still loading, or ready to play.
+   *
+   * Done during render when the key changes rather than in an effect: React
+   * re-renders straight away instead of committing a frame without the clip. */
+  const speechPersona = personaId || selectedVrmId || DEFAULT_PERSONA_ID
+  const speechKey = `${speechPersona}\u0000${text}`
+  const [attachedKey, setAttachedKey] = useState<string | null>(null)
+  if (attachedKey !== speechKey) {
+    setAttachedKey(speechKey)
+    const found = liveSpeech(text, speechPersona)
     if (found) setOwnClip(found)
-  }, [text, personaId, selectedVrmId])
+  }
 
   const handleToggle = () => {
     // Before any await: Safari and iOS WebViews start an AudioContext only

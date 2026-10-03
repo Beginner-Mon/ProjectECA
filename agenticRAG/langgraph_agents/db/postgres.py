@@ -52,6 +52,26 @@ def current_request_user() -> Optional[str]:
     return _request_user_id.get()
 
 
+# Which character is speaking this turn (plan T8b). Same shape as the user
+# binding beside it: a ContextVar set once per request, read by transaction()
+# so every statement in the block carries both identities. The value is the
+# persona slug (e.g. "anne") — it comes from the catalog-validated request,
+# never from model output.
+_request_character: ContextVar[Optional[str]] = ContextVar(
+    "vva_request_character", default=None,
+)
+
+
+def bind_request_character(slug: str) -> None:
+    """Declare whose sheet the rest of this request may read."""
+    _request_character.set(slug)
+
+
+def current_request_character() -> Optional[str]:
+    """The bound character, or None outside a request."""
+    return _request_character.get()
+
+
 # One loader for the whole service. This module used to carry its own copy of
 # the search order, which is how "which .env wins" came to depend on import
 # order. See shared/env.py.
@@ -421,7 +441,18 @@ class PostgresClient:
 
         Uses `_raw_transaction`, not `transaction`: the latter routes back here
         for a bound user, which would be infinite.
+
+        When a character is bound (plan T8b), `app.character` rides in the SAME
+        SELECT — one statement, no extra round-trip.
         """
+        character = _request_character.get()
         async with self._raw_transaction() as conn:
-            await conn.execute("SELECT set_config('app.user_id', $1, true)", user_id)
+            if character is None:
+                await conn.execute("SELECT set_config('app.user_id', $1, true)", user_id)
+            else:
+                await conn.execute(
+                    "SELECT set_config('app.user_id', $1, true), "
+                    "set_config('app.character', $2, true)",
+                    user_id, character,
+                )
             yield conn

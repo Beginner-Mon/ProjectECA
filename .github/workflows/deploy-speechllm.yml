@@ -263,6 +263,24 @@ jobs:
 
           echo "::notice::${{ env.FUNCTION_NAME }} now runs ${{ github.sha }}"
 
+      # Noi cho CDK biet ban nao dang thuc su chay.
+      #
+      # Giong deploy-agent.yml: CDK so huu hinh dang, CI so huu code, nen
+      # template nho tag cua lan `cdk deploy` gan nhat va troi le dan. Mot
+      # `cdk deploy` chep tu runbook cu se lui ham ve ban cu - voi SpeechLLm
+      # thi do la mat ca HOME=/tmp va cache HF da de-symlink, tuc TTS cam han.
+      #
+      # speechllm_stack.py doc tham so nay khi khong co -c speechllm_image_tag.
+      # Ghi SAU khi update-function-code da xong: tham so khong bao gio duoc
+      # quang cao mot ban chua phuc vu.
+      - name: Record the deployed tag for CDK
+        if: steps.fn.outputs.exists == 'true'
+        run: |
+          set -euo pipefail
+          aws ssm put-parameter             --name /vva/speechllm/image-tag             --value "${{ github.sha }}"             --type String             --overwrite >/dev/null
+          echo "::notice::/vva/speechllm/image-tag = ${{ github.sha }}"
+
+
       # Smoke by STATE, not by invocation. Since T9 the CI role is Denied at
       # the resource policy — calling the function from here 403s by design,
       # so the old invocation-based smoke would fail on a healthy deploy.

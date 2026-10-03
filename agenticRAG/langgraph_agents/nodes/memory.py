@@ -57,7 +57,14 @@ _MEM_CFG = _load_memory_config()
 # on Lambda. The store reads REDIS_URL from the environment instead.
 _RECENT_RAW_MAX = 20          # max recent messages to load from cache/DB
 _SUMMARY_TOKEN_THRESHOLD = 10_000   # D13: single threshold for summarize trigger
-_STM_TOKEN_BUDGET = 1500      # max tokens for recent raw in context window
+_STM_TOKEN_BUDGET = 1500      # legacy default; use history_budget() instead (T11)
+
+
+def history_budget() -> int:
+    """Token budget for recent raw (plan T11: config `history`, thiếu = cũ)."""
+    from langgraph_agents.shared.context import context_budget
+
+    return context_budget("history")
 
 
 # ── Tier 1: user_memory facts (always-on, cheap, no vector search) ────────
@@ -165,8 +172,10 @@ async def _load_recent_raw_db(session_id: str, limit: int = _RECENT_RAW_MAX) -> 
         return []
 
 
-def _select_recent_raw(pairs: list[dict], budget: int = _STM_TOKEN_BUDGET) -> list[dict]:
+def _select_recent_raw(pairs: list[dict], budget: int | None = None) -> list[dict]:
     """Select recent messages from newest to oldest until token budget reached."""
+    if budget is None:
+        budget = history_budget()
     selected = []
     used = 0
     for msg in reversed(pairs):

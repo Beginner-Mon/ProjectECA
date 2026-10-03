@@ -11,6 +11,11 @@ Decisions encoded:
 from langgraph_agents.state import AgentState, ErrorSeverity
 
 
+def wants_motion(state: AgentState) -> bool:
+    """Kimodo runs when the planner says the user asked to see a movement."""
+    return "motion_descriptor" in (state.get("required_outputs") or [])
+
+
 def check_errors(state: AgentState) -> str:
     """After each node: route to error_handler if CRITICAL error exists."""
     for err in state.get("errors", []):
@@ -30,21 +35,22 @@ def route_after_memory(state: AgentState) -> str:
 
 # ── After planner — TWO INDEPENDENT PATHS ─────────────────────────────────
 # Path A: retriever gate (⟸ needs_retrieval)
-# Path B: Kimodo gate (⟸ needs_motion, hard edge)
+# Path B: Kimodo gate (⟸ motion_descriptor tag, hard edge)
 # Both can run in parallel (LangGraph fan-out)
 
 def route_after_planner(state: AgentState) -> str:
     """Planner → retriever_agent | kimodo | synthesizer | error_handler.
 
     Cổng RETRIEVER ⟸ needs_retrieval (D2).
-    Kimodo hard edge ⟸ needs_motion (D3, D26).
+    Kimodo hard edge ⟸ motion_descriptor tag (D3, D26, S2).
     Does NOT read required_outputs — those are for the grader gate (D15).
+    (Exception: the Kimodo edge reads the motion tag — routing, not grading.)
 
     Priority (single path — one conditional edge per node):
       1. CRITICAL error → error_handler
       2. needs_clarification → synthesizer (skip all)
       3. needs_retrieval → retriever_agent (may chain to kimodo after)
-      4. needs_motion (only) → kimodo
+      4. motion tag (only) → kimodo
       5. neither → synthesizer (chat/greeting/safety-only)
     """
     if check_errors(state) == "error_handler":
@@ -56,7 +62,7 @@ def route_after_planner(state: AgentState) -> str:
     if state.get("needs_retrieval"):
         return "retriever_agent"
 
-    if state.get("needs_motion"):
+    if wants_motion(state):
         return "kimodo"
 
     return "synthesizer"
@@ -68,13 +74,13 @@ MAX_RETRIEVER_ROUNDS = 2  # Hard cap: retriever_agent may run at most this many 
 
 
 def route_after_retriever(state: AgentState) -> str:
-    """Retriever → tools (more calls) | kimodo (if needs_motion) | synthesizer | error_handler.
+    """Retriever → tools (more calls) | kimodo (motion tag) | synthesizer | error_handler.
 
     Hard cap (P2): uses state.retriever_rounds (incremented by retriever_agent_node each
     execution). If rounds >= MAX_RETRIEVER_ROUNDS, force → synthesizer regardless of
     pending tool_calls. This is a hard per-turn ceiling — it covers both normal loops and
     grader-triggered retries (simplest choice: counter is never reset mid-turn).
-    After retrieval done: chain to kimodo if needs_motion (D26: motion after retrieval).
+    After retrieval done: chain to kimodo on the motion tag (D26: motion after retrieval).
     """
     if check_errors(state) == "error_handler":
         return "error_handler"
@@ -82,7 +88,7 @@ def route_after_retriever(state: AgentState) -> str:
     # Hard cap: if we've already hit the max rounds, skip to synthesizer
     retriever_rounds = state.get("retriever_rounds", 0)
     if retriever_rounds >= MAX_RETRIEVER_ROUNDS:
-        if state.get("needs_motion"):
+        if wants_motion(state):
             return "kimodo"
         return "synthesizer"
 
@@ -96,8 +102,8 @@ def route_after_retriever(state: AgentState) -> str:
     if last_has_tool_calls:
         return "tools"
 
-    # Retrieval done — chain to kimodo if motion needed (D26)
-    if state.get("needs_motion"):
+    # Retrieval done — chain to kimodo on the motion tag (D26)
+    if wants_motion(state):
         return "kimodo"
     return "synthesizer"
 

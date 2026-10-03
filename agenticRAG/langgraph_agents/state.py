@@ -45,9 +45,8 @@ class AgentState(TypedDict):
 
     # TRỤC 3: routing bits
     #   needs_retrieval → retriever gate (1 bit, not 3 tool flags — D2b)
-    #   needs_motion → Kimodo hard gate (D3, D26)
+    #   (S2: motion runs on the motion_descriptor tag — no second flag.)
     needs_retrieval: bool
-    needs_motion: bool
 
     # ── Clarify (static — planner detects missing info) ────────────────
     # Dynamic clarify (tool ambiguous) is handled by synthesizer — M.2b/D22

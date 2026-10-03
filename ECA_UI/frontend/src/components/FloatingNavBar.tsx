@@ -433,7 +433,12 @@ export default function FloatingNavBar() {
       if (
         target.closest('.floating-nav-bar') ||
         target.closest('.floating-panel') ||
-        target.closest('.confirm-dialog')
+        target.closest('.confirm-dialog') ||
+        // Portaled dialogs opened from inside a panel (e.g. the dislike
+        // feedback modal) render outside .floating-panel in the DOM tree and
+        // must not count as an outside click, or their first press closes
+        // the panel that opened them.
+        target.closest('[data-dialog-layer]')
       ) {
         return
       }
@@ -452,7 +457,12 @@ export default function FloatingNavBar() {
   
   let panelDimensionsClass = isHorizontal ? 'w-[360px] h-[480px]' : 'w-[360px] h-[520px]'
   if (activePanel === 'chat') {
-    panelDimensionsClass = isMiddleThird ? 'w-[600px] h-[400px]' : 'w-[360px] h-[600px]'
+    // Fixed size, not user-resizable. Between the original (400 / 600 px, ran
+    // off short laptop screens) and 26-09's (340 / 460, too small — Owner);
+    // max-h keeps it inside any window height.
+    panelDimensionsClass = isMiddleThird
+      ? 'w-[600px] h-[380px] max-h-[65vh]'
+      : 'w-[360px] h-[530px] max-h-[78vh]'
   }
   if (activePanel === 'avatars') {
     panelDimensionsClass = isHorizontal ? 'w-[400px] h-[540px]' : 'w-[400px] h-[580px]'

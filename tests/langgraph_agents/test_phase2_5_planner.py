@@ -9,6 +9,37 @@ from langgraph_agents.state import AgentState
 
 
 @pytest.mark.unit
+class TestPlannerPromptRules:
+    """Nhánh planner của T10 (Tri duyệt làm thêm): tag theo lượt hiện tại.
+
+    Hành vi thật do LLM quyết (đo ở probe V4-bis nhóm a); ở đây chốt prompt:
+    luật anti-carryover, ví dụ không lâm sàng, và không còn dòng gắn cả bó.
+    """
+
+    def test_prompt_forbids_carrying_previous_turn_tags(self):
+        from langgraph_agents.nodes.planner import _PLANNER_SYSTEM_PROMPT
+
+        assert "Never carry the previous turn's tags into this one" in _PLANNER_SYSTEM_PROMPT
+
+    def test_prompt_has_non_clinical_empty_examples(self):
+        from langgraph_agents.nodes.planner import _PLANNER_SYSTEM_PROMPT
+
+        assert '"i\'m sleepy"' in _PLANNER_SYSTEM_PROMPT
+        assert '"i\'m done exercising for today"' in _PLANNER_SYSTEM_PROMPT
+
+    def test_prompt_has_no_bundle_line(self):
+        from langgraph_agents.nodes.planner import _PLANNER_SYSTEM_PROMPT
+
+        assert "Exercise recommendation →" not in _PLANNER_SYSTEM_PROMPT
+
+    def test_tags_split_contain_vs_ask(self):
+        from langgraph_agents.nodes.planner import _PLANNER_SYSTEM_PROMPT
+
+        assert "what the reply will CONTAIN" in _PLANNER_SYSTEM_PROMPT
+        assert "what the user ASKS FOR" in _PLANNER_SYSTEM_PROMPT
+
+
+@pytest.mark.unit
 class TestPlanOutput:
     """Verify PlanOutput Pydantic model structure (M.1 3-axis)."""
 
@@ -17,7 +48,6 @@ class TestPlanOutput:
         assert plan.required_outputs == []
         assert plan.resolved_query == ""
         assert plan.needs_retrieval is False
-        assert plan.needs_motion is False
         assert plan.needs_clarification is False
 
     def test_3_axis_populated(self):
@@ -25,20 +55,17 @@ class TestPlanOutput:
             required_outputs=["exercise_protocol", "scope_disclaimer"],
             resolved_query="bai tap cho L4-L5",
             needs_retrieval=True,
-            needs_motion=False,
             needs_clarification=False,
         )
         assert len(plan.required_outputs) == 2
         assert "exercise_protocol" in plan.required_outputs
         assert plan.needs_retrieval is True
-        assert plan.needs_motion is False
 
     def test_json_mode_roundtrip(self):
         plan = PlanOutput(
             required_outputs=["red_flag_screen", "referral_advice"],
             resolved_query="dau nguc khi tap",
             needs_retrieval=False,
-            needs_motion=False,
         )
         d = plan.model_dump()
         plan2 = PlanOutput(**d)
@@ -73,9 +100,13 @@ class TestPlanOutput:
         assert "bai tap" in plan.resolved_query
         assert plan.required_outputs == []
 
-    def test_needs_motion_flag(self):
-        plan = PlanOutput(needs_motion=True, resolved_query="squat demo")
-        assert plan.needs_motion is True
+    def test_motion_runs_on_tag_not_flag(self):
+        """S2: không còn cờ needs_motion — motion_descriptor tag là cổng."""
+        from langgraph_agents.routing import wants_motion
+
+        plan = PlanOutput(required_outputs=["motion_descriptor"],
+                          resolved_query="squat demo")
+        assert wants_motion({"required_outputs": plan.required_outputs}) is True
         assert plan.needs_retrieval is False
 
     def test_needs_clarification_flag(self):
@@ -245,7 +276,6 @@ class TestPlanOutputSerialization:
             required_outputs=["exercise_protocol"],
             resolved_query="test",
             needs_retrieval=True,
-            needs_motion=False,
             needs_clarification=False,
         )
         json_str = plan.model_dump_json()

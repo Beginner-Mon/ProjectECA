@@ -31,6 +31,10 @@ export interface UiStrings {
   greeting: GreetingSlots
   placeholder: string
   stage_searching: string
+  stage_thinking: string
+  stage_recalling: string
+  stage_web: string
+  stage_video: string
   stage_composing: string
   error_stream: string
   /* Motion renders. The GPU worker is scaled to zero by default and switched on
@@ -63,7 +67,11 @@ export const FALLBACK_UI_STRINGS: Record<Locale, UiStrings> = {
       night: 'Still up at this hour? I am here if you need me.',
     },
     placeholder: 'Type a message...',
-    stage_searching: 'Searching...',
+    stage_searching: 'Searching the exercise library...',
+    stage_thinking: 'Thinking...',
+    stage_recalling: 'Recalling...',
+    stage_web: 'Searching the web...',
+    stage_video: 'Watching the video...',
     stage_composing: 'Writing a reply...',
     error_stream: 'Something went wrong. Please send that again.',
     motion_rendering: 'Building the movement...',
@@ -80,7 +88,11 @@ export const FALLBACK_UI_STRINGS: Record<Locale, UiStrings> = {
       night: 'Khuya rồi, bạn vẫn chưa ngủ à? Mình ở đây nhé.',
     },
     placeholder: 'Nhập tin nhắn...',
-    stage_searching: 'Đang tìm kiếm thông tin...',
+    stage_searching: 'Đang tìm trong thư viện bài tập...',
+    stage_thinking: 'Đang nghĩ...',
+    stage_recalling: 'Đang nhớ lại...',
+    stage_web: 'Đang tìm trên web...',
+    stage_video: 'Đang xem video...',
     stage_composing: 'Đang soạn câu trả lời...',
     error_stream: 'Đã có lỗi xảy ra. Bạn thử gửi lại nhé.',
     motion_rendering: 'Đang dựng động tác...',

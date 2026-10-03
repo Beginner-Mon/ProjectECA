@@ -48,6 +48,13 @@ def _has_danger_warning(text: str) -> bool:
     An emergency instruction (cấp cứu, call 999, A&E) or ⚠ is enough on its own:
     nobody writes those casually, and this tag only runs when the planner has
     already seen a danger sign in the question.
+
+    Task 3 (persona templates): the stop/check commands in Anne's and Bronya's
+    EN lines ("Stop there", "go get it checked", "needs a qualified
+    professional") are actions, so they sit in `act` and still need the danger
+    named — the templates do it with "This sign". On their own they would let
+    any "see a doctor" sign-off pass, which is the miss measured above.
+    "Stop me/here" and "dừng ở đây" match neither half (bảng âm tính).
     """
     if not text:
         return False
@@ -60,30 +67,53 @@ def _has_danger_warning(text: str) -> bool:
     if any(re.search(p, text, re.IGNORECASE) for p in emergency):
         return True
     serious = (r"(?:nguy hiểm|nghiêm trọng|khẩn cấp|dấu hiệu|triệu chứng"
-               r"|danger|serious|warning|red flag|sign of|symptom|chest pain)")
+               r"|danger|serious|warning|red flag|sign of|this sign|these signs|symptom|chest pain)")
     act = (r"(?:(?:ngừng|dừng)\s*(?:tập|ngay|lập tức|lại)|đi khám|gặp bác sĩ|gặp chuyên gia"
-           r"|stop (?:exercising|immediately|right away|now)|see (?:a |your )?(?:doctor|gp))")
+           r"|stop\s+(?:training|exercising|immediately|right away|now|there|the exercise)"
+           r"|see (?:a |your )?(?:doctor|gp)|(?:go\s+)?get\s+it\s+(?:checked|looked\s+at)"
+           r"|needs?\s+a\s+(?:doctor|qualified professional))")
     return bool(re.search(serious, text, re.IGNORECASE) and re.search(act, text, re.IGNORECASE))
 
 
 def _has_referral(text: str) -> bool:
     """Check for referral/consultation recommendation.
 
-    The last three patterns were added 29/09 for referrals the first two could
-    not see — "nên đi khám" with no doctor after it, "see your GP", "a
+    29/09 (three patterns after the base three): referrals those could not
+    see — "nên đi khám" with no doctor after it, "see your GP", "a
     physiotherapist can assess", "go to A&E": 6 of 9 missed, measured with
     scripts/eval_grader_rules.py. A miss here staples a second referral onto an
     answer that already had one.
+
+    Task 3: mỗi mẫu mới đòi CẢ HAI — một hành động/nhu cầu VÀ một đối tượng
+    y tế. Nhắc tới bác sĩ thôi ("My doctor friend likes squats") thì không đủ.
     """
     professional = r"(?:doctor|physician|specialist|gp|physio(?:therapist)?|(?:medical|healthcare|health) (?:professional|provider))"
+    _MEDICAL_OBJECT = r"(?:doctor|GP|physician|specialist|medical professional|health professional|bác sĩ|chuyên gia y tế)"
     patterns = [
         r"(?:khuyên|nên|hãy)\s*(?:bạn\s*)?(?:đi khám|gặp|hỏi|tham khảo)\s*(?:ý kiến\s*)?(?:bác sĩ|chuyên gia|bác sĩ chuyên khoa|chuyên viên y tế)",
         r"(?:consult|see|visit|refer)\s*(?:a\s*)?(?:doctor|physician|specialist|medical professional)",
         r"(?:không thể|không đủ)\s*(?:chẩn đoán|kê đơn|điều trị)",
+        # 29/09 (eval)
         r"đi khám|gặp\s*(?:bác sĩ|chuyên gia|chuyên viên)|khám chuyên khoa|gọi\s*(?:số\s*)?115|cấp cứu",
         rf"(?:consult|see|visit|talk to|speak to|ask)\s+(?:a|an|your|the)\s+{professional}"
         r"|\bA&E\b|(?:call|dial)\s*(?:999|911|112)|emergency (?:department|room|services)|urgent care",
         rf"{professional}\s+(?:can|could|should|will)\s+(?:assess|check|examine|diagnose|help)",
+        # Task 3: see/consult/consulting/visit + đối tượng y tế
+        # ("see a doctor", "consulting a doctor", "Go see a specialist").
+        r"(?:see|consult|consulting|visit)\s+(?:a\s+|the\s+)?" + _MEDICAL_OBJECT,
+        # Task 3: examined by / get checked by / go to + đối tượng y tế
+        # ("examined by a specialist").
+        r"(?:examined by|get checked by|go to)\s+(?:a\s+|the\s+)?" + _MEDICAL_OBJECT,
+        # Task 3: nhu cầu (needs) + đối tượng y tế.
+        r"needs?\s+(?:a\s+|the\s+)?" + _MEDICAL_OBJECT,
+        # Task 3: "specialist diagnosis is required" (Bronya EN) — nhu cầu
+        # dưới dạng bị động + chuyên gia.
+        r"(?:specialist|doctor|physician|GP)\s+diagnosis\s+is\s+required",
+        # Task 3: cần/nên + bác sĩ/chuyên gia (Bronya VI "Cần bác sĩ…").
+        r"(?:cần|nên)\s+(?:bác sĩ|chuyên gia)\b",
+        # Task 3: gặp/được + bác sĩ/chuyên gia … khám (Hatsune VI "gặp bác sĩ
+        # … được khám", Miki VI "được bác sĩ … khám").
+        r"(?:gặp|được)\s+(?:bác sĩ|chuyên gia)[\w\s]{0,40}?khám",
     ]
     return any(re.search(p, text, re.IGNORECASE) for p in patterns)
 
@@ -91,9 +121,10 @@ def _has_referral(text: str) -> bool:
 def _has_disclaimer(text: str) -> bool:
     """Check for wellness scope disclaimer.
 
-    The last three patterns were added 29/09: "không thay thế lời khuyên của
+    29/09 (three patterns after the base five): "không thay thế lời khuyên của
     bác sĩ", "not medical advice", "mình không thể chẩn đoán" — 4 of 6 missed,
-    measured with scripts/eval_grader_rules.py.
+    measured with scripts/eval_grader_rules.py. B2 (the rest): the personas'
+    own disclaimer lines, in both languages.
     """
     patterns = [
         r"(?:tư vấn|hướng dẫn)\s*(?:wellness|sức khỏe|thể chất)",
@@ -101,35 +132,60 @@ def _has_disclaimer(text: str) -> bool:
         r"(?:tham khảo|chỉ mang tính)\s*(?:tham khảo|giáo dục)",
         r"(?:wellness|educational|informational)\s*(?:advice|purpose)",
         r"(?:không phải|không thể)\s*(?:thay thế|coi là)\s*(?:lời khuyên y tế|chẩn đoán)",
+        # 29/09 (eval)
         r"(?:chỉ là|chỉ mang tính)\s*(?:thông tin\s*)?tham khảo"
         r"|không thay thế\s*(?:cho\s*)?(?:việc\s*)?(?:thăm\s*)?(?:lời khuyên|ý kiến|khám)[^.\n]{0,30}(?:bác sĩ|y tế|chuyên gia)",
         r"not (?:a substitute for |a replacement for )?(?:professional )?medical advice"
         r"|(?:does not|doesn't|cannot|can't) replace (?:a |your )?(?:doctor|medical|professional)",
         # First person only: "bạn không thể chẩn đoán nếu chỉ dựa vào cảm giác" is advice, not scope.
         r"(?:mình|tôi|em|trợ lý|AI)\s*(?:không thể|không được phép)\s*chẩn đoán|\bI\s*(?:cannot|can't)\s*diagnose",
+        # B2: "not (as) a replacement/substitute for … clinical/medical/
+        # doctor('s) examination/advice/diagnosis" (Anne/Bronya/Miki EN).
+        r"not\s+(?:as\s+)?a\s+(?:replacement|substitute)\s+for\s+"
+        r"(?:a\s+|an\s+|the\s+)?[\w\s']{0,40}?"
+        r"(?:clinical|medical|doctor(?:'s)?)\s+"
+        r"(?:examination|exam|advice|diagnosis|diagnoses|consultation)",
+        # B2: "does not replace … medical examination/diagnosis" (default EN).
+        r"(?:does not|doesn't|do not|don't|is not|isn't)\s+replace\s+"
+        r"[\w\s]{0,40}?(?:clinical|medical|professional)\s+"
+        r"(?:medical\s+)?(?:examination|exam|advice|diagnosis|diagnoses)",
+        # B2: "can't stand in for a doctor" (Hatsune EN).
+        r"(?:can't|cannot|can ?not)\s+stand in for a (?:doctor|physician)",
+        # B2: "không thay bác sĩ" (Hatsune VI).
+        r"không thay\s+(?:bác sĩ|chuyên gia)",
+        # B2: "chẩn đoán của bác sĩ" sau phủ định thay thế (Miki VI).
+        r"chẩn đoán của bác sĩ",
     ]
     return any(re.search(p, text, re.IGNORECASE) for p in patterns)
 
 
-def _has_sets_reps_frequency(text: str) -> bool:
-    """Check for exercise protocol: sets + reps + frequency.
+def _has_sets_reps(text: str) -> bool:
+    """Có số hiệp/lần (nửa đầu của _has_sets_reps_frequency — Task 4b)."""
+    return bool(re.search(
+        r"\d+\s*(?:lần|hiệp|reps?|repetitions?|sets?|lần lặp)",
+        text, re.IGNORECASE,
+    ))
+
+
+def _has_frequency(text: str) -> bool:
+    """Có tần suất (nửa sau của _has_sets_reps_frequency — Task 4b).
 
     Frequency must say per day/week. It used to accept a bare "10 lần", so
     "Lặp lại 10 lần" satisfied reps AND frequency from the same two words
     (measured 29/09, scripts/eval_grader_rules.py).
     """
-    has_sets_reps = bool(re.search(
-        r"\d+\s*(?:lần|hiệp|reps?|repetitions?|sets?|lần lặp)",
-        text, re.IGNORECASE,
-    ))
-    has_frequency = bool(re.search(
+    return bool(re.search(
         r"(?:\d+\s*buổi)|"
         r"(?:\d+\s*(?:lần|times?|ngày|days?)\s*(?:mỗi|một|/|a|per|each)\s*(?:ngày|tuần|day|week))|"
         r"(?:mỗi ngày|hàng ngày|hằng ngày|mỗi tuần|hàng tuần|cách ngày|daily|weekly"
         r"|every (?:day|other day|week)|per week|a week)",
         text, re.IGNORECASE,
     ))
-    return has_sets_reps and has_frequency
+
+
+def _has_sets_reps_frequency(text: str) -> bool:
+    """Check for exercise protocol: sets + reps + frequency."""
+    return _has_sets_reps(text) and _has_frequency(text)
 
 
 def _has_ordered_steps(text: str) -> bool:
@@ -455,6 +511,36 @@ def _grade_tags(final_answer: str, required_outputs: list[str]) -> dict:
 
 # ── Node ─────────────────────────────────────────────────────────────────
 
+def _evidence_text(messages: list) -> str:
+    """Văn bản evidence của lượt (Task 4b): nội dung các ToolMessage có nguồn
+    is_evidence=True — cùng ngữ nghĩa lọc với synthesizer._evidence_messages
+    (tool lạ không rõ nguồn vẫn được tính)."""
+    from langgraph_agents.sources import source_for_tool
+
+    parts = []
+    for m in messages:
+        if not isinstance(m, ToolMessage):
+            continue
+        src = source_for_tool(m.name or "")
+        if src is not None and not src.is_evidence:
+            continue
+        parts.append(str(m.content or ""))
+    return "\n".join(parts)
+
+
+def _grade_protocol_parts(answer: str, evidence_text: str) -> list[str]:
+    """Phần liều lượng mà evidence CÓ nhưng câu trả lời thiếu (Task 4b).
+
+    Trả [] khi evidence không ghi phần nào (tag không bị kiểm ở lượt đó) hoặc
+    khi câu trả lời đã đủ phần evidence có.
+    """
+    missing = []
+    if _has_sets_reps(evidence_text) and not _has_sets_reps(answer):
+        missing.append("sets_reps")
+    if _has_frequency(evidence_text) and not _has_frequency(answer):
+        missing.append("frequency")
+    return missing
+
 async def grader_node(state: AgentState, config: RunnableConfig) -> dict:
     """Tag-driven grader node — M.3.
 
@@ -479,7 +565,33 @@ async def grader_node(state: AgentState, config: RunnableConfig) -> dict:
         })
         return {"grader_result": "pass"}
 
-    result = _grade_tags(final_answer, required_outputs)
+    result = _grade_tags(final_answer, [t for t in required_outputs
+                                      if t != "exercise_protocol"])
+
+    # Task 4b: exercise_protocol chỉ bị đòi phần mà evidence có. Evidence
+    # không ghi phần nào → tag không bị kiểm ở lượt đó.
+    if "exercise_protocol" in required_outputs:
+        evidence_text = _evidence_text(state.get("messages", []))
+        ev_sets = _has_sets_reps(evidence_text)
+        ev_freq = _has_frequency(evidence_text)
+        if not ev_sets and not ev_freq:
+            logger.info("protocol_unsupported_by_evidence", extra={
+                "node": "grader",
+                "request_id": config["configurable"].get("request_id", "-"),
+            })
+        else:
+            missing = _grade_protocol_parts(final_answer, evidence_text)
+            if missing:
+                if "exercise_protocol" not in result["quality_missing"]:
+                    result["quality_missing"].append("exercise_protocol")
+                _, _, fb = TAG_RULES["exercise_protocol"]
+                piece = f"[exercise_protocol] {fb}"
+                result["feedback"] = (
+                    f"{result['feedback']} {piece}".strip()
+                    if result.get("feedback") else piece
+                )
+                if result["result"] == "pass":
+                    result["result"] = "retry"
 
     # The site language the user chose, not a guess at the answer's language.
     #

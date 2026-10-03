@@ -263,6 +263,79 @@ def test_sse_chat_emits_retriever_stage(api_client, monkeypatch):
     assert "planner" in nodes_seen
 
 
+# ── Stage sources (plan T6): nhãn trạng thái theo nguồn thật ─────────
+
+
+def _make_fake_astream_with_tool_calls(tool_names):
+    """retriever_agent yield AIMessage mang tool_calls cho trước."""
+    from langchain_core.messages import AIMessage
+
+    async def fake_stream(state, config, stream_mode=None):
+        yield ("updates", {"memory": {}})
+        yield ("updates", {"planner": {
+            "required_outputs": ["scope_disclaimer"],
+            "needs_retrieval": True,
+            "needs_clarification": False,
+        }})
+        calls = [{"name": n, "args": {}, "id": f"call-{i}",
+                  "type": "tool_call"}
+                 for i, n in enumerate(tool_names)]
+        yield ("updates", {"retriever_agent": {
+            "messages": [AIMessage(content="", tool_calls=calls)],
+        }})
+        yield ("updates", {"synthesizer": {
+            "final_answer": "Xong.",
+            "intent": "exercise_recommendation",
+            "total_tokens": 10,
+        }})
+
+    return fake_stream
+
+
+def _stage_data(api_client, mock_graph, tool_names):
+    from langgraph_agents.api.main import create_app  # noqa: F401 (giữ fixture)
+    client, _, _ = api_client
+    mock_graph.astream = _make_fake_astream_with_tool_calls(tool_names)
+    _set_graph(mock_graph)
+    resp = client.post("/chat", json={"query": "Bài tập cho đau lưng"})
+    assert resp.status_code == 200
+    events = _parse_sse_stream(resp.content)
+    return [e["data"] for e in events if e["event"] == "stage"]
+
+
+@pytest.mark.unit
+def test_planner_stage_carries_needs_retrieval(api_client, monkeypatch):
+    client, _, mock_graph = api_client
+    stages = _stage_data(api_client, mock_graph, ["kb_search"])
+    planner = next(s for s in stages if s.get("node") == "planner")
+    assert planner["needs_retrieval"] is True
+
+
+@pytest.mark.unit
+def test_retriever_stage_sources_library(api_client, monkeypatch):
+    client, _, mock_graph = api_client
+    stages = _stage_data(api_client, mock_graph, ["kb_search"])
+    ret = next(s for s in stages if s.get("node") == "retriever_agent")
+    assert ret["sources"] == ["library"]
+
+
+@pytest.mark.unit
+def test_retriever_stage_sources_memory_deduped_ordered(api_client, monkeypatch):
+    client, _, mock_graph = api_client
+    stages = _stage_data(api_client, mock_graph,
+                         ["memory_search", "kb_search", "memory_search"])
+    ret = next(s for s in stages if s.get("node") == "retriever_agent")
+    assert ret["sources"] == ["memory", "library"]
+
+
+@pytest.mark.unit
+def test_retriever_stage_sources_empty_without_tool_calls(api_client, monkeypatch):
+    client, _, mock_graph = api_client
+    stages = _stage_data(api_client, mock_graph, [])
+    ret = next(s for s in stages if s.get("node") == "retriever_agent")
+    assert ret["sources"] == []
+
+
 # ── Speech mode ────────────────────────────────────────────────────
 #
 # feature/tts-streaming: SpeechLLm now streams NDJSON lines
@@ -578,6 +651,71 @@ def test_sse_chat_session_persisted_before_done(api_client, monkeypatch):
         assert max(non_done_indices) < done_index
 
 
+@pytest.mark.unit
+def test_sse_chat_session_persisted_includes_assistant_message_id(api_client, monkeypatch):
+    """`session_persisted` must carry the assistant row's real id (task T2,
+    message-feedback plan §2.3) — the frontend attaches a 👍/👎 vote to it.
+    Also verifies the turn-context `meta` (plan §4.A) reaching
+    write_session_turn: request_id (so a vote traces back to CloudWatch logs)
+    and latency_ms, plus persona/locale passed straight from the request."""
+    client, _, mock_graph = api_client
+    mock_graph.astream = _make_fake_astream_stage_only()
+    _set_graph(mock_graph)
+
+    import langgraph_agents.api.main as api_module
+    captured = {}
+
+    async def fake_write(*args, **kwargs):
+        captured.update(kwargs)
+        return "11111111-2222-3333-4444-555555555555"
+
+    monkeypatch.setattr(api_module, "write_session_turn", fake_write)
+
+    resp = client.post(
+        "/chat",
+        json={"query": "Xin chào", "persona_id": "anne", "locale": "vi"},
+    )
+    events = _parse_sse_stream(resp.content)
+    persisted = next(e for e in events if e["event"] == "session_persisted")
+    assert persisted["data"]["assistant_message_id"] == (
+        "11111111-2222-3333-4444-555555555555"
+    )
+
+    meta = captured.get("meta")
+    assert meta is not None, "write_session_turn must be called with meta="
+    assert isinstance(meta.get("request_id"), str) and meta["request_id"]
+    assert isinstance(meta.get("latency_ms"), int)
+    assert meta.get("persona_id") == "anne"
+    assert meta.get("ui_locale") == "vi"
+
+
+@pytest.mark.unit
+def test_sse_chat_session_persisted_assistant_message_id_none_when_write_returns_none(
+    api_client, monkeypatch,
+):
+    """Backend-compat case: a write_session_turn that still returns None (e.g.
+    the old signature, or a caller that never got the RETURNING change) must
+    not crash the stream — assistant_message_id is simply null on the wire,
+    and the frontend already treats a missing id as "hide the thumb"."""
+    client, _, mock_graph = api_client
+    mock_graph.astream = _make_fake_astream_stage_only()
+    _set_graph(mock_graph)
+
+    import langgraph_agents.api.main as api_module
+
+    async def fake_write(*args, **kwargs):
+        return None
+
+    monkeypatch.setattr(api_module, "write_session_turn", fake_write)
+
+    resp = client.post("/chat", json={"query": "Xin chào"})
+    assert resp.status_code == 200
+    events = _parse_sse_stream(resp.content)
+    persisted = next(e for e in events if e["event"] == "session_persisted")
+    assert persisted["data"]["assistant_message_id"] is None
+    assert events[-1]["event"] == "done"
+
+
 # ── Session persist failure does not break stream ──────────────────
 
 
@@ -705,7 +843,9 @@ def _make_fake_astream_with_kimodo(kimodo_payload: dict):
 def test_kimodo_job_id_reaches_write_session_turn(api_client, monkeypatch, state):
     """queued/cache_hit job ids must be captured and passed through to persistence."""
     client, _, mock_graph = api_client
-    mock_graph.astream = _make_fake_astream_with_kimodo({"state": state, "job_id": "job-abc-123"})
+    mock_graph.astream = _make_fake_astream_with_kimodo(
+        {"state": state, "job_id": "job-abc-123", "prompt": "squat movement"}
+    )
     _set_graph(mock_graph)
 
     import langgraph_agents.api.main as api_module
@@ -721,6 +861,7 @@ def test_kimodo_job_id_reaches_write_session_turn(api_client, monkeypatch, state
     events = _parse_sse_stream(resp.content)
     assert events[-1]["event"] == "done"
     assert captured.get("motion_job_id") == "job-abc-123"
+    assert captured.get("motion_prompt") == "squat movement"
 
 
 @pytest.mark.unit
@@ -747,6 +888,7 @@ def test_kimodo_no_job_id_for_busy_or_unavailable(api_client, monkeypatch, state
     events = _parse_sse_stream(resp.content)
     assert events[-1]["event"] == "done"
     assert captured.get("motion_job_id") is None
+    assert captured.get("motion_prompt") is None
 
 
 @pytest.mark.unit

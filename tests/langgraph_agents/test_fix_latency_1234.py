@@ -708,7 +708,7 @@ class TestPlannerUsesGeminiCacheWhenWarm:
 
         fake_plan = PlanOutput(
             required_outputs=[], resolved_query="hello",
-            needs_retrieval=False, needs_motion=False, needs_clarification=False,
+            needs_retrieval=False, needs_clarification=False,
         )
         cached_model = MagicMock()
         cached_structured = MagicMock()

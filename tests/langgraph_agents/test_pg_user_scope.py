@@ -138,6 +138,62 @@ async def test_user_scope_runs_inside_a_transaction():
     assert pool.acquire.call_count == 1
 
 
+# ── bind_request_character (plan T8b) ───────────────────────────────────
+
+
+@pytest.mark.unit
+def test_bind_request_character_round_trip():
+    from langgraph_agents.db.postgres import (
+        bind_request_character,
+        current_request_character,
+    )
+
+    assert current_request_character() is None
+    bind_request_character("anne")
+    try:
+        assert current_request_character() == "anne"
+    finally:
+        bind_request_character(None)
+
+
+@pytest.mark.unit
+@pytest.mark.asyncio
+async def test_user_scope_sets_character_in_the_same_statement():
+    """app.character rides the same SELECT as app.user_id — no extra round-trip."""
+    from langgraph_agents.db.postgres import bind_request_character
+
+    client, _pool, conn = _client_with_fake_pool()
+    uid = "11111111-1111-1111-1111-111111111111"
+
+    bind_request_character("anne")
+    try:
+        async with client.user_scope(uid):
+            pass
+    finally:
+        bind_request_character(None)
+
+    conn.execute.assert_awaited_once()
+    sql, *params = conn.execute.await_args.args
+    assert "app.character" in sql
+    assert params == [uid, "anne"]
+
+
+@pytest.mark.unit
+@pytest.mark.asyncio
+async def test_user_scope_without_character_keeps_single_user_statement():
+    """Unbound character → the old one-GUC statement, unchanged."""
+    client, _pool, conn = _client_with_fake_pool()
+    uid = "11111111-1111-1111-1111-111111111111"
+
+    async with client.user_scope(uid):
+        pass
+
+    conn.execute.assert_awaited_once()
+    sql, *params = conn.execute.await_args.args
+    assert "app.character" not in sql
+    assert params == [uid]
+
+
 @pytest.mark.unit
 def test_no_other_api_sets_app_user_id():
     """user_scope must be the only way in.

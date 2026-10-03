@@ -37,6 +37,7 @@ DEFAULT_LANG = "en"
 # the user's language — the same way every other instruction in the prompt works.
 _CORE_SECTIONS = (
     "identity", "personality", "behavioral_rules", "response_formatting",
+    "exercise_rules",
 )
 
 # Sections the model IMITATES, or that are inserted verbatim into something a
@@ -137,11 +138,12 @@ def _safe_persona_file(persona_id: str, filename: str) -> Path:
     return resolved
 
 
-def _parse_sections(content: str) -> dict:
-    """Parse one markdown file into the section dict the rest of this module uses.
+def _split_headers(content: str) -> dict[str, str]:
+    """Split markdown into {header: body} on ## headers (plan T8a).
 
-    Shared by `_core.md` and the language overlays — they have the same shape and
-    differ only in which sections they are expected to carry.
+    The header loop that used to live inline in `_parse_sections`, shared so
+    `_shared/context.md` parses the same way persona files do. Pre-header text
+    goes under "identity", matching the old default.
     """
     sections: dict[str, str] = {}
     current_header = "identity"
@@ -159,6 +161,16 @@ def _parse_sections(content: str) -> dict:
 
     if current_body and current_header:
         sections[current_header] = "\n".join(current_body).strip()
+    return sections
+
+
+def _parse_sections(content: str) -> dict:
+    """Parse one markdown file into the section dict the rest of this module uses.
+
+    Shared by `_core.md` and the language overlays — they have the same shape and
+    differ only in which sections they are expected to carry.
+    """
+    sections = _split_headers(content)
 
     safety_raw = sections.pop("safety_templates", "")
     safety_templates = _parse_key_values(safety_raw)
@@ -218,6 +230,7 @@ def _parse_sections(content: str) -> dict:
         "voice": sections.get("voice", ""),
         "examples": sections.get("examples", ""),
         "behavioral_rules": sections.get("behavioral_rules", ""),
+        "exercise_rules": sections.get("exercise_rules", ""),
         "response_formatting": sections.get("response_formatting", ""),
         "safety_templates": safety_templates,
         "ui_strings": ui_strings,
@@ -423,7 +436,7 @@ async def preload_personas_from_db() -> int:
 _MODE_HINTS = {
     "chat":        "This turn is a casual greeting or general chat — be brief and warm.",
     "clarify":     "This turn is asking the user a clarification question — be concise and inviting.",
-    "refuse":      "This turn is refusing to answer (out of scope / no reliable sources) — be polite, explain why, and refer to a professional.",
+    "refuse":      "This turn is declining only the guidance it has no reliable source for — be polite, explain why for that part, and refer to a professional.",
     "synthesize":  "This turn is delivering factual content from retrieved sources — keep claims accurate, cite sources when available, and preserve all safety warnings verbatim.",
 }
 
@@ -508,6 +521,35 @@ def build_voice_card(persona: dict, mode: str) -> str:
     return "\n\n".join(parts)
 
 
+# Shared identity core (plan T8a): `_shared/context.md`, loaded once.
+# Prepended to a character's prompt ONLY when personas/<slug>/sheet.md exists.
+_shared_context: dict[str, str] | None = None
+
+
+def _load_shared_context() -> dict[str, str]:
+    """Parse `_shared/context.md` once; {} when absent (never raises)."""
+    global _shared_context
+    if _shared_context is None:
+        try:
+            path = _resolve_personas_dir() / "_shared" / "context.md"
+            _shared_context = _split_headers(path.read_text("utf-8"))
+        except (OSError, ValueError):
+            _shared_context = {}
+    return _shared_context
+
+
+def _persona_has_sheet(persona_id: str) -> bool:
+    """Whether personas/<slug>/sheet.md exists (no raise on missing)."""
+    if not re.fullmatch(r"[A-Za-z0-9_-]{1,64}", persona_id):
+        return False
+    try:
+        sheet = (_resolve_personas_dir() / persona_id / "sheet.md").resolve()
+        sheet.relative_to(_resolve_personas_dir().resolve())
+    except ValueError:
+        return False
+    return sheet.is_file()
+
+
 def build_persona_prompt(persona: dict, mode: str) -> str:
     """Build system prompt from persona sections for LLM styling/generation.
 
@@ -522,13 +564,30 @@ def build_persona_prompt(persona: dict, mode: str) -> str:
     voice = (persona.get("voice") or "").strip()
     voice_block = f"\n\n## How you speak\n{voice}" if voice else ""
 
-    return f"""You are {persona['identity']}
+    # Identity core (plan T8a): right after Identity, only for characters
+    # that have a sheet.md. No sheet → prompt byte-identical to before.
+    always_block = ""
+    if _persona_has_sheet(persona.get("persona_id", "")):
+        always = _load_shared_context().get("always", "").strip()
+        if always:
+            always_block = f"\n\n## Always\n{always}"
+
+    # Exercise rules (plan T10): prescription law lives here, loaded only
+    # when the turn is not casual chat. Personas without the section render
+    # as before (.get default).
+    exercise_block = ""
+    if mode != "chat":
+        exercise_rules = (persona.get("exercise_rules") or "").strip()
+        if exercise_rules:
+            exercise_block = f"\n\n## Exercise Rules\n{exercise_rules}"
+
+    return f"""You are {persona['identity']}{always_block}
 
 ## Your Personality
 {persona['personality']}{voice_block}
 
 ## Rules
-{persona['behavioral_rules']}
+{persona['behavioral_rules']}{exercise_block}
 
 ## Formatting
 {persona['response_formatting']}{hint_block}"""

@@ -34,7 +34,8 @@ class TestRetrieverRouting:
         from langchain_core.messages import AIMessage
         msg = AIMessage(content="motion needed", tool_calls=[])
         state: AgentState = {"messages": [msg], "errors": [], "retry_count": 0,
-                             "total_tokens": 0, "needs_motion": True}
+                             "total_tokens": 0,
+                             "required_outputs": ["motion_descriptor"]}
         result = route_after_retriever(state)
         assert result == "kimodo"
 
@@ -53,14 +54,15 @@ class TestRetrieverRouting:
     def test_route_after_retriever_or_tools_with_motion(self):
         from langgraph_agents.graph import route_after_retriever_or_tools
         state: AgentState = {"messages": [], "errors": [], "retry_count": 0,
-                             "total_tokens": 0, "needs_motion": True}
+                             "total_tokens": 0,
+                             "required_outputs": ["motion_descriptor"]}
         result = route_after_retriever_or_tools(state)
         assert result == "kimodo"
 
     def test_route_after_retriever_or_tools_no_motion(self):
         from langgraph_agents.graph import route_after_retriever_or_tools
         state: AgentState = {"messages": [], "errors": [], "retry_count": 0,
-                             "total_tokens": 0, "needs_motion": False}
+                             "total_tokens": 0, "required_outputs": []}
         result = route_after_retriever_or_tools(state)
         assert result == "synthesizer"
 
@@ -95,7 +97,8 @@ class TestPlannerRouting:
     def test_route_planner_needs_motion_only(self):
         from langgraph_agents.routing import route_after_planner
         state: AgentState = {"messages": [], "errors": [], "retry_count": 0,
-                             "total_tokens": 0, "needs_motion": True}
+                             "total_tokens": 0,
+                             "required_outputs": ["motion_descriptor"]}
         assert route_after_planner(state) == "kimodo"
 
     def test_route_planner_neither_to_synthesizer(self):

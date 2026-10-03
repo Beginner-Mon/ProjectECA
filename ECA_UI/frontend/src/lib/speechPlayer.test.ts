@@ -168,7 +168,7 @@ describe('SpeechPlayer measuring', () => {
       state: 'running',
       currentTime: 100,
       resume: async () => {},
-      decodeAudioData: async (_buf: ArrayBuffer) => ({ duration: 2.24 }),
+      decodeAudioData: async () => ({ duration: 2.24 }),
       createBufferSource: () => ({
         buffer: null,
         connect: () => {},

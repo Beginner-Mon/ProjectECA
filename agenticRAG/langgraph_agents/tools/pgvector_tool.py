@@ -28,6 +28,48 @@ logger = get_logger("langgraph.tools")
 # ── YouTube transcript cap (D28: budget ~3k tokens ≈ 12000 chars) ─────────
 _YT_CHAR_CAP = 12_000
 
+# Nguồn thuộc thư viện tra cứu (plan T5, mở rộng B5). Trùng SOURCE_TYPE
+# trong scripts/ingest_kb_pgvector.py:81 — đổi một trong hai mà quên bên còn
+# lại thì kb_search trả rỗng (không lỗi, D23) và mọi lượt lâm sàng thành refuse.
+# nhs_uk (49 đoạn) có nhãn riêng ở sources.KB_SOURCE_TYPE_LABELS, không gộp
+# vào tên thư viện ECA. source_type khác vẫn bị loại ngay ở WHERE này.
+LIBRARY_SOURCE_TYPES = ("exercise_db", "nhs_uk")
+
+
+def _retrieval_threshold(key: str) -> float | None:
+    """Một ngưỡng similarity trong `langgraph.retrieval` (plan T5/T8e).
+
+    None = không lọc (hành vi cũ). Giá trị do số đo quyết, không đoán.
+    """
+    try:
+        import yaml
+        from pathlib import Path
+
+        config_path = Path(__file__).resolve().parents[3] / "config" / "langgraph.yaml"
+        if not config_path.exists():
+            return None
+        with open(config_path, "r", encoding="utf-8") as f:
+            cfg = yaml.safe_load(f) or {}
+        value = (cfg.get("langgraph", {}) or {}).get("retrieval", {}) or {}
+        threshold = value.get(key)
+        return float(threshold) if threshold is not None else None
+    except Exception:
+        return None
+
+
+def _kb_min_similarity() -> float | None:
+    """Ngưỡng similarity cho kb_search, từ config (plan T5).
+
+    None = không lọc (hành vi cũ). Giá trị do số đo T1 quyết — phân bố (c) và
+    (d) chồng lấn nên hiện chưa đặt trong config; chỉ lọc khi Tri chốt số.
+    """
+    return _retrieval_threshold("kb_min_similarity")
+
+
+def _self_min_similarity() -> float | None:
+    """Ngưỡng riêng cho recall_self (plan T8e). None = không lọc."""
+    return _retrieval_threshold("self_min_similarity")
+
 
 def _to_uuid(value: str) -> str:
     """Coerce user-supplied string into a deterministic UUID."""
@@ -42,7 +84,12 @@ def _to_uuid(value: str) -> str:
 # kb_search — public knowledge base (kb_embeddings table)
 # ═══════════════════════════════════════════════════════════════════════════
 
-@tool
+@tool(description=(
+    "Search ECA's exercise and health knowledge base. Use for questions "
+    "about exercises, stretches, anatomy, physiotherapy techniques and "
+    "health facts. The knowledge base is written in English: write the query "
+    "in English, using the name of the exercise, muscle or joint."
+))
 async def kb_search(query: str, top_k: int = 5) -> list[dict]:
     """Search the internal PT/wellness knowledge base.
 
@@ -74,12 +121,16 @@ async def kb_search(query: str, top_k: int = 5) -> list[dict]:
                    d.source_type, d.title
             FROM kb_embeddings ke
             JOIN documents d ON ke.document_id = d.id
+            WHERE d.source_type = ANY($3)
             ORDER BY ke.embedding <=> $1
             LIMIT $2
             """,
             query_vec,
             top_k,
+            list(LIBRARY_SOURCE_TYPES),
         )
+
+        min_sim = _kb_min_similarity()
 
         results = [
             {
@@ -90,6 +141,7 @@ async def kb_search(query: str, top_k: int = 5) -> list[dict]:
                 "chunk_index": r["chunk_index"],
             }
             for r in rows
+            if min_sim is None or float(r["similarity"]) >= min_sim
         ]
 
         logger.info("kb_search_done", extra={
@@ -107,7 +159,12 @@ async def kb_search(query: str, top_k: int = 5) -> list[dict]:
 # memory_search — user's past session summaries (summaries table, 2-step)
 # ═══════════════════════════════════════════════════════════════════════════
 
-@tool
+@tool(description=(
+    "Search this user's earlier conversations with you. Use when the user "
+    "refers back to something said before, names a past time (last week, "
+    "yesterday), or asks you to repeat something. `since_days` limits the "
+    "search to recent days."
+))
 async def memory_search(
     query: str,
     since_days: Optional[int] = None,
@@ -228,7 +285,10 @@ async def memory_search(
 # resume_last_session — tool riêng cho "tiếp tục session vừa rồi" (M.6)
 # ═══════════════════════════════════════════════════════════════════════════
 
-@tool
+@tool(description=(
+    "Load the user's most recent earlier session. Use when the user wants "
+    "to continue where they left off, rather than recall one fact."
+))
 async def resume_last_session(
     since_days: Optional[int] = None,
     config: RunnableConfig = None,
@@ -353,7 +413,11 @@ async def resume_last_session(
 # youtube_transcript — fetch spoken transcript of a YouTube video (no DB write)
 # ═══════════════════════════════════════════════════════════════════════════
 
-@tool
+@tool(description=(
+    "Fetch the spoken transcript of a YouTube video. Use when the user's "
+    "message contains a YouTube link; pass the URL exactly as written. "
+    "Speech only: it does not see the video."
+))
 async def youtube_transcript(url: str) -> dict:
     """Fetch the spoken transcript of a YouTube video the user pasted.
 
@@ -403,6 +467,77 @@ async def youtube_transcript(url: str) -> dict:
         "video_id": video_id, "chars": len(full_text), "truncated": truncated,
     })
     return {"found": True, "video_id": video_id, "transcript": full_text, "truncated": truncated}
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# recall_self — what the character knows about itself (plan T8e)
+# ═══════════════════════════════════════════════════════════════════════════
+
+@tool(description=(
+    "Look up what you know about yourself: appearance, clothes, tastes, "
+    "history. Use when the user asks about you."
+))
+async def recall_self(query: str, config: RunnableConfig = None) -> dict:
+    """Search what you know about yourself: appearance, clothes,
+    tastes, history. Use when the user asks about you.
+
+    Args:
+        query: What the user asked about you (appearance, height, ...).
+
+    Returns:
+        {found: true, results: [{title, kind, content, similarity}]}
+        OR {found: false} if no sheet rows match (NOT error — D23).
+
+    The character is never a parameter: the slug comes from the turn's
+    persona_id, gated twice — this WHERE clause and the RLS policy on
+    app.character (migration 013).
+    """
+    persona_id = (config or {}).get("configurable", {}).get("persona_id", "anne")
+
+    try:
+        embed_svc = get_embedding_service()
+        pg = get_pg_client()
+        await pg.connect()
+
+        query_vec = await embed_svc.aembed_query(query)
+
+        rows = await pg.fetch(
+            """
+            SELECT ck.title, ck.kind, ck.content,
+                   1 - (ck.embedding <=> $1) AS similarity
+            FROM character_knowledge ck
+            WHERE ck.character_slug = $2
+            ORDER BY ck.embedding <=> $1
+            LIMIT 3
+            """,
+            query_vec,
+            persona_id,
+        )
+
+        min_sim = _self_min_similarity()
+
+        results = [
+            {
+                "title": r["title"] or "",
+                "kind": r["kind"],
+                "content": r["content"],
+                "similarity": round(float(r["similarity"]), 4),
+            }
+            for r in rows
+            if min_sim is None or float(r["similarity"]) >= min_sim
+        ]
+
+        if not results:
+            return {"found": False}
+
+        logger.info("recall_self_done", extra={
+            "persona_id": persona_id, "results": len(results),
+        })
+        return {"found": True, "results": results}
+
+    except Exception as exc:
+        logger.error("recall_self_error", extra={"error": str(exc)})
+        raise
 
 
 # ── Exports ───────────────────────────────────────────────────────────────

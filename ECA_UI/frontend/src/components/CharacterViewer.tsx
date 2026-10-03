@@ -158,7 +158,10 @@ const easeInOutCubic = (p: number) => (p < 0.5 ? 4 * p * p * p : 1 - Math.pow(-2
  *  for the chat panel that occupies the bottom ~40% on mobile. */
 const CAMERA_RESPONSIVE_PRESETS: Record<CameraMode, CameraResponsivePreset> = {
   head: {
-    wideFraming: [0, 0.5, 0],
+    // 1 m in front of the head. Was [0, 0.5, 0], which only ever landed at
+    // 1 m because the old 1 m minDistance pushed it out; with the floor at
+    // 0.5 m (so the user can zoom closer) the preset carries the distance.
+    wideFraming: [0, 1.0, 0],
     narrowFraming: [0, 2.0, 0],
     narrowTargetZ: -0.6,
   },
@@ -848,9 +851,9 @@ function Scene({ theme, vrmUrl, modelId, onReady, avatarRef }: SceneProps) {
         endTarget.z += targetZRef.current
         endPos = followPos.clone().add(responsiveDisplayRef.current).add(currentCustomOffset)
       }
-      // Land where OrbitControls will keep the camera. The `head` preset sits
-      // 0.5 m out, inside the default 1 m minDistance, so a transition ending
-      // there was clamped outward on the next frame: a second, smaller snap.
+      // Land where OrbitControls will keep the camera: a preset inside
+      // minDistance would be clamped outward on the next frame — a second,
+      // smaller snap. (The `head` preset used to rely on this to reach 1 m.)
       const minDist = cameraMode === 'face' ? FACE_LOCK_MIN_DISTANCE : cameraConfig.minDistance
       const reach = endPos.distanceTo(endTarget)
       if (reach < minDist) {
@@ -880,6 +883,13 @@ function Scene({ theme, vrmUrl, modelId, onReady, avatarRef }: SceneProps) {
     targetPos.z += targetZRef.current
 
     if (!cameraInitializedRef.current) {
+      // Start AT the preset, not one smoothing step toward it from the
+      // (0, 0.5, 0) the refs are born with. The old 1 m minDistance used to
+      // push that ~0.6 m first view back out; with the floor at 0.5 m it
+      // would stick (30-09).
+      responsiveDisplayRef.current.copy(responsiveTargetRef.current)
+      targetPos.z += targetZTarget - targetZRef.current
+      targetZRef.current = targetZTarget
       controlsRef.current.target.copy(targetPos)
       camera.position.copy(followPos).add(responsiveDisplayRef.current).add(currentCustomOffset)
       lastAppliedOffsetRef.current.copy(responsiveDisplayRef.current)
@@ -1131,6 +1141,12 @@ return (
         enablePan={cameraConfig.enablePan}
         enableZoom={cameraConfig.enableZoom}
         minDistance={cameraHeld ? FACE_LOCK_MIN_DISTANCE : cameraConfig.minDistance}
+        // Zoom toward what is under the pointer, not the orbit point: after a
+        // pan the orbit point sits in empty space beside the character, and
+        // zooming toward it stopped short of her (30-09). three moves the
+        // orbit point along with the zoom, which onEnd may count as a pan —
+        // that switches to manual, as any real zoom already does.
+        zoomToCursor
         maxDistance={cameraConfig.maxDistance}
         target={[0, 0, 0]}
         onStart={() => {

@@ -10,16 +10,17 @@ import {
 import type { Message } from '../components/ChatMessage'
 import {
   getSession, listSessions, deleteSession, streamChat, fetchMotionStatus, DEFAULT_PERSONA_ID,
-  type SessionMessage,
+  type SessionMessage, type MessageFeedback,
 } from '../lib/api'
 import { CLIP_ABORTED, SpeechClip, speechPlayer, unlockSpeechAudio } from '../lib/speechPlayer'
 import { routeSpeechEvent } from '../lib/speechSource'
 import { createTurnLifecycle } from '../lib/turnLifecycle'
 import { pollMotionJob } from '../lib/motionJob'
-import { clearSessionPointer, readSessionPointer, stampSessionPointer } from '../lib/chatSession'
+import { clearSessionPointer, forgetMissingSession, readSessionPointer, stampSessionPointer } from '../lib/chatSession'
 import { useMotion } from '../hooks/useMotion'
 import { ChatContext, type ChatContextType, type SessionItem } from '../hooks/useChat'
 import { uiStringsFor, getGreetingForSlot, getTimeSlot, buildGreetingKey, type UiStrings } from '../lib/characterCopy'
+import { stageLabelFor } from '../lib/stageLabel'
 import { resolveGreeting, type CapturedGreeting } from '../lib/greeting'
 import { useLocale } from '../hooks/useLocale'
 
@@ -279,10 +280,11 @@ export function ChatProvider({ children }: { children: ReactNode }) {
 
   /* ── Restore the conversation this browser was last in ──────────────────
    *
-   * Runs once on mount. A 404 is the normal case, not an error: a brand-new
-   * session id has no row until the first turn is written, so we simply keep
-   * the greeting. Anything else is logged and also falls back to the greeting —
-   * a failed restore must never leave the user staring at an empty panel. */
+   * Runs once on mount. A 404 means the pointer outlived its conversation — the
+   * turn that stamped it never finished writing — so the pointer is dropped
+   * (forgetMissingSession) and the greeting stays. Anything else is logged and
+   * also falls back to the greeting — a failed restore must never leave the
+   * user staring at an empty panel. */
   useEffect(() => {
     let cancelled = false
 
@@ -294,6 +296,7 @@ export function ChatProvider({ children }: { children: ReactNode }) {
       return
     }
     const sessionId = sessionIdRef.current
+    const restoreStartedAt = Date.now()
 
     ;(async () => {
       try {
@@ -320,10 +323,14 @@ export function ChatProvider({ children }: { children: ReactNode }) {
             // and acted on by the effect below.
             motionJobId: m.motion_job_id,
             motionExpiresAt: m.motion_expires_at,
-            // The user's own words for this turn — the picker lists motions by
-            // what was asked for, and on a restore the question is the message
-            // immediately before the answer.
-            motionLabel: m.role === 'assistant' ? history[i - 1]?.content : undefined,
+            // The prompt Kimodo rendered, so the picker lists motions by what
+            // was actually asked for. Older rows never recorded that prompt,
+            // so fall back to the message immediately before the answer.
+            motionLabel: m.role === 'assistant' ? (m.motion_prompt || history[i - 1]?.content) : undefined,
+            // The database id, so feedback buttons can show and the modal has
+            // something to POST to. `id` above stays the client/React key.
+            serverId: m.id,
+            feedback: m.feedback ?? null,
           })),
         )
 
@@ -348,7 +355,7 @@ export function ChatProvider({ children }: { children: ReactNode }) {
               // Deliberately no url. A signed URL lives five minutes, and this
               // page has no cached clip — fetching one now would hand the
               // picker a dead link. It resolves a fresh one when picked.
-              label: history[i - 1]?.content ?? '',
+              label: m.motion_prompt || history[i - 1]?.content || '',
             })
           } else {
             setMessages((prev) =>
@@ -362,7 +369,12 @@ export function ChatProvider({ children }: { children: ReactNode }) {
         })
       } catch (e) {
         const status = (e as { response?: { status?: number } }).response?.status
-        if (status !== 404) console.warn('[session] restore failed:', e)
+        if (status !== 404) {
+          console.warn('[session] restore failed:', e)
+        } else if (forgetMissingSession(sessionId, restoreStartedAt) && !cancelled) {
+          sessionIdRef.current = null
+          setActiveSessionId(null)
+        }
       } finally {
         if (!cancelled) setIsRestoring(false)
       }
@@ -420,6 +432,22 @@ export function ChatProvider({ children }: { children: ReactNode }) {
     setSessionsDirty(false)
   }, [])
 
+  /** Set (or clear, with `null`) one message's saved vote by its server id
+   *  (a UUID). Used both for the optimistic update before the API call and to
+   *  apply the server's answer once it returns.
+   *
+   *  Keyed by serverId, not the client `id`: restored/switched messages get
+   *  positional client ids (`switched-3`) that repeat across sessions, so an
+   *  update resolving after a session switch could otherwise land on a
+   *  different session's message. A stale serverId from a session the user
+   *  has since left matches nothing here, which makes the update a no-op
+   *  instead of a wrong write. */
+  const setMessageFeedback = useCallback((serverId: string, fb: MessageFeedback | null) => {
+    setMessages((prev) =>
+      prev.map((m) => (m.serverId === serverId ? { ...m, feedback: fb } : m))
+    )
+  }, [])
+
   const endThinking = useCallback(() => {
     if (!thinkingRef.current) return
     thinkingRef.current = false
@@ -464,6 +492,8 @@ export function ChatProvider({ children }: { children: ReactNode }) {
             role: m.role,
             content: m.content,
             timestamp: new Date(m.timestamp),
+            serverId: m.id,
+            feedback: m.feedback ?? null,
           })),
         )
       } else {
@@ -531,14 +561,15 @@ export function ChatProvider({ children }: { children: ReactNode }) {
       return [...prev, userMsg]
     })
     setInput('')
-    // Hiển thị stage ngay để tránh 3 chấm đầu, dùng text pulse thay vì dots
+    // Hiển thị stage ngay để tránh 3 chấm đầu, dùng text pulse thay vì dots.
+    // Trung tính (thinking) — nhãn nguồn thật tới sau qua sự kiện stage (T6).
     setIsTyping(false)
-    setStageLabel(uiRef.current.stage_searching)
+    setStageLabel(stageLabelFor(null, uiRef.current, null))
     // Fallback: nếu backend không emit retriever (chat thuần hoặc miss event)
-    // thì sau 2.5s tự chuyển sang COMPOSING để không treo ở SEARCHING
+    // thì sau 2.5s tự chuyển từ THINKING sang COMPOSING để không treo
     if (stageTimeoutRef.current) clearTimeout(stageTimeoutRef.current)
     stageTimeoutRef.current = setTimeout(() => {
-      setStageLabel((prev) => (prev === uiRef.current.stage_searching ? uiRef.current.stage_composing : prev))
+      setStageLabel((prev) => (prev === uiRef.current.stage_thinking ? uiRef.current.stage_composing : prev))
     }, 2500)
     setIsGenerating(true)
     thinkingRef.current = true
@@ -599,15 +630,22 @@ export function ChatProvider({ children }: { children: ReactNode }) {
       playSpeech: (clip) => {
         void speechPlayer.play(clip, avatarRef.current)
       },
+      // The row's real id, once the backend has one. Feedback buttons gate on
+      // this being set, so it targets THIS turn's message specifically rather
+      // than whichever assistant bubble happens to be latest.
+      attachServerId: (id) => {
+        setMessages((prev) =>
+          prev.map((msg) => (msg.id === assistantMsgId ? { ...msg, serverId: id } : msg))
+        )
+      },
     })
 
     /* Captured once per send rather than read per event: switching character
-     * mid-stream must not swap the label under a reply already being written,
+     * mid-stream must not swap the copy under a reply already being written,
      * and the error line below has to match the character who greeted the
-     * user. */
+     * user. (Nhãn stage là ngoại lệ: stageLabelFor đọc uiRef.current trực
+     * tiếp để mỗi sự kiện dùng copy mới nhất.) */
     const copy = uiRef.current
-    const STAGE_SEARCHING = copy.stage_searching
-    const STAGE_COMPOSING = copy.stage_composing
 
     try {
       await streamChat(
@@ -630,17 +668,17 @@ export function ChatProvider({ children }: { children: ReactNode }) {
         (type, data) => {
           if (lifecycle(type, data)) return
           if (type === 'stage') {
-            const { node, status } = data as { node: string; status: string }
+            const { node, status, sources } = data as { node: string; status: string; sources?: string[] }
             if (node === 'planner' && status === 'complete') {
               setIsTyping(false)
-              setStageLabel(STAGE_SEARCHING)
+              setStageLabel((prev) => stageLabelFor({ node, status }, uiRef.current, prev))
             } else if (node === 'retriever_agent' && status === 'complete') {
               if (stageTimeoutRef.current) clearTimeout(stageTimeoutRef.current)
-              setStageLabel(STAGE_COMPOSING)
+              setStageLabel((prev) => stageLabelFor({ node, status, sources }, uiRef.current, prev))
             } else if (node === 'synthesizer' && status === 'started') {
               // Giữ COMPOSING tới token đầu để che TTFT, không tắt ở đây
               if (stageTimeoutRef.current) clearTimeout(stageTimeoutRef.current)
-              setStageLabel(STAGE_COMPOSING)
+              setStageLabel((prev) => stageLabelFor({ node, status }, uiRef.current, prev))
             }
           } else if (type === 'emotion') {
             // Reply-driven emotion: sent ahead of the text, already filtered by
@@ -679,6 +717,7 @@ export function ChatProvider({ children }: { children: ReactNode }) {
               state: string
               job_id?: string
               retry_after_seconds?: number
+              prompt?: string
             }
             const notice = (text: string | undefined) =>
               setMessages((prev) =>
@@ -706,8 +745,10 @@ export function ChatProvider({ children }: { children: ReactNode }) {
                   // job_id is the cache key: the URL is a CloudFront signature
                   // that differs on every fetch, so keying on it would re-fetch
                   // and re-retarget the same clip each replay.
-                  // `text` is what the user typed, so the motion picker lists
-                  // "động tác squat" rather than a hash nobody can read.
+                  // `m.prompt` is the prompt Kimodo rendered — the planner's
+                  // cleaned resolved_query — so the motion picker lists
+                  // "động tác squat" rather than a hash nobody can read. Fall
+                  // back to what the user typed if the backend didn't send one.
                   // `false` is a real failure, not a soft "nothing to do":
                   // the avatar has no controller (WebGL off, VRM never
                   // attached), the clip failed to fetch or retarget (the
@@ -715,7 +756,7 @@ export function ChatProvider({ children }: { children: ReactNode }) {
                   // refused. Dropping it here cleared the notice as if the
                   // clip had played, so a tester whose laptop could not play
                   // motion saw "Building the movement..." and then nothing.
-                  const played = await playMotionFile(url, jobId, text)
+                  const played = await playMotionFile(url, jobId, m.prompt || text)
                   if (!played) {
                     console.warn('[motion] avatar could not play clip', { jobId })
                     notice(copy.motion_failed)
@@ -738,7 +779,11 @@ export function ChatProvider({ children }: { children: ReactNode }) {
         setMessages((prev) =>
           prev.map((msg) =>
             msg.id === assistantMsgId
-              ? { ...msg, content: copy.error_stream }
+              // A session_persisted before the failure may already have set
+              // serverId/feedback on this bubble; clear both along with the
+              // content, or the feedback buttons show on an error message the
+              // user can no longer see, voting on an answer that isn't there.
+              ? { ...msg, content: copy.error_stream, serverId: undefined, feedback: null }
               : msg
           )
         )
@@ -801,6 +846,7 @@ export function ChatProvider({ children }: { children: ReactNode }) {
       switchToSession,
       deleteSessionAction,
       markSessionsClean,
+      setMessageFeedback,
       isRecording,
       recordingDuration,
       recordingError,
@@ -808,7 +854,7 @@ export function ChatProvider({ children }: { children: ReactNode }) {
       startRecord,
       stopRecord,
     }),
-    [messages, input, isTyping, isGenerating, stageLabel, ui, webSearch, voiceReply, isRestoring, isSwitching, startNewSession, handleSend, handleStop, imageUrls, addImage, removeImage, sessionList, sessionsDirty, activeSessionId, refreshSessions, switchToSession, deleteSessionAction, markSessionsClean, isRecording, recordingDuration, recordingError, dictationSupported, startRecord, stopRecord],
+    [messages, input, isTyping, isGenerating, stageLabel, ui, webSearch, voiceReply, isRestoring, isSwitching, startNewSession, handleSend, handleStop, imageUrls, addImage, removeImage, sessionList, sessionsDirty, activeSessionId, refreshSessions, switchToSession, deleteSessionAction, markSessionsClean, setMessageFeedback, isRecording, recordingDuration, recordingError, dictationSupported, startRecord, stopRecord],
   )
 
   return <ChatContext.Provider value={value}>{children}</ChatContext.Provider>

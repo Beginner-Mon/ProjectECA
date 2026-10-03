@@ -57,6 +57,13 @@ def _shape_message(row, created_at: Optional[datetime]) -> dict:
     with no motion cannot have an expired one. Emitting them unconditionally
     would put keys describing nothing on the large majority of every history
     payload, and assert something false about each.
+
+    `id` appears whenever the row carries one (guarded like `_extras`, since
+    some callers — see test_motion_expiry_deadline.py — hand in rows without
+    it). `feedback` appears only when a `message_feedback` row was joined in
+    (rating not NULL) — same "only when present" rule as motion. `extras.meta`
+    (turn context: persona, grader result, latency — see write_session_turn)
+    is intentionally NEVER copied onto the wire; it is for ops queries only.
     """
     out = {
         "role":      row["role"],
@@ -64,10 +71,22 @@ def _shape_message(row, created_at: Optional[datetime]) -> dict:
         "tokens":    row["token_count"],
         "timestamp": created_at.isoformat() if created_at else None,
     }
-    job_id = _extras(row).get("motion", {}).get("job_id")
+    if "id" in row.keys():
+        out["id"] = str(row["id"])
+    motion = _extras(row).get("motion", {})
+    job_id = motion.get("job_id")
     if job_id:
         out["motion_job_id"] = job_id
         out["motion_expires_at"] = motion_expires_at(created_at)
+        prompt = motion.get("prompt")
+        if prompt:
+            out["motion_prompt"] = prompt
+    if "feedback_rating" in row.keys() and row["feedback_rating"] is not None:
+        out["feedback"] = {
+            "rating":  row["feedback_rating"],
+            "reasons": list(row["feedback_reasons"] or []),
+            "comment": row["feedback_comment"],
+        }
     return out
 
 
@@ -282,21 +301,31 @@ async def load_session_messages(
     # timestamp alone leaves the pair's order to the planner, and it really does
     # come back answer-before-question — which is exactly how the restored
     # transcript would read.
+    # LEFT JOIN message_feedback so a restored history reports the same
+    # thumb state the user left it in — one join on the primary key, no
+    # extra round trip. Every column is qualified with `m.` because the
+    # join brings a second table into scope (`f.` for feedback columns).
     if before:
         rows = await pg.fetch(
-            """SELECT role, content, token_count, extras, created_at
-               FROM messages
-               WHERE session_id = $1::uuid AND created_at < $2::timestamptz
-               ORDER BY created_at DESC, seq_id DESC LIMIT $3""",
+            """SELECT m.id, m.role, m.content, m.token_count, m.extras, m.created_at,
+                      f.rating AS feedback_rating, f.reasons AS feedback_reasons,
+                      f.comment AS feedback_comment
+               FROM messages m
+               LEFT JOIN message_feedback f ON f.message_id = m.id
+               WHERE m.session_id = $1::uuid AND m.created_at < $2::timestamptz
+               ORDER BY m.created_at DESC, m.seq_id DESC LIMIT $3""",
             session_id, before, limit,
         )
         rows = list(reversed(rows))
     else:
         rows = await pg.fetch(
-            """SELECT role, content, token_count, extras, created_at
-               FROM messages
-               WHERE session_id = $1::uuid
-               ORDER BY created_at DESC, seq_id DESC LIMIT $2""",
+            """SELECT m.id, m.role, m.content, m.token_count, m.extras, m.created_at,
+                      f.rating AS feedback_rating, f.reasons AS feedback_reasons,
+                      f.comment AS feedback_comment
+               FROM messages m
+               LEFT JOIN message_feedback f ON f.message_id = m.id
+               WHERE m.session_id = $1::uuid
+               ORDER BY m.created_at DESC, m.seq_id DESC LIMIT $2""",
             session_id, limit,
         )
         rows = list(reversed(rows))
@@ -339,7 +368,9 @@ async def write_session_turn(
     total_tokens: int = 0,
     grader_result: str = "pass",
     motion_job_id: str | None = None,
-) -> None:
+    motion_prompt: str | None = None,
+    meta: dict | None = None,
+) -> str | None:
     """`motion_job_id` is stored inside the `extras` JSONB column, namespaced
     under "motion" — not as a column of its own. Motion is an occasional extra
     on a chat turn, and it is not the last one: TTS wants to record the language
@@ -353,6 +384,25 @@ async def write_session_turn(
     the `queued`/`cache_hit` states carry one — `busy`/`unavailable` pass
     None, same as a turn with no motion at all. Written on the assistant row
     only; the user row's motion_job_id is always NULL.
+
+    `motion_prompt`: the prompt Kimodo actually rendered from — the
+    planner's `resolved_query`, not the raw user message. A restored motion
+    (GET /sessions/{id} after a refresh) should be labelled by what the GPU
+    was asked to draw, and that is often not what the user typed. Optional
+    because `motion_job_id` predates it and old rows have none.
+
+    `meta`: a snapshot of this turn's context (persona, locale, grader
+    result, latency, request_id — see api/main.py's caller), written next to
+    "motion" under the assistant row's `extras`. It is never sent to the
+    frontend (`_shape_message` does not copy it) — it exists so a 👎 vote
+    can be traced back to the request that produced it, and so ops SQL can
+    group feedback by persona without a second table. Optional and additive:
+    old rows simply have no "meta" key.
+
+    Returns the assistant row's `id` (as `str`), or `None` if the insert
+    somehow returned no assistant row. SSE's `session_persisted` event hands
+    this to the frontend so a 👍/👎 vote can name the exact message it is
+    about, instead of guessing from position in the transcript.
 
     ONE HELD CONNECTION, TWO ROUND TRIPS — not three separate pg.execute()
     calls. Diagnosed 11-09 (owner's vva.log: the send button stayed in "stop"
@@ -415,9 +465,15 @@ async def write_session_turn(
     pg = get_pg_client()
     await pg.connect()
     ts = datetime.now(timezone.utc).isoformat()
-    extras_json = (
-        json.dumps({"motion": {"job_id": motion_job_id}}) if motion_job_id else None
-    )
+    assistant_extras: dict = {}
+    if motion_job_id:
+        motion_extra = {"job_id": motion_job_id}
+        if motion_prompt:
+            motion_extra["prompt"] = motion_prompt
+        assistant_extras["motion"] = motion_extra
+    if meta:
+        assistant_extras["meta"] = meta
+    extras_json = json.dumps(assistant_extras) if assistant_extras else None
 
     t0 = time.perf_counter() if STATS_ENABLED else 0.0
     async with pg.transaction() as conn:
@@ -434,17 +490,27 @@ async def write_session_turn(
         # created_at omitted → DB DEFAULT now() fills it. Ordering within a turn
         # is by seq_id (BIGSERIAL, VALUES-list order), not created_at. Passing
         # an ISO string for a timestamptz param fails under binary binding.
-        await conn.execute(
+        # RETURNING id, role — .fetch() instead of .execute() — is still ONE
+        # round trip; this is what lets the caller hand the assistant row's
+        # real id back to the frontend (see the docstring's `meta`/return-value
+        # paragraph above).
+        rows = await conn.fetch(
             """INSERT INTO messages (session_id, role, content, token_count, extras)
                VALUES
                    ($1::uuid, 'user',      $2, NULL, NULL),
-                   ($1::uuid, 'assistant', $3, $4,   $5::jsonb)""",
+                   ($1::uuid, 'assistant', $3, $4,   $5::jsonb)
+               RETURNING id, role""",
             session_id, user_query, assistant_answer, total_tokens, extras_json,
         )
     if STATS_ENABLED:
         STATS.record("write_session_turn", time.perf_counter() - t0)
 
     await _append_stm(session_id, user_query, assistant_answer, ts)
+
+    assistant_id = next(
+        (row["id"] for row in rows if row["role"] == "assistant"), None
+    )
+    return str(assistant_id) if assistant_id is not None else None
 
 
 async def _append_stm(session_id: str, q: str, a: str, ts: str) -> None:

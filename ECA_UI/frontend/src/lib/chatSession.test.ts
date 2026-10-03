@@ -14,6 +14,7 @@ import {
   SESSION_KEY,
   SESSION_TTL_MS,
   clearSessionPointer,
+  forgetMissingSession,
   readSessionPointer,
   stampSessionPointer,
 } from './chatSession'
@@ -155,5 +156,41 @@ describe('clearSessionPointer', () => {
 
   it('does not throw when storage is unavailable', () => {
     expect(() => clearSessionPointer(throwingStorage())).not.toThrow()
+  })
+})
+
+describe('forgetMissingSession', () => {
+  // The restore got 404: the turn that stamped this pointer never finished
+  // writing its row. Without this, every reload for two hours asked again.
+  it('drops a pointer whose conversation does not exist', () => {
+    const s = fakeStorage()
+    stampSessionPointer('dead', NOW - 5 * MINUTE, s)
+    expect(forgetMissingSession('dead', NOW, s)).toBe(true)
+    expect(readSessionPointer(NOW, s)).toBeNull()
+  })
+
+  // Sending is not blocked while the restore is in flight. A message sent in
+  // that window re-stamps the same id, and its row is about to exist.
+  it('keeps the pointer when a message was sent after the restore began', () => {
+    const s = fakeStorage()
+    stampSessionPointer('live', NOW + 2_000, s)
+    expect(forgetMissingSession('live', NOW, s)).toBe(false)
+    expect(readSessionPointer(NOW + 2_000, s)).toBe('live')
+  })
+
+  it('leaves a pointer to a different conversation alone', () => {
+    const s = fakeStorage()
+    stampSessionPointer('other', NOW - MINUTE, s)
+    expect(forgetMissingSession('dead', NOW, s)).toBe(false)
+    expect(readSessionPointer(NOW, s)).toBe('other')
+  })
+
+  it('is false on an empty store or malformed value', () => {
+    expect(forgetMissingSession('dead', NOW, fakeStorage())).toBe(false)
+    expect(forgetMissingSession('dead', NOW, fakeStorage({ [SESSION_KEY]: '{oops' }))).toBe(false)
+  })
+
+  it('does not throw when storage is unavailable', () => {
+    expect(forgetMissingSession('dead', NOW, throwingStorage())).toBe(false)
   })
 })

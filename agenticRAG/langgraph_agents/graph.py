@@ -37,6 +37,7 @@ from langgraph_agents.routing import (
     route_after_synthesizer,
     route_after_grader,
     check_errors,
+    wants_motion,
 )
 from langgraph_agents.shared.logging import get_logger
 
@@ -54,7 +55,7 @@ def route_after_planner(state: AgentState) -> str:
       1. CRITICAL error → error_handler
       2. needs_clarification → synthesizer (skip all)
       3. needs_retrieval → retriever_agent (then chain → kimodo if needed)
-      4. needs_motion (only, no retrieval) → kimodo
+      4. motion tag (only, no retrieval) → kimodo
       5. neither → synthesizer (chat/greeting/safety-only)
     """
     if check_errors(state) == "error_handler":
@@ -66,7 +67,7 @@ def route_after_planner(state: AgentState) -> str:
     if state.get("needs_retrieval"):
         return "retriever_agent"
 
-    if state.get("needs_motion"):
+    if wants_motion(state):
         return "kimodo"
 
     # No retrieval, no motion → chat / safety-only / clarify
@@ -84,7 +85,7 @@ def route_after_retriever_or_tools(state: AgentState) -> str:
     if check_errors(state) == "error_handler":
         return "error_handler"
 
-    if state.get("needs_motion"):
+    if wants_motion(state):
         return "kimodo"
     return "synthesizer"
 
@@ -205,15 +206,27 @@ async def build_graph_async():
         "error_handler": "error_handler",
     })
 
-    # ── Retriever ⇄ tools loop (max 2 rounds) ────────────────────────
-    # After loop: → kimodo (if needs_motion) or → synthesizer
+    # ── Retriever → tools, một lượt (plan T7: một cổng) ───────────────
+    # Sau tools KHÔNG quay lại retriever_agent nữa: đi kimodo nếu có tag motion,
+    # ngược lại synthesizer. Vòng agent thứ hai cũ là một lời gọi LLM vô ích
+    # (không thấy kết quả tool, yêu cầu nào cũng chạm trần 2 vòng).
+    # Retry của grader vẫn qua retriever_agent (cạnh grader → retriever_agent
+    # giữ nguyên) — đó là lượt agent mới có feedback, không phải lượt thừa.
     g.add_conditional_edges("retriever_agent", route_after_retriever, {
         "tools": "tools",
         "kimodo": "kimodo",
         "synthesizer": "synthesizer",
         "error_handler": "error_handler",
     })
-    g.add_edge("tools", "retriever_agent")
+    # Một cổng (plan T7): sau tools đi tiếp, KHÔNG quay lại retriever_agent.
+    # Vòng LLM thứ hai cũ không được đưa kết quả tool và mọi tool nó yêu cầu
+    # bị bỏ vì chạm trần 2 vòng — một lời gọi vô ích mỗi lượt có tool.
+    # Retry của grader không đổi: grader → retriever_agent vẫn còn nguyên.
+    g.add_conditional_edges("tools", route_after_retriever_or_tools, {
+        "kimodo": "kimodo",
+        "synthesizer": "synthesizer",
+        "error_handler": "error_handler",
+    })
 
     # ── Kimodo → synthesizer ──────────────────────────────────────────
     g.add_edge("kimodo", "synthesizer")

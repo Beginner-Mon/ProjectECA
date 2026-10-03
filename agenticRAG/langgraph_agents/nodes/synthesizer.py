@@ -28,6 +28,8 @@ from langchain_core.runnables import RunnableConfig
 
 from langgraph.config import get_stream_writer
 from langgraph_agents.shared import reply_emotion
+from langgraph_agents.shared.context import budget_chars, estimate_tokens
+from langgraph_agents.sources import source_for_tool
 from langgraph_agents.state import AgentState, ErrorSeverity
 from langgraph_agents.llm import get_chat_model, get_fallback_chat_model, extract_cache_tokens
 from langgraph_agents.nodes._persona_loader import (
@@ -108,6 +110,36 @@ def _build_safety_rules(persona: dict, required_outputs: list) -> str:
     return "## SAFETY — required this turn (D32, D33)\n" + "\n".join(lines) + "\n"
 
 
+# ── Per-tag instructions (B3: chỉ tag của lượt mới được hướng dẫn) ──────
+
+# Tách từ _SYNTHESIZE_TASK: mỗi dòng "For <tag>" trước đây có mặt ở MỌI lượt
+# (kèm ví dụ sets/reps cụ thể) nên lượt không hỏi liều lượng vẫn tự cho số.
+# _build_tag_instructions chỉ trả dòng của tag có trong lượt — cùng cách
+# _build_safety_rules đang làm. Không thêm luật mới.
+_TAG_INSTRUCTIONS = {
+    "exercise_protocol":
+        "- For exercise_protocol: give the sets, reps and frequency the evidence "
+        "states, and name the source. Where the evidence does not state one of "
+        "them, say so. Do not supply numbers of your own.",
+    "exercise_steps":
+        "- For exercise_steps: provide ≥2 ordered steps",
+    "contraindication":
+        "- For contraindication: list conditions where the exercise "
+        "should NOT be done",
+    "motion_descriptor":
+        "- For motion_descriptor: describe the movement + joints involved clearly",
+    "evidence_citation":
+        "- For evidence_citation: mention sources (document title, web source)",
+}
+
+
+def _build_tag_instructions(required_outputs: list) -> str:
+    """Dòng hướng dẫn của đúng các tag trong lượt; rỗng khi không có tag nào."""
+    return "\n".join(
+        _TAG_INSTRUCTIONS[t] for t in _TAG_INSTRUCTIONS if t in required_outputs
+    )
+
+
 # ── Mode-specific prompts ────────────────────────────────────────────────
 
 _SYNTHESIZE_TASK = """## This turn
@@ -128,24 +160,22 @@ Answer the user's wellness question from the evidence below.
 Instructions:
 - Cover ALL required_outputs tags in your response
 - Base your answer on the retrieved evidence — cite sources when available
-- For exercise_protocol: include sets, reps, frequency (e.g. "3 sets of 10 reps, 2-3 times a week")
-- For exercise_steps: provide ≥2 ordered steps
-- For contraindication: list conditions where the exercise should NOT be done
-- For motion_descriptor: describe the movement + joints involved clearly
-- For evidence_citation: mention sources (document title, web source)
+{tag_instructions}
 - Do not pad or repeat safety disclaimers — state each once.
 - Length and layout are set by your own Formatting rules, not by this list.
 """
 
 _REFUSE_TASK = """## This turn
-You cannot answer this one. Say so honestly and point the user somewhere useful.
+You have no reliable source for the guidance the user asked for. Do not make
+up exercise or health guidance. Say so for that part only.
 
 {language_rule}
 {safety_rules}
 
 ## Situation
-The user asked a question that is OUTSIDE your wellness advisory scope
-and/or no reliable sources were found. You MUST NOT fabricate an answer.
+The guidance the user asked for has no reliable source: the question is
+OUTSIDE your wellness advisory scope and/or nothing trustworthy was found.
+Speak only to that part — anything else in the turn you can still answer.
 
 ## Required deliverables (tags)
 {required_outputs}
@@ -154,7 +184,7 @@ and/or no reliable sources were found. You MUST NOT fabricate an answer.
 {resolved_query}
 
 Instructions:
-- Be honest: explain WHY you cannot answer (out of scope / no sources)
+- Be honest: explain WHY you cannot give that guidance (out of scope / no sources)
 - If referral_advice tag is present: strongly recommend seeing a medical professional
 - If no sources were found: state this clearly, suggest the user rephrase or ask a professional
 - Keep it brief
@@ -191,14 +221,76 @@ Instructions:
 - Respond naturally, the way you would speak
 - Keep under 50 words for greetings, under 100 for follow-up chat
 - Do NOT add clinical advice unless the user explicitly asks
-- You may offer PT/wellness help in 1 short line if natural
 """
 
 
 # ── Helpers ──────────────────────────────────────────────────────────────
 
 _EVIDENCE_PER_MESSAGE_CAP = 1500
-_EVIDENCE_CHAR_BUDGET = 4000
+# Trần evidence/about-you đọc từ config qua budget_chars() (plan T11); số cũ
+# giữ làm default khi config thiếu (shared/context.py::_CONTEXT_BUDGET_DEFAULTS).
+
+
+def _evidence_messages(messages: list) -> list:
+    """ToolMessages that count as retrieved evidence (plan T3).
+
+    Sources flagged is_evidence=False (self, motion) are body/self state,
+    not lookup results — the synthesizer reads them through their own
+    prompt blocks (T4/T8), never as evidence.
+    """
+    out = []
+    for m in messages:
+        if not isinstance(m, ToolMessage):
+            continue
+        src = source_for_tool(m.name or "")
+        if src is not None and not src.is_evidence:
+            continue
+        out.append(m)
+    return out
+
+
+def _evidence_title(m: ToolMessage) -> str:
+    """Section header naming WHERE the evidence comes from (plan T2/T3)."""
+    src = source_for_tool(m.name or "")
+    if src is None:
+        return "[From another source]"
+    return f"[From {src.label}]"
+
+
+def _split_message_parts(m: ToolMessage) -> list[tuple[str, str]]:
+    """Tách một ToolMessage thành các cặp (tiêu đề, nội dung).
+
+    Mặc định một message = một cặp. Riêng kb_search tách theo từng đoạn
+    dựa trên source_type của đoạn (B5): exercise_db và nhs_uk mang hai tiêu
+    đề khác nhau, kèm document_title. Đoạn có source_type lạ bị bỏ
+    (đã bị loại ở SQL, đây là chốt chặn thứ hai).
+    """
+    if (m.name or "") != "kb_search":
+        return [(_evidence_title(m), str(m.content))]
+    import json
+
+    from langgraph_agents.sources import kb_segment_label
+
+    try:
+        data = json.loads(str(m.content))
+    except (json.JSONDecodeError, TypeError):
+        return [(_evidence_title(m), str(m.content))]
+    if not isinstance(data, list):
+        return [(_evidence_title(m), str(m.content))]
+    if not data:
+        return [(_evidence_title(m), str(m.content))]
+    parts: list[tuple[str, str]] = []
+    for seg in data:
+        if not isinstance(seg, dict):
+            continue
+        label = kb_segment_label(seg.get("source_type", ""))
+        if label is None:
+            continue
+        doc = seg.get("document_title") or ""
+        title = f"[From {label}]" if not doc else f"[From {label}: {doc}]"
+        parts.append((title, str(seg.get("content", ""))))
+    # Toàn đoạn lạ → message không đóng góp gì (không hiện JSON thô).
+    return parts
 
 
 def _extract_tool_results(messages: list) -> str:
@@ -217,16 +309,24 @@ def _extract_tool_results(messages: list) -> str:
 
     At least one tool result always survives, however long it is — a single
     oversized document should be truncated, not silently omitted.
+
+    B5: kb_search messages are split per segment first (titles differ by
+    source_type); the budget below counts split pieces, newest first.
     """
-    tools = [m for m in messages if isinstance(m, ToolMessage)]
+    tools = _evidence_messages(messages)
+
+    pieces: list[tuple[str, str]] = []
+    for m in tools:
+        pieces.extend(_split_message_parts(m))
 
     parts: list[str] = []
     used = 0
-    for offset, m in enumerate(reversed(tools)):
-        content = str(m.content)[:_EVIDENCE_PER_MESSAGE_CAP]
-        if parts and used + len(content) > _EVIDENCE_CHAR_BUDGET:
+    evidence_budget = budget_chars("evidence")
+    for title, text in reversed(pieces):
+        content = text[:_EVIDENCE_PER_MESSAGE_CAP]
+        if parts and used + len(content) > evidence_budget:
             break
-        parts.append(f"[Tool {len(tools) - offset}: {m.name}]\n{content}")
+        parts.append(f"{title}\n{content}")
         used += len(content)
 
     parts.reverse()
@@ -247,15 +347,16 @@ def _has_tool_results(messages: list) -> bool:
     """Check if any ToolMessage has non-empty, non-error results."""
     return any(
         _classify_tool_result(str(m.content)) == "hits"
-        for m in messages if isinstance(m, ToolMessage)
+        for m in _evidence_messages(messages)
     )
 
 
 def _top_similarity(content: str) -> float | None:
     """Best `similarity` in a tool result, if it carries any.
 
-    kb_search has no relevance cutoff — it always returns its top 5 — so "hits"
-    alone does not mean the library covered the question. This number does.
+    kb_search's cutoff (`kb_min_similarity`, plan T5) is optional and may be
+    unset, so "hits" alone does not mean the library covered the question.
+    This number does, and it is what that cutoff should be tuned against.
     """
     import json
     try:
@@ -291,14 +392,13 @@ def _evidence_summary(messages: list) -> list[dict]:
 def _check_tool_ambiguous(messages: list) -> bool:
     """Check if any tool returned ambiguity metadata (D22: dynamic clarify)."""
     import json
-    for m in messages:
-        if isinstance(m, ToolMessage):
-            try:
-                data = json.loads(str(m.content))
-                if isinstance(data, dict) and data.get("ambiguous"):
-                    return True
-            except (json.JSONDecodeError, TypeError):
-                pass
+    for m in _evidence_messages(messages):
+        try:
+            data = json.loads(str(m.content))
+            if isinstance(data, dict) and data.get("ambiguous"):
+                return True
+        except (json.JSONDecodeError, TypeError):
+            pass
     return False
 
 
@@ -337,6 +437,89 @@ def _build_avatar_switch_note(
         f"briefly ONLY if it fits naturally; otherwise ignore it and answer "
         f"the question."
     )
+
+
+def _build_body_state_note(messages: list) -> str:
+    """What this character's own 3D body is doing this turn (plan T4).
+
+    Reads the newest motion-source message (kimodo node today, show_movement
+    tool after T9) and returns a short first-person-able block. Empty when
+    there is no motion message or its payload is broken — blocks with no
+    data never enter the prompt (~10K token window).
+
+    Never names machinery: when the body cannot perform, the character says
+    so as itself, with no technical reason.
+    """
+    import json
+
+    motion_msg = None
+    for m in messages:
+        if not isinstance(m, ToolMessage):
+            continue
+        src = source_for_tool(m.name or "")
+        if src is not None and src.id == "motion":
+            motion_msg = m
+    if motion_msg is None:
+        return ""
+
+    try:
+        data = json.loads(str(motion_msg.content))
+    except (json.JSONDecodeError, TypeError):
+        return ""
+    if not isinstance(data, dict):
+        return ""
+
+    state = data.get("state")
+    if state in ("queued", "cache_hit"):
+        prompt = str(data.get("prompt", "") or "").strip()
+        eta = data.get("eta_seconds")
+        time_clause = f", in about {eta} seconds" if eta else ""
+        return (
+            "\n\n## Your body this turn\n"
+            f"You are about to show \"{prompt}\" with your own body{time_clause}. "
+            "Speak as the one doing it."
+        )
+    if state in ("unavailable", "busy"):
+        return (
+            "\n\n## Your body this turn\n"
+            "You are not able to show a movement right now. Do not promise to, "
+            "and give no technical reason. You may describe it in words instead."
+        )
+    return ""
+
+
+def _build_about_you(messages: list) -> str:
+    """What the character knows about itself, from recall_self (plan T8f).
+
+    Newest usable result wins. Capped so the block never eats the ~10K token
+    window. Empty when the tool found nothing — the identity core (T8a) still
+    tells the character not to invent.
+    """
+    import json
+
+    for m in reversed(messages):
+        if not isinstance(m, ToolMessage) or (m.name or "") != "recall_self":
+            continue
+        try:
+            data = json.loads(str(m.content))
+        except (json.JSONDecodeError, TypeError):
+            continue
+        if not isinstance(data, dict) or not data.get("found"):
+            continue
+        parts = []
+        for r in data.get("results", []) or []:
+            if isinstance(r, dict) and r.get("content"):
+                title = (r.get("title") or "").strip()
+                parts.append(f"{title}: {r['content']}" if title else r["content"])
+        content = "\n".join(parts)[:budget_chars("about_you")]
+        if content.strip():
+            return (
+                "\n\n## About you\n"
+                "This is what you know about yourself. Say it in the first person, "
+                "as your own\nknowledge. Never say you looked it up.\n"
+                f"{content}"
+            )
+    return ""
 
 
 # ── Mode derivation (D29: emerge from signals, no enum) ─────────────────
@@ -411,6 +594,9 @@ async def synthesizer_node(state: AgentState, config: RunnableConfig) -> dict:
     # Safety rules: only the tags actually required this turn (D32, D33)
     safety_rules = _build_safety_rules(persona, required_outputs)
 
+    # Tag instructions: only the tags actually required this turn (B3)
+    tag_instructions = _build_tag_instructions(required_outputs)
+
     if mode == "clarify":
         task_system = _CLARIFY_TASK.format(
             language_rule=_LANGUAGE_RULE,
@@ -431,6 +617,7 @@ async def synthesizer_node(state: AgentState, config: RunnableConfig) -> dict:
             required_outputs=tags_str,
             tool_results=tool_results or "(no evidence)",
             resolved_query=resolved_query,
+            tag_instructions=tag_instructions,
         )
     else:  # chat
         task_system = _CHAT_TASK.format(
@@ -440,7 +627,14 @@ async def synthesizer_node(state: AgentState, config: RunnableConfig) -> dict:
 
     # Persona prompt (D30: applies to ALL modes)
     persona_system = build_persona_prompt(persona, mode)
-    system = f"{persona_system}\n\n---\n\n{task_system}"
+    # Body state sits between persona and task (plan T4; T8 slots About-you
+    # after it). Absent when there is no motion message, so chat turns keep
+    # the exact prompt they had before.
+    body_note = _build_body_state_note(state.get("messages", []))
+    about_you = _build_about_you(state.get("messages", []))
+    middle_blocks = [b for b in (body_note, about_you) if b]
+    middle = ("\n\n".join(middle_blocks) + "\n\n") if middle_blocks else ""
+    system = f"{persona_system}\n\n---\n\n{middle}{task_system}"
 
     llm = get_chat_model("synthesizer")
 
@@ -602,6 +796,21 @@ async def synthesizer_node(state: AgentState, config: RunnableConfig) -> dict:
 
     cache_hit_tokens, cache_miss_tokens = extract_cache_tokens(ai_msg)
 
+    # Prompt-block sizes for budget tracking (plan T11). usage_metadata carries
+    # the provider's real token counts; estimate_tokens is the local ~4
+    # chars/token rule whose accuracy V4 measures.
+    usage = getattr(ai_msg, "usage_metadata", None) or {}
+    history_chars = sum(len(str(getattr(m, "content", "") or "")) for m in history)
+    prompt_blocks = {
+        "persona": len(persona_system),
+        "body_state": len(body_note),
+        "about_you": len(about_you),
+        "task": len(task_system),
+        "evidence": len(tool_results),
+        "history": history_chars,
+        "voice_card": len(voice_card),
+    }
+
     elapsed_ms = round((time.perf_counter() - t0) * 1000)
     logger.info("node_complete", extra={
         "node": "synthesizer", "request_id": request_id,
@@ -611,6 +820,9 @@ async def synthesizer_node(state: AgentState, config: RunnableConfig) -> dict:
         "cache_hit_tokens": cache_hit_tokens,
         "cache_miss_tokens": cache_miss_tokens,
         "llm_fallback_used": used_fallback,
+        "prompt_blocks": prompt_blocks,
+        "input_tokens": usage.get("input_tokens", 0),
+        "output_tokens": usage.get("output_tokens", 0),
     })
 
     return {

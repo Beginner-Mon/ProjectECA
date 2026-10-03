@@ -21,6 +21,17 @@ langgraph:
     web_search_enabled: true
     web_search_max_results: 3
 
+  # Prompt budgets, in TOKENS (plan T11 — model nhỏ, cửa sổ ~10K).
+  # Code đọc qua shared/context.py::context_budget, giữ giá trị cũ khi thiếu.
+  context_budgets:
+    persona: 600
+    identity_core: 120
+    about_you: 250
+    body_state: 40
+    evidence: 1200
+    history: 1000
+    voice_card: 280
+
   services:
     vieneu_tts:
       url: "http://localhost:5000"

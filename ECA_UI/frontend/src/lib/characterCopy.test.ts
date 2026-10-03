@@ -123,6 +123,55 @@ describe('FALLBACK_UI_STRINGS', () => {
   it('has no Vietnamese in the English bundle', () => {
     expect(vietnameseIn(FALLBACK_UI_STRINGS.en)).toEqual([])
   })
+
+  it('stage_searching names the library, not a generic search', () => {
+    expect(FALLBACK_UI_STRINGS.vi.stage_searching).toMatch(/thư viện/)
+    expect(FALLBACK_UI_STRINGS.en.stage_searching).toMatch(/librar/i)
+  })
+})
+
+describe('uiStringsFor — stage keys (plan T6)', () => {
+  const STAGE_KEYS = [
+    'stage_thinking',
+    'stage_recalling',
+    'stage_web',
+    'stage_video',
+  ] as const
+
+  it('reads the new stage keys from ui_strings', () => {
+    const character = {
+      slug: 'anne',
+      ui_strings: {
+        vi: {
+          stage_thinking: 'Để mình nghĩ...',
+          stage_recalling: 'Để mình nhớ lại...',
+          stage_web: 'Để mình tìm trên web...',
+          stage_video: 'Để mình xem video...',
+        },
+      },
+    } as unknown as Character
+
+    const resolved = uiStringsFor(character, 'vi')
+
+    for (const key of STAGE_KEYS) {
+      expect(resolved[key]).toBe(
+        (character.ui_strings as Record<string, Record<string, string>>).vi[key],
+      )
+    }
+  })
+
+  it('falls back per key when the persona did not author stage strings', () => {
+    const partial = {
+      slug: 'x',
+      ui_strings: { vi: { placeholder: 'Nhắn cho X...' } },
+    } as unknown as Character
+
+    const resolved = uiStringsFor(partial, 'vi')
+
+    for (const key of STAGE_KEYS) {
+      expect(resolved[key]).toBe(FALLBACK_UI_STRINGS.vi[key])
+    }
+  })
 })
 
 describe('getTimeSlot', () => {

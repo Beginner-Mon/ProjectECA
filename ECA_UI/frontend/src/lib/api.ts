@@ -44,6 +44,45 @@ import type { MotionStatus } from './motionJob'
  */
 export const DEFAULT_PERSONA_ID = 'anne'
 
+// ── Message feedback ─────────────────────────────────────────────────────────
+
+/** Why a reply got a 👎. Codes travel in English; labels are looked up through i18n. */
+export type FeedbackReason =
+  | 'incorrect'
+  | 'unsafe'
+  | 'not_relevant'
+  | 'incomplete'
+  | 'hard_to_follow'
+  | 'wrong_language'
+  | 'motion_issue'
+  | 'voice_issue'
+  | 'other'
+
+/**
+ * Display order in the dislike modal. Only `motion_issue` is conditional —
+ * shown when the message had a motion. `voice_issue` is always offered: the
+ * speaker button can synthesise or replay audio for any assistant message
+ * (cache or a fresh POST /tts) independent of whether the live turn happened
+ * to stream one, so gating it on that would hide it for most restored
+ * messages even though they can still be played and criticised.
+ */
+export const FEEDBACK_REASONS: readonly FeedbackReason[] = [
+  'incorrect',
+  'unsafe',
+  'not_relevant',
+  'incomplete',
+  'hard_to_follow',
+  'wrong_language',
+  'motion_issue',
+  'voice_issue',
+  'other',
+]
+
+export interface MessageFeedback {
+  rating: 1 | -1
+  reasons: FeedbackReason[]
+  comment: string | null
+}
 
 // ── Auth helpers ──────────────────────────────────────────────────────────────
 
@@ -335,12 +374,23 @@ export async function deleteSession(sessionId: string) {
 // ── On-demand TTS ──────────────────────────────────────────────────────────────
 
 export interface SessionMessage {
+  /** The message's database id. Optional: an older backend does not send it. */
+  id?: string
   role: 'user' | 'assistant'
   content: string
   timestamp: string
   tokens?: number
+  /** The caller's saved vote on this message, when one exists. */
+  feedback?: MessageFeedback
   /** Present only when this turn rendered a motion. Assistant rows only. */
   motion_job_id?: string
+  /**
+   * The prompt Kimodo actually rendered — the planner's cleaned
+   * `resolved_query`, not the user's raw message. Absent on rows stored
+   * before this field was recorded; callers fall back to the user's message
+   * in that case.
+   */
+  motion_prompt?: string
   /**
    * When that motion stops being fetchable — ISO-8601, absolute.
    *
@@ -359,12 +409,11 @@ export interface SessionMessage {
  * checks those first).
  *
  * POST /tts answers with an SSE stream of the same events /chat sends in voice
- * mode: `speech_start`, then per sentence a `speech_sentence` mark and one
- * `speech_chunk` per self-standing Opus/FLAC (or WAV) file, then `speech_end`
- * (`partial: true` if it stopped early) — or `speech_failed`. The server
- * synthesises one sentence per call, slower than it plays, so the player
- * buffers per sentence and plays as it goes instead of waiting for the whole
- * answer (lib/speechSchedule.ts sentenceStartTime).
+ * mode: `speech_start`, one `speech_chunk` per self-standing Opus/FLAC (or
+ * WAV) file, then `speech_end` — or `speech_failed`. The first chunk lands
+ * about half a second after synthesis starts and the rest arrive faster than
+ * they play, so the caller plays as it goes instead of waiting for the whole
+ * answer.
  *
  * fetch, not the axios client: axios is XHR and cannot deliver a stream
  * progressively. This used to be a task id plus a one-second poll through
@@ -447,6 +496,39 @@ export async function createUserMemory(factText: string, category?: string) {
 export async function deleteUserMemory(factId: string) {
   const { data } = await http.delete(`/me/memory/${encodeURIComponent(factId)}`)
   return data
+}
+
+// ── Message feedback CRUD ────────────────────────────────────────────────────
+
+/**
+ * Save (or change) the caller's vote on one assistant message.
+ *
+ * Upsert: the same call is used for a first vote, changing the rating, or
+ * adding/editing reasons — the caller never needs to know whether a row
+ * already exists. 404 if the message does not exist, is not the caller's, or
+ * is not an assistant message.
+ */
+export async function saveMessageFeedback(
+  messageId: string,
+  input: { rating: 1 | -1; reasons?: FeedbackReason[]; comment?: string | null },
+): Promise<MessageFeedback> {
+  const { data } = await http.post(`/me/feedback/messages/${encodeURIComponent(messageId)}`, input)
+  return {
+    rating: data.rating,
+    reasons: data.reasons,
+    comment: data.comment,
+  }
+}
+
+/**
+ * Clear the caller's vote on one assistant message.
+ *
+ * Always 204, whether or not a vote existed, and whether or not the message
+ * itself exists or belongs to the caller — RLS simply hides rows that are not
+ * the caller's, so there is nothing to 404 on. Idempotent.
+ */
+export async function clearMessageFeedback(messageId: string): Promise<void> {
+  await http.delete(`/me/feedback/messages/${encodeURIComponent(messageId)}`)
 }
 
 // ── Zero-cost sandbox billing ────────────────────────────────────────────────

@@ -1,16 +1,17 @@
 """Kimodo node — writes a queue row instead of calling MCP (D26 + Task 8).
 
 Decisions encoded:
-  D3:   needs_motion = HARD GATE (edge cứng, not LLM tool-choice)
+  D3:   motion_descriptor tag = HARD GATE (edge cứng, not LLM tool-choice)
   D26:  Motion = node riêng, parallel to retriever, NOT in retriever bind_tools
   Task 8: MCP dropped for this path entirely. D26's "MCP = transport, edge =
           control" reasoning assumed MCP's tool-discovery bought something
-          here — it never did, because needs_motion is a hard edge and the
+          here — it never did, because the motion tag is a hard edge and the
           LLM never chooses the motion tool. MCP stays for web search, where
           the LLM does choose.
+  S2:   the old needs_motion flag is gone; the gate reads the tag (wants_motion).
 
 The Kimodo node now:
-  - Only runs when needs_motion=true (hard edge from planner)
+  - Only runs on the motion_descriptor tag (hard edge from planner)
   - Checks the worker heartbeat FIRST. A stale heartbeat means the worker is
     off, and the node returns `unavailable` WITHOUT writing a row — the
     queue must never be loaded with work nobody will pick up.
@@ -176,7 +177,7 @@ async def kimodo_node(state: AgentState, config: RunnableConfig) -> dict:
 async def _kimodo_node(state: AgentState, config: RunnableConfig) -> dict:
     """Kimodo motion job enqueue node.
 
-    Called via hard edge when planner sets needs_motion=true. Never calls the
+    Called via hard edge when the planner tags motion_descriptor. Never calls the
     GPU directly: it checks the worker is alive, computes the job id, checks
     for an existing row, checks the queue depth, and writes the row. A GPU
     worker polls the table independently and picks the job up.
@@ -223,9 +224,11 @@ async def _kimodo_node(state: AgentState, config: RunnableConfig) -> dict:
 
     existing = await asyncio.to_thread(read_status, table, job_id)
     if existing and existing["status"] == "done":
-        return _msg({"state": "cache_hit", "job_id": job_id})   # GPU không chạy
+        # job_id is an HMAC of resolved_query, so a cache hit is still the
+        # right label for what would have been rendered.
+        return _msg({"state": "cache_hit", "job_id": job_id, "prompt": resolved_query})   # GPU không chạy
     if existing and existing["status"] in ("queued", "processing"):
-        return _msg({"state": "queued", "job_id": job_id,
+        return _msg({"state": "queued", "job_id": job_id, "prompt": resolved_query,
                      "queue_position": 1, "eta_seconds": SECONDS_PER_JOB})
 
     depth = await asyncio.to_thread(queue_depth, table)
@@ -250,6 +253,6 @@ async def _kimodo_node(state: AgentState, config: RunnableConfig) -> dict:
         "elapsed_ms": elapsed_ms, "job_id": job_id, "queue_position": depth + 1,
     })
 
-    return _msg({"state": "queued", "job_id": job_id,
+    return _msg({"state": "queued", "job_id": job_id, "prompt": resolved_query,
                  "queue_position": depth + 1,
                  "eta_seconds": (depth + 1) * SECONDS_PER_JOB})

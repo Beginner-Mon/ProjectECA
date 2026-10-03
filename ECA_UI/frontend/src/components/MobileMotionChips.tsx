@@ -5,12 +5,14 @@ import { useMotion } from '../hooks/useMotion'
 import { fetchMotionStatus } from '../lib/api'
 
 /**
- * MobileMotionChips — horizontal scroll replay chips for the mobile chat
- * top-strip (left side). Same replay source as MotionControlPanel's
- * dropdown: `sessionMotions` newest-first, clip cached under job_id.
+ * MobileMotionChips — horizontal scroll replay chips, pinned ABOVE the mobile
+ * conversation frame (MobileChatDock renders this before the conversation
+ * card, so above the resize handle too). Bare strip, no card of its own.
+ * Same replay source as MotionControlPanel's dropdown: `sessionMotions`
+ * newest-first, clip cached under job_id.
  *
- * Renders nothing when there is nothing to replay, so the strip's left
- * side collapses instead of leaving an empty slot.
+ * Renders nothing when there is nothing to replay, so no empty strip takes
+ * up dock space.
  */
 export default function MobileMotionChips() {
   const { t } = useTranslation()
@@ -46,7 +48,7 @@ export default function MobileMotionChips() {
 
   return (
     <div
-      className="flex items-center gap-1.5 overflow-x-auto flex-1 min-w-0 px-3 py-2 border-b border-border/40 shrink-0"
+      className="mx-3 mb-1 flex items-center gap-1.5 overflow-x-auto py-1 shrink-0"
       aria-label={t('motion.replay_motion')}
     >
       {sessionMotions.map((m) => {

@@ -81,10 +81,22 @@ from aws_cdk import (
     aws_iam as iam,
     aws_lambda as lambda_,
     aws_scheduler as scheduler,
+    aws_ssm as ssm,
 )
 from constructs import Construct
 
 _REPOSITORY_NAME = "vva-speechllm"
+
+# Noi CI ghi lai image vua roll len ham. Giong het agent_stack.py, va
+# vi dung mot ly do: CDK so huu hinh dang, CI so huu code, nen template
+# nho tag cua lan `cdk deploy` gan nhat va troi le dan sau moi lan CI
+# chay. Mot `cdk deploy` chep tu runbook cu se lui ham ve ban cu, im
+# lang, va CloudFormation bao thanh cong.
+#
+# Giai boi CloudFormation LUC DEPLOY (tham so
+# AWS::SSM::Parameter::Value<String>), khong phai luc synth: tra luc
+# synth se cache vao cdk.context.json roi cung troi le nhu cu.
+_IMAGE_TAG_PARAM = "/vva/speechllm/image-tag"
 
 # Default memory TAM PROVISIONAL — D6 chot. Lambda cap CPU theo RAM: 1769 MB
 # = 1 vCPU, 3538 MB = 2 vCPU (diem 2-vCPU ly tuong ban dau). Nhung quota
@@ -216,17 +228,16 @@ class SpeechllmStack(Stack):
             self.fn_url = None
             return
 
+        # Khong truyen tag: lay ban CI vua deploy, tu SSM. Co truyen thi co
+        # thang - do la cach dien dat mot lan rollback co chu dich.
+        #
+        # Cho nay tung `raise`. Raise chan duoc viec deploy XOA mat ham, va
+        # nguy co do khong con nua - nhung no cung bat moi nguoi tu go tag
+        # bang tay, ma tag go tay chinh la cach ham bi lui nguoc. Thieu tham
+        # so thi CloudFormation van bao loi that to luc deploy.
         if not image_tag:
-            raise ValueError(
-                "VvaSpeechllmStack needs the image tag to deploy.\n\n"
-                "  First time (repository only):\n"
-                "    cdk deploy VvaSpeechllmStack -c speechllm_bootstrap=1\n\n"
-                "  Every time after that:\n"
-                "    cdk deploy VvaSpeechllmStack -c speechllm_image_tag=<git-sha>\n\n"
-                "Neither flag is NOT treated as 'skip the function'. A deploy "
-                "that quietly omitted it would DELETE the live one, and "
-                "CloudFormation would call that a success — same failure "
-                "VvaAgentStack guards against."
+            image_tag = ssm.StringParameter.value_for_string_parameter(
+                self, _IMAGE_TAG_PARAM,
             )
 
         # ── Function ────────────────────────────────────────────────────

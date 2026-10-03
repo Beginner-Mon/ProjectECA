@@ -42,6 +42,9 @@ export interface TurnHooks {
   routeSpeech: (clip: SpeechClip, type: string, data: unknown) => void
   /** Start speaking this reply — voice mode's autoplay. */
   playSpeech: (clip: SpeechClip) => void
+  /** The row's real database id, once `session_persisted` carries one. Optional:
+   *  an older backend sends `{session_id}` alone, and there is nothing to attach. */
+  attachServerId?: (id: string) => void
 }
 
 /**
@@ -63,6 +66,9 @@ export function createTurnLifecycle(
   return (type, data) => {
     if (type === 'session_persisted') {
       persisted = true
+      // The row's id, for feedback buttons — same "not gated on isCurrent" reasoning as below.
+      const id = (data as { assistant_message_id?: unknown } | undefined)?.assistant_message_id
+      if (typeof id === 'string') hooks.attachServerId?.(id)
       // Not gated on isCurrent: the row exists whichever stream is newest, and
       // once the composer is released the user may already have sent another
       // message, after which this stream's `done` is no longer current.

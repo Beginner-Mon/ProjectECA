@@ -68,13 +68,6 @@ export interface Placement extends Segment {
 
 const FROM_START: SchedulerStart = { seq: 0, offset: 0, mediaStart: 0 }
 
-/**
- * Earliest context time chunk `seq` may start, or undefined for "no hold".
- * Asked once per chunk, when it is placed (`now` = that moment). How the
- * player makes whole-sentence pauses — see sentenceStartTime.
- */
-export type StartGate = (seq: number, now: number) => number | undefined
-
 export class ChunkScheduler {
   private nextSeq: number
   /** Context time the last placed chunk ends. Null until one has been placed —
@@ -94,16 +87,13 @@ export class ChunkScheduler {
   private firstStartAt: number | undefined
   /** Decoded (duration) or failed (null) chunks waiting for an earlier seq. */
   private readonly held = new Map<number, number | null>()
-  /** Optional hold on chunks after the first (sentence starts). */
-  private readonly gate: StartGate | undefined
 
-  constructor(start: SchedulerStart = FROM_START, safety = START_SAFETY_S, firstStartAt?: number, gate?: StartGate) {
+  constructor(start: SchedulerStart = FROM_START, safety = START_SAFETY_S, firstStartAt?: number) {
     this.nextSeq = start.seq
     this.firstOffset = start.offset
     this.mediaCursor = start.mediaStart
     this.safety = safety
     this.firstStartAt = firstStartAt
-    this.gate = gate
   }
 
   /** The seq everything is waiting on. Every seq below it has been placed or skipped. */
@@ -158,12 +148,8 @@ export class ChunkScheduler {
       } else {
         // The whole rule: its slot if the slot is still ahead of us, otherwise
         // as soon as possible — and the difference is the gap the user hears.
-        const slot = Math.max(now + this.safety, this.nextStartTime)
-        lateBy = slot - this.nextStartTime
-        // A deliberate hold (a sentence buffering before it speaks) is not
-        // starvation, so it is not counted in lateBy.
-        const held = this.gate?.(current, now)
-        startAt = held === undefined ? slot : Math.max(slot, held)
+        startAt = Math.max(now + this.safety, this.nextStartTime)
+        lateBy = startAt - this.nextStartTime
       }
 
       out.push({ seq: current, startAt, offset, length, mediaStart: this.mediaCursor + offset, lateBy })
@@ -207,45 +193,6 @@ export const PRIOR_RATE = 0.64
  */
 export function priorStartTime(firstArrivalAt: number, estimatedTotalS: number): number {
   return firstArrivalAt + estimatedTotalS * (1 / PRIOR_RATE - 1)
-}
-
-/** Where a sentence starts in the clip and how long it should sound
- *  (`speech_sentence`). */
-export interface SentenceMark {
-  firstSeq: number
-  estimatedAudioS: number
-}
-
-/**
- * Hold for the chunk that opens a sentence, while that sentence is still
- * arriving (the StartGate the player hands the scheduler).
- *
- * The server synthesises one sentence per call, in order, and generation runs
- * slower than playback. So instead of buffering the WHOLE reply before the
- * first sound (computeStartTime, up to 15 s of silence), each sentence buffers
- * just enough to play itself through: priorStartTime from the moment its
- * first chunk arrived, over its own estimate. The waiting that cannot be
- * avoided lands at sentence boundaries — a pause after a full stop, not a
- * stutter mid-word. If the previous sentence is still sounding past that
- * point, the hold costs nothing: the chunk just chains on.
- *
- * No hold for the first sentence (the start-of-play measurement covers it),
- * for chunks that do not open a sentence, once the clip has settled, or when
- * a LATER sentence has already started arriving (so this one is complete).
- */
-export function sentenceStartTime(
-  sentences: readonly (SentenceMark | undefined)[],
-  seq: number,
-  now: number,
-  settled: boolean,
-): number | undefined {
-  if (settled) return undefined
-  const k = sentences.findIndex((s) => s?.firstSeq === seq)
-  if (k <= 0) return undefined
-  if (sentences[k + 1]) return undefined
-  const est = sentences[k]!.estimatedAudioS
-  if (!(est > 0)) return undefined
-  return Math.min(priorStartTime(now, est), now + MAX_START_DELAY_S)
 }
 
 /** One decoded chunk's arrival instant (context clock) and media length. */

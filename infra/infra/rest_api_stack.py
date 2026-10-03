@@ -259,6 +259,18 @@ class RestApiStack(Stack):
         preferences.add_method("GET", crud, **authed)
         preferences.add_method("PATCH", crud, **authed)
 
+        # ── /me/feedback/messages/{message_id} — authenticated ──────────
+        # POST is an upsert (first vote, changed vote, added reasons); DELETE
+        # clears the vote. Not PUT/PATCH: the preflight above allows only
+        # GET, POST, DELETE and OPTIONS, so a browser would fail the preflight
+        # and never send the request. Buffered CRUD function — a vote is one
+        # small row, nothing to stream. As with /me/preferences, without this
+        # declaration the deployed API answers 403 "Missing Authentication
+        # Token" even though crud_app.py serves the route.
+        feedback_msg = me.add_resource("feedback").add_resource("messages").add_resource("{message_id}")
+        feedback_msg.add_method("POST", crud, **authed)
+        feedback_msg.add_method("DELETE", crud, **authed)
+
         # ── /chat — authenticated, and STREAMED ─────────────────────────
         #
         # The endpoint this API was chosen for. The module docstring above says

@@ -213,6 +213,9 @@ class TestSynthesizerEmotion:
     async def test_prompt_asks_for_the_tag_last_and_can_be_switched_off(self, monkeypatch):
         from langgraph_agents.nodes import synthesizer as syn_mod
 
+        # Hermetic against local .env: T0 sets VVA_REPLY_EMOTION=0 there and
+        # conftest auto-loads it, so force the "on" state for the first half.
+        monkeypatch.setenv("VVA_REPLY_EMOTION", "1")
         captured = {}
 
         async def ainvoke(msgs):

@@ -86,6 +86,9 @@ export default function MobileChatDock({ chatOpen, onOpenChange, maxHeight, dock
       className="dark block md:hidden fixed bottom-0 inset-x-0 z-40 bg-transparent"
       style={{ paddingBottom: 'calc(0.75rem + env(safe-area-inset-bottom, 0px))' }}
     >
+      {/* Replay chips sit ABOVE the whole conversation frame — handle included —
+          so they stay put while the conversation resizes/collapses beneath them. */}
+      <MobileMotionChips />
       <div className="mobile-chat-conversation mx-3 bg-white border border-border/40 rounded-2xl p-2 flex flex-col">
         <div className="flex justify-center shrink-0">
           <button
@@ -129,7 +132,6 @@ export default function MobileChatDock({ chatOpen, onOpenChange, maxHeight, dock
           className="mobile-chat-content max-h-[35vh] overflow-hidden flex flex-col"
           style={{ height, maxHeight: `min(35vh, ${maxHeight}px)`, transition: dragHeight !== null ? 'none' : undefined }}
         >
-          <MobileMotionChips />
           <div className="flex-1 min-h-0 overflow-hidden">
             <ChatPanel hideInput active={expanded} />
           </div>

@@ -209,5 +209,29 @@
     "load_error": "Could not load characters: {{error}}",
     "loading_avatar": "Loading 3D Avatar...",
     "loading_catalog": "Loading characters..."
+  },
+  "feedback": {
+    "cancel": "Cancel",
+    "char_count": "{{count}}/{{max}} characters",
+    "comment_label": "Anything else? (optional)",
+    "comment_placeholder": "Don't include sensitive personal information",
+    "error_save": "Couldn't save your feedback — try again",
+    "modal_subtitle": "Your vote is saved. Adding a reason helps us improve — optional.",
+    "modal_title": "What went wrong?",
+    "reason_label": "Reason",
+    "reason_placeholder": "Choose a reason…",
+    "reasons": {
+      "hard_to_follow": "Hard to understand or too long",
+      "incomplete": "Missing information or not detailed enough",
+      "incorrect": "Information is inaccurate",
+      "motion_issue": "The 3D motion was wrong",
+      "not_relevant": "Didn't address the question",
+      "other": "Other",
+      "unsafe": "Could be unsafe / risk of injury",
+      "voice_issue": "There was a problem with the voice",
+      "wrong_language": "Replied in the wrong language"
+    },
+    "submit": "Submit",
+    "submitting": "Submitting..."
   }
 }

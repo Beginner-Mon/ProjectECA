@@ -81,7 +81,7 @@ def test_enabled_still_reads_the_real_servers(monkeypatch):
     cfg = mcp_client._load_mcp_config()
     assert cfg, "config/mcp_servers.yaml produced no servers with MCP enabled"
     # kimodo_motion was removed from config/mcp_servers.yaml in Task 8 — the
-    # LLM never chooses the motion tool (D26: needs_motion is a hard edge),
+    # LLM never chooses the motion tool (D26: the motion tag is a hard edge),
     # so MCP's tool-discovery bought nothing on that path. web_search is the
     # entry that survives: the LLM does choose that one.
     assert "web_search" in cfg

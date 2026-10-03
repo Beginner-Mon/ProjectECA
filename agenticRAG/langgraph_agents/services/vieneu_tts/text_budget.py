@@ -1,35 +1,30 @@
-"""Split a reply into the sentences that are spoken, one TTS call each.
+"""Cap how much of a reply is spoken aloud (Owner decision 09-2026).
 
 Companion to `voice.py`: that file holds the rule for "in WHICH voice",
-this one holds the rule for "in what PIECES". The single choke point is
+this one holds the rule for "up to WHERE". The single choke point is
 `api/main.py::_stream_speech`, shared by /chat and POST /tts — both call
-sites get the same plan with no per-route logic.
-
-Why sentences (Owner decision 28-09-2026, replacing the 600-char cap):
-generation runs SLOWER than playback (0.64–0.74× realtime), so one call for
-the whole reply forces the browser to sit in silence until enough audio is
-buffered to play it gaplessly — ~0.56 × the reply's length, capped at 15 s.
-One call per sentence lets the first sentence sound after its own short
-buffer, and the unavoidable waiting lands BETWEEN sentences, where a pause
-after a full stop sounds like speech rather than a stutter. The whole reply
-is spoken; the old rule spoke only the first sentence of anything over
-600 chars.
+sites get the same budget with no per-route logic.
 
 Where the numbers come from (challenge these if the setup changes):
 
+- ``SPOKEN_CHAR_LIMIT = 600`` — Owner decision, not a measurement. Above
+  600 chars only the FIRST sentence is spoken.
 - ``CHARS_PER_AUDIO_SECOND = 17.9`` — measured: the D6 probe text
-  (2,255 chars) produced ~126s of audio (2255 / 126 ≈ 17.9).
-- ``MIN_SEGMENT_CHARS = 40`` — about 2 s of audio. Shorter sentences
-  ("Chào bạn.") are joined to the next, so the voice does not start with
-  half a second of audio and then a pause.
-- ``MAX_SEGMENT_CHARS = 400`` — one pathological sentence cannot approach
-  the Lambda 300 s timeout on its own: 400 chars ≈ 22 s of audio ≈ ~35 s of
-  synthesis. Longer ones are cut at a word boundary.
+  (2,255 chars) produced ~126s of audio (126 s viewer: 2255 / 126 ≈ 17.9).
+- ``FIRST_SENTENCE_MAX = 400`` — a sub-cap so one pathological sentence
+  cannot approach the Lambda 300s timeout on its own: 400 chars ≈ 22s of
+  audio ≈ ~35s of synthesis at the measured 0.64–0.74× realtime rate.
+- The synthesis rate itself (0.64–0.74× realtime, ratios 1.35–1.56) is
+  deliberately NOT baked in here: it drifts with RAM, arch and model, and a
+  stale server-side constant would silently under-buffer. The frontend
+  measures the live rate per turn (speechSchedule.computeStartTime); the
+  server only supplies ``estimated_audio_s`` (total expected length, which
+  the frontend cannot know until the stream ends).
 
-Optional cap: ``TTS_MAX_SPOKEN_CHARS`` env, read at CALL time. Unset (the
-default) speaks everything. When set, whole segments are kept while they fit
-(the first always is). Unparseable or non-positive values mean "no cap" — a
-bad env var must never take TTS down.
+Override: ``TTS_MAX_SPOKEN_CHARS`` env, read at CALL time (not import) so
+tests and per-process config can change it. Unparseable or non-positive
+values fall back to the default instead of raising — a bad env var must
+never take TTS down.
 """
 
 from __future__ import annotations
@@ -38,164 +33,106 @@ import os
 from dataclasses import dataclass
 
 __all__ = [
+    "SPOKEN_CHAR_LIMIT",
+    "FIRST_SENTENCE_MAX",
     "CHARS_PER_AUDIO_SECOND",
-    "MAX_SEGMENT_CHARS",
-    "MIN_SEGMENT_CHARS",
     "SpokenPlan",
-    "SpokenSegment",
     "plan_spoken_text",
-    "split_sentences",
 ]
 
+SPOKEN_CHAR_LIMIT = 600
+FIRST_SENTENCE_MAX = 400
+# Floor on what counts as the first sentence. Below this the "sentence" is a
+# list marker, a decimal, or a heading — speaking it alone is worse than
+# speaking nothing. ~40 chars is about 2 seconds of audio.
+_MIN_FIRST_SENTENCE = 40
 CHARS_PER_AUDIO_SECOND = 17.9
-MIN_SEGMENT_CHARS = 40
-MAX_SEGMENT_CHARS = 400
 
 _ENV_LIMIT_NAME = "TTS_MAX_SPOKEN_CHARS"
 
-_SENTENCE_ENDS = ".!?…"
-# Closing marks that belong to the sentence they follow: `Tốt lắm!"` ends
-# after the quote, not before it.
-_CLOSERS = "\"'”’)]»"
-
-
-@dataclass(frozen=True)
-class SpokenSegment:
-    text: str
-    estimated_audio_s: float  # len(text) / CHARS_PER_AUDIO_SECOND
+# First-sentence terminators, checked in text order (earliest wins).
+_SENTENCE_ENDS = (".", "!", "?", "…", "\n")
 
 
 @dataclass(frozen=True)
 class SpokenPlan:
-    segments: tuple[SpokenSegment, ...]
-    truncated: bool  # True only when TTS_MAX_SPOKEN_CHARS dropped segments
-
-    @property
-    def spoken_chars(self) -> int:
-        return sum(len(s.text) for s in self.segments)
-
-    @property
-    def estimated_audio_s(self) -> float:
-        return sum(s.estimated_audio_s for s in self.segments)
+    text: str              # the part actually sent to SpeechLLm
+    truncated: bool        # True when the reply was longer than the budget
+    estimated_audio_s: float  # len(text) / CHARS_PER_AUDIO_SECOND
 
 
-def _limit() -> int | None:
-    raw = os.environ.get(_ENV_LIMIT_NAME, "")
-    if not raw:
-        return None
+def _limit() -> int:
     try:
-        value = int(raw)
+        value = int(os.environ.get(_ENV_LIMIT_NAME, "") or SPOKEN_CHAR_LIMIT)
     except (TypeError, ValueError):
-        return None
-    return value if value > 0 else None
+        return SPOKEN_CHAR_LIMIT
+    return value if value > 0 else SPOKEN_CHAR_LIMIT
 
 
-def _is_sentence_end(text: str, i: int) -> bool:
-    """Is text[i] (a terminator) really the end of a sentence?
+def _first_sentence(text: str) -> str:
+    """Cut right after the earliest terminator that actually ends a sentence.
 
-    A "." next to digits usually is not, and missing that is silent: the
-    voice says "one dot" and pauses. Replies are exercise instructions, so
-    both of these are routine:
+    "Earliest terminator" alone is wrong, and wrong in a way that is silent:
+    a reply opening with a numbered list ("1. Khoi dong khop vai...") has its
+    first "." at index 1, so the spoken text became "1." — 0.1s of audio
+    saying "one dot". A decimal ("tap 2.5 phut") did the same at index 13.
+    Two guards, both cheap:
 
-    * a decimal — "2.5 phút": digit on both sides;
-    * a list marker — "1. Khởi động…": only digits between the start of the
-      line and the ".".
+    * a "." preceded by a digit is a list marker or a decimal, never the end
+      of a sentence in this domain (replies are exercise instructions);
+    * a candidate shorter than _MIN_FIRST_SENTENCE is not a sentence worth
+      speaking — keep looking. This also covers a heading line ending in a
+      newline before the real first sentence.
 
-    "…tập 10 lần." still ends a sentence: a digit before, but not a decimal
-    and not at the start of a line.
+    Order of preference, and the reason for it:
+
+    1. the earliest terminator that clears both guards — a whole sentence,
+       long enough to be worth hearing;
+    2. failing that, the earliest terminator that clears the digit guard
+       even if it is short ("Xin chào…" with no other sentence after it).
+       A short whole sentence beats a mid-sentence cut: Owner's rule is
+       never to stop the voice mid-sentence;
+    3. "" — no terminator at all, so the caller cuts at a word boundary.
+       This is the only path that can end mid-sentence, and only because
+       there is no sentence to end.
     """
-    if text[i] != ".":
-        return True
-    before = text[i - 1] if i > 0 else ""
-    after = text[i + 1] if i + 1 < len(text) else ""
-    if before.isdigit() and after.isdigit():
-        return False
-    line_start = text.rfind("\n", 0, i) + 1
-    head = text[line_start:i].strip()
-    if head and head.isdigit():
-        return False
-    return True
-
-
-def _raw_sentences(text: str) -> list[str]:
-    """Cut after every real terminator (and after each line)."""
-    out: list[str] = []
-    start = 0
-    i = 0
-    n = len(text)
-    while i < n:
-        char = text[i]
-        if char == "\n":
-            out.append(text[start:i])
-            start = i + 1
-        elif char in _SENTENCE_ENDS and _is_sentence_end(text, i):
-            # "?!", "..." and a closing quote stay with the sentence.
-            j = i + 1
-            while j < n and (text[j] in _SENTENCE_ENDS or text[j] in _CLOSERS):
-                j += 1
-            out.append(text[start:j])
-            start = j
-            i = j
+    fallback = ""
+    for i, char in enumerate(text):
+        if char not in _SENTENCE_ENDS:
             continue
-        i += 1
-    out.append(text[start:])
-    return [s.strip() for s in out if s.strip()]
-
-
-def _cut_long(sentence: str) -> list[str]:
-    """Split a sentence longer than MAX_SEGMENT_CHARS at word boundaries."""
-    pieces: list[str] = []
-    rest = sentence
-    while len(rest) > MAX_SEGMENT_CHARS:
-        window = rest[:MAX_SEGMENT_CHARS]
-        space = max(window.rfind(" "), window.rfind("\t"))
-        cut = space if space > 0 else MAX_SEGMENT_CHARS
-        pieces.append(rest[:cut].rstrip())
-        rest = rest[cut:].lstrip()
-    if rest:
-        pieces.append(rest)
-    return pieces
-
-
-def split_sentences(text: str) -> list[str]:
-    """The reply as the pieces it is spoken in, in order, nothing dropped.
-
-    Short sentences are joined forward until a piece reaches
-    MIN_SEGMENT_CHARS; a short LAST piece stays on its own (it is the end of
-    the reply, nothing follows it to pause before). Over-long sentences are
-    cut at word boundaries.
-    """
-    segments: list[str] = []
-    pending = ""
-    for sentence in _raw_sentences(text):
-        pending = f"{pending} {sentence}" if pending else sentence
-        if len(pending) >= MIN_SEGMENT_CHARS:
-            segments.extend(_cut_long(pending))
-            pending = ""
-    if pending:
-        segments.extend(_cut_long(pending))
-    return segments
+        if char == "." and i > 0 and text[i - 1].isdigit():
+            continue
+        candidate = text[:i] if char == "\n" else text[: i + 1]
+        if len(candidate.strip()) < _MIN_FIRST_SENTENCE:
+            fallback = fallback or candidate
+            continue
+        return candidate
+    return fallback
 
 
 def plan_spoken_text(text: str) -> SpokenPlan:
-    """Decide what gets spoken, and in which pieces. Everything, by default."""
-    pieces = split_sentences(text)
+    """Decide how much of ``text`` gets spoken.
+
+    At or under budget the string passes through UNTOUCHED — no strip, no
+    normalization — so short replies are byte-identical to before this
+    module existed. Over budget only the first sentence is kept (sub-capped
+    at FIRST_SENTENCE_MAX), and the result is rstripped.
+    """
     limit = _limit()
-    truncated = False
-    if limit is not None:
-        kept: list[str] = []
-        total = 0
-        for piece in pieces:
-            if kept and total + len(piece) > limit:
-                truncated = True
-                break
-            kept.append(piece)
-            total += len(piece)
-        pieces = kept
+    if len(text) <= limit:
+        return SpokenPlan(
+            text=text,
+            truncated=False,
+            estimated_audio_s=len(text) / CHARS_PER_AUDIO_SECOND,
+        )
+    first = _first_sentence(text)
+    if not first or len(first) > FIRST_SENTENCE_MAX:
+        window = text[:FIRST_SENTENCE_MAX]
+        space = max(window.rfind(" "), window.rfind("\t"))
+        first = window[:space] if space != -1 else window
+    spoken = first.rstrip()
     return SpokenPlan(
-        segments=tuple(
-            SpokenSegment(text=p, estimated_audio_s=len(p) / CHARS_PER_AUDIO_SECOND)
-            for p in pieces
-        ),
-        truncated=truncated,
+        text=spoken,
+        truncated=True,
+        estimated_audio_s=len(spoken) / CHARS_PER_AUDIO_SECOND,
     )

@@ -16,12 +16,12 @@ hai giọng được viết riêng cho hai ngôn ngữ. Phần "Anne là ai và 
 - (chat) Chào bạn! Hôm nay mình có thể hỗ trợ cho bạn cái gì nè?
 - (synthesize) Rõ rồi, đau lưng dưới do ngồi lâu. Thư viện bên mình có ba bài cho đúng kiểu này, làm ngay tại bàn được luôn.
 - (clarify) Mình hỏi một câu: đau âm ỉ cả ngày, hay chỉ đau lúc đứng dậy? Hai kiểu này tập khác nhau.
-- (refuse) Cái này thì mình không giúp được rồi. Thư viện bên mình không có gì để nói chắc, mà mình cũng không muốn nói bừa.
+- (refuse) Phần hướng dẫn này mình chưa có gì chắc để nói, mà mình cũng không muốn nói bừa.
 
 ## Safety Templates
 red_flag_screen: "Bạn dừng lại đã. **Dấu hiệu này cần người có chuyên môn xem trực tiếp** — bạn đi khám nhé, đừng tự tập tiếp."
-referral_advice: "Chỗ này bạn nên gặp bác sĩ, không phải mình. Mình chỉ dẫn bài tập trong thư viện thôi."
-scope_disclaimer: "*Mình chia sẻ từ thư viện của ECA, không thay thế khám lâm sàng.*"
+referral_advice: "Chỗ này bạn nên gặp bác sĩ, không phải mình."
+scope_disclaimer: "*Đây là gợi ý, không thay thế khám lâm sàng.*"
 
 ## UI Strings
 greeting.morning: "Chào buổi sáng! Mình là Anne, người hỗ trợ bạn trong sức khỏe, bạn muốn hỏi gì không?"
@@ -30,8 +30,12 @@ greeting.evening: "Anne đây, cũng đã qua nửa ngày rồi, bạn thấy m�
 greeting.night: "Khuya rồi, mình là Anne đây, bạn muốn tâm sự chứ?"
 placeholder: "Nhắn cho Anne..."
 stage_searching: "Đang tìm trong thư viện..."
+stage_thinking: "Đợi mình một chút..."
+stage_recalling: "Để mình nhớ lại..."
+stage_web: "Để mình tìm trên web..."
+stage_video: "Để mình nghe qua video..."
 stage_composing: "Đang soạn cho bạn..."
 error_stream: "Mất kết nối giữa chừng rồi. Bạn gửi lại giúp mình nhé."
-error_system: "Thư viện bị khóa mất rồi. Bạn thử lại sau ít phút nha."
+error_system: "Có trục trặc rồi, bạn thử lại sau ít phút nha."
 error_partial: "Có chút trục trặc, nhưng phần này mình vẫn trả lời được."
 error_unavailable: "Câu này hơi khó nói. Bạn thử hỏi cách khác xem sao."

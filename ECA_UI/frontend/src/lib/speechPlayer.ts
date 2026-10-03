@@ -32,10 +32,8 @@ import {
   MAX_START_DELAY_S,
   priorStartTime,
   mediaPositionAt,
-  sentenceStartTime,
   type ChunkArrival,
   type Placement,
-  type SentenceMark,
 } from './speechSchedule'
 
 // ── SpeechClip ───────────────────────────────────────────────────────────────
@@ -97,15 +95,6 @@ export class SpeechClip {
    * on replay costs milliseconds per chunk.
    */
   readonly chunks: (ArrayBuffer | null | undefined)[] = []
-  /**
-   * `speech_sentence` marks by sentence index. The server synthesises one
-   * sentence per call; the player buffers per sentence from these. Empty for
-   * a cached clip or an older server — then it buffers per clip, as before.
-   */
-  readonly sentences: (SentenceMark | undefined)[] = []
-  /** speech_end said the reply stopped early (a sentence failed after some
-   *  audio went out): playable, but not worth caching as the whole reply. */
-  private partial = false
   private snap: ClipSnapshot = { status: 'pending', received: 0, error: null }
   private readonly listeners = new Set<() => void>()
 
@@ -137,7 +126,7 @@ export class SpeechClip {
    * for a day; better to miss and synthesise it whole.
    */
   get intact(): boolean {
-    if (this.snap.status !== 'complete' || this.partial) return false
+    if (this.snap.status !== 'complete') return false
     // An index loop, not `every`: `every` skips the holes of a sparse array,
     // and holes are exactly what this is looking for.
     for (let i = 0; i < this.chunks.length; i++) {
@@ -160,30 +149,12 @@ export class SpeechClip {
     this.set({ received: this.snap.received + 1 })
   }
 
-  addSentence(index: number, firstSeq: number, estimatedAudioS: number): void {
-    if (this.snap.status !== 'streaming') return
-    if (!Number.isInteger(index) || index < 0 || index >= MAX_CHUNKS) return
-    if (!Number.isInteger(firstSeq) || firstSeq < 0 || firstSeq >= MAX_CHUNKS) return
-    if (this.sentences[index] !== undefined) return // duplicate
-    this.sentences[index] = { firstSeq, estimatedAudioS: estimatedAudioS > 0 ? estimatedAudioS : 0 }
-  }
-
-  /** Expected audio of what plays first: the first sentence when the server
-   *  marks sentences, else the whole clip. What the start-of-play buffer is
-   *  measured against. */
-  get firstEstimate(): number | undefined {
-    const first = this.sentences[0]?.estimatedAudioS
-    return first !== undefined && first > 0 ? first : this.meta?.estimatedAudioS
-  }
-
   /**
    * `speech_end`. Any seq below `count` that never arrived becomes a hole
    * (null), so the player skips it instead of waiting for it forever.
-   * `partial`: the server stopped early after some audio (see `intact`).
    */
-  finish(count?: number, partial = false): void {
+  finish(count?: number): void {
     if (this.snap.status !== 'streaming') return
-    this.partial = partial
     const total = Math.min(MAX_CHUNKS, Math.max(count ?? 0, this.chunks.length))
     for (let i = 0; i < total; i++) {
       if (this.chunks[i] === undefined) this.chunks[i] = null
@@ -232,7 +203,7 @@ function base64ToBytes(b64: string): ArrayBuffer | null {
 /**
  * Apply one SSE event to a clip.
  *
- * The same six events arrive inside /chat (voice mode) and as the whole body
+ * The same five events arrive inside /chat (voice mode) and as the whole body
  * of POST /tts — the backend emits both from one helper — so both paths come
  * through here and cannot drift apart.
  *
@@ -251,13 +222,6 @@ export function applySpeechEvent(clip: SpeechClip, type: string, data: unknown):
         estimatedAudioS: typeof d.estimated_audio_s === 'number' ? d.estimated_audio_s : undefined,
       })
       return true
-    case 'speech_sentence':
-      clip.addSentence(
-        typeof d.index === 'number' ? d.index : -1,
-        typeof d.first_seq === 'number' ? d.first_seq : -1,
-        typeof d.estimated_audio_s === 'number' ? d.estimated_audio_s : 0,
-      )
-      return true
     case 'speech_chunk':
       clip.addChunk(
         typeof d.seq === 'number' ? d.seq : -1,
@@ -265,7 +229,7 @@ export function applySpeechEvent(clip: SpeechClip, type: string, data: unknown):
       )
       return true
     case 'speech_end':
-      clip.finish(typeof d.chunks === 'number' ? d.chunks : undefined, d.partial === true)
+      clip.finish(typeof d.chunks === 'number' ? d.chunks : undefined)
       return true
     case 'speech_failed':
       // The text is still there and readable — a missing voice is not worth an
@@ -633,7 +597,7 @@ class SpeechPlayer {
     // — when generation began producing (this arrival) and how much audio is
     // coming (the server's estimate) — so waiting for two more chunks only
     // buys precision, and costs silence a short reply cannot afford.
-    const est = this.clip?.firstEstimate
+    const est = this.clip?.meta?.estimatedAudioS
     const ctx = this.ctx
     if (seq === 0 && m.timer === null && ctx && typeof est === 'number' && est > 0) {
       const at = Math.min(priorStartTime(now, est), now + MAX_START_DELAY_S)
@@ -655,7 +619,7 @@ class SpeechPlayer {
     if (!m || !clip || !ctx || m.gen !== this.gen) return
     const startAt = computeStartTime(
       m.samples.filter((s): s is ChunkArrival => !!s),
-      clip.firstEstimate,
+      clip.meta?.estimatedAudioS,
       ctx.currentTime,
     )
     this.startRun(ctx, 0, m.controller, startAt)
@@ -670,13 +634,8 @@ class SpeechPlayer {
       return b === undefined ? undefined : b === null ? null : b.duration
     })
     const start = locate(durations, from)
-    // Each later sentence buffers on its own (sentenceStartTime) while the
-    // clip is still streaming. Read live: marks keep arriving during the run.
-    const clip = this.clip
-    const gate = (seq: number, now: number) =>
-      clip ? sentenceStartTime(clip.sentences, seq, now, clip.settled) : undefined
     const run: Run = {
-      scheduler: new ChunkScheduler(start, undefined, firstStartAt, gate),
+      scheduler: new ChunkScheduler(start, undefined, firstStartAt),
       sources: new Set(),
       segments: [],
       from: start.mediaStart + start.offset,

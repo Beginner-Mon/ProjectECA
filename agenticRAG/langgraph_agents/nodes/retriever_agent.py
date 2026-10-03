@@ -41,21 +41,28 @@ from langgraph_agents.tools.pgvector_tool import (
     memory_search as _memory_search,
     resume_last_session as _resume_last_session,
     youtube_transcript as _youtube_transcript,
+    recall_self as _recall_self,
 )
+from langgraph_agents.nodes._persona_loader import _persona_has_sheet
 
-RETRIEVER_BASE_TOOLS = [_kb_search, _memory_search, _resume_last_session, _youtube_transcript]
+RETRIEVER_BASE_TOOLS = [_kb_search, _memory_search, _resume_last_session,
+                        _youtube_transcript, _recall_self]
 
 
-async def _build_tools(web_search_enabled: bool = True) -> list:
+async def _build_tools(web_search_enabled: bool = True,
+                       persona_id: str = "anne") -> list:
     """Assemble tool list: kb_search + memory_search + resume_last_session + MCP tools.
 
     memory_search + resume_last_session always available.
     web_search (search_medical) is filtered by user toggle (D27).
+    recall_self is offered only when this turn's character has a sheet.md
+    (plan T8e) — without facts about itself the tool has nothing to return.
     """
     from langgraph_agents.mcp.client import get_mcp_tools
     mcp_tools = await get_mcp_tools()
 
-    tools = [*RETRIEVER_BASE_TOOLS]
+    tools = [t for t in RETRIEVER_BASE_TOOLS
+             if t.name != "recall_self" or _persona_has_sheet(persona_id)]
 
     for t in mcp_tools:
         # Filter: motion tools NOT in retriever (D26)
@@ -69,102 +76,32 @@ async def _build_tools(web_search_enabled: bool = True) -> list:
     return tools
 
 
-# ── System prompt (P3: conditional web search block) ─────────────────────
+# ── System prompt (S1: chọn tool theo mô tả — prompt không nhắc tên tool) ──
 
-# Web-search tool description + decision rule — injected only when web_search_enabled.
-_WEB_SEARCH_TOOL_BLOCK = """\
-- **search_medical(query)**: Search the web via metasearch engine.
-  Use for: real-time info (news, prices, current events), general facts outside PT domain.
-"""
-
-_WEB_SEARCH_RULE_LINE = """\
-2. **Real-time/external** (news, prices, weather, general non-PT facts) → search_medical
-"""
-
-# D34: injected only when web_search_enabled AND allow_web_fallback (no high-safety tag).
-# MUST call both tools in the SAME round — route_after_retriever force-drops any tool_calls
-# requested on round 2, so there is no second chance to fall back after seeing kb empty.
-_PT_WEB_FALLBACK_RULE_LINE = """\
-1b. **PT/wellness topic, this query has no safety tag** → call kb_search AND search_medical
-   TOGETHER in this same round (parallel), do NOT wait to see if kb_search is empty first —
-   there is no second round to fall back in. If kb_search has real results, synthesizer will
-   prefer them; search_medical is just insurance against a sparse/empty internal KB.
-"""
+# Dòng chính sách web (D34): chỉ khi web_search bật VÀ lượt không có tag an
+# toàn. Nội dung không nhắc tên tool — model tự đối chiếu với mô tả tool.
+_WEB_POLICY_LINE = """\
+- This turn allows web search: for an exercise or health question, search the
+knowledge base and the web together."""
 
 # Static sections (always present regardless of web_search flag)
 _RETRIEVER_PROMPT_BASE = """\
-You are a KNOWLEDGE RETRIEVER for a physical therapy & wellness AI assistant.
+You choose which tools this turn needs. You do not write the answer.
 
-## YOUR ROLE (Dev metaphor)
-You are a DEVELOPER — you decide HOW to find information. The planner (manager) told you WHAT
-is needed (tags) and gave you a resolved question. You choose which tools to use and what
-to search for. Do NOT write the final answer — that's the synthesizer's job.
-
-## TOOLS AVAILABLE
-- **kb_search(query, top_k=5)**: Search the internal PT/wellness knowledge base.
-  Use for: exercises, stretches, anatomy, physiotherapy techniques, health facts.
-{web_search_tool_block}\
-- **memory_search(query, since_days=None, top_k=3)**: Search user's past conversation summaries.
-  Use when the user refers back to an earlier conversation — recalling what they asked
-  before, naming a past time ("last week", "yesterday"), or asking you to repeat something.
-  Scope is automatically scoped to the current user — no need to pass user_id.
-- **resume_last_session(since_days=None)**: Resume the most recent past session.
-  Use when the user wants to CONTINUE where they left off rather than recall a fact —
-  picking the previous session's work back up, carrying on with it.
-  Returns both summary chunks and recent messages from that session.
-- **youtube_transcript(url)**: Fetch the spoken transcript of a YouTube video.
-  Use ONLY when the user's message contains a YouTube link (youtube.com/watch?v= or youtu.be/).
-  Pass the URL verbatim from the user's message. Speech-only — does NOT understand visuals.
-
-## DECISION RULES
-1. **PT/wellness topic** (exercises, stretches, anatomy, physiotherapy) → kb_search FIRST
-{pt_fallback_rule_line}\
-{web_search_rule_line}\
-2. **Past conversation recall** (the user refers to something said earlier, or asks to
-   continue previous work) → memory_search
-3. **YouTube link in message** (youtube.com/watch or youtu.be) → call `youtube_transcript(url)`
-   with the exact URL from the user's message; use the returned transcript to answer.
-4. **Multiple needs** → call tools IN PARALLEL (multiple tool_calls in one response)
-5. **NOT SURE which tool** → call kb_search (default, most common)
-
-## SEARCH QUERY TIPS
-- Use the resolved_query as base, enrich with relevant keywords from required_outputs tags
-- The knowledge base is written in English. When the user asks in another language,
-  search in ENGLISH — use the English clinical term for what they described. The
-  embedding model is multilingual, but an English query matches English documents best.
-- Enrich with the domain words that fit the question: for a movement, the exercise or
-  stretch name; for anatomy, the muscle or joint. Do not pad with generic words.
-
-## EMPTY vs ERROR
-{empty_handling}\
-
-## RETRY CONTEXT
+## How to choose
+- Each tool's description says what it does and when to use it. Choose by those
+  descriptions.
+- Tools are not alternatives to each other. If two apply, call both.
+- You get ONE round: every tool this turn needs must be called in this single
+  response.
+- If no tool fits, call none.
+- An empty result is fine. The next step handles it.
+{web_policy_line}
 {retry_note}
 
-## WHAT IS NEEDED (from planner)
+## This turn
 Required outputs: {required_outputs}
-Resolved query: {resolved_query}
-"""
-
-# D34: default empty-handling (no fallback — either web is off, or query carries a
-# high-safety tag where we deliberately do NOT want ungated web content).
-_EMPTY_HANDLING_DEFAULT = """\
-- If a tool returns results → pass them to synthesizer
-- If a tool returns empty (no results found) → that's OK, synthesizer will handle no-source
-- If a tool returns an ERROR → try an alternative tool or different query
-- Do NOT loop infinitely — max 2 rounds of tool calls
-"""
-
-# D34: injected only when web_search_enabled AND allow_web_fallback. Reminds the agent it
-# already called search_medical alongside kb_search per rule 1b — this is NOT a "wait and
-# see" note, since there is no round left to react to an empty kb_search result in.
-_EMPTY_HANDLING_WITH_WEB_FALLBACK = """\
-- If a tool returns results → pass them to synthesizer
-- If kb_search comes back empty but search_medical (called in parallel per rule 1b) has
-  results → use those, and note the source; synthesizer needs a citation for web-sourced info
-- If both kb_search and search_medical are empty → that's OK, synthesizer will handle no-source
-- If a tool returns an ERROR → try an alternative tool or different query
-- Do NOT loop infinitely — max 2 rounds of tool calls
+Request: {resolved_query}
 """
 
 
@@ -204,26 +141,23 @@ def _build_retriever_system_prompt(
     retry_note: str,
     required_outputs: str,
     resolved_query: str,
+    self_tool_available: bool = False,
 ) -> str:
     """Build the retriever system prompt.
 
-    When web_search_enabled=False, the search_medical tool description and its
-    decision rule are omitted entirely — the LLM is never told web search exists.
-    This is the first layer of P3 defense (conditional prompt).
+    S1: the prompt names no tool. Each tool describes itself; the model
+    chooses by those descriptions. web_search_enabled + allow_web_fallback
+    (D34) only control the one web-policy line, which itself names no tool.
 
-    allow_web_fallback (D34): only meaningful when web_search_enabled=True — tells the LLM
-    to call kb_search + search_medical TOGETHER in round 1 for PT/wellness topics (rule 1b),
-    since round 2's tool_calls get force-dropped by the P2 hard cap (route_after_retriever)
-    regardless of content — there is no "wait for kb empty, then fall back" round available.
-    False for high-safety tags (red_flag_screen/referral_advice): hard no-source refusal only.
+    self_tool_available (T8e) is kept for callers but no longer shapes the
+    prompt — recall_self is gated in _build_tools only.
     """
-    use_fallback = web_search_enabled and allow_web_fallback
-    empty_handling = _EMPTY_HANDLING_WITH_WEB_FALLBACK if use_fallback else _EMPTY_HANDLING_DEFAULT
+    _ = self_tool_available
+    web_policy_line = (
+        _WEB_POLICY_LINE if (web_search_enabled and allow_web_fallback) else ""
+    )
     return _RETRIEVER_PROMPT_BASE.format(
-        web_search_tool_block=_WEB_SEARCH_TOOL_BLOCK if web_search_enabled else "",
-        pt_fallback_rule_line=_PT_WEB_FALLBACK_RULE_LINE if use_fallback else "",
-        web_search_rule_line=_WEB_SEARCH_RULE_LINE if web_search_enabled else "",
-        empty_handling=empty_handling,
+        web_policy_line=web_policy_line,
         retry_note=retry_note,
         required_outputs=required_outputs,
         resolved_query=resolved_query,
@@ -273,7 +207,10 @@ async def retriever_agent_node(state: AgentState, config: RunnableConfig) -> dic
         "web_fallback_allowed": web_search_enabled and allow_web_fallback,
     })
 
-    tools = await _build_tools(web_search_enabled=web_search_enabled)
+    tools = await _build_tools(
+        web_search_enabled=web_search_enabled,
+        persona_id=config["configurable"].get("persona_id", "anne"),
+    )
 
     system = _build_retriever_system_prompt(
         web_search_enabled=web_search_enabled,
@@ -281,6 +218,8 @@ async def retriever_agent_node(state: AgentState, config: RunnableConfig) -> dic
         retry_note=retry_note,
         required_outputs=", ".join(required_outputs) if required_outputs else "(none — general/chat)",
         resolved_query=resolved_query,
+        self_tool_available=_persona_has_sheet(
+            config["configurable"].get("persona_id", "anne")),
     )
 
     llm = get_chat_model("retriever").bind_tools(tools)
@@ -288,7 +227,7 @@ async def retriever_agent_node(state: AgentState, config: RunnableConfig) -> dic
     try:
         ai_msg = await llm.ainvoke([
             SystemMessage(content=system),
-            HumanMessage(content=f"Find information for: {resolved_query}"),
+            HumanMessage(content=f"Request: {resolved_query}"),
         ])
     except Exception as exc:
         elapsed_ms = round((time.perf_counter() - t0) * 1000)

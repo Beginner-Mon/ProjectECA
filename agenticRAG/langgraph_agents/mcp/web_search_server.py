@@ -54,9 +54,8 @@ async def list_tools() -> list[Tool]:
         Tool(
             name="search_medical",
             description=(
-                "Web search via SearXNG metasearch (Google+Bing+DDG+Wikipedia). "
-                "Use as fallback when internal knowledge base (pgvector) is "
-                "insufficient. Returns up to max_results items."
+                "Search the web. Use for current events, prices, news, "
+                "and facts outside exercise and health."
             ),
             inputSchema={
                 "type": "object",

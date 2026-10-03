@@ -1,12 +1,12 @@
-"""Fixes 1 & 4 (29-09-2026): avatar presence in every persona prompt, and the
-evidence summary the synthesizer logs to explain its mode."""
+"""Fix 4 (29-09-2026): the evidence summary the synthesizer logs to explain its
+mode. Avatar presence (fix 1) is now the shared identity core, plan T8a — see
+test_persona_identity_core.py."""
 
 import json
 
 import pytest
 from langchain_core.messages import ToolMessage
 
-from langgraph_agents.nodes._persona_loader import build_persona_prompt, get_persona
 from langgraph_agents.nodes.synthesizer import _derive_mode, _evidence_summary
 
 pytestmark = pytest.mark.unit
@@ -15,14 +15,6 @@ pytestmark = pytest.mark.unit
 def _tool(name: str, content) -> ToolMessage:
     body = content if isinstance(content, str) else json.dumps(content)
     return ToolMessage(content=body, name=name, tool_call_id=name)
-
-
-@pytest.mark.parametrize("persona_id", ["anne", "bronya", "hatsune-miku", "miki"])
-@pytest.mark.parametrize("mode", ["chat", "clarify", "refuse", "synthesize"])
-def test_every_persona_prompt_states_its_presence(persona_id, mode):
-    prompt = build_persona_prompt(get_persona(persona_id, "en"), mode)
-    assert "## Your presence" in prompt
-    assert "Never say you have no body" in prompt
 
 
 def test_summary_reports_hits_with_best_similarity():

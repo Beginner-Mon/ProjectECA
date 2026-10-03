@@ -1,0 +1,226 @@
+# Labelled answers for measuring the grader's rule functions (nodes/grader.py).
+#
+# A label is `true` when the element the tag asks for is REALLY in the text —
+# judged by meaning, not by whether a keyword appears. The rules are regexes,
+# so every disagreement is either a false pass (rule says present, it is not)
+# or a miss (rule says absent, it is there).
+#
+# What each tag means here:
+#   red_flag_screen    names a danger sign AND says to stop / get urgent care
+#   referral_advice    advises seeing a doctor, GP, physio or emergency service
+#   scope_disclaimer   says the information is general/wellness, not a medical diagnosis or advice
+#   exercise_protocol  gives sets AND reps AND how often (per day/week)
+#   exercise_steps     >= 2 ordered steps of ONE movement (a list of exercise names is not steps)
+#   contraindication   names a condition or group of people who should not / must be careful doing it
+#                      (a technique tip like "don't hold your breath" is not one)
+#   evidence_citation  names a specific source: organisation, document, URL, study
+#                      ("according to research" with nothing named is not one)
+#   motion_descriptor  describes how the body moves AND which joints/body parts
+#
+# Labels are one person's judgement (K, 29/09/2026). The notes say why where it
+# is not obvious. Real synthesizer output would be a better set — see the
+# worklog of the same date.
+
+answers:
+  - id: vi-backpain-exercises
+    lang: vi
+    text: |
+      Với đau lưng dưới nhẹ, bạn có thể thử bài cầu mông:
+      1. Nằm ngửa, co hai gối, bàn chân đặt trên sàn.
+      2. Siết mông và nâng hông lên đến khi thân người thẳng từ vai đến gối.
+      3. Giữ 3 giây rồi hạ xuống từ từ.
+      Tập 2 hiệp, mỗi hiệp 10 lần, 3 buổi mỗi tuần. Tránh nín thở khi nâng hông.
+      Tiếp theo, bạn có thể thêm bài mèo-bò để giãn cột sống. Dấu hiệu bạn tập đúng là cơ mông hơi mỏi chứ không phải lưng.
+    labels: {red_flag_screen: false, referral_advice: false, scope_disclaimer: false, exercise_protocol: true,
+             exercise_steps: true, contraindication: false, evidence_citation: false, motion_descriptor: true}
+    note: "'tránh nín thở' is technique; 'tiếp theo' and 'dấu hiệu' are ordinary words here"
+
+  - id: vi-knee-redflag
+    lang: vi
+    text: |
+      Đầu gối sưng, đỏ, nóng kèm sốt có thể là dấu hiệu nhiễm trùng khớp — đây là tình trạng cần xử lý gấp.
+      Bạn hãy ngừng tập ngay và đi khám bác sĩ trong hôm nay. Không nên tập hay xoa bóp khi khớp đang sưng nóng.
+    labels: {red_flag_screen: true, referral_advice: true, scope_disclaimer: false, exercise_protocol: false,
+             exercise_steps: false, contraindication: true, evidence_citation: false, motion_descriptor: false}
+
+  - id: vi-chitchat
+    lang: vi
+    text: |
+      Chào bạn! Hôm nay bạn tập thế nào rồi? Theo mình thấy thì bạn đang tiến bộ rõ đấy.
+      Nếu bạn đau nhẹ sau buổi tập thì cũng bình thường thôi, nhớ uống đủ nước và ngủ sớm nhé.
+    labels: {red_flag_screen: false, referral_advice: false, scope_disclaimer: false, exercise_protocol: false,
+             exercise_steps: false, contraindication: false, evidence_citation: false, motion_descriptor: false}
+    note: "'theo mình thấy' is an opinion, not a source; 'nếu bạn đau nhẹ' is reassurance"
+
+  - id: vi-plank-complete
+    lang: vi
+    text: |
+      Theo hướng dẫn của NHS (nhs.uk), plank là bài tăng sức bền cơ lõi:
+      1. Chống hai khuỷu tay xuống sàn, khuỷu thẳng hàng dưới vai.
+      2. Nâng người lên, giữ thân thẳng từ vai đến gót, siết cơ bụng.
+      Giữ 20 giây, lặp 3 hiệp, 3 buổi mỗi tuần.
+      Người đang bị thoát vị đĩa đệm cấp, phụ nữ mang thai 3 tháng cuối hoặc người huyết áp cao chưa kiểm soát không nên tập plank.
+      Bạn nên hỏi ý kiến bác sĩ trước khi bắt đầu. Thông tin này chỉ mang tính tham khảo, không thay thế chẩn đoán y tế.
+    labels: {red_flag_screen: false, referral_advice: true, scope_disclaimer: true, exercise_protocol: true,
+             exercise_steps: true, contraindication: true, evidence_citation: true, motion_descriptor: true}
+
+  - id: vi-doms-knowledge
+    lang: vi
+    text: |
+      Đau cơ khởi phát muộn (DOMS) là hiện tượng bình thường sau khi tập, thường xuất hiện sau 24–48 giờ và là dấu hiệu cơ đang thích nghi.
+      Theo các nghiên cứu, vận động nhẹ giúp giảm đau nhanh hơn nghỉ hẳn.
+      Tuy nhiên nếu cơ đau dữ dội, sưng to hoặc nước tiểu sẫm màu như nước trà, hãy đi khám ngay vì đó có thể là tiêu cơ vân.
+      Thông tin chỉ mang tính tham khảo.
+    labels: {red_flag_screen: true, referral_advice: true, scope_disclaimer: true, exercise_protocol: false,
+             exercise_steps: false, contraindication: false, evidence_citation: false, motion_descriptor: false}
+    note: "'theo các nghiên cứu' names no source; 'hãy đi khám ngay' is a referral with no doctor word after it"
+
+  - id: vi-shoulder-motion
+    lang: vi
+    text: |
+      Mình sẽ minh hoạ động tác xoay vai: đứng thẳng, hai tay thả lỏng hai bên.
+      1. Nhún vai lên phía tai.
+      2. Kéo vai ra sau rồi hạ xuống, xoay theo vòng tròn.
+      Lặp lại 10 lần.
+    labels: {red_flag_screen: false, referral_advice: false, scope_disclaimer: false, exercise_protocol: false,
+             exercise_steps: true, contraindication: false, evidence_citation: false, motion_descriptor: true}
+    note: "reps only — no sets, no frequency; 'xoay theo vòng tròn' is not a source"
+
+  - id: vi-exercise-menu
+    lang: vi
+    text: |
+      Một số bài phù hợp với lưng của bạn:
+      - Cầu mông
+      - Chim-chó (bird-dog)
+      - Mèo-bò
+      Bạn muốn mình hướng dẫn chi tiết bài nào?
+    labels: {red_flag_screen: false, referral_advice: false, scope_disclaimer: false, exercise_protocol: false,
+             exercise_steps: false, contraindication: false, evidence_citation: false, motion_descriptor: false}
+    note: "a menu of exercises, not steps of one movement"
+
+  - id: vi-chronic-referral
+    lang: vi
+    text: |
+      Với cơn đau vai kéo dài đã 3 tháng, bạn nên gặp bác sĩ chuyên khoa cơ xương khớp để được chẩn đoán đúng nguyên nhân.
+      Mình không thể chẩn đoán qua tin nhắn. Trong lúc chờ khám, bạn vẫn có thể vận động nhẹ trong giới hạn không đau.
+    labels: {red_flag_screen: false, referral_advice: true, scope_disclaimer: true, exercise_protocol: false,
+             exercise_steps: false, contraindication: false, evidence_citation: false, motion_descriptor: false}
+    note: "chronic, not urgent: a referral but no red flag"
+
+  - id: en-backpain-exercises
+    lang: en
+    text: |
+      Try the glute bridge for mild lower back pain:
+      1. Lie on your back with your knees bent and feet flat on the floor.
+      2. Squeeze your glutes and lift your hips until your body is straight from shoulders to knees.
+      3. Hold for 3 seconds, then lower slowly.
+      Do 3 sets of 10 reps, 3 times a week. Avoid holding your breath as you lift.
+    labels: {red_flag_screen: false, referral_advice: false, scope_disclaimer: false, exercise_protocol: true,
+             exercise_steps: true, contraindication: false, evidence_citation: false, motion_descriptor: true}
+
+  - id: en-cauda-equina
+    lang: en
+    text: |
+      Numbness in both legs or losing control of your bladder can be a sign of cauda equina syndrome.
+      Stop exercising and go to A&E or call 999 now. Do not try to exercise through these symptoms.
+    labels: {red_flag_screen: true, referral_advice: true, scope_disclaimer: false, exercise_protocol: false,
+             exercise_steps: false, contraindication: true, evidence_citation: false, motion_descriptor: false}
+    note: "A&E / 999 counts as referral; 'do not exercise with these symptoms' is a contraindication"
+
+  - id: en-guidelines-cited
+    lang: en
+    text: |
+      According to the NHS, adults should do strengthening activities on at least 2 days a week (nhs.uk/live-well/exercise).
+      This is general wellness information, not medical advice.
+    labels: {red_flag_screen: false, referral_advice: false, scope_disclaimer: true, exercise_protocol: false,
+             exercise_steps: false, contraindication: false, evidence_citation: true, motion_descriptor: false}
+
+  - id: en-chitchat
+    lang: en
+    text: |
+      Great job today! Warning: you're on a 5-day streak now, so don't break it.
+      Do not forget to stretch before bed.
+    labels: {red_flag_screen: false, referral_advice: false, scope_disclaimer: false, exercise_protocol: false,
+             exercise_steps: false, contraindication: false, evidence_citation: false, motion_descriptor: false}
+    note: "playful 'warning', reminder 'do not forget'"
+
+cases:
+  # ── red_flag_screen ──
+  - {id: rf-vi-pos-1, tag: red_flag_screen, lang: vi, expect: true,
+     text: "Đau ngực, khó thở hoặc choáng khi tập là dấu hiệu nguy hiểm — dừng ngay và gọi 115."}
+  - {id: rf-vi-pos-2, tag: red_flag_screen, lang: vi, expect: true,
+     text: "Nếu tê bì cả hai chân hoặc mất kiểm soát tiểu tiện, hãy gọi 115 ngay.", note: "no keyword the rule knows"}
+  - {id: rf-vi-neg-1, tag: red_flag_screen, lang: vi, expect: false,
+     text: "Dấu hiệu cho thấy bạn đang tập đúng là cơ bụng hơi mỏi."}
+  - {id: rf-en-pos-1, tag: red_flag_screen, lang: en, expect: true,
+     text: "If you feel chest pain, dizziness or shortness of breath, stop immediately and call 999."}
+  - {id: rf-en-neg-1, tag: red_flag_screen, lang: en, expect: false,
+     text: "Warning: this one is harder than it looks!"}
+
+  # ── referral_advice ──
+  - {id: rf2-vi-pos-1, tag: referral_advice, lang: vi, expect: true, text: "Bạn nên đi khám để được chẩn đoán."}
+  - {id: rf2-vi-pos-2, tag: referral_advice, lang: vi, expect: true, text: "Hãy gặp bác sĩ chuyên khoa."}
+  - {id: rf2-en-pos-1, tag: referral_advice, lang: en, expect: true, text: "Please see your GP about this."}
+  - {id: rf2-en-pos-2, tag: referral_advice, lang: en, expect: true, text: "A physiotherapist can assess your shoulder properly."}
+  - {id: rf2-vi-neg-1, tag: referral_advice, lang: vi, expect: false,
+     text: "Phương pháp này do một bác sĩ vật lý trị liệu người Úc phát triển."}
+
+  # ── scope_disclaimer ──
+  - {id: sd-vi-pos-1, tag: scope_disclaimer, lang: vi, expect: true,
+     text: "Lưu ý: đây chỉ là thông tin tham khảo, không thay thế lời khuyên của bác sĩ."}
+  - {id: sd-en-pos-1, tag: scope_disclaimer, lang: en, expect: true, text: "This is not medical advice."}
+  - {id: sd-vi-neg-1, tag: scope_disclaimer, lang: vi, expect: false, text: "Bạn có thể tham khảo thêm các bài giãn cơ khác."}
+
+  # ── exercise_protocol ──
+  - {id: ep-vi-pos-1, tag: exercise_protocol, lang: vi, expect: true, text: "Tập 3 hiệp, mỗi hiệp 12 lần, 3 buổi mỗi tuần."}
+  - {id: ep-vi-neg-1, tag: exercise_protocol, lang: vi, expect: false, text: "Lặp lại 10 lần."}
+  - {id: ep-vi-neg-2, tag: exercise_protocol, lang: vi, expect: false, text: "Tập đều đặn hàng ngày."}
+  - {id: ep-en-pos-1, tag: exercise_protocol, lang: en, expect: true, text: "Do 2 sets of 15 reps, every other day."}
+  - {id: ep-en-neg-1, tag: exercise_protocol, lang: en, expect: false, text: "Repeat 5 times."}
+
+  # ── exercise_steps ──
+  - {id: es-vi-pos-1, tag: exercise_steps, lang: vi, expect: true, text: "Bước 1: nằm ngửa. Bước 2: co gối và nâng hông."}
+  - {id: es-vi-neg-1, tag: exercise_steps, lang: vi, expect: false,
+     text: "Đầu tiên, cảm ơn bạn đã hỏi. Tiếp theo, mình nghĩ bạn nên nghỉ ngơi. Cuối cùng, chúc bạn mau khỏe."}
+  - {id: es-vi-neg-2, tag: exercise_steps, lang: vi, expect: false,
+     text: "Bạn có 2 lựa chọn: 1. Nghỉ ngơi vài ngày 2. Chườm đá 15 phút.", note: "options, not steps of a movement"}
+  - {id: es-en-pos-1, tag: exercise_steps, lang: en, expect: true,
+     text: "First, stand with your feet hip-width apart. Then slowly bend your knees. Finally, stand back up."}
+
+  # ── contraindication ──
+  - {id: ci-vi-pos-1, tag: contraindication, lang: vi, expect: true,
+     text: "Không nên tập bài này nếu bạn đang bị thoát vị đĩa đệm cấp."}
+  - {id: ci-en-pos-1, tag: contraindication, lang: en, expect: true,
+     text: "People with osteoporosis should not do loaded spinal flexion."}
+  - {id: ci-vi-neg-1, tag: contraindication, lang: vi, expect: false, text: "Tránh nín thở khi nâng tạ."}
+  - {id: ci-en-neg-1, tag: contraindication, lang: en, expect: false, text: "Avoid rushing — slow reps work better."}
+  - {id: ci-en-neg-2, tag: contraindication, lang: en, expect: false, text: "You cannot go wrong with walking."}
+
+  # ── evidence_citation ──
+  - {id: ec-vi-pos-1, tag: evidence_citation, lang: vi, expect: true, text: "Theo NHS (nhs.uk), người lớn nên tập sức mạnh 2 ngày mỗi tuần."}
+  - {id: ec-vi-neg-1, tag: evidence_citation, lang: vi, expect: false, text: "Tiếp theo, hãy theo dõi cơn đau trong 2 ngày."}
+  - {id: ec-en-pos-1, tag: evidence_citation, lang: en, expect: true, text: "Source: NHS website."}
+  - {id: ec-en-neg-1, tag: evidence_citation, lang: en, expect: false, text: "Next, keep track of how you feel."}
+
+  # ── motion_descriptor ──
+  - {id: md-vi-pos-1, tag: motion_descriptor, lang: vi, expect: true, text: "Nâng tay phải lên ngang vai, giữ khuỷu tay thẳng."}
+  - {id: md-vi-neg-1, tag: motion_descriptor, lang: vi, expect: false, text: "Bài này giúp giảm đau lưng hiệu quả."}
+  - {id: md-vi-neg-2, tag: motion_descriptor, lang: vi, expect: false,
+     text: "Tập đều giúp khớp gối khỏe hơn và nâng cao sức bền.", note: "'nâng cao' is not a movement"}
+
+  # ── Held-out probes, 29/09: written AFTER the first fix of referral_advice,
+  #    scope_disclaimer and exercise_protocol, run before looking at the result.
+  #    3 of 13 failed, then were fixed. Kept so the fix cannot regress.
+  - {id: ho-ref-vi-neg-1, tag: referral_advice, lang: vi, expect: false, text: "Nhiều bác sĩ vật lý trị liệu khuyên dùng bài này."}
+  - {id: ho-ref-vi-neg-2, tag: referral_advice, lang: vi, expect: false, text: "Bài này được một chuyên gia thiết kế."}
+  - {id: ho-ref-en-neg-1, tag: referral_advice, lang: en, expect: false, text: "Your physio will love this one!"}
+  - {id: ho-ref-vi-pos-1, tag: referral_advice, lang: vi, expect: true, text: "Bạn nên đến gặp chuyên gia vật lý trị liệu."}
+  - {id: ho-ref-en-pos-1, tag: referral_advice, lang: en, expect: true, text: "Talk to your doctor before starting."}
+  - {id: ho-sd-vi-neg-1, tag: scope_disclaimer, lang: vi, expect: false, text: "Bạn không thể chẩn đoán chính xác nếu chỉ dựa vào cảm giác."}
+  - {id: ho-sd-en-neg-1, tag: scope_disclaimer, lang: en, expect: false, text: "This workout is not medical treatment, just stretching."}
+  - {id: ho-sd-vi-pos-1, tag: scope_disclaimer, lang: vi, expect: true, text: "Lưu ý: nội dung trên không thay thế cho việc thăm khám của bác sĩ."}
+  - {id: ho-sd-en-pos-1, tag: scope_disclaimer, lang: en, expect: true, text: "I can't diagnose this over chat."}
+  - {id: ho-ep-vi-neg-1, tag: exercise_protocol, lang: vi, expect: false, text: "Đi bộ 30 phút mỗi ngày.", note: "no reps"}
+  - {id: ho-ep-vi-neg-2, tag: exercise_protocol, lang: vi, expect: false, text: "Tập 3 hiệp 10 lần trong 2 tuần đầu.", note: "a duration, not how often"}
+  - {id: ho-ep-vi-pos-1, tag: exercise_protocol, lang: vi, expect: true, text: "Mỗi tuần tập 3 buổi, mỗi buổi 2 hiệp x 12 lần."}
+  - {id: ho-ep-en-pos-1, tag: exercise_protocol, lang: en, expect: true, text: "10 reps x 3 sets, 4 days a week."}

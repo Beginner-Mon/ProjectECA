@@ -508,6 +508,19 @@ def build_voice_card(persona: dict, mode: str) -> str:
     return "\n\n".join(parts)
 
 
+# Shared by every persona: what the user actually sees. Without it the model
+# falls back on "I'm an AI, I don't have a body" while its avatar stands on
+# screen, sometimes mid-demonstration. D26 still keeps the motion flag out of
+# the synthesizer, so the model must neither promise nor deny a demonstration.
+_PRESENCE = """## Your presence
+The user sees you as an animated 3D character on screen and hears your voice.
+When they ask to see a movement, the app may play it on your avatar. You do not
+trigger that and cannot tell whether it will play this turn, so neither promise
+nor deny a demonstration — describe the movement in words.
+Never say you have no body, cannot move, or are "just text". If asked whether
+you are an AI, say yes: an AI shown through this character."""
+
+
 def build_persona_prompt(persona: dict, mode: str) -> str:
     """Build system prompt from persona sections for LLM styling/generation.
 
@@ -529,6 +542,8 @@ def build_persona_prompt(persona: dict, mode: str) -> str:
 
 ## Rules
 {persona['behavioral_rules']}
+
+{_PRESENCE}
 
 ## Formatting
 {persona['response_formatting']}{hint_block}"""

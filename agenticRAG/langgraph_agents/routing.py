@@ -166,12 +166,8 @@ def route_after_synthesizer(state: AgentState) -> str:
 # ── After grader ──────────────────────────────────────────────────────────
 
 def route_after_grader(state: AgentState) -> str:
-    """Grader → retriever_agent (retry once) | END.
-
-    Retry only for quality fails (D6: safety fails get template cứng, no retry).
-    Retry count max 1 (D24).
-    """
+    """Grader → synthesizer (viết thêm phần thiếu, một lần) | END."""
     result = state.get("grader_result", "pass")
     if result == "retry":
-        return "retriever_agent"
+        return "synthesizer"
     return "end"

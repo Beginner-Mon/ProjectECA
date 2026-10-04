@@ -45,7 +45,7 @@ from langgraph_agents.shared.logging import get_logger
 
 _logger = get_logger("langgraph.graph")
 
-_RECURSION_LIMIT = 20  # planner→retriever⇄tools→kimodo→synth→grader (retry once)
+_RECURSION_LIMIT = 20  # planner→retriever⇄tools→kimodo→synth⇄grader (viết thêm một lần)
 
 
 # ── Single routing function from planner (one conditional edge only) ────
@@ -230,9 +230,9 @@ async def build_graph_async():
         "error_handler": "error_handler",
     })
 
-    # ── Grader → retry (retriever_agent) | END ────────────────────────
+    # ── Grader → viết thêm (synthesizer) | END ────────────────────────
     g.add_conditional_edges("grader", route_after_grader, {
-        "retriever_agent": "retriever_agent",
+        "synthesizer": "synthesizer",
         "end": END,
     })
 

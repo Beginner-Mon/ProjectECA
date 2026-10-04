@@ -37,13 +37,13 @@ async def test_tools_routes_to_kimodo_or_synthesizer():
 
 @pytest.mark.unit
 @pytest.mark.asyncio
-async def test_grader_retry_path_intact():
-    """Đường retry của grader (grader -> retriever_agent) giữ nguyên: thay đổi
-    T7 chỉ bỏ lượt agent thừa sau tools, không bỏ retry."""
+async def test_grader_retry_goes_to_synthesizer():
+    """Đường retry của grader (grader -> synthesizer): viết thêm phần thiếu."""
     from langgraph_agents.graph import build_graph_async
 
     graph = await build_graph_async()
-    assert ("grader", "retriever_agent") in _edge_pairs(graph)
+    assert ("grader", "synthesizer") in _edge_pairs(graph)
+    assert ("grader", "retriever_agent") not in _edge_pairs(graph)
 
 
 # ── Đếm số lần chạy retriever_agent trên graph thật (LLM + pg giả) ──────

@@ -442,6 +442,93 @@ def _derive_mode(state: AgentState) -> str:
 
 # ── Node ─────────────────────────────────────────────────────────────────
 
+_ADD_MISSING_BLOCK = """
+
+## Add what is missing
+Your reply above is already on the user's screen. It left out:
+{feedback}
+Write only that part, as a short continuation in the same voice: one to four
+sentences or a short list. Do not repeat or rewrite anything you already said.
+Take it from the evidence. If the evidence does not state it, say so in one
+sentence."""
+
+
+async def _run_addition(state, config, llm, writer, msgs, previous,
+                        request_id, t0, persona_system, body_note, about_you,
+                        task_system, tool_results, history, voice_card,
+                        tag_stream) -> dict:
+    """Lượt viết thêm: chỉ nối phần thiếu vào bản đã hiện, không viết lại.
+
+    Chuỗi "\\n\\n" đi cùng chunk chữ đầu tiên của LLM. LLM lỗi: giữ nguyên
+    bản đã hiện, không fallback, không lỗi CRITICAL.
+    """
+    addition = ""
+    tokens = 0
+    ai_msg = None
+    try:
+        if writer is not None:
+            async for chunk in llm.astream(msgs):
+                raw = chunk.content if hasattr(chunk, "content") else str(chunk)
+                _, content = tag_stream.feed(raw) if raw else (None, "")
+                if content:
+                    if not addition:
+                        content = f"\n\n{content}"
+                    addition += content
+                    writer({"content": content})
+                    await asyncio.sleep(0)
+                if hasattr(chunk, "usage_metadata") and chunk.usage_metadata:
+                    tokens = chunk.usage_metadata.get("total_tokens", 0)
+                    ai_msg = chunk
+                elif (getattr(chunk, "response_metadata", None) or {}).get("token_usage"):
+                    ai_msg = chunk
+            _, content = tag_stream.flush()
+            if content:
+                if not addition:
+                    content = f"\n\n{content}"
+                addition += content
+                writer({"content": content})
+        else:
+            ai_msg = await llm.ainvoke(msgs)
+            _, text = reply_emotion.parse_emotion_tag(ai_msg.content or "")
+            addition = f"\n\n{text}" if text else ""
+            tokens = 0
+            if hasattr(ai_msg, "usage_metadata") and ai_msg.usage_metadata:
+                tokens = ai_msg.usage_metadata.get("total_tokens", 0)
+    except Exception as exc:
+        elapsed_ms = round((time.perf_counter() - t0) * 1000)
+        logger.warning("addition_failed", extra={
+            "node": "synthesizer", "request_id": request_id,
+            "elapsed_ms": elapsed_ms, "error": type(exc).__name__,
+        })
+        return {"final_answer": previous, "total_tokens": 0}
+
+    final_answer = previous + addition if addition else previous
+    cache_hit_tokens, cache_miss_tokens = extract_cache_tokens(ai_msg)
+    usage = getattr(ai_msg, "usage_metadata", None) or {}
+    history_chars = sum(len(str(getattr(m, "content", "") or "")) for m in history)
+    elapsed_ms = round((time.perf_counter() - t0) * 1000)
+    logger.info("node_complete", extra={
+        "node": "synthesizer", "request_id": request_id,
+        "elapsed_ms": elapsed_ms, "tokens": tokens, "mode": "addition",
+        "output_chars": len(addition),
+        "streamed": writer is not None,
+        "cache_hit_tokens": cache_hit_tokens,
+        "cache_miss_tokens": cache_miss_tokens,
+        "prompt_blocks": {
+            "persona": len(persona_system),
+            "body_state": len(body_note),
+            "about_you": len(about_you),
+            "task": len(task_system),
+            "evidence": len(tool_results),
+            "history": history_chars,
+            "voice_card": len(voice_card),
+        },
+        "input_tokens": usage.get("input_tokens", 0),
+        "output_tokens": usage.get("output_tokens", 0),
+    })
+    return {"final_answer": final_answer, "total_tokens": tokens}
+
+
 async def synthesizer_node(state: AgentState, config: RunnableConfig) -> dict:
     """Synthesizer node — universal responder (M.3b).
 
@@ -453,6 +540,12 @@ async def synthesizer_node(state: AgentState, config: RunnableConfig) -> dict:
     persona_id = config["configurable"].get("persona_id", "anne")
     resolved_query = state.get("resolved_query") or config["configurable"]["query"]
     required_outputs = state.get("required_outputs", [])
+
+    previous = state.get("final_answer") or ""
+    feedback = state.get("grader_feedback")
+    addition_mode = (state.get("retry_count", 0) >= 1 and bool(feedback)
+                     and bool(previous.strip()))
+    is_rewrite = state.get("retry_count", 0) >= 1 and not addition_mode
 
     mode = _derive_mode(state)
 
@@ -509,7 +602,6 @@ async def synthesizer_node(state: AgentState, config: RunnableConfig) -> dict:
     contract_note = _build_contract_note(opening, required_outputs)
     if contract_note:
         task_system = f"{task_system}\n{contract_note}\n"
-
     # Persona prompt (D30: applies to ALL modes)
     persona_system = build_persona_prompt(persona, mode)
     # Body state sits between persona and task (plan T4; T8 slots About-you
@@ -549,20 +641,34 @@ async def synthesizer_node(state: AgentState, config: RunnableConfig) -> dict:
     # Reply-driven avatar emotion: the model opens with [emotion: NAME N],
     # stripped below before anything else sees the text (shared/reply_emotion).
     # Last, beside the voice card, where instructions are followed most reliably.
-    if reply_emotion.enabled():
+    # Lượt viết thêm không gợi emotion mới: mặt hiện tại thuộc về bản đã hiện.
+    if reply_emotion.enabled() and not addition_mode:
         voice_card += reply_emotion.PROMPT_RULE
-    msgs = [
-        SystemMessage(content=system),
-        *history,
-        HumanMessage(content=resolved_query),
-        SystemMessage(content=voice_card),
-    ]
+    if addition_mode:
+        msgs = [
+            SystemMessage(content=system),
+            *history,
+            HumanMessage(content=resolved_query),
+            AIMessage(content=previous),
+            SystemMessage(content=voice_card + _ADD_MISSING_BLOCK.format(
+                feedback=feedback)),
+        ]
+    else:
+        msgs = [
+            SystemMessage(content=system),
+            *history,
+            HumanMessage(content=resolved_query),
+            SystemMessage(content=voice_card),
+        ]
 
     ai_msg = None  # kept for prompt-cache telemetry (fix #1)
     used_fallback = False
     tag_stream = reply_emotion.EmotionTagStream()
 
     def send_emotion(emotion: dict | None) -> None:
+        # Lượt viết thêm không gửi emotion mới.
+        if addition_mode:
+            return
         # Its own custom-stream item, ahead of the text: api/main.py turns it
         # into the `emotion` SSE event. Health rules applied here, where the
         # turn's mode and safety tags are known.
@@ -570,11 +676,17 @@ async def synthesizer_node(state: AgentState, config: RunnableConfig) -> dict:
         if emotion is not None and writer is not None:
             writer({"emotion": emotion})
 
+    if addition_mode:
+        return await _run_addition(
+            state, config, llm, writer, msgs, previous,
+            request_id, t0, persona_system, body_note, about_you,
+            task_system, tool_results, history, voice_card, tag_stream)
+
     try:
         if writer is not None:
             final = ""
             tokens = 0
-            if prefix:
+            if prefix and not (is_rewrite and previous.startswith(prefix)):
                 writer({"content": prefix})
             async for chunk in llm.astream(msgs):
                 raw = chunk.content if hasattr(chunk, "content") else str(chunk)

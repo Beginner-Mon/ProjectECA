@@ -60,6 +60,7 @@ _DEFAULT_TEMPS = {
     "synthesizer": 0.7,
     "conversation": 0.7,
     "retriever": 0.0,
+    "grader": 0.0,
     "health_check": 0.0,
 }
 

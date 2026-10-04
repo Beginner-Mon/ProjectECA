@@ -96,80 +96,8 @@ class TestGraderRuleEdgeCases:
 
 
 @pytest.mark.unit
-class TestGradeTags:
-    """Test _grade_tags function for edge cases."""
-
-    def test_grade_tags_empty_required_outputs(self):
-        from langgraph_agents.nodes.grader import _grade_tags
-        result = _grade_tags("any answer", [])
-        assert result["result"] == "pass"
-        assert result["safety_missing"] == []
-        assert result["quality_missing"] == []
-
-    def test_grade_tags_empty_answer_with_tags(self):
-        from langgraph_agents.nodes.grader import _grade_tags
-        result = _grade_tags("", ["exercise_protocol"])
-        assert result["result"] == "retry"
-
-    def test_grade_tags_all_safety_pass(self):
-        from langgraph_agents.nodes.grader import _grade_tags
-        answer = (
-            "⚠️ Đau ngực là nghiêm trọng, bạn nên ngừng tập ngay lập tức.\n"
-            "Tôi khuyên bạn đi khám bác sĩ chuyên khoa.\n"
-            "Thông tin này chỉ mang tính tham khảo wellness, không thay thế việc khám lâm sàng."
-        )
-        result = _grade_tags(answer, ["red_flag_screen", "referral_advice", "scope_disclaimer"])
-        assert result["result"] == "pass"
-        assert result["safety_missing"] == []
-
-    def test_grade_tags_safety_missing_multiple(self):
-        from langgraph_agents.nodes.grader import _grade_tags
-        result = _grade_tags("Tap squat tot cho suc khoe.", ["red_flag_screen", "scope_disclaimer"])
-        assert result["result"] == "pass_with_warning"
-        assert len(result["safety_missing"]) >= 1
-
-    def test_grade_tags_mixed_safety_quality_both_missing(self):
-        from langgraph_agents.nodes.grader import _grade_tags
-        result = _grade_tags(
-            "Squat rat tot.",  # no danger, no disclaimer, no sets/reps, no steps
-            ["red_flag_screen", "exercise_protocol"]
-        )
-        # Safety missing → pass_with_warning (NOT retry)
-        assert result["result"] == "pass_with_warning"
-
-    def test_grade_tags_safety_pass_quality_fail(self):
-        from langgraph_agents.nodes.grader import _grade_tags
-        answer = "⚠️ Dau nguc la nghiem trong, nen di kham."  # safety present, no exercise details
-        result = _grade_tags(answer, ["red_flag_screen", "exercise_protocol"])
-        # red_flag passes, but exercise_protocol missing → retry
-        assert result["result"] == "retry"
-        assert "exercise_protocol" in result["quality_missing"]
-
-    def test_grade_tags_unknown_tag_skipped(self):
-        from langgraph_agents.nodes.grader import _grade_tags
-        result = _grade_tags("any answer", ["not_a_real_tag"])
-        assert result["result"] == "pass"
-        assert result["safety_missing"] == []
-        assert result["quality_missing"] == []
-
-    def test_grade_tags_with_none_answer(self):
-        from langgraph_agents.nodes.grader import _grade_tags
-        # None answer should be treated like empty
-        result = _grade_tags(None, ["exercise_protocol"])
-        assert result["result"] == "retry"
-
-    def test_grade_tags_retry_count_exhausted(self):
-        """After retry exhaustion, grader should pass_with_warning."""
-        # This is handled by the node, not _grade_tags.
-        # We just verify _grade_tags doesn't crash with retry exhaustion logic.
-        from langgraph_agents.nodes.grader import _grade_tags
-        result = _grade_tags("still bad", ["exercise_protocol"])
-        assert result["result"] == "retry"
-
-
-@pytest.mark.unit
 class TestGraderNode:
-    """Test grader_node logic (no LLM calls, rule-based)."""
+    """Test grader_node logic (LLM chấm giả)."""
 
     @pytest.mark.asyncio
     async def test_grader_skip_empty_tags(self):
@@ -201,14 +129,36 @@ class TestGraderNode:
 
     @pytest.mark.asyncio
     async def test_grader_quality_retry_increments(self):
+        from types import SimpleNamespace
+        from unittest.mock import AsyncMock, MagicMock
+
+        from langchain_core.messages import ToolMessage
+
+        from langgraph_agents.nodes import grader as grader_mod
         from langgraph_agents.nodes.grader import grader_node
+        import json as _json
+
+        ev = _json.dumps([{
+            "content": "Step one. Step two.", "similarity": 0.9,
+            "source_type": "exercise_db", "document_title": "Back",
+            "chunk_index": 0,
+        }])
         state: AgentState = {
-            "messages": [], "errors": [], "retry_count": 0,
+            "messages": [ToolMessage(content=ev, tool_call_id="tc-kb",
+                                      name="kb_search")],
+            "errors": [], "retry_count": 0,
             "total_tokens": 0,
-            "required_outputs": ["exercise_protocol", "exercise_steps"],
+            "required_outputs": ["exercise_steps"],
             "final_answer": "Tap squat rat tot.",
         }
-        result = await grader_node(state, GRADER_CONFIG)
+        parsed = SimpleNamespace(items=[SimpleNamespace(
+            item="exercise_steps", in_reply=False, in_evidence=True)])
+        mock_llm = MagicMock()
+        structured = MagicMock()
+        structured.ainvoke = AsyncMock(return_value={"parsed": parsed})
+        mock_llm.with_structured_output = MagicMock(return_value=structured)
+        with patch.object(grader_mod, "get_chat_model", return_value=mock_llm):
+            result = await grader_node(state, GRADER_CONFIG)
         assert result["grader_result"] == "retry"
         assert result.get("grader_feedback", "")
 
@@ -264,70 +214,3 @@ class TestGraderNode:
         result = await grader_node(state, GRADER_CONFIG)
         assert result["grader_result"] == "pass"
 
-
-@pytest.mark.unit
-class TestProtocolEvidenceConditional:
-    """Task 4b: exercise_protocol chỉ bị đòi phần mà evidence có."""
-
-    def _kb_msg(self, chunks):
-        import json as _json
-
-        from langchain_core.messages import ToolMessage
-
-        return ToolMessage(content=_json.dumps(chunks),
-                           tool_call_id="tc-kb", name="kb_search")
-
-    def _chunk(self, content):
-        return {"content": content, "similarity": 0.9,
-                "source_type": "exercise_db", "document_title": "Back",
-                "chunk_index": 0}
-
-    @pytest.mark.asyncio
-    async def test_no_numbers_in_evidence_means_pass(self):
-        """Evidence không có số + trả lời trung thực → pass, không retry."""
-        from langgraph_agents.nodes.grader import grader_node
-
-        state: AgentState = {
-            "messages": [self._kb_msg([
-                self._chunk("Cat-cow gently mobilizes the spine.")])],
-            "errors": [], "retry_count": 0,
-            "total_tokens": 0,
-            "required_outputs": ["exercise_protocol"],
-            "final_answer": "Nguon khong ghi so hiep cho bai nay.",
-        }
-        result = await grader_node(state, GRADER_CONFIG)
-        assert result["grader_result"] == "pass"
-        assert "retry_count" not in result
-
-    @pytest.mark.asyncio
-    async def test_numbers_in_evidence_still_required(self):
-        """Evidence có số + trả lời thiếu số → retry như trước."""
-        from langgraph_agents.nodes.grader import grader_node
-
-        state: AgentState = {
-            "messages": [self._kb_msg([
-                self._chunk("3 sets of 10 reps, 2-3 times a week.")])],
-            "errors": [], "retry_count": 0,
-            "total_tokens": 0,
-            "required_outputs": ["exercise_protocol"],
-            "final_answer": "Tap bai nay nhe.",
-        }
-        result = await grader_node(state, GRADER_CONFIG)
-        assert result["grader_result"] == "retry"
-        assert "exercise_protocol" in result.get("grader_feedback", "")
-
-    @pytest.mark.asyncio
-    async def test_sets_only_evidence_needs_no_frequency(self):
-        """Evidence chỉ có số lần mỗi hiệp + trả lời nêu số đó → pass."""
-        from langgraph_agents.nodes.grader import grader_node
-
-        state: AgentState = {
-            "messages": [self._kb_msg([
-                self._chunk("8-15 lần mỗi hiệp.")])],
-            "errors": [], "retry_count": 0,
-            "total_tokens": 0,
-            "required_outputs": ["exercise_protocol"],
-            "final_answer": "8-15 lần mỗi hiệp theo thư viện.",
-        }
-        result = await grader_node(state, GRADER_CONFIG)
-        assert result["grader_result"] == "pass"

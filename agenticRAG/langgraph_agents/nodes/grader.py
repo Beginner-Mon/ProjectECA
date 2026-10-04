@@ -25,7 +25,12 @@ from langchain_core.messages import ToolMessage
 from langchain_core.runnables import RunnableConfig
 
 from langgraph.config import get_stream_writer
-from langgraph_agents.evidence import evidence_items
+from langgraph_agents.evidence import (
+    classify_tool_result,
+    evidence_items,
+    evidence_messages,
+    render_evidence,
+)
 from langgraph_agents.state import AgentState
 from langgraph_agents.nodes._persona_loader import PersonaError, get_persona
 from langgraph_agents.shared.logging import get_logger
@@ -33,6 +38,7 @@ from langgraph_agents.tag_contract import (
     DEFAULT_SAFETY_TEMPLATES,
     DEFAULT_SAFETY_TEMPLATES_EN,
     TAG_CONTRACT,
+    check_items,
     closing_lines,
     get_safety_text,
     model_tags,
@@ -393,195 +399,128 @@ def _finish(state: AgentState, config: RunnableConfig, result: str, extra: dict 
     return {"grader_result": result, "final_answer": final_answer + tail, **(extra or {})}
 
 
+from pydantic import BaseModel, Field
+
+from langgraph_agents.llm import get_chat_model
+
+
+class JudgeItem(BaseModel):
+    item: str
+    in_reply: bool
+    in_evidence: bool
+
+
+class JudgeOutput(BaseModel):
+    items: list[JudgeItem] = Field(default_factory=list)
+
+
+_JUDGE_SYSTEM = """You check one reply against a checklist. You do not rewrite the reply.
+
+For each item answer two questions, true or false:
+- in_reply: does the reply contain this, in whatever language it is written?
+- in_evidence: does the evidence state this for the exercise the reply is about?
+
+Return JSON: {"items": [{"item": "<item name>", "in_reply": true, "in_evidence": false}]}"""
+
+_JUDGE_USER = """## Checklist
+{checklist}
+
+## Evidence
+{evidence}
+
+## Reply
+{answer}"""
+
+
+async def _judge(checks: list, evidence: str, body: str, request_id: str) -> dict:
+    """Kết luận từng mục kiểm. {} khi LLM chấm không dùng được: lượt đó cho qua."""
+    checklist = "\n".join(f"- {c.key}: {c.definition}" for c in checks)
+    t0 = time.perf_counter()
+    try:
+        llm = get_chat_model("grader")
+        structured = llm.with_structured_output(JudgeOutput, method="json_mode",
+                                                include_raw=True)
+        raw = await structured.ainvoke([
+            ("system", _JUDGE_SYSTEM),
+            ("user", _JUDGE_USER.format(checklist=checklist, evidence=evidence, answer=body)),
+        ])
+        parsed = raw.get("parsed") if isinstance(raw, dict) else raw
+        if parsed is None:
+            raise ValueError("judge output did not parse")
+    except Exception as exc:
+        logger.warning("grader_judge_failed", extra={
+            "node": "grader", "request_id": request_id, "error": type(exc).__name__,
+            "elapsed_ms": round((time.perf_counter() - t0) * 1000),
+        })
+        return {}
+    by_key = {i.item: i for i in parsed.items}
+    detail = {}
+    for c in checks:
+        j = by_key.get(c.key)
+        if j is None or j.in_reply:
+            detail[c.key] = "ok"
+        elif j.in_evidence:
+            detail[c.key] = "synth_missed"
+        else:
+            detail[c.key] = "source_silent"
+    logger.info("grader_judge", extra={
+        "node": "grader", "request_id": request_id, "detail": detail,
+        "elapsed_ms": round((time.perf_counter() - t0) * 1000),
+    })
+    return detail
+
+
 # ── Grader logic ─────────────────────────────────────────────────────────
-
-def _grade_tags(final_answer: str, required_outputs: list[str]) -> dict:
-    """Run tag-driven checks against final_answer.
-
-    Returns:
-        {result: "pass"|"retry"|"pass_with_warning",
-         feedback: str|None,
-         safety_missing: list[str],    # safety tags that failed
-         quality_missing: list[str]}   # quality tags that failed
-    """
-    if not final_answer or not final_answer.strip():
-        return {
-            "result": "retry",
-            "feedback": "Empty response. Must produce an answer.",
-            "safety_missing": [],
-            "quality_missing": [],
-        }
-
-    safety_missing = []
-    quality_missing = []
-
-    for tag in required_outputs:
-        if tag not in TAG_RULES:
-            logger.warning("unknown_tag_in_grader", extra={"tag": tag})
-            continue
-
-        kind, rule_fn, _ = TAG_RULES[tag]
-        if not rule_fn(final_answer):
-            if kind == "safety":
-                safety_missing.append(tag)
-            else:
-                quality_missing.append(tag)
-
-    # Safety failures → template cứng (D6: no retry for safety)
-    if safety_missing:
-        return {
-            "result": "pass_with_warning",  # We'll inject templates
-            "feedback": None,
-            "safety_missing": safety_missing,
-            "quality_missing": quality_missing,
-        }
-
-    # Quality failures → retry (max 1, D6)
-    if quality_missing:
-        feedback_parts = []
-        for tag in quality_missing:
-            _, _, fb = TAG_RULES[tag]
-            feedback_parts.append(f"[{tag}] {fb}")
-        return {
-            "result": "retry",
-            "feedback": " ".join(feedback_parts),
-            "safety_missing": [],
-            "quality_missing": quality_missing,
-        }
-
-    # All tags pass
-    return {
-        "result": "pass",
-        "feedback": None,
-        "safety_missing": [],
-        "quality_missing": [],
-    }
-
 
 # ── Node ─────────────────────────────────────────────────────────────────
 
-def _evidence_text(messages: list) -> str:
-    """Văn bản evidence của lượt (Task 4b): nội dung các ToolMessage có nguồn
-    is_evidence=True — cùng ngữ nghĩa lọc với synthesizer._evidence_messages
-    (tool lạ không rõ nguồn vẫn được tính)."""
-    from langgraph_agents.sources import source_for_tool
-
-    parts = []
-    for m in messages:
-        if not isinstance(m, ToolMessage):
-            continue
-        src = source_for_tool(m.name or "")
-        if src is not None and not src.is_evidence:
-            continue
-        parts.append(str(m.content or ""))
-    return "\n".join(parts)
-
-
-def _grade_protocol_parts(answer: str, evidence_text: str) -> list[str]:
-    """Phần liều lượng mà evidence CÓ nhưng câu trả lời thiếu (Task 4b).
-
-    Trả [] khi evidence không ghi phần nào (tag không bị kiểm ở lượt đó) hoặc
-    khi câu trả lời đã đủ phần evidence có.
-    """
-    missing = []
-    if _has_sets_reps(evidence_text) and not _has_sets_reps(answer):
-        missing.append("sets_reps")
-    if _has_frequency(evidence_text) and not _has_frequency(answer):
-        missing.append("frequency")
-    return missing
-
 async def grader_node(state: AgentState, config: RunnableConfig) -> dict:
-    """Tag-driven grader node — M.3.
+    """LLM chấm từng mục kiểm của tag do model viết; code nối các dòng kết.
 
-    Reads: required_outputs (tags), final_answer, persona_id (from config)
-    Logic:
-      - required_outputs=[] → skipped by routing (D8), this node never called
-      - safety tag missing → inject persona-aware template (NO retry — D6)
-      - quality tag missing → retry max 1 (D6)
-      - retry_count >= 1 + still failing quality → pass_with_warning
-      - D32: unverified disclaimer appended at END on pass_with_warning
+    - Không tag → pass. Thân rỗng → retry một lần, không chấm.
+    - Đã viết thêm (retry_count >= 1) → không chấm lại.
+    - Không evidence (hoặc evidence rỗng/lỗi) → pass, mục nào cũng no_evidence.
+    - LLM chấm lỗi → pass. Thiếu mà evidence có → retry viết thêm.
+    - Thiếu mà evidence cũng im → pass (source_silent).
     """
-    t0 = time.perf_counter()
     required_outputs = state.get("required_outputs", [])
-    final_answer = state.get("final_answer", "")
-    retry_count = state.get("retry_count", 0)
-    persona_id = config["configurable"].get("persona_id", "anne")
-
-    # Safety: required_outputs=[] should never reach grader (D8 + D15 routing)
     if not required_outputs:
-        logger.info("node_skip", extra={
-            "node": "grader", "reason": "no_tags",
-        })
+        logger.info("node_skip", extra={"node": "grader", "reason": "no_tags"})
         return {"grader_result": "pass"}
 
-    result = _grade_tags(final_answer, [t for t in model_tags(required_outputs)
-                                          if t != "exercise_protocol"])
+    request_id = config["configurable"].get("request_id", "-")
+    persona_id = config["configurable"].get("persona_id", "anne")
+    locale = config["configurable"].get("locale", "en")
+    final_answer = state.get("final_answer", "")
+    retry_count = state.get("retry_count", 0)
+    messages = state.get("messages", [])
 
-    # Task 4b: exercise_protocol chỉ bị đòi phần mà evidence có. Evidence
-    # không ghi phần nào → tag không bị kiểm ở lượt đó.
-    if "exercise_protocol" in model_tags(required_outputs):
-        evidence_text = _evidence_text(state.get("messages", []))
-        ev_sets = _has_sets_reps(evidence_text)
-        ev_freq = _has_frequency(evidence_text)
-        if not ev_sets and not ev_freq:
-            logger.info("protocol_unsupported_by_evidence", extra={
-                "node": "grader",
-                "request_id": config["configurable"].get("request_id", "-"),
-            })
+    opening = opening_line(required_outputs, persona_id, locale)
+    body = final_answer.removeprefix(f"{opening}\n\n") if opening else final_answer
+
+    # Đã viết thêm (hoặc đã viết lại vì thân rỗng): không chấm lại.
+    if retry_count >= 1:
+        return _finish(state, config, "pass_with_warning",
+                       {"grader_detail": state.get("grader_detail") or {}})
+
+    if not body.strip():
+        return {"grader_result": "retry", "retry_count": 1, "grader_feedback": None,
+                "grader_detail": {"body": "empty"}}
+
+    checks = check_items(required_outputs)
+    detail: dict = {}
+    if checks:
+        has_hits = any(classify_tool_result(str(m.content)) == "hits"
+                       for m in evidence_messages(messages))
+        if not has_hits:
+            detail = {c.key: "no_evidence" for c in checks}
         else:
-            missing = _grade_protocol_parts(final_answer, evidence_text)
-            if missing:
-                if "exercise_protocol" not in result["quality_missing"]:
-                    result["quality_missing"].append("exercise_protocol")
-                _, _, fb = TAG_RULES["exercise_protocol"]
-                piece = f"[exercise_protocol] {fb}"
-                result["feedback"] = (
-                    f"{result['feedback']} {piece}".strip()
-                    if result.get("feedback") else piece
-                )
-                if result["result"] == "pass":
-                    result["result"] = "retry"
+            detail = await _judge(checks, render_evidence(evidence_items(messages)),
+                                  body, request_id)
+            missed = [c for c in checks if detail.get(c.key) == "synth_missed"]
+            if missed:
+                return {"grader_result": "retry", "retry_count": 1,
+                        "grader_feedback": "\n".join(f"- {c.definition}" for c in missed),
+                        "grader_detail": detail}
 
-    # The site language the user chose, not a guess at the answer's language.
-    #
-    # This used to call detect_lang(final_answer). Detection reads the reply and
-    # is usually right, but "usually" is the problem: a safety warning is the one
-    # sentence a reader must not skip, and a declared preference cannot be
-    # mis-read the way a two-word answer can.
-    #
-    # Known consequence, accepted: a Vietnamese question asked on an English site
-    # gets a Vietnamese answer with an English warning attached. The reply
-    # language still mirrors the question — locale governs inserted text only.
-    lang = config["configurable"].get("locale", "en")
-
-    elapsed_ms = round((time.perf_counter() - t0) * 1000)
-
-    # ── PASS ──────────────────────────────────────────────────────────
-    if result["result"] == "pass":
-        logger.info("node_complete", extra={
-            "node": "grader", "result": "pass",
-            "elapsed_ms": elapsed_ms, "tags": required_outputs,
-        })
-        return _finish(state, config, "pass")
-
-    # ── QUALITY MISSING → retry (max 1) ───────────────────────────────
-    if retry_count == 0:
-        logger.info("node_complete", extra={
-            "node": "grader", "result": "retry",
-            "elapsed_ms": elapsed_ms,
-            "quality_missing": result["quality_missing"],
-        })
-        return {
-            "grader_result": "retry",
-            "retry_count": 1,
-            "grader_feedback": result["feedback"],
-        }
-
-    # ── RETRY EXHAUSTED → pass with warning ────
-    logger.warning("node_complete", extra={
-        "node": "grader", "result": "pass_with_warning",
-        "elapsed_ms": elapsed_ms,
-        "quality_missing": result["quality_missing"],
-        "retry_count": retry_count,
-    })
-    return _finish(state, config, "pass_with_warning")
+    return _finish(state, config, "pass", {"grader_detail": detail})

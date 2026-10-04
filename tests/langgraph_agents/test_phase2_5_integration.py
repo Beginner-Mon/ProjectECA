@@ -221,39 +221,6 @@ class TestGraderRules:
         assert _has_motion_fields("Gập đầu gối, xoay hông khi thực hiện squat.")
         assert not _has_motion_fields("Bài tập squat rất tốt.")  # no joints
 
-    def test_grade_tags_safety_missing(self):
-        from langgraph_agents.nodes.grader import _grade_tags
-        result = _grade_tags(
-            "Bài tập squat: đứng thẳng, hạ người.",  # no danger warning
-            ["red_flag_screen", "exercise_steps"],
-        )
-        assert result["result"] == "pass_with_warning"
-        assert "red_flag_screen" in result["safety_missing"]
-
-    def test_grade_tags_quality_retry(self):
-        from langgraph_agents.nodes.grader import _grade_tags
-        result = _grade_tags(
-            "Squat rất tốt cho chân.",  # no sets/reps, no steps
-            ["exercise_protocol", "exercise_steps"],
-        )
-        assert result["result"] == "retry"
-        assert len(result["quality_missing"]) >= 1
-
-    def test_grade_tags_all_pass(self):
-        from langgraph_agents.nodes.grader import _grade_tags
-        result = _grade_tags(
-            "3 hiệp × 10 lần, 2-3 lần/tuần.\n"
-            "1. Đứng thẳng. 2. Hạ người từ từ.\n"
-            "Không nên tập nếu đau đầu gối.",
-            ["exercise_protocol", "exercise_steps", "contraindication"],
-        )
-        assert result["result"] == "pass"
-
-    def test_grade_tags_empty_answer(self):
-        from langgraph_agents.nodes.grader import _grade_tags
-        result = _grade_tags("", ["exercise_protocol"])
-        assert result["result"] == "retry"
-
 
 # ═══════════════════════════════════════════════════════════════════════════
 # Unit tests — Synthesizer mode derivation (D29, no LLM)

@@ -37,6 +37,11 @@ from langgraph_agents.evidence import (
 )
 from langgraph_agents.sources import source_for_tool
 from langgraph_agents.state import AgentState, ErrorSeverity
+from langgraph_agents.tag_contract import (
+    closing_items_note,
+    model_tags,
+    opening_line,
+)
 from langgraph_agents.llm import get_chat_model, get_fallback_chat_model, extract_cache_tokens
 from langgraph_agents.nodes._persona_loader import (
     PersonaError,
@@ -66,56 +71,6 @@ _LANGUAGE_RULE = """## LANGUAGE (which language to answer in — not how to soun
 """
 
 
-# ── Safety warning prefix (D32: safety = ĐẦU output, mọi persona) ─────
-
-_SAFETY_TAG_RULES = {
-    "red_flag_screen":
-        "Your FIRST sentence must warn that the symptom could be serious and "
-        "that the user should stop exercising and get it looked at.",
-    "referral_advice":
-        "Say plainly, somewhere in the answer, that the user should see a "
-        "medical professional.",
-    "scope_disclaimer":
-        "Near the end, note that this is wellness guidance and not a clinical "
-        "diagnosis.",
-}
-_SAFETY_TAGS = frozenset(_SAFETY_TAG_RULES)
-
-
-def _build_safety_rules(persona: dict, required_outputs: list) -> str:
-    """Safety instructions for this turn, worded in the character's own voice.
-
-    Every persona already ships its own phrasing for these three tags (the
-    `## Safety Templates` section of personas/*.md). The generating model never
-    saw them: grader.py:368 used them to repair an answer after the fact, while
-    the prompt showed two hard-coded Vietnamese sentences in a flat clinical
-    register instead.
-
-    Those two sentences were the most imitable text in the entire prompt — a
-    complete, well-formed example sitting next to a persona that offered only
-    adjectives — so every character delivered its safety warning in the same
-    borrowed voice. Showing the character's own line instead costs nothing and
-    removes the thing that was overriding it.
-
-    Only the tags actually required this turn are described. The old block
-    listed all three whenever any one of them fired, which spent tokens telling
-    the model about obligations it did not have.
-    """
-    tags = [t for t in _SAFETY_TAG_RULES if t in required_outputs]
-    if not tags:
-        return ""
-
-    templates = persona.get("safety_templates") or {}
-    lines = []
-    for tag in tags:
-        lines.append(f"- `{tag}`: {_SAFETY_TAG_RULES[tag]}")
-        example = templates.get(tag)
-        if example:
-            lines.append(f'  Say it your way, e.g. "{example}"')
-
-    return "## SAFETY — required this turn (D32, D33)\n" + "\n".join(lines) + "\n"
-
-
 # ── Per-tag instructions (B3: chỉ tag của lượt mới được hướng dẫn) ──────
 
 # Tách từ _SYNTHESIZE_TASK: mỗi dòng "For <tag>" trước đây có mặt ở MỌI lượt
@@ -134,8 +89,6 @@ _TAG_INSTRUCTIONS = {
         "should NOT be done",
     "motion_descriptor":
         "- For motion_descriptor: describe the movement + joints involved clearly",
-    "evidence_citation":
-        "- For evidence_citation: mention sources (document title, web source)",
 }
 
 
@@ -146,13 +99,30 @@ def _build_tag_instructions(required_outputs: list) -> str:
     )
 
 
+def _build_contract_note(opening: str, required_outputs: list) -> str:
+    """Báo cho model câu đã hiện và các dòng sẽ được thêm; "" khi không có gì."""
+    blocks = []
+    if opening:
+        blocks.append(
+            "## Already on the user's screen\n"
+            "This line was shown to the user just before your reply:\n"
+            f'"{opening}"\n'
+            "Start from there. Do not repeat it, quote it or rephrase it.")
+    closing = closing_items_note(required_outputs)
+    if closing:
+        blocks.append(
+            "## Added after your reply\n"
+            f"These are added automatically when you finish: {closing}.\n"
+            "Do not write any of them yourself.")
+    return "\n\n".join(blocks)
+
+
 # ── Mode-specific prompts ────────────────────────────────────────────────
 
 _SYNTHESIZE_TASK = """## This turn
 Answer the user's wellness question from the evidence below.
 
 {language_rule}
-{safety_rules}
 
 ## Required deliverables (tags)
 {required_outputs}
@@ -167,7 +137,8 @@ Instructions:
 - Cover ALL required_outputs tags in your response
 - Base your answer on the retrieved evidence — cite sources when available
 {tag_instructions}
-- Do not pad or repeat safety disclaimers — state each once.
+- Numbers for sets, reps, hold times or frequency come only from the evidence.
+  If the evidence gives none, give none.
 - Length and layout are set by your own Formatting rules, not by this list.
 """
 
@@ -176,7 +147,6 @@ You have no reliable source for the guidance the user asked for. Do not make
 up exercise or health guidance. Say so for that part only.
 
 {language_rule}
-{safety_rules}
 
 ## Situation
 The guidance the user asked for has no reliable source: the question is
@@ -191,10 +161,11 @@ Speak only to that part — anything else in the turn you can still answer.
 
 Instructions:
 - Be honest: explain WHY you cannot give that guidance (out of scope / no sources)
-- If referral_advice tag is present: strongly recommend seeing a medical professional
 - If no sources were found: state this clearly, suggest the user rephrase or ask a professional
 - Keep it brief
 - Do NOT invent exercises, diagnoses, or medical advice
+- Numbers for sets, reps, hold times or frequency come only from the evidence.
+  If the evidence gives none, give none.
 """
 
 _CLARIFY_TASK = """## This turn
@@ -502,10 +473,9 @@ async def synthesizer_node(state: AgentState, config: RunnableConfig) -> dict:
     locale = config["configurable"].get("locale", "en")
     persona = get_persona(persona_id, locale)
     tool_results = _extract_tool_results(state.get("messages", []))
-    tags_str = ", ".join(required_outputs) if required_outputs else "(none — free response)"
-
-    # Safety rules: only the tags actually required this turn (D32, D33)
-    safety_rules = _build_safety_rules(persona, required_outputs)
+    opening = opening_line(required_outputs, persona_id, locale)
+    prefix = f"{opening}\n\n" if opening else ""
+    tags_str = ", ".join(model_tags(required_outputs)) or "(none — free response)"
 
     # Tag instructions: only the tags actually required this turn (B3)
     tag_instructions = _build_tag_instructions(required_outputs)
@@ -519,14 +489,12 @@ async def synthesizer_node(state: AgentState, config: RunnableConfig) -> dict:
     elif mode == "refuse":
         task_system = _REFUSE_TASK.format(
             language_rule=_LANGUAGE_RULE,
-            safety_rules=safety_rules,
             required_outputs=tags_str,
             resolved_query=resolved_query,
         )
     elif mode == "synthesize":
         task_system = _SYNTHESIZE_TASK.format(
             language_rule=_LANGUAGE_RULE,
-            safety_rules=safety_rules,
             required_outputs=tags_str,
             tool_results=tool_results or "(no evidence)",
             resolved_query=resolved_query,
@@ -537,6 +505,10 @@ async def synthesizer_node(state: AgentState, config: RunnableConfig) -> dict:
             language_rule=_LANGUAGE_RULE,
             resolved_query=resolved_query,
         )
+
+    contract_note = _build_contract_note(opening, required_outputs)
+    if contract_note:
+        task_system = f"{task_system}\n{contract_note}\n"
 
     # Persona prompt (D30: applies to ALL modes)
     persona_system = build_persona_prompt(persona, mode)
@@ -602,6 +574,8 @@ async def synthesizer_node(state: AgentState, config: RunnableConfig) -> dict:
         if writer is not None:
             final = ""
             tokens = 0
+            if prefix:
+                writer({"content": prefix})
             async for chunk in llm.astream(msgs):
                 raw = chunk.content if hasattr(chunk, "content") else str(chunk)
                 # Hold back only while the start could still be the emotion tag;
@@ -692,7 +666,7 @@ async def synthesizer_node(state: AgentState, config: RunnableConfig) -> dict:
             # through here rather than translating this literal.
             fallback = get_ui_string(persona_id, "error_unavailable", locale)
             return {
-                "final_answer": fallback,
+                "final_answer": prefix + fallback,
                 "errors": [{
                     "node": "synthesizer",
                     "severity": ErrorSeverity.CRITICAL,
@@ -739,6 +713,6 @@ async def synthesizer_node(state: AgentState, config: RunnableConfig) -> dict:
     })
 
     return {
-        "final_answer": final or "",
+        "final_answer": prefix + (final or ""),
         "total_tokens": tokens,
     }

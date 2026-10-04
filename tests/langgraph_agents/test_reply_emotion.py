@@ -163,7 +163,7 @@ class TestSynthesizerEmotion:
             mock_llm.return_value.astream = _astream("[emotion: happy 0.9] See a doctor.")
             await syn_mod.synthesizer_node(_state(["red_flag_screen"]), _config())
 
-        assert sent[0] == {"emotion": {"name": "neutral", "intensity": 1.0}}
+        assert {"emotion": {"name": "neutral", "intensity": 1.0}} in sent
 
     @pytest.mark.asyncio
     async def test_no_tag_no_emotion_event(self):

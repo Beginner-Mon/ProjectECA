@@ -61,7 +61,7 @@ async def test_chat_path_no_retrieval_no_tags():
 @pytest.mark.skipif(not HAS_LLM_KEY, reason="DEEPSEEK_API_KEY not set")
 @pytest.mark.asyncio
 async def test_safety_path_red_flag_no_retrieval():
-    """Red-flag symptom → safety tags, NO retrieval, safety template enforced."""
+    """Red-flag symptom → safety tags, NO retrieval; câu mở đầu do code phát."""
     graph = await build_graph_async()
     state, config = _base_state_config(query="Tôi bị đau ngực khi tập thể dục")
     result = await graph.ainvoke(state, config=config)
@@ -71,6 +71,8 @@ async def test_safety_path_red_flag_no_retrieval():
     tags = result.get("required_outputs", [])
     assert "red_flag_screen" in tags or "referral_advice" in tags, \
         f"Expected safety tags, got {tags}"
+    assert "chưa được kiểm chứng" not in result["final_answer"]
+    assert "has not been verified" not in result["final_answer"]
 
 
 @pytest.mark.integration
@@ -109,7 +111,7 @@ async def test_clarify_path():
 @pytest.mark.skipif(not HAS_LLM_KEY, reason="DEEPSEEK_API_KEY not set")
 @pytest.mark.asyncio
 async def test_grader_enforces_tags():
-    """Exercise query → grader checks required_outputs (if tags present)."""
+    """Exercise query → grader kiểm tag do model viết; dòng kết do code nối."""
     graph = await build_graph_async()
     state, config = _base_state_config(query="Hướng dẫn bài tập squat")
     result = await graph.ainvoke(state, config=config)
@@ -117,7 +119,9 @@ async def test_grader_enforces_tags():
     assert result["final_answer"], "final_answer should not be empty"
     # grader_result should be set if tags were emitted
     if result.get("required_outputs"):
-        assert result.get("grader_result") in ("pass", "pass_with_warning", "retry", None)
+        assert result.get("grader_result") in ("pass", "pass_with_warning")
+    assert "chưa được kiểm chứng" not in result["final_answer"]
+    assert "has not been verified" not in result["final_answer"]
 
 
 # ═══════════════════════════════════════════════════════════════════════════

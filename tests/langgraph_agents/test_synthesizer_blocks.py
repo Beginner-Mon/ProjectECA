@@ -240,8 +240,8 @@ async def test_synthesizer_prompt_omits_protocol_without_tag():
     assert captured.get("msgs"), "synthesizer never called the LLM"
     prompt = "\n".join(
         str(getattr(m, "content", "")) for m in captured["msgs"])
-    assert "sets, reps" not in prompt
-    assert "mention sources" in prompt  # evidence_citation có trong lượt
+    assert "For exercise_protocol" not in prompt
+    assert "mention sources" not in prompt  # dòng nguồn do code phát (T4)
 
 
 @pytest.mark.unit

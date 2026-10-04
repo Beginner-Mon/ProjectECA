@@ -186,6 +186,7 @@ class TestGraderNode:
     @pytest.mark.asyncio
     async def test_grader_safety_missing_injects_template(self):
         from langgraph_agents.nodes.grader import grader_node
+        from langgraph_agents.tag_contract import get_safety_text
         state: AgentState = {
             "messages": [], "errors": [], "retry_count": 0,
             "total_tokens": 0,
@@ -193,7 +194,10 @@ class TestGraderNode:
             "final_answer": "Bai tap nay tot cho bac si.",
         }
         result = await grader_node(state, GRADER_CONFIG)
-        assert result["grader_result"] in ("pass_with_warning", "retry")
+        assert result["grader_result"] == "pass"
+        assert result["final_answer"].startswith("Bai tap nay tot cho bac si.")
+        assert result["final_answer"].endswith(
+            get_safety_text("referral_advice", "anne", "en"))
 
     @pytest.mark.asyncio
     async def test_grader_quality_retry_increments(self):

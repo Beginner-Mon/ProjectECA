@@ -24,6 +24,8 @@ from typing import Callable
 from langchain_core.messages import ToolMessage
 from langchain_core.runnables import RunnableConfig
 
+from langgraph.config import get_stream_writer
+from langgraph_agents.evidence import evidence_items
 from langgraph_agents.state import AgentState
 from langgraph_agents.nodes._persona_loader import PersonaError, get_persona
 from langgraph_agents.shared.logging import get_logger
@@ -31,7 +33,10 @@ from langgraph_agents.tag_contract import (
     DEFAULT_SAFETY_TEMPLATES,
     DEFAULT_SAFETY_TEMPLATES_EN,
     TAG_CONTRACT,
+    closing_lines,
     get_safety_text,
+    model_tags,
+    opening_line,
 )
 
 logger = get_logger("langgraph.grader")
@@ -368,20 +373,24 @@ assert _PLANNER_TAGS == set(TAG_RULES.keys()), (
 )
 assert set(TAG_CONTRACT) == set(TAG_RULES)
 
-# ── Warning message for pass_with_warning ─────────────────────────────────
-_UNAUTHORIZED_DISCLAIMER = (
-    "*Thông tin này chưa được kiểm chứng bởi chuyên gia y tế. "
-    "Vui lòng tham khảo ý kiến bác sĩ trước khi áp dụng.*"
-)
 
-_UNAUTHORIZED_DISCLAIMER_EN = (
-    "*This information has not been verified by a health professional. "
-    "Please consult a doctor before acting on it.*"
-)
-
-
-def _unauthorized_disclaimer(lang: str) -> str:
-    return _UNAUTHORIZED_DISCLAIMER_EN if lang == "en" else _UNAUTHORIZED_DISCLAIMER
+def _finish(state: AgentState, config: RunnableConfig, result: str, extra: dict | None = None) -> dict:
+    """Kết thúc lượt: nối các dòng kết vào stream và vào final_answer."""
+    tags = state.get("required_outputs", [])
+    persona_id = config["configurable"].get("persona_id", "anne")
+    locale = config["configurable"].get("locale", "en")
+    final_answer = state.get("final_answer", "")
+    opening = opening_line(tags, persona_id, locale)
+    body = final_answer.removeprefix(f"{opening}\n\n") if opening else final_answer
+    lines = closing_lines(tags, persona_id, locale,
+                          evidence_items(state.get("messages", [])), body)
+    tail = "".join(f"\n\n{line}" for line in lines)
+    if tail:
+        try:
+            get_stream_writer()({"content": tail})
+        except RuntimeError:
+            pass
+    return {"grader_result": result, "final_answer": final_answer + tail, **(extra or {})}
 
 
 # ── Grader logic ─────────────────────────────────────────────────────────
@@ -505,12 +514,12 @@ async def grader_node(state: AgentState, config: RunnableConfig) -> dict:
         })
         return {"grader_result": "pass"}
 
-    result = _grade_tags(final_answer, [t for t in required_outputs
-                                      if t != "exercise_protocol"])
+    result = _grade_tags(final_answer, [t for t in model_tags(required_outputs)
+                                          if t != "exercise_protocol"])
 
     # Task 4b: exercise_protocol chỉ bị đòi phần mà evidence có. Evidence
     # không ghi phần nào → tag không bị kiểm ở lượt đó.
-    if "exercise_protocol" in required_outputs:
+    if "exercise_protocol" in model_tags(required_outputs):
         evidence_text = _evidence_text(state.get("messages", []))
         ev_sets = _has_sets_reps(evidence_text)
         ev_freq = _has_frequency(evidence_text)
@@ -553,35 +562,7 @@ async def grader_node(state: AgentState, config: RunnableConfig) -> dict:
             "node": "grader", "result": "pass",
             "elapsed_ms": elapsed_ms, "tags": required_outputs,
         })
-        return {"grader_result": "pass"}
-
-    # ── SAFETY MISSING → inject template cứng (D6: NO retry) ─────────
-    if result["safety_missing"]:
-        # Inject persona-aware safety templates at START of answer (D32)
-        templates = []
-        for tag in result["safety_missing"]:
-            templates.append(get_safety_text(tag, persona_id, lang))
-
-        safety_block = "\n\n---\n\n".join(templates)
-        modified_answer = f"{safety_block}\n\n---\n\n{final_answer}"
-
-        # Also append unverified disclaimer if quality also failed (D32: CUỐI)
-        disclaimer = ""
-        if result["quality_missing"]:
-            disclaimer = f"\n\n---\n\n{_unauthorized_disclaimer(lang)}"
-            modified_answer += disclaimer
-
-        logger.warning("node_complete", extra={
-            "node": "grader", "result": "pass_with_warning",
-            "elapsed_ms": elapsed_ms,
-            "lang": lang,
-            "safety_missing": result["safety_missing"],
-            "quality_missing": result["quality_missing"],
-        })
-        return {
-            "grader_result": "pass_with_warning",
-            "final_answer": modified_answer,
-        }
+        return _finish(state, config, "pass")
 
     # ── QUALITY MISSING → retry (max 1) ───────────────────────────────
     if retry_count == 0:
@@ -596,15 +577,11 @@ async def grader_node(state: AgentState, config: RunnableConfig) -> dict:
             "grader_feedback": result["feedback"],
         }
 
-    # ── RETRY EXHAUSTED → pass with warning (D32: disclaimer cuối) ────
+    # ── RETRY EXHAUSTED → pass with warning ────
     logger.warning("node_complete", extra={
         "node": "grader", "result": "pass_with_warning",
         "elapsed_ms": elapsed_ms,
         "quality_missing": result["quality_missing"],
         "retry_count": retry_count,
     })
-    modified_answer = f"{final_answer}\n\n---\n\n{_unauthorized_disclaimer(lang)}"
-    return {
-        "grader_result": "pass_with_warning",
-        "final_answer": modified_answer,
-    }
+    return _finish(state, config, "pass_with_warning")

@@ -139,7 +139,8 @@ async def test_graph_runs_kimodo_once_with_tag_regardless_of_retrieval():
         mock_retriever_llm.bind_tools = MagicMock(return_value=mock_bound)
 
         synth_llm = MagicMock()
-        synth_llm.ainvoke = AsyncMock(return_value=AIMessage(content="ok"))
+        synth_llm.ainvoke = AsyncMock(return_value=AIMessage(
+            content="giơ tay phải lên — khớp vai và khuỷu"))
 
         kimodo_runs: list = []
 

@@ -84,6 +84,12 @@ _WEB_POLICY_LINE = """\
 - This turn allows web search: for an exercise or health question, search the
 knowledge base and the web together."""
 
+_SECOND_ATTEMPT_NOTE = """\
+## Second attempt
+{reason}
+Read the tool descriptions again and call every tool that fits this request.
+If none fits, call none."""
+
 # Static sections (always present regardless of web_search flag)
 _RETRIEVER_PROMPT_BASE = """\
 You choose which tools this turn needs. You do not write the answer.
@@ -169,7 +175,7 @@ def _build_retriever_system_prompt(
 async def retriever_agent_node(state: AgentState, config: RunnableConfig) -> dict:
     """Retriever node — self-chooses tools, calls in parallel, returns evidence.
 
-    Input: resolved_query + required_outputs (+ grader_feedback on retry)
+    Input: resolved_query + required_outputs
     Output: messages (AIMessage with tool_calls → ToolNode executes → ToolMessages)
     """
     t0 = time.perf_counter()
@@ -177,7 +183,6 @@ async def retriever_agent_node(state: AgentState, config: RunnableConfig) -> dic
 
     resolved_query = state.get("resolved_query") or config["configurable"]["query"]
     required_outputs = state.get("required_outputs", [])
-    feedback = state.get("grader_feedback")
 
     # Hard-cap round counter (P2): increment each node execution
     current_rounds = state.get("retriever_rounds", 0) + 1
@@ -189,15 +194,24 @@ async def retriever_agent_node(state: AgentState, config: RunnableConfig) -> dic
     _HIGH_SAFETY_TAGS = {"red_flag_screen", "referral_advice"}
     allow_web_fallback = not (_HIGH_SAFETY_TAGS & set(required_outputs))
 
-    retry_note = ""
-    if feedback:
-        retry_note = (
-            "## RETRY — Previous attempt rejected\n"
-            f"Grader feedback: {feedback}\n"
-            "Try different search queries or additional tools."
-        )
+    from langgraph_agents.routing import failed_tool_names, retrieval_fault
 
-    is_retry = bool(feedback)
+    retry_note = ""
+    if state.get("retriever_rounds", 0) >= 1:
+        fault = retrieval_fault(state)
+        if fault == "no_tool_called":
+            reason = "Your previous response called no tool, and this request needs one."
+        elif fault == "tool_error":
+            reason = f"These tool calls failed: {', '.join(failed_tool_names(state))}."
+        else:
+            reason = ""
+        if reason:
+            retry_note = _SECOND_ATTEMPT_NOTE.format(reason=reason)
+        logger.info("retrieval_check", extra={
+            "node": "retriever_agent", "request_id": request_id,
+            "fault": fault, "round": state.get("retriever_rounds", 0) + 1,
+        })
+    is_retry = bool(retry_note)
     logger.info("node_start", extra={
         "node": "retriever_agent", "request_id": request_id,
         "query_preview": resolved_query[:80],

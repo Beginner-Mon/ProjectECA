@@ -18,6 +18,7 @@ Nodes (8 total):
 """
 
 import asyncio
+import json
 
 from langchain_core.messages import ToolMessage
 from langgraph.graph import StateGraph, END, START
@@ -36,6 +37,7 @@ from langgraph_agents.routing import (
     route_after_retriever,
     route_after_synthesizer,
     route_after_grader,
+    route_after_tools,
     check_errors,
     wants_motion,
 )
@@ -74,20 +76,13 @@ def route_after_planner(state: AgentState) -> str:
     return "synthesizer"
 
 
-# ── After retriever: chain to kimodo if motion needed ──────────────────
+# ── Tool errors become ToolMessages, not graph crashes ──────────────────
 
-def route_after_retriever_or_tools(state: AgentState) -> str:
-    """After retriever completes (or tools→retriever loop): go to kimodo if needed.
-
-    This ensures Kimodo runs after retrieval but before synthesizer.
-    Both write to messages independently → synthesizer reads combined results.
-    """
-    if check_errors(state) == "error_handler":
-        return "error_handler"
-
-    if wants_motion(state):
-        return "kimodo"
-    return "synthesizer"
+def _tool_error_payload(exc: Exception) -> str:
+    """Nội dung ToolMessage khi tool ném lỗi. Chỉ tên lớp: thông điệp của
+    exception có thể chứa thông tin kết nối. Giữ annotation `Exception`:
+    ToolNode suy ra loại lỗi được bắt từ annotation này."""
+    return json.dumps({"error": type(exc).__name__})
 
 
 def _make_guarded_tools_node(base_tool_node: ToolNode):
@@ -181,7 +176,7 @@ async def build_graph_async():
     g.add_node("memory", memory_node)
     g.add_node("planner", planner_node)
     g.add_node("retriever_agent", retriever_agent_node)
-    g.add_node("tools", _make_guarded_tools_node(ToolNode(all_tools)))
+    g.add_node("tools", _make_guarded_tools_node(ToolNode(all_tools, handle_tool_errors=_tool_error_payload)))
     g.add_node("kimodo", kimodo_node)
     g.add_node("synthesizer", synthesizer_node)
     g.add_node("grader", grader_node)
@@ -206,23 +201,20 @@ async def build_graph_async():
         "error_handler": "error_handler",
     })
 
-    # ── Retriever → tools, một lượt (plan T7: một cổng) ───────────────
-    # Sau tools KHÔNG quay lại retriever_agent nữa: đi kimodo nếu có tag motion,
-    # ngược lại synthesizer. Vòng agent thứ hai cũ là một lời gọi LLM vô ích
-    # (không thấy kết quả tool, yêu cầu nào cũng chạm trần 2 vòng).
-    # Retry của grader vẫn qua retriever_agent (cạnh grader → retriever_agent
-    # giữ nguyên) — đó là lượt agent mới có feedback, không phải lượt thừa.
+    # ── Kiểm 1: quay lại đúng node có lỗi, tối đa một lần ───────────────
+    # retriever_agent không gọi tool → quay lại retriever_agent (route_after_retriever).
+    # tools lỗi → quay lại retriever_agent (route_after_tools).
+    # Kết quả rỗng không phải lỗi (D24): đi tiếp.
     g.add_conditional_edges("retriever_agent", route_after_retriever, {
         "tools": "tools",
+        "retriever_agent": "retriever_agent",
         "kimodo": "kimodo",
         "synthesizer": "synthesizer",
         "error_handler": "error_handler",
     })
-    # Một cổng (plan T7): sau tools đi tiếp, KHÔNG quay lại retriever_agent.
-    # Vòng LLM thứ hai cũ không được đưa kết quả tool và mọi tool nó yêu cầu
-    # bị bỏ vì chạm trần 2 vòng — một lời gọi vô ích mỗi lượt có tool.
-    # Retry của grader không đổi: grader → retriever_agent vẫn còn nguyên.
-    g.add_conditional_edges("tools", route_after_retriever_or_tools, {
+    # Tool lỗi cả vòng → retriever_agent chạy lại một lần với ghi chú second attempt.
+    g.add_conditional_edges("tools", route_after_tools, {
+        "retriever_agent": "retriever_agent",
         "kimodo": "kimodo",
         "synthesizer": "synthesizer",
         "error_handler": "error_handler",

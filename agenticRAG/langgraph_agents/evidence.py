@@ -77,6 +77,8 @@ def evidence_items(messages: list) -> list[EvidenceItem]:
     """Các mục evidence đưa cho synthesizer: mới nhất được giữ trước, trả theo thứ tự thời gian."""
     pieces: list[EvidenceItem] = []
     for m in evidence_messages(messages):
+        if classify_tool_result(str(m.content)) == "error":
+            continue
         pieces.extend(_message_items(m))
     kept: list[EvidenceItem] = []
     used = 0

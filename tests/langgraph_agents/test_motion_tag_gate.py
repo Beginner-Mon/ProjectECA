@@ -97,8 +97,7 @@ class TestMotionTagRouting:
             assert route(state) == "synthesizer"
 
     def test_retriever_chain_uses_tag(self):
-        from langgraph_agents.routing import route_after_retriever
-        from langgraph_agents.graph import route_after_retriever_or_tools
+        from langgraph_agents.routing import route_after_retriever, route_after_tools
 
         tagged = {"messages": [], "errors": [], "retry_count": 0,
                   "total_tokens": 0, "retriever_rounds": 0,
@@ -106,8 +105,8 @@ class TestMotionTagRouting:
         untagged = {**tagged, "required_outputs": []}
         assert route_after_retriever(tagged) == "kimodo"
         assert route_after_retriever(untagged) == "synthesizer"
-        assert route_after_retriever_or_tools(tagged) == "kimodo"
-        assert route_after_retriever_or_tools(untagged) == "synthesizer"
+        assert route_after_tools(tagged) == "kimodo"
+        assert route_after_tools(untagged) == "synthesizer"
 
 
 @pytest.mark.unit

@@ -1,8 +1,8 @@
-"""Một cổng tool (plan T7): tools -> kimodo/synthesizer, không quay lại retriever.
+"""Kiểm 1 sau tools (grader-contract T2): tools lỗi → quay lại retriever_agent.
 
-Trước T7, sau tools graph luôn quay lại retriever_agent: lần gọi LLM thứ hai
-không được đưa kết quả tool và mọi tool nó yêu cầu bị bỏ vì chạm trần 2 vòng
-— một lời gọi LLM vô ích mỗi lượt có tool.
+Trước T2, sau tools graph không bao giờ quay lại retriever_agent. Từ T2,
+tool lỗi được quay lại retriever_agent tối đa một lần (route_after_tools);
+kết quả rỗng không phải lỗi (D24) nên vẫn đi tiếp.
 """
 
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -17,11 +17,11 @@ def _edge_pairs(graph) -> set[tuple[str, str]]:
 
 @pytest.mark.unit
 @pytest.mark.asyncio
-async def test_tools_no_longer_routes_back_to_retriever():
+async def test_tools_can_route_back_to_retriever():
     from langgraph_agents.graph import build_graph_async
 
     graph = await build_graph_async()
-    assert ("tools", "retriever_agent") not in _edge_pairs(graph)
+    assert ("tools", "retriever_agent") in _edge_pairs(graph)
 
 
 @pytest.mark.unit
@@ -31,7 +31,7 @@ async def test_tools_routes_to_kimodo_or_synthesizer():
 
     graph = await build_graph_async()
     targets = {t for s, t in _edge_pairs(graph) if s == "tools"}
-    assert targets <= {"kimodo", "synthesizer", "error_handler"}
+    assert targets <= {"retriever_agent", "kimodo", "synthesizer", "error_handler"}
     assert "synthesizer" in targets
 
 

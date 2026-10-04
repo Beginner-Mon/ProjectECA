@@ -29,6 +29,12 @@ from langchain_core.runnables import RunnableConfig
 from langgraph.config import get_stream_writer
 from langgraph_agents.shared import reply_emotion
 from langgraph_agents.shared.context import budget_chars, estimate_tokens
+from langgraph_agents.evidence import (
+    classify_tool_result as _classify_tool_result,
+    evidence_items,
+    evidence_messages as _evidence_messages,
+    render_evidence,
+)
 from langgraph_agents.sources import source_for_tool
 from langgraph_agents.state import AgentState, ErrorSeverity
 from langgraph_agents.llm import get_chat_model, get_fallback_chat_model, extract_cache_tokens
@@ -226,72 +232,6 @@ Instructions:
 
 # ── Helpers ──────────────────────────────────────────────────────────────
 
-_EVIDENCE_PER_MESSAGE_CAP = 1500
-# Trần evidence/about-you đọc từ config qua budget_chars() (plan T11); số cũ
-# giữ làm default khi config thiếu (shared/context.py::_CONTEXT_BUDGET_DEFAULTS).
-
-
-def _evidence_messages(messages: list) -> list:
-    """ToolMessages that count as retrieved evidence (plan T3).
-
-    Sources flagged is_evidence=False (self, motion) are body/self state,
-    not lookup results — the synthesizer reads them through their own
-    prompt blocks (T4/T8), never as evidence.
-    """
-    out = []
-    for m in messages:
-        if not isinstance(m, ToolMessage):
-            continue
-        src = source_for_tool(m.name or "")
-        if src is not None and not src.is_evidence:
-            continue
-        out.append(m)
-    return out
-
-
-def _evidence_title(m: ToolMessage) -> str:
-    """Section header naming WHERE the evidence comes from (plan T2/T3)."""
-    src = source_for_tool(m.name or "")
-    if src is None:
-        return "[From another source]"
-    return f"[From {src.label}]"
-
-
-def _split_message_parts(m: ToolMessage) -> list[tuple[str, str]]:
-    """Tách một ToolMessage thành các cặp (tiêu đề, nội dung).
-
-    Mặc định một message = một cặp. Riêng kb_search tách theo từng đoạn
-    dựa trên source_type của đoạn (B5): exercise_db và nhs_uk mang hai tiêu
-    đề khác nhau, kèm document_title. Đoạn có source_type lạ bị bỏ
-    (đã bị loại ở SQL, đây là chốt chặn thứ hai).
-    """
-    if (m.name or "") != "kb_search":
-        return [(_evidence_title(m), str(m.content))]
-    import json
-
-    from langgraph_agents.sources import kb_segment_label
-
-    try:
-        data = json.loads(str(m.content))
-    except (json.JSONDecodeError, TypeError):
-        return [(_evidence_title(m), str(m.content))]
-    if not isinstance(data, list):
-        return [(_evidence_title(m), str(m.content))]
-    if not data:
-        return [(_evidence_title(m), str(m.content))]
-    parts: list[tuple[str, str]] = []
-    for seg in data:
-        if not isinstance(seg, dict):
-            continue
-        label = kb_segment_label(seg.get("source_type", ""))
-        if label is None:
-            continue
-        doc = seg.get("document_title") or ""
-        title = f"[From {label}]" if not doc else f"[From {label}: {doc}]"
-        parts.append((title, str(seg.get("content", ""))))
-    # Toàn đoạn lạ → message không đóng góp gì (không hiện JSON thô).
-    return parts
-
 
 def _extract_tool_results(messages: list) -> str:
     """Format ToolMessage content from retriever tool calls, newest kept first.
@@ -313,34 +253,7 @@ def _extract_tool_results(messages: list) -> str:
     B5: kb_search messages are split per segment first (titles differ by
     source_type); the budget below counts split pieces, newest first.
     """
-    tools = _evidence_messages(messages)
-
-    pieces: list[tuple[str, str]] = []
-    for m in tools:
-        pieces.extend(_split_message_parts(m))
-
-    parts: list[str] = []
-    used = 0
-    evidence_budget = budget_chars("evidence")
-    for title, text in reversed(pieces):
-        content = text[:_EVIDENCE_PER_MESSAGE_CAP]
-        if parts and used + len(content) > evidence_budget:
-            break
-        parts.append(f"{title}\n{content}")
-        used += len(content)
-
-    parts.reverse()
-    return "\n\n".join(parts) if parts else ""
-
-
-def _classify_tool_result(content: str) -> str:
-    """'empty' | 'error' | 'hits' — the one rule both mode and logging use."""
-    # Empty result (D23: {found: false} or [])
-    if content in ("", "[]", "{}", '{"found": false}'):
-        return "empty"
-    if '"error"' in content:
-        return "error"
-    return "hits"
+    return render_evidence(evidence_items(messages))
 
 
 def _has_tool_results(messages: list) -> bool:

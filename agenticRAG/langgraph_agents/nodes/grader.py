@@ -27,6 +27,12 @@ from langchain_core.runnables import RunnableConfig
 from langgraph_agents.state import AgentState
 from langgraph_agents.nodes._persona_loader import PersonaError, get_persona
 from langgraph_agents.shared.logging import get_logger
+from langgraph_agents.tag_contract import (
+    DEFAULT_SAFETY_TEMPLATES,
+    DEFAULT_SAFETY_TEMPLATES_EN,
+    TAG_CONTRACT,
+    get_safety_text,
+)
 
 logger = get_logger("langgraph.grader")
 
@@ -302,22 +308,17 @@ TAG_RULES: dict[str, tuple[str, Callable[[str], bool], str]] = {
         "safety",
         _has_danger_warning,
         # Template cứng (appended when missing):
-        "**Cảnh báo quan trọng:** Triệu chứng bạn mô tả có thể là dấu hiệu "
-        "của một tình trạng nghiêm trọng. Bạn nên NGỪNG tập luyện ngay và đi "
-        "khám bác sĩ chuyên khoa để được chẩn đoán chính xác.",
+        DEFAULT_SAFETY_TEMPLATES["red_flag_screen"],
     ),
     "referral_advice": (
         "safety",
         _has_referral,
-        "**Lưu ý:** Với câu hỏi này, tôi khuyên bạn nên tham khảo ý kiến "
-        "bác sĩ hoặc chuyên gia y tế. Tôi chỉ có thể cung cấp thông tin tham "
-        "khảo về wellness, không thay thế chẩn đoán lâm sàng.",
+        DEFAULT_SAFETY_TEMPLATES["referral_advice"],
     ),
     "scope_disclaimer": (
         "safety",
         _has_disclaimer,
-        "*Thông tin này chỉ mang tính tham khảo về wellness và không thay "
-        "thế cho việc khám và chẩn đoán y tế chuyên nghiệp.*",
+        DEFAULT_SAFETY_TEMPLATES["scope_disclaimer"],
     ),
 
     # ── QUALITY (thiếu → retry max 1 — D6) ──
@@ -353,41 +354,6 @@ TAG_RULES: dict[str, tuple[str, Callable[[str], bool], str]] = {
     ),
 }
 
-# ── Default safety templates (fallback when persona doesn't define them) ──
-
-# Derived from TAG_RULES rather than restated. These three strings used to be a
-# verbatim second copy of the safety templates above, which is a standing
-# invitation to edit one and not the other — and that is exactly what nearly
-# happened while stripping the emoji out of both.
-DEFAULT_SAFETY_TEMPLATES: dict[str, str] = {
-    tag: rule[2] for tag, rule in TAG_RULES.items() if rule[0] == "safety"
-}
-
-# English counterparts. These are injected VERBATIM — the grader is rule-based
-# and never calls an LLM — so a user who asked in English used to receive a
-# perfectly English answer with a Vietnamese safety warning stapled to it. That
-# is worst precisely where it matters most: the red-flag text is the one
-# sentence the reader must not skip.
-#
-# No emoji, matching the Vietnamese set: emphasis is carried by bold text, so a
-# terminal or screen reader that drops the glyph loses nothing.
-DEFAULT_SAFETY_TEMPLATES_EN: dict[str, str] = {
-    "red_flag_screen": (
-        "**Important warning:** the symptoms you describe may indicate a "
-        "serious condition. Please STOP exercising now and see a doctor for a "
-        "proper diagnosis."
-    ),
-    "referral_advice": (
-        "**Note:** for this question I recommend consulting a doctor or a "
-        "qualified health professional. I can only offer general wellness "
-        "information, which does not replace a clinical diagnosis."
-    ),
-    "scope_disclaimer": (
-        "*This is general wellness information and does not replace "
-        "professional medical examination or diagnosis.*"
-    ),
-}
-
 # Startup assertion: ensure planner vocabulary ⊆ TAG_RULES (D7)
 # Called once at module import — catches drift between planner and grader.
 _PLANNER_TAGS = frozenset({
@@ -400,6 +366,7 @@ assert _PLANNER_TAGS == set(TAG_RULES.keys()), (
     f"planner_tags - TAG_RULES = {_PLANNER_TAGS - set(TAG_RULES.keys())}, "
     f"TAG_RULES - planner_tags = {set(TAG_RULES.keys()) - _PLANNER_TAGS}"
 )
+assert set(TAG_CONTRACT) == set(TAG_RULES)
 
 # ── Warning message for pass_with_warning ─────────────────────────────────
 _UNAUTHORIZED_DISCLAIMER = (
@@ -415,33 +382,6 @@ _UNAUTHORIZED_DISCLAIMER_EN = (
 
 def _unauthorized_disclaimer(lang: str) -> str:
     return _UNAUTHORIZED_DISCLAIMER_EN if lang == "en" else _UNAUTHORIZED_DISCLAIMER
-
-
-def get_safety_text(tag: str, persona_id: str, lang: str = "vi") -> str:
-    """The safety line for one tag, in the character's own words, in `lang`.
-
-    Resolution order, most specific first:
-        persona overlay for `lang` → module default for `lang` → ""
-
-    The `<tag>.en` suffix convention is gone. It existed because a persona was a
-    single flat file that had to carry two languages at once; now each language
-    is its own overlay file (`personas/<slug>/<lang>.md`) and the key is just
-    `<tag>` in both. A persona that has no overlay for `lang` gets the neutral
-    default rather than a warning in the wrong language.
-
-    Falls back rather than raising, unlike `get_persona`: every caller is already
-    injecting text into a reply that is about to ship, and a missing template
-    must degrade to the generic warning, never to silence.
-    """
-    try:
-        templates = get_persona(persona_id, lang).get("safety_templates") or {}
-    except PersonaError:
-        templates = {}
-    custom = templates.get(tag)
-    if custom:
-        return custom
-    defaults = DEFAULT_SAFETY_TEMPLATES_EN if lang == "en" else DEFAULT_SAFETY_TEMPLATES
-    return defaults.get(tag, "")
 
 
 # ── Grader logic ─────────────────────────────────────────────────────────

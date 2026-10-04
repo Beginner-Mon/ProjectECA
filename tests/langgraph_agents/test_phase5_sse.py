@@ -1044,3 +1044,95 @@ class TestSchemas:
             stm_populated=True, last_updated="2026-01-02T00:00:00",
         )
         assert resp.stm_populated is True
+
+
+# ── Bất biến stream == câu lưu (grader-contract T7) ───────────────────
+
+
+def _make_fake_astream_tokens_then_grader(tokens, final_answer,
+                                          grader_detail=None):
+    """custom content... rồi updates của node grader mang final_answer."""
+
+    async def fake_stream(state, config, stream_mode=None):
+        yield ("updates", {"memory": {}})
+        yield ("updates", {"planner": {"required_outputs": []}})
+        for tok in tokens:
+            yield ("custom", {"content": tok})
+        yield ("updates", {"grader": {
+            "grader_result": "pass",
+            "final_answer": final_answer,
+            "grader_detail": grader_detail if grader_detail is not None else {},
+        }})
+
+    return fake_stream
+
+
+@pytest.mark.unit
+def test_stream_matches_stored_answer(api_client, monkeypatch, caplog):
+    import logging
+
+    import langgraph_agents.api.main as api_module
+
+    client, _, mock_graph = api_client
+    mock_graph.astream = _make_fake_astream_tokens_then_grader(
+        ["A", "B"], "AB", {"exercise_steps": "ok"})
+    _set_graph(mock_graph)
+    captured = {}
+
+    async def fake_write(*args, **kwargs):
+        captured.update(kwargs)
+        return "id-1"
+
+    monkeypatch.setattr(api_module, "write_session_turn", fake_write)
+    with caplog.at_level(logging.WARNING, logger="langgraph.api"):
+        resp = client.post("/chat", json={"query": "hi"})
+    assert resp.status_code == 200
+    events = _parse_sse_stream(resp.content)
+    token_events = [e for e in events if e["event"] == "token"]
+    assert "".join(e["data"]["content"] for e in token_events) == "AB"
+    assert captured.get("assistant_answer") == "AB"
+    assert captured.get("meta", {}).get("grader_detail") == {
+        "exercise_steps": "ok"}
+    assert "stream_final_mismatch" not in caplog.text
+
+
+@pytest.mark.unit
+def test_stream_mismatch_is_logged(api_client, monkeypatch, caplog):
+    import logging
+
+    import langgraph_agents.api.main as api_module
+
+    client, _, mock_graph = api_client
+    mock_graph.astream = _make_fake_astream_tokens_then_grader(["A"], "AB")
+    _set_graph(mock_graph)
+
+    async def fake_write(*args, **kwargs):
+        return "id-1"
+
+    monkeypatch.setattr(api_module, "write_session_turn", fake_write)
+    with caplog.at_level(logging.WARNING, logger="langgraph.api"):
+        resp = client.post("/chat", json={"query": "hi"})
+    assert resp.status_code == 200
+    records = [r for r in caplog.records
+               if r.getMessage() == "stream_final_mismatch"]
+    assert len(records) == 1
+
+
+@pytest.mark.unit
+def test_no_mismatch_log_without_tokens(api_client, monkeypatch, caplog):
+    import logging
+
+    import langgraph_agents.api.main as api_module
+
+    client, _, mock_graph = api_client
+    mock_graph.astream = _make_fake_astream_tokens_then_grader([], "x")
+    _set_graph(mock_graph)
+
+    async def fake_write(*args, **kwargs):
+        return "id-1"
+
+    monkeypatch.setattr(api_module, "write_session_turn", fake_write)
+    with caplog.at_level(logging.WARNING, logger="langgraph.api"):
+        resp = client.post("/chat", json={"query": "hi"})
+    assert resp.status_code == 200
+    assert "stream_final_mismatch" not in caplog.text

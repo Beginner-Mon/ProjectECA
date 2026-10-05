@@ -105,7 +105,7 @@ class TestP1EmbeddingOffline:
 
 @pytest.mark.unit
 class TestP2RetrieverRoundCap:
-    """Verify route_after_retriever enforces MAX_RETRIEVER_ROUNDS=2."""
+    """Kiểm 1 (grader-contract T2): quay lại đúng node có lỗi, tối đa một lần."""
 
     def _make_state(self, retriever_rounds: int, has_tool_calls: bool = True, with_motion_tag: bool = False):
         from langchain_core.messages import AIMessage
@@ -129,29 +129,29 @@ class TestP2RetrieverRoundCap:
         state = self._make_state(retriever_rounds=1, has_tool_calls=True)
         assert route_after_retriever(state) == "tools"
 
-    def test_round_2_with_tool_calls_forces_synthesizer(self):
-        """Round 2 (== MAX), tool calls present → synthesizer (cap enforced)."""
+    def test_round_2_with_tool_calls_runs_tools(self):
+        """Round 2 (== MAX), tool calls present → tools (kiểm 1 chỉ quay lại khi lỗi)."""
         from langgraph_agents.routing import route_after_retriever
         state = self._make_state(retriever_rounds=2, has_tool_calls=True)
-        assert route_after_retriever(state) == "synthesizer"
+        assert route_after_retriever(state) == "tools"
 
-    def test_round_3_with_tool_calls_forces_synthesizer(self):
-        """Round 3 (> MAX), tool calls present → synthesizer (cap enforced)."""
+    def test_round_3_with_tool_calls_runs_tools(self):
+        """Round 3 (> MAX), tool calls present → tools (lời gọi đang chờ luôn chạy)."""
         from langgraph_agents.routing import route_after_retriever
         state = self._make_state(retriever_rounds=3, has_tool_calls=True)
-        assert route_after_retriever(state) == "synthesizer"
+        assert route_after_retriever(state) == "tools"
 
-    def test_round_2_with_motion_forces_kimodo(self):
-        """Round 2 (at cap), motion tag → kimodo (not synthesizer)."""
+    def test_round_2_with_motion_and_calls_runs_tools(self):
+        """Round 2, motion tag + tool calls đang chờ → tools (chạy tool trước)."""
         from langgraph_agents.routing import route_after_retriever
         state = self._make_state(retriever_rounds=2, has_tool_calls=True, with_motion_tag=True)
-        assert route_after_retriever(state) == "kimodo"
+        assert route_after_retriever(state) == "tools"
 
-    def test_round_0_no_tool_calls_to_synthesizer(self):
-        """Round 0, no tool calls → synthesizer (normal completion)."""
+    def test_round_0_no_tool_calls_goes_back_once(self):
+        """Round 0, no tool calls → retriever_agent (kiểm 1, tối đa một lần)."""
         from langgraph_agents.routing import route_after_retriever
         state = self._make_state(retriever_rounds=0, has_tool_calls=False)
-        assert route_after_retriever(state) == "synthesizer"
+        assert route_after_retriever(state) == "retriever_agent"
 
     def test_retriever_node_increments_round_counter(self):
         """retriever_agent_node returns retriever_rounds = previous + 1."""

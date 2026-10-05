@@ -473,7 +473,7 @@ class TestFix3MaxTokens:
         from langgraph_agents.nodes._persona_loader import get_persona
 
         assert not re.search(r"\bunder \d+ words\b", _SYNTHESIZE_TASK)
-        assert "Do not pad or repeat safety disclaimers" in _SYNTHESIZE_TASK
+        assert "come only from the evidence" in _SYNTHESIZE_TASK
 
         for persona_id in ("anne", "anne", "bronya", "hatsune-miku", "miki"):
             formatting = get_persona(persona_id)["response_formatting"]

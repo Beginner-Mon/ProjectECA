@@ -131,6 +131,70 @@ def _check_safety_repeated(answer: str, tags: list,
             repeated[tag] = n
     return repeated
 
+
+# ── Grader-contract V8 (T8): stream==final, câu code, retry ───────────────
+
+def _fixed_line_count(answer: str, tags: list, lang: str) -> dict[str, int]:
+    """Số lần mỗi câu an toàn của lượt xuất hiện trong câu trả lời (V8: đúng 1)."""
+    from langgraph_agents.tag_contract import get_safety_text
+
+    out: dict[str, int] = {}
+    for tag in tags or []:
+        if tag not in _SAFETY_TAGS:
+            continue
+        try:
+            template = get_safety_text(tag, "anne", lang)
+        except Exception:
+            continue
+        if template:
+            out[tag] = (answer or "").count(template)
+    return out
+
+
+def _answer_source_line(answer: str) -> str:
+    """Dòng nguồn cuối cùng trong câu trả lời; "" khi không có."""
+    for line in reversed((answer or "").splitlines()):
+        s = line.strip()
+        if s.startswith("*Nguồn:") or s.startswith("*Source:"):
+            return s[:200]
+    return ""
+
+
+def _check_addition_repeats_draft(answer: str) -> bool:
+    """Câu dài (≥60 ký tự) lặp lại trong câu trả lời — dấu hiệu viết thêm lặp bản cũ."""
+    seen: set[str] = set()
+    for s in re.split(r"[.!?\n]+", answer or ""):
+        s = s.strip()
+        if len(s) >= 60:
+            if s in seen:
+                return True
+            seen.add(s)
+    return False
+
+
+def _check_model_wrote_own_safety(answer: str, tags: list, lang: str) -> bool:
+    """Thân bài (bỏ các câu do code phát) vẫn tự chạm regex an toàn của tag lượt."""
+    from langgraph_agents.nodes.grader import (
+        _has_danger_warning, _has_disclaimer, _has_referral,
+    )
+    from langgraph_agents.tag_contract import get_safety_text
+
+    body = answer or ""
+    for tag in ("red_flag_screen", "referral_advice", "scope_disclaimer"):
+        try:
+            template = get_safety_text(tag, "anne", lang)
+        except Exception:
+            template = ""
+        if template:
+            body = body.replace(template, "")
+    body = "\n".join(
+        line for line in body.splitlines()
+        if not line.strip().startswith(("*Nguồn:", "*Source:")))
+    checks = {"red_flag_screen": _has_danger_warning,
+              "referral_advice": _has_referral,
+              "scope_disclaimer": _has_disclaimer}
+    return any(fn(body) for tag, fn in checks.items() if tag in (tags or []))
+
 # ── Motion override (cờ --motion-state; sau T9 trỏ sang tool show_movement) ──
 
 _MOTION_OVERRIDE: dict[str, Any] = {"state": None}
@@ -281,6 +345,10 @@ async def _run_probe_safe(graph: Any, probe: dict, **kwargs) -> dict[str, Any]:
             "speaks_as_performer": None, "first_sentence": "",
             "evidence_text": "", "dose_not_in_evidence": [],
             "safety_line_repeated": {},
+            "stream_equals_final": False, "retriever_runs": 0,
+            "fixed_line_count": {}, "source_line": "", "grader_detail": None,
+            "retry": False, "addition_repeats_draft": False,
+            "model_wrote_own_safety": False,
             "error": f"{type(exc).__name__}: {exc}",
         }
 
@@ -427,6 +495,18 @@ async def _run_probe(
     result["safety_line_repeated"] = _check_safety_repeated(
         final_answer, planner_out.get("required_outputs", []),
         persona_id="anne", lang=lang)
+    # V8 (grader-contract T8): bất biến stream, câu code, retry.
+    tags = planner_out.get("required_outputs", [])
+    result["stream_equals_final"] = (streamed_answer == final_answer)
+    result["retriever_runs"] = node_runs.get("retriever_agent", 0)
+    result["fixed_line_count"] = _fixed_line_count(final_answer, tags, lang)
+    result["source_line"] = _answer_source_line(final_answer)
+    result["grader_detail"] = final_updates.get("grader_detail")
+    result["retry"] = node_runs.get("synthesizer", 0) == 2
+    result["addition_repeats_draft"] = bool(result["retry"]) and \
+        _check_addition_repeats_draft(final_answer)
+    result["model_wrote_own_safety"] = _check_model_wrote_own_safety(
+        final_answer, tags, lang)
     return result
 
 
@@ -544,9 +624,9 @@ def _render_report(label: str, results: list[dict],
     lines += ["", "## Bảng tổng hợp", "",
               "| id | tags | retr | motion | tools | runs P/R/S | mode | "
               + " | ".join(_CHECK_COLS)
-              + " | sim_top1 |",
+              + " | sim_top1 | dose! |",
               "|---|---|---|---|---|---|---|"
-              + "|".join(["---"] * len(_CHECK_COLS)) + "|---|"]
+              + "|".join(["---"] * len(_CHECK_COLS)) + "|---|---|"]
     for r in results:
         runs = (f"{r['node_runs'].get('planner', 0)}/"
                 f"{r['node_runs'].get('retriever_agent', 0)}/"
@@ -554,12 +634,66 @@ def _render_report(label: str, results: list[dict],
         tags = ",".join(r["planner_tags"]) if r["planner_tags"] else "[]"
         tools = ",".join(r["tools_called"]) if r["tools_called"] else "—"
         sim = r["similarity_top1"] if r["similarity_top1"] is not None else "—"
+        dose = r.get("dose_not_in_evidence") or []
         row = [r["id"], f"`{tags}`", str(r["needs_retrieval"]),
                str(r["needs_motion"]), f"`{tools}`", runs, r["synth_mode"]]
         row += [_fmt_cell(c, r[c]) for c in _CHECK_COLS]
-        row += [str(sim)]
+        row += [str(sim), str(len(dose)) if dose else "—"]
         lines.append("| " + " | ".join(row) + " |")
+    # V8 (grader-contract T8): tổng hợp theo ngôn ngữ.
+    lines += ["", "## Tổng hợp theo ngôn ngữ (V8)", "",
+              "| lang | lượt | có tag | retry | retriever×2 | TB giây |",
+              "|---|---|---|---|---|---|"]
+    for lang in ("vi", "en"):
+        rows = [r for r in results if r.get("lang") == lang and not r.get("error")]
+        n = len(rows)
+        tagged = sum(1 for r in rows if r.get("planner_tags"))
+        retried = sum(1 for r in rows if r.get("retry"))
+        r2 = sum(1 for r in rows if r.get("retriever_runs") == 2)
+        avg = (sum(r.get("elapsed_s", 0) for r in rows) / n) if n else 0
+        lines.append(f"| {lang} | {n} | {tagged} | {retried} | {r2} | {avg:.1f} |")
+    # V8: stream == final, câu code, retry, grader_detail.
+    bad_stream = [r["id"] for r in results if not r.get("stream_equals_final")]
+    bad_fixed = [(r["id"], t, c) for r in results
+                 for t, c in (r.get("fixed_line_count") or {}).items() if c != 1]
+    retries = [r["id"] for r in results if r.get("retry")]
+    repeats = [r["id"] for r in results if r.get("addition_repeats_draft")]
+    own_safety = [r["id"] for r in results if r.get("model_wrote_own_safety")]
+    lines += ["", "## V8 — bất biến và dòng code", "",
+              f"- stream_equals_final: {len(results) - len(bad_stream)}/{len(results)}"
+              + ("" if not bad_stream else f" (lệch: {', '.join(bad_stream)})"),
+              "- fixed_line_count ≠ 1: "
+              + ("—" if not bad_fixed else ", ".join(
+                  f"{pid}/{t}×{c}" for pid, t, c in bad_fixed)),
+              f"- retry: {len(retries)}/31 lượt có tag"
+              + ("" if not retries else f" ({', '.join(retries)})"),
+              f"- addition_repeats_draft: {len(repeats)}"
+              + ("" if not repeats else f" ({', '.join(repeats)})"),
+              f"- model_wrote_own_safety: {len(own_safety)}"
+              + ("" if not own_safety else f" ({', '.join(own_safety)})")]
     lines += ["", "## Chi tiết từng câu", ""]
+    for r in results:
+        lines.append(f"### {r['id']} — {r['query']}")
+        lines.append("")
+        if r.get("error"):
+            lines.append(f"- LỖI: `{r['error']}`")
+            lines.append("")
+            continue
+        lines.append(f"- planner: tags={r['planner_tags']} "
+                     f"retrieval={r['needs_retrieval']} motion={r['needs_motion']} "
+                     f"clarify={r['needs_clarification']}")
+        lines.append(f"- tools: {r['tools_called'] or '—'}; "
+                     f"runs P/R/S={r['node_runs']}; mode={r['synth_mode']}; "
+                     f"grader={r['grader_result']}; "
+                     f"sim_top1={r['similarity_top1']}; {r['elapsed_s']}s")
+        lines.append(f"- v8: stream==final {r.get('stream_equals_final')}; "
+                     f"retriever_runs={r.get('retriever_runs')}; "
+                     f"fixed={r.get('fixed_line_count')}; "
+                     f"source={r.get('source_line') or '—'}; "
+                     f"grader_detail={r.get('grader_detail')}; "
+                     f"retry={r.get('retry')}; "
+                     f"addition_repeats={r.get('addition_repeats_draft')}; "
+                     f"own_safety={r.get('model_wrote_own_safety')}")
     for r in results:
         lines.append(f"### {r['id']} — {r['query']}")
         lines.append("")
@@ -692,6 +826,10 @@ async def _run_selector_probe(probe: dict, *, label: str, history: list) -> dict
             "speaks_as_performer": None, "first_sentence": "",
             "evidence_text": "", "dose_not_in_evidence": [],
             "safety_line_repeated": {},
+            "stream_equals_final": True, "retriever_runs": 1,
+            "fixed_line_count": {}, "source_line": "", "grader_detail": None,
+            "retry": False, "addition_repeats_draft": False,
+            "model_wrote_own_safety": False,
         }
     except Exception as exc:  # noqa: BLE001
         traceback.print_exc()
@@ -702,7 +840,8 @@ async def _run_selector_probe(probe: dict, *, label: str, history: list) -> dict
             "planner_tags": [], "needs_retrieval": None,
             "needs_motion": False, "needs_clarification": None,
             "tools_called": [], "node_runs": {}, "synth_mode": "?",
-            "grader_result": None, "similarity_top1": None, "elapsed_s": 0.0,
+            "grader_result": None, "similarity_top1": None,
+            "elapsed_s": 0.0,
             "answer": "", "mentions_exercise": None,
             "calls_library_source": None, "has_sets_reps": None,
             "has_citation": None, "anne_voice_ok": None,
@@ -710,9 +849,12 @@ async def _run_selector_probe(probe: dict, *, label: str, history: list) -> dict
             "speaks_as_performer": None, "first_sentence": "",
             "evidence_text": "", "dose_not_in_evidence": [],
             "safety_line_repeated": {},
+            "stream_equals_final": False, "retriever_runs": 0,
+            "fixed_line_count": {}, "source_line": "", "grader_detail": None,
+            "retry": False, "addition_repeats_draft": False,
+            "model_wrote_own_safety": False,
             "error": f"{type(exc).__name__}: {exc}",
         }
-
 
 async def amain(args: argparse.Namespace) -> int:
     from langgraph_agents.shared.env import load_env

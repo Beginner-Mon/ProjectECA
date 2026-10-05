@@ -1,5 +1,25 @@
 export const CHAT_DRAG_THRESHOLD = 6
 export const CHAT_RAIL_GAP = 8
+/** The rail's distance from the right edge (MobileNavBar `right-2`). */
+export const RAIL_RIGHT = 8
+/** The conversation card's side margin inside the dock (MobileChatDock `mx-3`). */
+export const DOCK_MARGIN = 12
+
+/**
+ * Phone held sideways: the rail sits BESIDE the dock instead of above it.
+ * Stacked, the rail's ~190 px left ~40 px for messages on a 375 px tall
+ * screen (audit 30-09). Layout viewport, not visual: an on-screen keyboard
+ * must not flip a portrait phone into the landscape arrangement.
+ */
+export function isLandscape(layoutWidth: number, layoutHeight: number) {
+  return layoutWidth > layoutHeight
+}
+
+/** How far the dock's right edge must stay from the screen edge so the rail
+ *  fits beside it: rail offset + rail + gap, minus the card margin already there. */
+export function dockRightInset(railWidth: number) {
+  return Math.max(0, RAIL_RIGHT + railWidth + CHAT_RAIL_GAP - DOCK_MARGIN)
+}
 
 export function clampChatHeight(height: number, maximum: number) {
   return Math.max(0, Math.min(height, Math.max(0, maximum)))

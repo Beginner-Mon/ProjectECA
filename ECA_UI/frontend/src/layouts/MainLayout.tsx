@@ -47,7 +47,7 @@ export default function MainLayout() {
             <h1 className="text-2xl font-semibold tracking-[0.18em] text-foreground">ECA</h1>
           </Link>
           {/* Desktop only — mobile rail has no music toggle (removed by design). */}
-          <span className="hidden md:flex items-center">
+          <span className="hidden desktop:flex items-center">
             <AudioToggle />
           </span>
         </div>

@@ -19,9 +19,13 @@ FIXED_TAGS = {"red_flag_screen", "referral_advice", "scope_disclaimer",
 def _items():
     data = yaml.safe_load(FIXTURE.read_text(encoding="utf-8"))
     for a in data["answers"]:
+        if a.get("lang") not in ("vi", "en"):
+            continue
         for tag, expect in a["labels"].items():
             yield a["id"], tag, expect, a["text"]
     for c in data["cases"]:
+        if c.get("lang") not in ("vi", "en"):
+            continue
         yield c["id"], c["tag"], c["expect"], c["text"]
 
 

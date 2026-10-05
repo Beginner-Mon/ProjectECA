@@ -24,9 +24,26 @@ from typing import Callable
 from langchain_core.messages import ToolMessage
 from langchain_core.runnables import RunnableConfig
 
+from langgraph.config import get_stream_writer
+from langgraph_agents.evidence import (
+    classify_tool_result,
+    evidence_items,
+    evidence_messages,
+    render_evidence,
+)
 from langgraph_agents.state import AgentState
 from langgraph_agents.nodes._persona_loader import PersonaError, get_persona
 from langgraph_agents.shared.logging import get_logger
+from langgraph_agents.tag_contract import (
+    DEFAULT_SAFETY_TEMPLATES,
+    DEFAULT_SAFETY_TEMPLATES_EN,
+    TAG_CONTRACT,
+    check_items,
+    closing_lines,
+    get_safety_text,
+    model_tags,
+    opening_line,
+)
 
 logger = get_logger("langgraph.grader")
 
@@ -307,22 +324,17 @@ TAG_RULES: dict[str, tuple[str, Callable[[str], bool], str]] = {
         "safety",
         _has_danger_warning,
         # Template cứng (appended when missing):
-        "**Cảnh báo quan trọng:** Triệu chứng bạn mô tả có thể là dấu hiệu "
-        "của một tình trạng nghiêm trọng. Bạn nên NGỪNG tập luyện ngay và đi "
-        "khám bác sĩ chuyên khoa để được chẩn đoán chính xác.",
+        DEFAULT_SAFETY_TEMPLATES["red_flag_screen"],
     ),
     "referral_advice": (
         "safety",
         _has_referral,
-        "**Lưu ý:** Với câu hỏi này, tôi khuyên bạn nên tham khảo ý kiến "
-        "bác sĩ hoặc chuyên gia y tế. Tôi chỉ có thể cung cấp thông tin tham "
-        "khảo về wellness, không thay thế chẩn đoán lâm sàng.",
+        DEFAULT_SAFETY_TEMPLATES["referral_advice"],
     ),
     "scope_disclaimer": (
         "safety",
         _has_disclaimer,
-        "*Thông tin này chỉ mang tính tham khảo về wellness và không thay "
-        "thế cho việc khám và chẩn đoán y tế chuyên nghiệp.*",
+        DEFAULT_SAFETY_TEMPLATES["scope_disclaimer"],
     ),
 
     # ── QUALITY (thiếu → retry max 1 — D6) ──
@@ -358,41 +370,6 @@ TAG_RULES: dict[str, tuple[str, Callable[[str], bool], str]] = {
     ),
 }
 
-# ── Default safety templates (fallback when persona doesn't define them) ──
-
-# Derived from TAG_RULES rather than restated. These three strings used to be a
-# verbatim second copy of the safety templates above, which is a standing
-# invitation to edit one and not the other — and that is exactly what nearly
-# happened while stripping the emoji out of both.
-DEFAULT_SAFETY_TEMPLATES: dict[str, str] = {
-    tag: rule[2] for tag, rule in TAG_RULES.items() if rule[0] == "safety"
-}
-
-# English counterparts. These are injected VERBATIM — the grader is rule-based
-# and never calls an LLM — so a user who asked in English used to receive a
-# perfectly English answer with a Vietnamese safety warning stapled to it. That
-# is worst precisely where it matters most: the red-flag text is the one
-# sentence the reader must not skip.
-#
-# No emoji, matching the Vietnamese set: emphasis is carried by bold text, so a
-# terminal or screen reader that drops the glyph loses nothing.
-DEFAULT_SAFETY_TEMPLATES_EN: dict[str, str] = {
-    "red_flag_screen": (
-        "**Important warning:** the symptoms you describe may indicate a "
-        "serious condition. Please STOP exercising now and see a doctor for a "
-        "proper diagnosis."
-    ),
-    "referral_advice": (
-        "**Note:** for this question I recommend consulting a doctor or a "
-        "qualified health professional. I can only offer general wellness "
-        "information, which does not replace a clinical diagnosis."
-    ),
-    "scope_disclaimer": (
-        "*This is general wellness information and does not replace "
-        "professional medical examination or diagnosis.*"
-    ),
-}
-
 # Startup assertion: ensure planner vocabulary ⊆ TAG_RULES (D7)
 # Called once at module import — catches drift between planner and grader.
 _PLANNER_TAGS = frozenset({
@@ -405,271 +382,150 @@ assert _PLANNER_TAGS == set(TAG_RULES.keys()), (
     f"planner_tags - TAG_RULES = {_PLANNER_TAGS - set(TAG_RULES.keys())}, "
     f"TAG_RULES - planner_tags = {set(TAG_RULES.keys()) - _PLANNER_TAGS}"
 )
-
-# ── Warning message for pass_with_warning ─────────────────────────────────
-_UNAUTHORIZED_DISCLAIMER = (
-    "*Thông tin này chưa được kiểm chứng bởi chuyên gia y tế. "
-    "Vui lòng tham khảo ý kiến bác sĩ trước khi áp dụng.*"
-)
-
-_UNAUTHORIZED_DISCLAIMER_EN = (
-    "*This information has not been verified by a health professional. "
-    "Please consult a doctor before acting on it.*"
-)
+assert set(TAG_CONTRACT) == set(TAG_RULES)
 
 
-def _unauthorized_disclaimer(lang: str) -> str:
-    return _UNAUTHORIZED_DISCLAIMER_EN if lang == "en" else _UNAUTHORIZED_DISCLAIMER
+def _finish(state: AgentState, config: RunnableConfig, result: str, extra: dict | None = None) -> dict:
+    """Kết thúc lượt: nối các dòng kết vào stream và vào final_answer."""
+    tags = state.get("required_outputs", [])
+    persona_id = config["configurable"].get("persona_id", "anne")
+    locale = config["configurable"].get("locale", "en")
+    final_answer = state.get("final_answer", "")
+    opening = opening_line(tags, persona_id, locale)
+    body = final_answer.removeprefix(f"{opening}\n\n") if opening else final_answer
+    lines = closing_lines(tags, persona_id, locale,
+                          evidence_items(state.get("messages", [])), body)
+    tail = "".join(f"\n\n{line}" for line in lines)
+    if tail:
+        try:
+            get_stream_writer()({"content": tail})
+        except RuntimeError:
+            pass
+    return {"grader_result": result, "final_answer": final_answer + tail, **(extra or {})}
 
 
-def get_safety_text(tag: str, persona_id: str, lang: str = "vi") -> str:
-    """The safety line for one tag, in the character's own words, in `lang`.
+from pydantic import BaseModel, Field
 
-    Resolution order, most specific first:
-        persona overlay for `lang` → module default for `lang` → ""
+from langgraph_agents.llm import get_chat_model
 
-    The `<tag>.en` suffix convention is gone. It existed because a persona was a
-    single flat file that had to carry two languages at once; now each language
-    is its own overlay file (`personas/<slug>/<lang>.md`) and the key is just
-    `<tag>` in both. A persona that has no overlay for `lang` gets the neutral
-    default rather than a warning in the wrong language.
 
-    Falls back rather than raising, unlike `get_persona`: every caller is already
-    injecting text into a reply that is about to ship, and a missing template
-    must degrade to the generic warning, never to silence.
-    """
+class JudgeItem(BaseModel):
+    item: str
+    in_reply: bool
+    in_evidence: bool
+
+
+class JudgeOutput(BaseModel):
+    items: list[JudgeItem] = Field(default_factory=list)
+
+
+_JUDGE_SYSTEM = """You check one reply against a checklist. You do not rewrite the reply.
+
+For each item answer two questions, true or false:
+- in_reply: does the reply contain this, in whatever language it is written?
+- in_evidence: does the evidence state this for the exercise the reply is about?
+
+Return JSON: {"items": [{"item": "<item name>", "in_reply": true, "in_evidence": false}]}"""
+
+_JUDGE_USER = """## Checklist
+{checklist}
+
+## Evidence
+{evidence}
+
+## Reply
+{answer}"""
+
+
+async def _judge(checks: list, evidence: str, body: str, request_id: str) -> dict:
+    """Kết luận từng mục kiểm. {} khi LLM chấm không dùng được: lượt đó cho qua."""
+    checklist = "\n".join(f"- {c.key}: {c.definition}" for c in checks)
+    t0 = time.perf_counter()
     try:
-        templates = get_persona(persona_id, lang).get("safety_templates") or {}
-    except PersonaError:
-        templates = {}
-    custom = templates.get(tag)
-    if custom:
-        return custom
-    defaults = DEFAULT_SAFETY_TEMPLATES_EN if lang == "en" else DEFAULT_SAFETY_TEMPLATES
-    return defaults.get(tag, "")
+        llm = get_chat_model("grader")
+        structured = llm.with_structured_output(JudgeOutput, method="json_mode",
+                                                include_raw=True)
+        raw = await structured.ainvoke([
+            ("system", _JUDGE_SYSTEM),
+            ("user", _JUDGE_USER.format(checklist=checklist, evidence=evidence, answer=body)),
+        ])
+        parsed = raw.get("parsed") if isinstance(raw, dict) else raw
+        if parsed is None:
+            raise ValueError("judge output did not parse")
+    except Exception as exc:
+        logger.warning("grader_judge_failed", extra={
+            "node": "grader", "request_id": request_id, "error": type(exc).__name__,
+            "elapsed_ms": round((time.perf_counter() - t0) * 1000),
+        })
+        return {}
+    by_key = {i.item: i for i in parsed.items}
+    detail = {}
+    for c in checks:
+        j = by_key.get(c.key)
+        if j is None or j.in_reply:
+            detail[c.key] = "ok"
+        elif j.in_evidence:
+            detail[c.key] = "synth_missed"
+        else:
+            detail[c.key] = "source_silent"
+    logger.info("grader_judge", extra={
+        "node": "grader", "request_id": request_id, "detail": detail,
+        "elapsed_ms": round((time.perf_counter() - t0) * 1000),
+    })
+    return detail
 
 
 # ── Grader logic ─────────────────────────────────────────────────────────
 
-def _grade_tags(final_answer: str, required_outputs: list[str]) -> dict:
-    """Run tag-driven checks against final_answer.
-
-    Returns:
-        {result: "pass"|"retry"|"pass_with_warning",
-         feedback: str|None,
-         safety_missing: list[str],    # safety tags that failed
-         quality_missing: list[str]}   # quality tags that failed
-    """
-    if not final_answer or not final_answer.strip():
-        return {
-            "result": "retry",
-            "feedback": "Empty response. Must produce an answer.",
-            "safety_missing": [],
-            "quality_missing": [],
-        }
-
-    safety_missing = []
-    quality_missing = []
-
-    for tag in required_outputs:
-        if tag not in TAG_RULES:
-            logger.warning("unknown_tag_in_grader", extra={"tag": tag})
-            continue
-
-        kind, rule_fn, _ = TAG_RULES[tag]
-        if not rule_fn(final_answer):
-            if kind == "safety":
-                safety_missing.append(tag)
-            else:
-                quality_missing.append(tag)
-
-    # Safety failures → template cứng (D6: no retry for safety)
-    if safety_missing:
-        return {
-            "result": "pass_with_warning",  # We'll inject templates
-            "feedback": None,
-            "safety_missing": safety_missing,
-            "quality_missing": quality_missing,
-        }
-
-    # Quality failures → retry (max 1, D6)
-    if quality_missing:
-        feedback_parts = []
-        for tag in quality_missing:
-            _, _, fb = TAG_RULES[tag]
-            feedback_parts.append(f"[{tag}] {fb}")
-        return {
-            "result": "retry",
-            "feedback": " ".join(feedback_parts),
-            "safety_missing": [],
-            "quality_missing": quality_missing,
-        }
-
-    # All tags pass
-    return {
-        "result": "pass",
-        "feedback": None,
-        "safety_missing": [],
-        "quality_missing": [],
-    }
-
-
 # ── Node ─────────────────────────────────────────────────────────────────
 
-def _evidence_text(messages: list) -> str:
-    """Văn bản evidence của lượt (Task 4b): nội dung các ToolMessage có nguồn
-    is_evidence=True — cùng ngữ nghĩa lọc với synthesizer._evidence_messages
-    (tool lạ không rõ nguồn vẫn được tính)."""
-    from langgraph_agents.sources import source_for_tool
-
-    parts = []
-    for m in messages:
-        if not isinstance(m, ToolMessage):
-            continue
-        src = source_for_tool(m.name or "")
-        if src is not None and not src.is_evidence:
-            continue
-        parts.append(str(m.content or ""))
-    return "\n".join(parts)
-
-
-def _grade_protocol_parts(answer: str, evidence_text: str) -> list[str]:
-    """Phần liều lượng mà evidence CÓ nhưng câu trả lời thiếu (Task 4b).
-
-    Trả [] khi evidence không ghi phần nào (tag không bị kiểm ở lượt đó) hoặc
-    khi câu trả lời đã đủ phần evidence có.
-    """
-    missing = []
-    if _has_sets_reps(evidence_text) and not _has_sets_reps(answer):
-        missing.append("sets_reps")
-    if _has_frequency(evidence_text) and not _has_frequency(answer):
-        missing.append("frequency")
-    return missing
-
 async def grader_node(state: AgentState, config: RunnableConfig) -> dict:
-    """Tag-driven grader node — M.3.
+    """LLM chấm từng mục kiểm của tag do model viết; code nối các dòng kết.
 
-    Reads: required_outputs (tags), final_answer, persona_id (from config)
-    Logic:
-      - required_outputs=[] → skipped by routing (D8), this node never called
-      - safety tag missing → inject persona-aware template (NO retry — D6)
-      - quality tag missing → retry max 1 (D6)
-      - retry_count >= 1 + still failing quality → pass_with_warning
-      - D32: unverified disclaimer appended at END on pass_with_warning
+    - Không tag → pass. Thân rỗng → retry một lần, không chấm.
+    - Đã viết thêm (retry_count >= 1) → không chấm lại.
+    - Không evidence (hoặc evidence rỗng/lỗi) → pass, mục nào cũng no_evidence.
+    - LLM chấm lỗi → pass. Thiếu mà evidence có → retry viết thêm.
+    - Thiếu mà evidence cũng im → pass (source_silent).
     """
-    t0 = time.perf_counter()
     required_outputs = state.get("required_outputs", [])
+    if not required_outputs:
+        logger.info("node_skip", extra={"node": "grader", "reason": "no_tags"})
+        return {"grader_result": "pass"}
+
+    request_id = config["configurable"].get("request_id", "-")
+    persona_id = config["configurable"].get("persona_id", "anne")
+    locale = config["configurable"].get("locale", "en")
     final_answer = state.get("final_answer", "")
     retry_count = state.get("retry_count", 0)
-    persona_id = config["configurable"].get("persona_id", "anne")
+    messages = state.get("messages", [])
 
-    # Safety: required_outputs=[] should never reach grader (D8 + D15 routing)
-    if not required_outputs:
-        logger.info("node_skip", extra={
-            "node": "grader", "reason": "no_tags",
-        })
-        return {"grader_result": "pass"}
+    opening = opening_line(required_outputs, persona_id, locale)
+    body = final_answer.removeprefix(f"{opening}\n\n") if opening else final_answer
 
-    result = _grade_tags(final_answer, [t for t in required_outputs
-                                      if t != "exercise_protocol"])
+    # Đã viết thêm (hoặc đã viết lại vì thân rỗng): không chấm lại.
+    if retry_count >= 1:
+        return _finish(state, config, "pass_with_warning",
+                       {"grader_detail": state.get("grader_detail") or {}})
 
-    # Task 4b: exercise_protocol chỉ bị đòi phần mà evidence có. Evidence
-    # không ghi phần nào → tag không bị kiểm ở lượt đó.
-    if "exercise_protocol" in required_outputs:
-        evidence_text = _evidence_text(state.get("messages", []))
-        ev_sets = _has_sets_reps(evidence_text)
-        ev_freq = _has_frequency(evidence_text)
-        if not ev_sets and not ev_freq:
-            logger.info("protocol_unsupported_by_evidence", extra={
-                "node": "grader",
-                "request_id": config["configurable"].get("request_id", "-"),
-            })
+    if not body.strip():
+        return {"grader_result": "retry", "retry_count": 1, "grader_feedback": None,
+                "grader_detail": {"body": "empty"}}
+
+    checks = check_items(required_outputs)
+    detail: dict = {}
+    if checks:
+        has_hits = any(classify_tool_result(str(m.content)) == "hits"
+                       for m in evidence_messages(messages))
+        if not has_hits:
+            detail = {c.key: "no_evidence" for c in checks}
         else:
-            missing = _grade_protocol_parts(final_answer, evidence_text)
-            if missing:
-                if "exercise_protocol" not in result["quality_missing"]:
-                    result["quality_missing"].append("exercise_protocol")
-                _, _, fb = TAG_RULES["exercise_protocol"]
-                piece = f"[exercise_protocol] {fb}"
-                result["feedback"] = (
-                    f"{result['feedback']} {piece}".strip()
-                    if result.get("feedback") else piece
-                )
-                if result["result"] == "pass":
-                    result["result"] = "retry"
+            detail = await _judge(checks, render_evidence(evidence_items(messages)),
+                                  body, request_id)
+            missed = [c for c in checks if detail.get(c.key) == "synth_missed"]
+            if missed:
+                return {"grader_result": "retry", "retry_count": 1,
+                        "grader_feedback": "\n".join(f"- {c.definition}" for c in missed),
+                        "grader_detail": detail}
 
-    # The site language the user chose, not a guess at the answer's language.
-    #
-    # This used to call detect_lang(final_answer). Detection reads the reply and
-    # is usually right, but "usually" is the problem: a safety warning is the one
-    # sentence a reader must not skip, and a declared preference cannot be
-    # mis-read the way a two-word answer can.
-    #
-    # Known consequence, accepted: a Vietnamese question asked on an English site
-    # gets a Vietnamese answer with an English warning attached. The reply
-    # language still mirrors the question — locale governs inserted text only.
-    lang = config["configurable"].get("locale", "en")
-
-    elapsed_ms = round((time.perf_counter() - t0) * 1000)
-
-    # ── PASS ──────────────────────────────────────────────────────────
-    if result["result"] == "pass":
-        logger.info("node_complete", extra={
-            "node": "grader", "result": "pass",
-            "elapsed_ms": elapsed_ms, "tags": required_outputs,
-        })
-        return {"grader_result": "pass"}
-
-    # ── SAFETY MISSING → inject template cứng (D6: NO retry) ─────────
-    if result["safety_missing"]:
-        # Inject persona-aware safety templates at START of answer (D32)
-        templates = []
-        for tag in result["safety_missing"]:
-            templates.append(get_safety_text(tag, persona_id, lang))
-
-        safety_block = "\n\n---\n\n".join(templates)
-        modified_answer = f"{safety_block}\n\n---\n\n{final_answer}"
-
-        # Also append unverified disclaimer if quality also failed (D32: CUỐI)
-        disclaimer = ""
-        if result["quality_missing"]:
-            disclaimer = f"\n\n---\n\n{_unauthorized_disclaimer(lang)}"
-            modified_answer += disclaimer
-
-        logger.warning("node_complete", extra={
-            "node": "grader", "result": "pass_with_warning",
-            "elapsed_ms": elapsed_ms,
-            "lang": lang,
-            "safety_missing": result["safety_missing"],
-            "quality_missing": result["quality_missing"],
-        })
-        return {
-            "grader_result": "pass_with_warning",
-            "final_answer": modified_answer,
-        }
-
-    # ── QUALITY MISSING → retry (max 1) ───────────────────────────────
-    if retry_count == 0:
-        logger.info("node_complete", extra={
-            "node": "grader", "result": "retry",
-            "elapsed_ms": elapsed_ms,
-            "quality_missing": result["quality_missing"],
-        })
-        return {
-            "grader_result": "retry",
-            "retry_count": 1,
-            "grader_feedback": result["feedback"],
-        }
-
-    # ── RETRY EXHAUSTED → pass with warning (D32: disclaimer cuối) ────
-    logger.warning("node_complete", extra={
-        "node": "grader", "result": "pass_with_warning",
-        "elapsed_ms": elapsed_ms,
-        "quality_missing": result["quality_missing"],
-        "retry_count": retry_count,
-    })
-    modified_answer = f"{final_answer}\n\n---\n\n{_unauthorized_disclaimer(lang)}"
-    return {
-        "grader_result": "pass_with_warning",
-        "final_answer": modified_answer,
-    }
+    return _finish(state, config, "pass", {"grader_detail": detail})

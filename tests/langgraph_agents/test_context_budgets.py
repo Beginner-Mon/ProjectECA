@@ -44,11 +44,12 @@ def test_evidence_cap_reads_config(monkeypatch):
     from langchain_core.messages import ToolMessage
 
     from langgraph_agents.nodes import synthesizer as syn
+    from langgraph_agents import evidence as ev_mod
 
     big = "x" * 3000
     msgs = [ToolMessage(content=big, tool_call_id=f"t{i}", name="kb_search")
             for i in range(3)]
-    monkeypatch.setattr(syn, "budget_chars", lambda key: 1000 if key == "evidence"
+    monkeypatch.setattr(ev_mod, "budget_chars", lambda key: 1000 if key == "evidence"
                         else ctx_mod.budget_chars(key))
     ev = syn._extract_tool_results(msgs)
     assert len(ev) <= 1000 + 1500  # trần tổng + một message đầu luôn sống

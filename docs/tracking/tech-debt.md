@@ -1,7 +1,8 @@
 # Tech Debt & Pending Tasks
 
 > Checklist các việc đã biết nhưng CHƯA làm. Cập nhật khi đóng/ mở item.
-> Last update: 2026-09-12 (K — nợ TTS streaming: 2s cuối lượt N chấp nhận, `anne_en.wav` nhỏ tiếng, 422, iOS, int8).
+> Last update: 2026-10-03 (K — nợ sau đợt agent-context: hồ sơ Anne, grader, emotion tag, ba nhân vật chưa chuyển đổi).
+> Trước đó: 2026-09-12 (K — nợ TTS streaming: 2s cuối lượt N chấp nhận, `anne_en.wav` nhỏ tiếng, 422, iOS, int8).
 > Trước đó: 2026-08-21 (K — DELETE account hoãn theo quyết định Owner; xem mục "Chờ quyết định").
 > Trước đó: 2026-08-16 (K — Track 2 Lambda catalog: rate limit, concurrency, latency, migration).
 > Trước đó: 2026-08-05 (K — Neon, 7 lỗi TS, TTS VieNeu, lip sync, auth 1-user, Capacitor).
@@ -292,6 +293,77 @@ Mức: 🔴 critical (phải làm trước Phase 7 deploy) · 🟠 quan trọng 
       (ghi 09/09, K) — `ModuleNotFoundError: langgraph_agents.mcp.kimodo_server`. Test còn trỏ vào
       đường dẫn cũ; server đã dời sang `text-to-motion/kimodo/mcp_server.py`. Sửa import hoặc bỏ
       test nếu `_generate_motion_mock` không còn tồn tại.
+
+### Agent context — nợ ghi 03/10 (nhánh `feature/agent-context`, ship cùng ngày)
+
+Nguồn: `docs/worklogs/01-10-2026.md`, `02-10-2026.md`, `02-10-2026-round3.md`,
+`03-10-2026.md`; số đo `docs/tracking/context-probe-V7.md`.
+
+- [x] 🟠 **Thiết kế lại grader và luồng retry** — XONG 05/10 (nhánh
+  `feature/grader-contract`, kế hoạch `docs/plans/grader-node-checks.md`):
+  kiểm 1 sau tools (quay lại retriever, tối đa 1 lần), kiểm 2 bằng LLM chấm
+  (quay lại synthesizer viết thêm phần thiếu), câu an toàn + dòng nguồn do code
+  phát vào stream, retry không viết lại cả câu. V8: stream==final 51/51, retry 0,
+  dose ngoài evidence 0.
+- [ ] 🟠 **Kiểm 1 mức B (một LLM chấm kết quả tra cứu) chưa làm**; bật khi bảng đo
+  chọn tool tụt dưới ngưỡng sau khi thêm tool. Ca chưa bắt được: gọi nhầm tool
+  mà tool đó vẫn trả kết quả.
+- [ ] 🟠 **Model hay hỏi "muốn tập bài gì" khi trò chuyện**: việc riêng; cần hội
+  thoại mẫu của Tri và bộ đo nhiều lượt.
+- [ ] 🟡 **Câu an toàn và nhãn nguồn chỉ có tiếng Việt và tiếng Anh.**
+- [ ] 🟡 **Sau khi viết thêm, câu trả lời không được chấm lại.**
+- [ ] 🟡 **Lượt không có tag không có gì kiểm câu trả lời.**
+- [ ] 🟡 **Thư viện ECA không ghi chống chỉ định; model viết phần này từ hiểu
+  biết riêng.**
+- [ ] 🟡 **Planner, retriever, synthesizer dùng chế độ suy nghĩ ngầm mặc định của
+  deepseek-v4-flash** (~130–210 token, 0,5–1 giây mỗi lời gọi). Tri quyết giữ
+  (04/10): lợi 1–2 giây/lượt không đáng so với rủi ro đổi hành vi chọn tool.
+  Chỉ role grader tắt.
+- [ ] 🟡 **Model vẫn tự viết dòng nguồn ở 2/11 lượt có dòng nguồn** (d3_en, d5_vi),
+  nên câu trả lời có hai dòng nguồn.
+- [ ] 🟡 **Định nghĩa chống chỉ định của LLM chấm ("or should take care") rộng hơn
+  nhãn** — 6/7 ca sai ở eval là judge cho qua, nhãn expect false.
+- [ ] 🟡 **LLM chấm thêm ~0,8 s mỗi lượt có tag và có evidence; 0 ca bắt được ở cả
+  hai lần đo V8** — xem lại bằng `grader_detail` trên prod sau 1–2 tuần.
+- [ ] 🟡 **`test_phase2_5_integration.py::TestGraderRules::test_has_danger_warning_present`
+  fail từ trước nhánh này** (test kỳ vọng luật regex cũ); Tri quyết.
+- [ ] 🟠 **Chưa thử tay trên UI trước khi ship** — 10 bước ở mục 5 của
+      `docs/plans/agent-context-round2.md`, cộng hai bước kiểm vấn đề (1) ở trên: một câu hỏi bài
+      tập tiếng Anh (bong bóng có bị nối hai bản nháp không) và câu đau ngực (cảnh báo có hiện
+      ngay không). Chạy backend local với `VVA_PERSONA_SOURCE=files`.
+- [ ] 🟠 **Emotion tag vẫn bật trên prod** — `VVA_REPLY_EMOTION=0` đã thêm vào
+      `infra/infra/agent_stack.py`, nhưng workflow deploy chỉ chạy `update-function-code`. Cần
+      `cdk deploy VvaAgentStack` để biến môi trường có hiệu lực. Xóa hẳn code
+      (`shared/reply_emotion.py` và các chỗ nối) là việc riêng, báo Tony trước. Biểu cảm theo
+      giọng điệu hội thoại là đề tài nghiên cứu, chưa lên kế hoạch.
+- [ ] 🟡 **Hồ sơ Anne (`personas/anne/sheet.md`) còn dang dở** — Tri sẽ cập nhật sau. Hiện 8
+      mục; đã bỏ mục sở thích và đồ ăn uống; tuổi (23) và mục "Things she dislikes" là gợi ý của
+      K, chưa được xác nhận từng dòng; chưa có `backstory.md`. Sửa file lần nào phải chạy lại
+      `scripts/ingest_character_pgvector.py anne` lần đó, nếu không DB vẫn giữ bản cũ.
+- [ ] 🟡 **Nhóm câu hỏi về bản thân chưa đo lại sau ingest** — V7 đo khi bảng
+      `character_knowledge` còn rỗng. Chạy lại nhóm (b) của `local_tests/run_context_probe.py`:
+      kỳ vọng 156 cm, đúng trang phục và giày, không tự nghĩ ra sở thích.
+- [ ] 🟡 **Bronya, Miku, Miki chưa được chuyển đổi** — chưa có `sheet.md` (nên không có lõi danh
+      tính và không có tool `recall_self`), chưa đổi `Role:`, chưa tách `## Exercise Rules`, chưa
+      có chuỗi nhãn trạng thái mới (đang dùng chuỗi mặc định). Luật "Every exercise carries
+      concrete parameters" của Bronya trái với quyết định "sets/reps chỉ khi được hỏi".
+- [ ] 🟡 **Câu disclaimer tiếng Anh của Anne còn chữ "ECA's library"** — Tri giữ nguyên ngày
+      02/10; bản tiếng Việt đã đổi thành câu không gắn với nguồn.
+- [ ] 🟡 **`kb_search` chưa có ngưỡng similarity** — hai phân bố chồng nhau (lạc đề 0,850–0,894;
+      đúng 0,865–0,935), không có điểm cắt với model embedding hiện tại. Thư viện vì vậy vẫn trả
+      đoạn lạc đề cho câu hỏi ngoài phạm vi.
+- [ ] 🟡 **Bộ kiểm cảnh báo nguy hiểm tiếng Việt quá lỏng** — `_has_danger_warning` khớp riêng chữ
+      "dấu hiệu", nên một câu trả lời không có cảnh báo thật vẫn có thể qua. Siết lại là thay đổi
+      về an toàn lâm sàng, cần Owner quyết.
+- [ ] 🟡 **User facts được tải mỗi lượt nhưng không model nào đọc** — `nodes/memory.py` tốn hai
+      query Neon mỗi lượt; synthesizer lọc bỏ `SystemMessage` đó, planner chỉ nhìn 4 tin cuối.
+      Hướng đã bàn: đưa thành tool in-process, bỏ lần tải sẵn.
+- [ ] ⚪ **Tool chưa làm**: ngày giờ, thông tin website và sản phẩm ECA, màn hình hiện tại. Tool
+      cần danh tính (user, nhân vật) phải là in-process; MCP đang tắt trên Lambda
+      (`ENABLE_MCP=false`), nên prod cũng không có web search.
+- [ ] ⚪ **Gộp Kimodo vào cổng tool** — thử ba cách viết mô tả tool, không cách nào đạt cả hai
+      ngưỡng (gọi đủ và không gọi thừa); hiện Kimodo chạy theo tag `motion_descriptor`. Thử lại
+      khi đổi model. Khi số tool tăng, cân nhắc lớp lọc top-k tool theo mô tả.
 
 ## 🟡 Nên làm
 

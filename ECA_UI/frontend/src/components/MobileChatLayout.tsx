@@ -2,7 +2,7 @@ import { useLayoutEffect, useRef, useState } from 'react'
 import type { NavItem, PanelId } from './FloatingNavBar'
 import MobileChatDock from './MobileChatDock'
 import MobileNavBar from './MobileNavBar'
-import { chatHeightLimit, chatRailTop } from '../lib/mobileChatLayout'
+import { chatHeightLimit, chatRailTop, dockRightInset, isLandscape } from '../lib/mobileChatLayout'
 
 interface MobileChatLayoutProps {
   activePanel: PanelId
@@ -31,17 +31,24 @@ export default function MobileChatLayout({ activePanel, onIconClick, onChatOpenC
       const viewportTop = viewport?.offsetTop ?? 0
       const viewportHeight = viewport?.height ?? window.innerHeight
       const topInset = insetRef.current?.getBoundingClientRect().height ?? 0
+      // Sideways: rail beside the dock, not stacked above it (see isLandscape).
+      const landscape = isLandscape(window.innerWidth, window.innerHeight)
+      dock.style.right = landscape ? `${dockRightInset(rail.getBoundingClientRect().width)}px` : ''
       // Keep the composer above keyboards that resize only the visual viewport.
       dock.style.bottom = `${Math.max(0, window.innerHeight - viewportTop - viewportHeight)}px`
       const dockBounds = dock.getBoundingClientRect()
       const contentHeight = content.getBoundingClientRect().height
       const baseHeight = dockBounds.height - contentHeight
-      // On very short screens the rail itself can scroll; its buttons keep their size.
-      rail.style.maxHeight = `${Math.max(40, viewportHeight - baseHeight - topInset - 16)}px`
+      // On very short screens the rail itself can scroll; its buttons keep their
+      // size. Beside the dock it may use the full height; above it, what the
+      // closed dock leaves.
+      rail.style.maxHeight = `${Math.max(40, viewportHeight - (landscape ? 0 : baseHeight) - topInset - 16)}px`
       const railHeight = rail.getBoundingClientRect().height
-      setMaxHeight(chatHeightLimit(window.innerHeight, viewportHeight, baseHeight, railHeight, topInset))
+      setMaxHeight(chatHeightLimit(window.innerHeight, viewportHeight, baseHeight, landscape ? 0 : railHeight, topInset))
       rail.style.translate = 'none'
-      rail.style.top = `${chatRailTop(viewportTop, viewportHeight, railHeight, contentHeight > 0.5 ? dockBounds.top : null, topInset)}px`
+      // Above the dock whenever they share the right edge — closed too: a
+      // centred rail used to overlap a closed dock on short screens (audit 30-09).
+      rail.style.top = `${chatRailTop(viewportTop, viewportHeight, railHeight, landscape ? null : dockBounds.top, topInset)}px`
     }
     const observer = new ResizeObserver(measure)
     observer.observe(dock)

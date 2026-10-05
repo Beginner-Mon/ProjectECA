@@ -73,39 +73,73 @@ def route_after_planner(state: AgentState) -> str:
 MAX_RETRIEVER_ROUNDS = 2  # Hard cap: retriever_agent may run at most this many times
 
 
-def route_after_retriever(state: AgentState) -> str:
-    """Retriever → tools (more calls) | kimodo (motion tag) | synthesizer | error_handler.
+def _last_ai_index(messages: list) -> int | None:
+    from langchain_core.messages import AIMessage
+    for i in range(len(messages) - 1, -1, -1):
+        if isinstance(messages[i], AIMessage):
+            return i
+    return None
 
-    Hard cap (P2): uses state.retriever_rounds (incremented by retriever_agent_node each
-    execution). If rounds >= MAX_RETRIEVER_ROUNDS, force → synthesizer regardless of
-    pending tool_calls. This is a hard per-turn ceiling — it covers both normal loops and
-    grader-triggered retries (simplest choice: counter is never reset mid-turn).
-    After retrieval done: chain to kimodo on the motion tag (D26: motion after retrieval).
+
+def failed_tool_names(state: AgentState) -> list[str]:
+    """Tên các tool trả lỗi ở vòng retriever vừa xong."""
+    from langchain_core.messages import ToolMessage
+    from langgraph_agents.evidence import classify_tool_result
+
+    messages = state.get("messages", [])
+    idx = _last_ai_index(messages)
+    if idx is None:
+        return []
+    return [m.name or "?" for m in messages[idx + 1:]
+            if isinstance(m, ToolMessage)
+            and classify_tool_result(str(m.content)) == "error"]
+
+
+def retrieval_fault(state: AgentState) -> str | None:
+    """Lỗi của vòng retriever vừa xong: "no_tool_called" | "tool_error" | None.
+
+    AIMessage cuối trong state là của retriever: synthesizer không ghi vào messages.
+    Kết quả rỗng không phải lỗi (D24).
     """
+    messages = state.get("messages", [])
+    idx = _last_ai_index(messages)
+    if idx is None:
+        return None
+    if not getattr(messages[idx], "tool_calls", None):
+        return "no_tool_called"
+    if failed_tool_names(state):
+        return "tool_error"
+    return None
+
+
+def _after_retrieval(state: AgentState) -> str:
+    return "kimodo" if wants_motion(state) else "synthesizer"
+
+
+def route_after_retriever(state: AgentState) -> str:
+    """Retriever → tools | retriever_agent (không gọi tool, tối đa 1 lần quay lại)
+    | kimodo | synthesizer | error_handler."""
     if check_errors(state) == "error_handler":
         return "error_handler"
-
-    # Hard cap: if we've already hit the max rounds, skip to synthesizer
-    retriever_rounds = state.get("retriever_rounds", 0)
-    if retriever_rounds >= MAX_RETRIEVER_ROUNDS:
-        if wants_motion(state):
-            return "kimodo"
-        return "synthesizer"
-
-    from langchain_core.messages import AIMessage
     messages = state.get("messages", [])
     last_msg = messages[-1] if messages else None
-    last_has_tool_calls = bool(
-        last_msg and getattr(last_msg, "tool_calls", None)
-    )
-
-    if last_has_tool_calls:
+    if last_msg is not None and getattr(last_msg, "tool_calls", None):
         return "tools"
+    if (retrieval_fault(state) == "no_tool_called"
+            and state.get("retriever_rounds", 0) < MAX_RETRIEVER_ROUNDS):
+        return "retriever_agent"
+    return _after_retrieval(state)
 
-    # Retrieval done — chain to kimodo on the motion tag (D26)
-    if wants_motion(state):
-        return "kimodo"
-    return "synthesizer"
+
+def route_after_tools(state: AgentState) -> str:
+    """Tools → retriever_agent (tool lỗi, tối đa 1 lần quay lại) | kimodo | synthesizer
+    | error_handler."""
+    if check_errors(state) == "error_handler":
+        return "error_handler"
+    if (retrieval_fault(state) == "tool_error"
+            and state.get("retriever_rounds", 0) < MAX_RETRIEVER_ROUNDS):
+        return "retriever_agent"
+    return _after_retrieval(state)
 
 
 # ── After synthesizer — GRADER GATE ───────────────────────────────────────
@@ -132,12 +166,8 @@ def route_after_synthesizer(state: AgentState) -> str:
 # ── After grader ──────────────────────────────────────────────────────────
 
 def route_after_grader(state: AgentState) -> str:
-    """Grader → retriever_agent (retry once) | END.
-
-    Retry only for quality fails (D6: safety fails get template cứng, no retry).
-    Retry count max 1 (D24).
-    """
+    """Grader → synthesizer (viết thêm phần thiếu, một lần) | END."""
     result = state.get("grader_result", "pass")
     if result == "retry":
-        return "retriever_agent"
+        return "synthesizer"
     return "end"

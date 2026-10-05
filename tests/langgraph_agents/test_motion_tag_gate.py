@@ -97,8 +97,7 @@ class TestMotionTagRouting:
             assert route(state) == "synthesizer"
 
     def test_retriever_chain_uses_tag(self):
-        from langgraph_agents.routing import route_after_retriever
-        from langgraph_agents.graph import route_after_retriever_or_tools
+        from langgraph_agents.routing import route_after_retriever, route_after_tools
 
         tagged = {"messages": [], "errors": [], "retry_count": 0,
                   "total_tokens": 0, "retriever_rounds": 0,
@@ -106,8 +105,8 @@ class TestMotionTagRouting:
         untagged = {**tagged, "required_outputs": []}
         assert route_after_retriever(tagged) == "kimodo"
         assert route_after_retriever(untagged) == "synthesizer"
-        assert route_after_retriever_or_tools(tagged) == "kimodo"
-        assert route_after_retriever_or_tools(untagged) == "synthesizer"
+        assert route_after_tools(tagged) == "kimodo"
+        assert route_after_tools(untagged) == "synthesizer"
 
 
 @pytest.mark.unit
@@ -140,7 +139,8 @@ async def test_graph_runs_kimodo_once_with_tag_regardless_of_retrieval():
         mock_retriever_llm.bind_tools = MagicMock(return_value=mock_bound)
 
         synth_llm = MagicMock()
-        synth_llm.ainvoke = AsyncMock(return_value=AIMessage(content="ok"))
+        synth_llm.ainvoke = AsyncMock(return_value=AIMessage(
+            content="giơ tay phải lên — khớp vai và khuỷu"))
 
         kimodo_runs: list = []
 
@@ -231,27 +231,51 @@ async def test_graph_skips_kimodo_without_tag():
 
 @pytest.mark.unit
 class TestGraderMotionRetryPinned:
-    """Chốt hành vi retry của grader với tag motion_descriptor ở HEAD.
+    """Chốt hành vi retry của grader với tag motion_descriptor (LLM chấm giả).
 
-    S2 không đụng grader — test này phải xanh y hệt trước và sau.
-    motion_descriptor là quality tag: thiếu → retry, đủ → pass.
+    motion_descriptor là tag do model viết: thiếu mà evidence có → retry,
+    đủ → pass.
     """
 
-    def test_motion_missing_means_retry(self):
-        from langgraph_agents.nodes.grader import _grade_tags
+    def _run_grader(self, answer, in_reply):
+        import asyncio
+        import json as _json
+        from types import SimpleNamespace
+        from unittest.mock import AsyncMock, MagicMock, patch
 
-        out = _grade_tags("Bài tập squat tốt cho chân.",
-                          ["motion_descriptor"])
-        assert out["result"] == "retry"
-        assert out["quality_missing"] == ["motion_descriptor"]
-        assert out["safety_missing"] == []
+        from langchain_core.messages import ToolMessage
+
+        from langgraph_agents.nodes import grader as grader_mod
+
+        ev = _json.dumps([{
+            "content": "Raise the arm, shoulder and elbow move.", "similarity": 0.9,
+            "source_type": "exercise_db", "document_title": "Arm",
+            "chunk_index": 0,
+        }])
+        state = {
+            "messages": [ToolMessage(content=ev, tool_call_id="tc-kb",
+                                      name="kb_search")],
+            "errors": [], "retry_count": 0, "total_tokens": 0,
+            "required_outputs": ["motion_descriptor"],
+            "final_answer": answer,
+        }
+        config = {"configurable": {"persona_id": "anne", "locale": "en"}}
+        parsed = SimpleNamespace(items=[SimpleNamespace(
+            item="motion_descriptor", in_reply=in_reply, in_evidence=True)])
+        mock_llm = MagicMock()
+        structured = MagicMock()
+        structured.ainvoke = AsyncMock(return_value={"parsed": parsed})
+        mock_llm.with_structured_output = MagicMock(return_value=structured)
+        with patch.object(grader_mod, "get_chat_model", return_value=mock_llm):
+            return asyncio.run(grader_mod.grader_node(state, config))
+
+    def test_motion_missing_means_retry(self):
+        out = self._run_grader("Bài tập squat tốt cho chân.", False)
+        assert out["grader_result"] == "retry"
+        assert out["grader_detail"] == {"motion_descriptor": "synth_missed"}
 
     def test_motion_present_passes_quality(self):
-        from langgraph_agents.nodes.grader import _grade_tags
-
-        out = _grade_tags(
-            "Giơ tay phải lên qua đầu — khớp vai và khuỷu cùng làm việc. "
-            "(Nguyen 2024)",
-            ["motion_descriptor", "evidence_citation"],
-        )
-        assert out["quality_missing"] == []
+        out = self._run_grader(
+            "Giơ tay phải lên qua đầu — khớp vai và khuỷu cùng làm việc.", True)
+        assert out["grader_result"] == "pass"
+        assert out["grader_detail"] == {"motion_descriptor": "ok"}

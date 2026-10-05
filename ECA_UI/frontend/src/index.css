@@ -3,6 +3,17 @@
 
 @custom-variant dark (&:is(.dark *));
 
+/* The desktop layout: exactly NOT lib/layoutQuery.ts MOBILE_LAYOUT_QUERY
+   ((max-width: 767px), (max-height: 500px) and (pointer: coarse)). Change both
+   together. Used instead of `md:` wherever a class decides phone vs desktop
+   layout, so a phone held sideways (wide but short) gets the phone styling
+   that goes with the phone layout. */
+@custom-variant desktop {
+  @media (min-width: 768px) and (min-height: 501px), (min-width: 768px) and (not (pointer: coarse)) {
+    @slot;
+  }
+}
+
 @theme inline {
   --color-background: var(--background);
   --color-foreground: var(--foreground);

@@ -538,6 +538,7 @@ async def _stream_chat(req, request_id, config, state, background_tasks, request
     """
     t0 = time.time()
     final_state: dict = {}
+    streamed_text = ""
     conversation_stage_started = False
 
     graph = _get_graph()
@@ -644,6 +645,14 @@ async def _stream_chat(req, request_id, config, state, background_tasks, request
                     )
                     conversation_stage_started = True
                 yield encode_event("token", {"content": payload["content"]})
+                streamed_text += str(payload["content"])
+
+    stored = final_state.get("final_answer") or ""
+    if streamed_text and stored and streamed_text != stored:
+        logger.warning("stream_final_mismatch", extra={
+            "request_id": request_id,
+            "streamed_chars": len(streamed_text), "final_chars": len(stored),
+        })
 
     final_answer = final_state.get("final_answer") or get_ui_string(
         req.persona_id or "anne", "error_unavailable", req.locale
@@ -664,6 +673,7 @@ async def _stream_chat(req, request_id, config, state, background_tasks, request
                 "web_search": req.web_search,
                 "required_outputs": final_state.get("required_outputs"),
                 "grader_result": final_state.get("grader_result"),
+                "grader_detail": final_state.get("grader_detail"),
                 "latency_ms": int((time.time() - t0) * 1000),
             }
             assistant_message_id = await write_session_turn(

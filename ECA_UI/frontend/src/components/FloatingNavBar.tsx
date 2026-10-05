@@ -28,6 +28,7 @@ import {
 // feature lands.
 import { useTranslation } from 'react-i18next'
 import { useMediaQuery } from '../lib/use-media-query'
+import { MOBILE_LAYOUT_QUERY } from '../lib/layoutQuery'
 import { useAvatarBg } from '../hooks/useAvatarBg'
 import { PANEL_BG, PANEL_BORDER } from '../lib/utils'
 import ChatPanel from './ChatPanel'
@@ -256,7 +257,7 @@ function DraggableBar({
    ═══════════════════════════════════════════════ */
 
 export default function FloatingNavBar() {
-  const isMobile = useMediaQuery('(max-width: 767px)')
+  const isMobile = useMediaQuery(MOBILE_LAYOUT_QUERY)
   const translatedNavItems = useTranslatedNavItems()
 
   const [dockedEdge, setDockedEdge] = useState<DockedEdge>('left')
@@ -455,17 +456,21 @@ export default function FloatingNavBar() {
   const navBarCenterX = position.x + (barSize.width / 2)
   const isMiddleThird = navBarCenterX >= window.innerWidth / 3 && navBarCenterX <= (window.innerWidth * 2) / 3
   
-  let panelDimensionsClass = isHorizontal ? 'w-[360px] h-[480px]' : 'w-[360px] h-[520px]'
+  // Every size is capped to the window: on a short window a panel used to run
+  // off the bottom (sessions: 520 px on a 390 px screen, audit 30-09). With the
+  // cap it always fits, and shift({ padding: 16 }) keeps it on screen; every
+  // panel scrolls inside itself.
+  let panelDimensionsClass = isHorizontal ? 'w-[360px] h-[480px] max-h-[calc(100vh-2rem)]' : 'w-[360px] h-[520px] max-h-[calc(100vh-2rem)]'
   if (activePanel === 'chat') {
-    // Fixed size, not user-resizable. Between the original (400 / 600 px, ran
-    // off short laptop screens) and 26-09's (340 / 460, too small — Owner);
-    // max-h keeps it inside any window height.
+    // Fixed size, not user-resizable. Owner-tuned: 400/600 px ran off short
+    // laptop screens, 340/460 (26-09) was too small, 380/530 (28-09) a little
+    // short (30-09). max-h keeps it inside any window height.
     panelDimensionsClass = isMiddleThird
-      ? 'w-[600px] h-[380px] max-h-[65vh]'
-      : 'w-[360px] h-[530px] max-h-[78vh]'
+      ? 'w-[600px] h-[420px] max-h-[70vh]'
+      : 'w-[360px] h-[570px] max-h-[82vh]'
   }
   if (activePanel === 'avatars') {
-    panelDimensionsClass = isHorizontal ? 'w-[400px] h-[540px]' : 'w-[400px] h-[580px]'
+    panelDimensionsClass = isHorizontal ? 'w-[400px] h-[540px] max-h-[calc(100vh-2rem)]' : 'w-[400px] h-[580px] max-h-[calc(100vh-2rem)]'
   }
 
   // Custom drag constraint

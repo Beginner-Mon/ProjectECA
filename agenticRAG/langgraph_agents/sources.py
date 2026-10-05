@@ -94,3 +94,25 @@ KB_SOURCE_TYPE_LABELS: dict[str, str] = {
 def kb_segment_label(source_type: str) -> str | None:
     """Nhãn evidence cho một đoạn KB; None = loại lạ, vẫn bị loại (B5)."""
     return KB_SOURCE_TYPE_LABELS.get(source_type or "")
+
+
+# ── Nguồn dẫn được (grader-contract T3) ──────────────────────────────────
+# Mỗi nguồn khai nhãn theo ngôn ngữ và cách nhận ra nó trong câu trả lời.
+
+@dataclass(frozen=True)
+class Citation:
+    label: dict           # {"vi": ..., "en": ...}
+    cite_when: str        # "entry_named" | "name_mentioned" | "present"
+    name: str = ""        # chuỗi tìm trong câu trả lời khi cite_when == "name_mentioned"
+
+
+CITATIONS: dict[str, Citation] = {
+    "exercise_db": Citation({"vi": "thư viện bài tập của ECA",
+                             "en": "ECA's exercise library"}, "entry_named"),
+    "nhs_uk": Citation({"vi": "hướng dẫn sức khỏe của NHS",
+                        "en": "NHS health guidance"}, "name_mentioned", "NHS"),
+    "web": Citation({"vi": "kết quả tìm kiếm web", "en": "web search results"}, "present"),
+    "video": Citation({"vi": "video bạn gửi", "en": "the video you sent"}, "present"),
+}
+
+SOURCE_LINE_PREFIX = {"vi": "Nguồn", "en": "Source"}

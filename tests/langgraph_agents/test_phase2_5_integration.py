@@ -61,7 +61,7 @@ async def test_chat_path_no_retrieval_no_tags():
 @pytest.mark.skipif(not HAS_LLM_KEY, reason="DEEPSEEK_API_KEY not set")
 @pytest.mark.asyncio
 async def test_safety_path_red_flag_no_retrieval():
-    """Red-flag symptom → safety tags, NO retrieval, safety template enforced."""
+    """Red-flag symptom → safety tags, NO retrieval; câu mở đầu do code phát."""
     graph = await build_graph_async()
     state, config = _base_state_config(query="Tôi bị đau ngực khi tập thể dục")
     result = await graph.ainvoke(state, config=config)
@@ -71,6 +71,8 @@ async def test_safety_path_red_flag_no_retrieval():
     tags = result.get("required_outputs", [])
     assert "red_flag_screen" in tags or "referral_advice" in tags, \
         f"Expected safety tags, got {tags}"
+    assert "chưa được kiểm chứng" not in result["final_answer"]
+    assert "has not been verified" not in result["final_answer"]
 
 
 @pytest.mark.integration
@@ -109,7 +111,7 @@ async def test_clarify_path():
 @pytest.mark.skipif(not HAS_LLM_KEY, reason="DEEPSEEK_API_KEY not set")
 @pytest.mark.asyncio
 async def test_grader_enforces_tags():
-    """Exercise query → grader checks required_outputs (if tags present)."""
+    """Exercise query → grader kiểm tag do model viết; dòng kết do code nối."""
     graph = await build_graph_async()
     state, config = _base_state_config(query="Hướng dẫn bài tập squat")
     result = await graph.ainvoke(state, config=config)
@@ -117,7 +119,9 @@ async def test_grader_enforces_tags():
     assert result["final_answer"], "final_answer should not be empty"
     # grader_result should be set if tags were emitted
     if result.get("required_outputs"):
-        assert result.get("grader_result") in ("pass", "pass_with_warning", "retry", None)
+        assert result.get("grader_result") in ("pass", "pass_with_warning")
+    assert "chưa được kiểm chứng" not in result["final_answer"]
+    assert "has not been verified" not in result["final_answer"]
 
 
 # ═══════════════════════════════════════════════════════════════════════════
@@ -216,39 +220,6 @@ class TestGraderRules:
         assert _has_motion_fields("Giơ tay phải lên cao — động tác sử dụng khớp vai.")
         assert _has_motion_fields("Gập đầu gối, xoay hông khi thực hiện squat.")
         assert not _has_motion_fields("Bài tập squat rất tốt.")  # no joints
-
-    def test_grade_tags_safety_missing(self):
-        from langgraph_agents.nodes.grader import _grade_tags
-        result = _grade_tags(
-            "Bài tập squat: đứng thẳng, hạ người.",  # no danger warning
-            ["red_flag_screen", "exercise_steps"],
-        )
-        assert result["result"] == "pass_with_warning"
-        assert "red_flag_screen" in result["safety_missing"]
-
-    def test_grade_tags_quality_retry(self):
-        from langgraph_agents.nodes.grader import _grade_tags
-        result = _grade_tags(
-            "Squat rất tốt cho chân.",  # no sets/reps, no steps
-            ["exercise_protocol", "exercise_steps"],
-        )
-        assert result["result"] == "retry"
-        assert len(result["quality_missing"]) >= 1
-
-    def test_grade_tags_all_pass(self):
-        from langgraph_agents.nodes.grader import _grade_tags
-        result = _grade_tags(
-            "3 hiệp × 10 lần, 2-3 lần/tuần.\n"
-            "1. Đứng thẳng. 2. Hạ người từ từ.\n"
-            "Không nên tập nếu đau đầu gối.",
-            ["exercise_protocol", "exercise_steps", "contraindication"],
-        )
-        assert result["result"] == "pass"
-
-    def test_grade_tags_empty_answer(self):
-        from langgraph_agents.nodes.grader import _grade_tags
-        result = _grade_tags("", ["exercise_protocol"])
-        assert result["result"] == "retry"
 
 
 # ═══════════════════════════════════════════════════════════════════════════

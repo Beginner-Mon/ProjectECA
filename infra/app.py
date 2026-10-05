@@ -43,6 +43,7 @@ from infra.agent_stack import AgentStack
 from infra.speechllm_stack import SpeechllmStack
 from infra.rest_api_stack import RestApiStack
 from infra.kimodo_ecs_stack import KimodoEcsStack
+from infra.monitoring_stack import MonitoringStack
 
 app = cdk.App()
 
@@ -164,6 +165,13 @@ kimodo_ecs = KimodoEcsStack(
     assets_bucket_name=asset_stack.bucket.bucket_name,
     env=env,
 )
+
+# ── Monitoring: CloudWatch dashboard "vva-lambdas" (SCRUM-39) ────────
+# Names the functions by string, so it imports nothing from the stacks above
+# and can be deployed or removed on its own:
+#
+#     cdk deploy VvaMonitoringStack
+MonitoringStack(app, "VvaMonitoringStack", env=env)
 
 # ── Phase 0 spike: THROWAWAY (opt-in) ───────────────────────────────
 # Answers one question — does LWA's response_stream prelude satisfy API

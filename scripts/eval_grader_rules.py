@@ -31,9 +31,11 @@ def load_items() -> list[dict]:
     items = [
         {"id": a["id"], "tag": tag, "lang": a["lang"], "expect": expect, "text": a["text"]}
         for a in data["answers"]
+        if a.get("lang") in ("vi", "en")
         for tag, expect in a["labels"].items()
     ]
-    items += [{k: c[k] for k in ("id", "tag", "lang", "expect", "text")} for c in data["cases"]]
+    items += [{k: c[k] for k in ("id", "tag", "lang", "expect", "text")}
+              for c in data["cases"] if c.get("lang") in ("vi", "en")]
     return items
 
 

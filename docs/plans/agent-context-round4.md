@@ -1,9 +1,12 @@
 ---
 tags: [plan, agent, context, grader, sse]
-status: deferred
+status: superseded
 date: 2026-10-03
 related: "[[agent-context-round3]]"
 ---
+
+> Superseded bởi [[grader-node-checks]] (thực thi 04–05/10/2026, nhánh
+> `feature/grader-contract`).
 
 # Backlog — thiết kế lại grader và luồng retry (hoãn)
 

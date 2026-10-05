@@ -299,15 +299,34 @@ Mức: 🔴 critical (phải làm trước Phase 7 deploy) · 🟠 quan trọng 
 Nguồn: `docs/worklogs/01-10-2026.md`, `02-10-2026.md`, `02-10-2026-round3.md`,
 `03-10-2026.md`; số đo `docs/tracking/context-probe-V7.md`.
 
-- [ ] 🟠 **Thiết kế lại grader và luồng retry** — hoãn theo quyết định của Tri (03/10). Năm
-      vấn đề đã đo ở V7, chi tiết và hướng xử lý ở `docs/plans/agent-context-round4.md`:
-      (1) giao diện chỉ nhận token của synthesizer, nên câu an toàn do grader chèn không hiện
-      trong lượt chat đang diễn ra, và khi retry bản nháp thứ hai bị nối sau bản nháp đầu;
-      (2) phản hồi của grader không tới synthesizer, retry viết lại mù (V7: 7/7 lượt retry vẫn
-      thiếu, 20 s thay vì 10 s); (3) bộ kiểm dẫn nguồn và chống chỉ định không nhận ra tiếng Anh
-      (6/15 lượt tiếng Anh bị retry, 8 lượt bị nối dòng "has not been verified"); (4) câu trả lời
-      "nguồn không ghi số" vẫn bị retry; (5) còn số liều lượng tự đặt ở lượt xin xem động tác
-      (4/18). **Biết trước khi ship:** tiếng Anh bị retry nhiều hơn prod trước đó.
+- [x] 🟠 **Thiết kế lại grader và luồng retry** — XONG 05/10 (nhánh
+  `feature/grader-contract`, kế hoạch `docs/plans/grader-node-checks.md`):
+  kiểm 1 sau tools (quay lại retriever, tối đa 1 lần), kiểm 2 bằng LLM chấm
+  (quay lại synthesizer viết thêm phần thiếu), câu an toàn + dòng nguồn do code
+  phát vào stream, retry không viết lại cả câu. V8: stream==final 51/51, retry 0,
+  dose ngoài evidence 0.
+- [ ] 🟠 **Kiểm 1 mức B (một LLM chấm kết quả tra cứu) chưa làm**; bật khi bảng đo
+  chọn tool tụt dưới ngưỡng sau khi thêm tool. Ca chưa bắt được: gọi nhầm tool
+  mà tool đó vẫn trả kết quả.
+- [ ] 🟠 **Model hay hỏi "muốn tập bài gì" khi trò chuyện**: việc riêng; cần hội
+  thoại mẫu của Tri và bộ đo nhiều lượt.
+- [ ] 🟡 **Câu an toàn và nhãn nguồn chỉ có tiếng Việt và tiếng Anh.**
+- [ ] 🟡 **Sau khi viết thêm, câu trả lời không được chấm lại.**
+- [ ] 🟡 **Lượt không có tag không có gì kiểm câu trả lời.**
+- [ ] 🟡 **Thư viện ECA không ghi chống chỉ định; model viết phần này từ hiểu
+  biết riêng.**
+- [ ] 🟡 **Planner, retriever, synthesizer dùng chế độ suy nghĩ ngầm mặc định của
+  deepseek-v4-flash** (~130–210 token, 0,5–1 giây mỗi lời gọi). Tri quyết giữ
+  (04/10): lợi 1–2 giây/lượt không đáng so với rủi ro đổi hành vi chọn tool.
+  Chỉ role grader tắt.
+- [ ] 🟡 **Model vẫn tự viết dòng nguồn ở 2/11 lượt có dòng nguồn** (d3_en, d5_vi),
+  nên câu trả lời có hai dòng nguồn.
+- [ ] 🟡 **Định nghĩa chống chỉ định của LLM chấm ("or should take care") rộng hơn
+  nhãn** — 6/7 ca sai ở eval là judge cho qua, nhãn expect false.
+- [ ] 🟡 **LLM chấm thêm ~0,8 s mỗi lượt có tag và có evidence; 0 ca bắt được ở cả
+  hai lần đo V8** — xem lại bằng `grader_detail` trên prod sau 1–2 tuần.
+- [ ] 🟡 **`test_phase2_5_integration.py::TestGraderRules::test_has_danger_warning_present`
+  fail từ trước nhánh này** (test kỳ vọng luật regex cũ); Tri quyết.
 - [ ] 🟠 **Chưa thử tay trên UI trước khi ship** — 10 bước ở mục 5 của
       `docs/plans/agent-context-round2.md`, cộng hai bước kiểm vấn đề (1) ở trên: một câu hỏi bài
       tập tiếng Anh (bong bóng có bị nối hai bản nháp không) và câu đau ngực (cảnh báo có hiện

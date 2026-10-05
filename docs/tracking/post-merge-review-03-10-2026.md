@@ -26,6 +26,19 @@ Trạng thái deploy kèm theo:
 - Lần push `release` ở `0b634ca` (Tri, khoảng 20:59) chưa tới Lambda. Cần xem run `deploy-agent` trên
   GitHub Actions: còn đang chạy hay đã fail.
 
+## Cập nhật 05/10 (kiểm prod chỉ đọc, 16:07)
+
+Prod giờ chạy `1d13b3e` (grader-contract T0–T9 của Tri): Lambda `vva-agent` cập nhật 05/10 14:40,
+Amplify build #67 thành công.
+
+| # | Trạng thái 05/10 |
+|---|---|
+| 1 | **Đã sửa.** Tool lỗi thành `ToolMessage {"error": ...}` (T2, `5deafda`), đã lên prod. |
+| 2 | **Còn mở.** API Gateway vẫn deploy lần cuối 23/09, chưa có route `/me/feedback`. |
+| 3 | **Còn mở.** |
+| 4 | **Còn mở.** Lambda chưa có `VVA_REPLY_EMOTION` → biểu cảm vẫn bật. |
+| 5 | **Không còn áp dụng.** T5 thay cách chấm bằng LLM judge; các hàm `_has_*` chỉ còn dùng để đo. Bộ 143 nhãn vẫn lệch 5. |
+
 ---
 
 ## 1. 🟠 Một tool lỗi làm hỏng cả lượt chat

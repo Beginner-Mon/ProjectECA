@@ -17,9 +17,12 @@ def _model(role, monkeypatch):
 
 
 def test_grader_disables_hidden_reasoning(monkeypatch):
+    from langgraph_agents.llm import role_timeout
+
     m = _model("grader", monkeypatch)
     assert m.extra_body == {"thinking": {"type": "disabled"}}
-    assert m.request_timeout == 5.0
+    # grader._judge dùng cùng số này làm hạn cho cả lời gọi (asyncio.wait_for).
+    assert m.request_timeout == 5.0 == role_timeout("grader")
     assert m.max_retries == 0
 
 

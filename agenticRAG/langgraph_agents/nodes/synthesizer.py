@@ -459,8 +459,9 @@ async def _run_addition(state, config, llm, writer, msgs, previous,
                         tag_stream) -> dict:
     """Lượt viết thêm: chỉ nối phần thiếu vào bản đã hiện, không viết lại.
 
-    Chuỗi "\\n\\n" đi cùng chunk chữ đầu tiên của LLM. LLM lỗi: giữ nguyên
-    bản đã hiện, không fallback, không lỗi CRITICAL.
+    Chuỗi "\\n\\n" đi cùng chunk chữ đầu tiên của LLM. LLM lỗi: giữ đúng phần
+    đã hiện (cả đoạn viết thêm dở nếu đã stream), không fallback, không lỗi
+    CRITICAL.
     """
     addition = ""
     tokens = 0
@@ -500,7 +501,8 @@ async def _run_addition(state, config, llm, writer, msgs, previous,
             "node": "synthesizer", "request_id": request_id,
             "elapsed_ms": elapsed_ms, "error": type(exc).__name__,
         })
-        return {"final_answer": previous, "total_tokens": 0}
+        # Phần đã stream không rút lại được: lưu đúng như màn hình.
+        return {"final_answer": previous + addition, "total_tokens": 0}
 
     final_answer = previous + addition if addition else previous
     cache_hit_tokens, cache_miss_tokens = extract_cache_tokens(ai_msg)

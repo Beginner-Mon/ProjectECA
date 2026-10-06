@@ -135,6 +135,17 @@ def _timeout_for_role(role: str) -> float:
     return _TIMEOUT_HEAVY if role in _HEAVY_ROLES or role in _LONG_OUTPUT_ROLES else _TIMEOUT_FAST
 
 
+def role_timeout(role: str) -> float:
+    """The request timeout get_chat_model gives this role, in seconds.
+
+    httpx applies it to each read, not to the whole call: DeepSeek sends
+    keep-alive lines while a request waits under load, and each one restarts
+    the clock. A caller that needs a hard cap wraps the call in
+    asyncio.wait_for with this value (nodes/grader.py::_judge).
+    """
+    return _ROLE_TIMEOUT.get(role, _timeout_for_role(role))
+
+
 def _max_tokens_for_role(role: str) -> int:
     return _MAX_TOKENS_HEAVY if role in _HEAVY_ROLES or role in _LONG_OUTPUT_ROLES else _MAX_TOKENS_FAST
 
@@ -290,7 +301,7 @@ def get_chat_model(role: str, *, temperature: float | None = None):
     """
     model_name = _model_for_role(role)
     temp = _DEFAULT_TEMPS.get(role, 0.7) if temperature is None else temperature
-    timeout = _ROLE_TIMEOUT.get(role, _timeout_for_role(role))
+    timeout = role_timeout(role)
     max_retries = _ROLE_MAX_RETRIES.get(role, _MAX_RETRIES)
     max_tokens = _max_tokens_for_role(role)
     logger.info("llm_init", extra={

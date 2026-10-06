@@ -177,6 +177,57 @@ async def test_judge_error_passes_and_logs(caplog):
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("judge", [
+    {"side_effect": TimeoutError("judge down")},
+    {"return_value": {"raw": None, "parsed": None}},
+], ids=["raises", "unparsed"])
+async def test_judge_failure_keeps_closing_safety_lines(judge):
+    """Lượt cho qua khi LLM chấm hỏng chỉ an toàn vì dòng kết do code nối, không qua LLM chấm."""
+    from langgraph_agents.nodes import grader as grader_mod
+    from langgraph_agents.tag_contract import get_safety_text
+
+    mock_llm = MagicMock()
+    structured = MagicMock()
+    structured.ainvoke = AsyncMock(**judge)
+    mock_llm.with_structured_output = MagicMock(return_value=structured)
+    tags = ["exercise_steps", "referral_advice", "scope_disclaimer"]
+    with patch.object(grader_mod, "get_chat_model", return_value=mock_llm):
+        result = await grader_mod.grader_node(_state(tags), _config())
+    structured.ainvoke.assert_awaited_once()
+    referral = get_safety_text("referral_advice", "anne", "en")
+    disclaimer = get_safety_text("scope_disclaimer", "anne", "en")
+    assert result["grader_result"] == "pass"
+    assert result["final_answer"] == f"Tập Elbow plank nhé.\n\n{referral}\n\n{disclaimer}"
+
+
+@pytest.mark.asyncio
+async def test_judge_that_never_answers_is_cut_at_the_deadline(caplog):
+    """Timeout của model chỉ tính từng lần đọc; wait_for giới hạn cả lời gọi."""
+    import asyncio
+    import logging
+    import time
+
+    from langgraph_agents.nodes import grader as grader_mod
+
+    async def never_answers(*_args, **_kwargs):
+        await asyncio.sleep(30)
+
+    mock_llm = MagicMock()
+    structured = MagicMock()
+    structured.ainvoke = AsyncMock(side_effect=never_answers)
+    mock_llm.with_structured_output = MagicMock(return_value=structured)
+    t0 = time.perf_counter()
+    with patch.object(grader_mod, "get_chat_model", return_value=mock_llm), \
+         patch.object(grader_mod, "role_timeout", return_value=0.05):
+        with caplog.at_level(logging.WARNING, logger="langgraph.grader"):
+            result = await grader_mod.grader_node(_state(["exercise_steps"]), _config())
+    assert time.perf_counter() - t0 < 5
+    assert result["grader_result"] == "pass"
+    assert result["grader_detail"] == {}
+    assert any(getattr(r, "error", None) == "TimeoutError" for r in caplog.records)
+
+
+@pytest.mark.asyncio
 async def test_unparsed_output_passes(caplog):
     import logging
 

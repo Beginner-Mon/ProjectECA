@@ -17,6 +17,7 @@ Grader scope (D31 — honest about limits):
 
 from __future__ import annotations
 
+import asyncio
 import re
 import time
 from typing import Callable
@@ -406,7 +407,7 @@ def _finish(state: AgentState, config: RunnableConfig, result: str, extra: dict 
 
 from pydantic import BaseModel, Field
 
-from langgraph_agents.llm import get_chat_model
+from langgraph_agents.llm import get_chat_model, role_timeout
 
 
 class JudgeItem(BaseModel):
@@ -445,10 +446,12 @@ async def _judge(checks: list, evidence: str, body: str, request_id: str) -> dic
         llm = get_chat_model("grader")
         structured = llm.with_structured_output(JudgeOutput, method="json_mode",
                                                 include_raw=True)
-        raw = await structured.ainvoke([
+        # Timeout của model tính cho từng lần đọc: DeepSeek lúc quá tải gửi dòng
+        # keep-alive, mỗi dòng đặt lại đồng hồ. wait_for giới hạn cả lời gọi.
+        raw = await asyncio.wait_for(structured.ainvoke([
             ("system", _JUDGE_SYSTEM),
             ("user", _JUDGE_USER.format(checklist=checklist, evidence=evidence, answer=body)),
-        ])
+        ]), timeout=role_timeout("grader"))
         parsed = raw.get("parsed") if isinstance(raw, dict) else raw
         if parsed is None:
             raise ValueError("judge output did not parse")

@@ -18,7 +18,10 @@ def _mock_planner(plan):
 
 
 class _SynthFake:
-    """LLM synthesizer giả: mỗi lần gọi dùng một kịch bản (list chunk hoặc lỗi)."""
+    """LLM synthesizer giả: mỗi lần gọi dùng một kịch bản (list chunk hoặc lỗi).
+
+    Lỗi đặt giữa list chunk: stream các chunk trước nó rồi mới ném.
+    """
 
     def __init__(self, scripts):
         self.scripts = scripts
@@ -33,6 +36,8 @@ class _SynthFake:
         if isinstance(script, Exception):
             raise script
         for p in script:
+            if isinstance(p, Exception):
+                raise p
             yield AIMessageChunk(content=p)
 
     async def ainvoke(self, msgs):
@@ -193,6 +198,18 @@ async def test_addition_failure_keeps_answer():
     assert "error_unavailable" not in final
     errors = res["final_state"].get("errors", []) or []
     assert not [e for e in errors if e.get("severity") == "critical"]
+    assert res["final_state"].get("grader_result") == "pass_with_warning"
+
+
+@pytest.mark.asyncio
+async def test_addition_cut_midway_keeps_what_was_shown():
+    part = "Thư viện ghi 3 hiệp"
+    res = await _run_turn([[_DRAFT], [part, RuntimeError("connection reset")]])
+    final = res["final_state"].get("final_answer", "")
+    streamed = "".join(p["content"] for p in res["sent"] if "content" in p)
+    assert streamed == final
+    assert final == (_opening() + "\n\n" + _DRAFT + "\n\n" + part
+                     + "\n\n" + _referral() + "\n\n" + _disclaimer())
     assert res["final_state"].get("grader_result") == "pass_with_warning"
 
 

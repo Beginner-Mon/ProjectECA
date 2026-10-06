@@ -22,7 +22,7 @@ try:
     import asyncpg
 
     async def _ping():
-        conn = await asyncpg.connect("postgresql://vva:vva_dev@localhost:5433/vva")
+        conn = await asyncpg.connect("postgresql://eca:eca_dev@localhost:5433/eca")
         await conn.close()
         return True
 

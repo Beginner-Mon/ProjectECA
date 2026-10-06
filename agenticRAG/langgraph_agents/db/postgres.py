@@ -18,7 +18,7 @@ from langgraph_agents.shared.logging import get_logger
 
 logger = get_logger("langgraph.db.postgres")
 
-_LOCAL_DSN = "postgresql://vva:vva_dev@localhost:5433/vva"
+_LOCAL_DSN = "postgresql://eca:eca_dev@localhost:5433/eca"
 
 
 # Whose rows the next statement may touch. Set once per request by

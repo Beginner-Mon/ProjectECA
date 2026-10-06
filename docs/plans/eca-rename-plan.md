@@ -1,5 +1,10 @@
 # ECA Rename Plan — ECA → ECA
 
+> **GHI CHÚ (06/10/2026): nội dung file này đã bị find-replace mù làm hỏng từ
+> commit `c1f27f80` (01/09) — bảng mapping đọc thành "ECA → ECA". KHÔNG thực
+> thi theo file này. Tầng A đã làm theo `.claude/plans/rename-tier-a.md`;
+> tầng B cần plan mới.**
+
 > Architect: K | Ngày: 2026-09-01 | Mr. Senryuu duyệt
 > Branch đề xuất: `chore/rename-vva-to-eca` (tách từ `feature/langgraph-rewrite`)
 > Scope: đổi **mọi tên định danh** ECA → ECA. Không đổi hành vi.

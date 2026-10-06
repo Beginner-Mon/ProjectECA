@@ -1,4 +1,4 @@
-"""REST API Gateway — the single front door for every VVA backend call.
+"""REST API Gateway — the single front door for every ECA backend call.
 
     GET    /v1/characters                        GET    /v1/sessions
     GET    /v1/characters/{slug}                 GET    /v1/sessions/{id}

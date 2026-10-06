@@ -1,5 +1,5 @@
 /**
- * VVA API client — PART B auth integration spec.
+ * ECA API client — PART B auth integration spec.
  *
  * - One origin: API_GATEWAY from VITE_API_GATEWAY_URL (see lib/apiBase.ts)
  * - authHeader(): attach Cognito idToken when Amplify is configured + user signed in
@@ -165,7 +165,7 @@ export async function currentUserId(): Promise<string> {
   const sub = await cognitoSub()
   if (sub) return sub
 
-  const DEMO_KEY = 'vva_demo_user'
+  const DEMO_KEY = 'eca-demo-user'
   let demoId = localStorage.getItem(DEMO_KEY)
   if (!demoId) {
     demoId = crypto.randomUUID()

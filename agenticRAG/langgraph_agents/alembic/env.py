@@ -1,4 +1,4 @@
-"""Alembic async env for VVA LangGraph agents.
+"""Alembic async env for ECA LangGraph agents.
 
 Uses SQLAlchemy async engine (asyncpg driver) for migrations.
 Migrations are raw SQL — no ORM metadata needed.
@@ -45,10 +45,10 @@ def _resolve_dsn() -> str:
         with open(config_path, "r", encoding="utf-8") as f:
             cfg = yaml.safe_load(f)
             pg_cfg = cfg.get("langgraph", {}).get("postgres", {})
-            raw = pg_cfg.get("dsn", "postgresql://vva:vva_dev@localhost:5433/vva")
+            raw = pg_cfg.get("dsn", "postgresql://eca:eca_dev@localhost:5433/eca")
             return _to_asyncpg(raw)
 
-    return _to_asyncpg("postgresql://vva:vva_dev@localhost:5433/vva")
+    return _to_asyncpg("postgresql://eca:eca_dev@localhost:5433/eca")
 
 
 def _to_asyncpg(dsn: str) -> str:

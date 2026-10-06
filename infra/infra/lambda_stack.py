@@ -1,4 +1,4 @@
-"""Lambda Stack - CRUD session endpoints for VVA.
+"""Lambda Stack - CRUD session endpoints for ECA.
 
 Three Lambda functions for session management:
     vva-list-sessions    - GET /sessions

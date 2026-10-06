@@ -1,5 +1,5 @@
 // Must run before every other import: GraphicsContext reads localStorage at
-// module load (`let state = load()`), so legacy VVA keys have to be migrated
+// module load (`let state = load()`), so legacy keys have to be migrated
 // to their ECA names before that module is evaluated.
 import './lib/storageKeyMigration'
 import { StrictMode } from 'react'

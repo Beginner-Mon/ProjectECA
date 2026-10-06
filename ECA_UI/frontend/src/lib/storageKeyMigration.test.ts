@@ -1,5 +1,5 @@
 /**
- * Migration of legacy VVA browser-storage keys to their ECA names.
+ * Migration of legacy browser-storage keys to their ECA names.
  *
  * Four cases: copies old to new and deletes the old key; never overwrites
  * an existing new key (but still deletes the old one); does nothing when

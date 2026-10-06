@@ -1,5 +1,5 @@
 /**
- * One-time migration of browser storage keys from the VVA naming to ECA.
+ * One-time migration of legacy browser storage keys to their ECA names.
  *
  * Added 06/10/2026. Safe to remove after 06/11/2026: anyone who has not
  * opened the app in that window falls back to defaults and starts a new

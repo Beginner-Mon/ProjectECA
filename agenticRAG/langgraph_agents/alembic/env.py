@@ -1,4 +1,4 @@
-"""Alembic async env for VVA LangGraph agents.
+"""Alembic async env for ECA LangGraph agents.
 
 Uses SQLAlchemy async engine (asyncpg driver) for migrations.
 Migrations are raw SQL — no ORM metadata needed.

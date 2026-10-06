@@ -1,6 +1,6 @@
 """Minimal local server for exercising only the sandbox billing UI.
 
-This runner exists for development machines that do not have the full VVA
+This runner exists for development machines that do not have the full ECA
 Postgres/Redis/LLM stack available.  It mounts the real billing router and swaps
 only its persistence dependency for a small SQLite adapter stored in the system
 temporary directory.  Stripe calls are still real Stripe *test-mode* API calls;
@@ -200,7 +200,7 @@ async def _lifespan(_: FastAPI):
 
 
 def create_app() -> FastAPI:
-    app = FastAPI(title="VVA billing sandbox (local only)", lifespan=_lifespan)
+    app = FastAPI(title="ECA billing sandbox (local only)", lifespan=_lifespan)
     app.add_middleware(
         CORSMiddleware,
         allow_origins=["http://localhost:5173", "http://127.0.0.1:5173"],

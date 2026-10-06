@@ -226,7 +226,7 @@ async def lifespan(application: FastAPI):
 
 
 def create_app() -> FastAPI:
-    application = FastAPI(title="VVA LangGraph v2.5", lifespan=lifespan)
+    application = FastAPI(title="ECA LangGraph v2.5", lifespan=lifespan)
 
     # CORS — frontend at port 3000 (or wherever) calls backend cross-origin.
     # Browser sends OPTIONS preflight before POST /chat; without this middleware

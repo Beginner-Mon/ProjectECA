@@ -1,4 +1,4 @@
-"""API Gateway Stack — REST API for VVA session CRUD.
+"""API Gateway Stack — REST API for ECA session CRUD.
 
 Regional REST API with Lambda proxy integrations:
     GET    /sessions                        → vva-list-sessions

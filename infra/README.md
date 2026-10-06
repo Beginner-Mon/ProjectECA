@@ -1,4 +1,4 @@
-# VVA Infrastructure (AWS CDK, Python)
+# ECA Infrastructure (AWS CDK, Python)
 
 Two architectures live in this directory. Only one of them is meant to be
 deployed. Read this before running any `cdk` command.

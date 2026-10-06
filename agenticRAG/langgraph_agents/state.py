@@ -1,4 +1,4 @@
-"""VVA Agent State — REUPDATE_PLAN.md §M.1 (3-axis model).
+"""ECA Agent State — REUPDATE_PLAN.md §M.1 (3-axis model).
 
 Replaces old 6-enum intent system. Key changes (33 decisions D1-D33):
   - D1:  Intent 6-enum → 3-axis (required_outputs / resolved_query / routing bits)

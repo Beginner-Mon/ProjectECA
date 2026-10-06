@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""VVA Infrastructure — CDK App Entry Point.
+"""ECA Infrastructure — CDK App Entry Point.
 
 Two tracks live side by side. Only one is synthesised by default.
 

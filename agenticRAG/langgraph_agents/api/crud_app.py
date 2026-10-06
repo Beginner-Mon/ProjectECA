@@ -90,7 +90,7 @@ async def _lifespan(_: FastAPI):
 
 
 def create_crud_app() -> FastAPI:
-    application = FastAPI(title="VVA CRUD API", lifespan=_lifespan)
+    application = FastAPI(title="ECA CRUD API", lifespan=_lifespan)
     add_cors(application)
     application.include_router(characters_router)
     application.include_router(crud_router)

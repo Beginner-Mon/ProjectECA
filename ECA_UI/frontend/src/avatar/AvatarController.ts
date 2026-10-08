@@ -135,6 +135,21 @@ export class AvatarController {
     this.state.engagedUntil = Math.max(this.state.engagedUntil, now() + TTS_GRACE_MS)
   }
 
+  /** DEV-only vowel lip sync on/off (forwards to LipSyncController). */
+  setVowelLipSync(on: boolean): void {
+    this.lipSync.setVowelMode(on)
+  }
+
+  /** Whether DEV vowel lip sync is currently on. */
+  get vowelLipSync(): boolean {
+    return this.lipSync.vowelMode
+  }
+
+  /** Currently selected viseme label, or '-' (debug/verification only). */
+  debugViseme(): string {
+    return this.lipSync.debugViseme()
+  }
+
   /** Feed normalized mouse gaze in [-1..1] (x right+, y up+). */
   setMouse(nx: number, ny: number): void {
     this.eye.setMouse(nx, ny, now())

@@ -70,7 +70,9 @@
     "target_head": "Target: Head",
     "target_hips": "Target: Hips",
     "title": "Motion Controls",
-    "unlock_axis": "Unlock {{axis}}"
+    "unlock_axis": "Unlock {{axis}}",
+    "viseme": "viseme",
+    "vowel_lipsync": "Vowel lip sync"
   },
   "sessions": {
     "delete_confirm_title": "Delete session?",

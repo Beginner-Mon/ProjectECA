@@ -70,7 +70,9 @@
     "subtitle": "Nguồn animation & phát lại",
     "target_head": "Mục tiêu: Đầu",
     "target_hips": "Mục tiêu: Hông",
-    "title": "Điều khiển chuyển động"
+    "title": "Điều khiển chuyển động",
+    "viseme": "khuôn miệng",
+    "vowel_lipsync": "Lip sync theo nguyên âm"
   },
   "sessions": {
     "delete_confirm_title": "Xóa phiên này?",

@@ -64,6 +64,8 @@ export default function MotionControlPanel() {
   const [emotionDurationMs, setEmotionDurationMs] = useState(500)
   const [lastEmotion, setLastEmotion] = useState<string>('—')
   const [avatarMode, setAvatarMode] = useState<string>('—')
+  const [vowelLipSync, setVowelLipSync] = useState<boolean>(false)
+  const [viseme, setViseme] = useState<string>('-')
 
   // Filter motion files so Character state actions don't leak into the debug picker.
   // The picker used to list bundled sample .bvh files under asset/motions/
@@ -81,6 +83,18 @@ export default function MotionControlPanel() {
 
   useEffect(() => {
     const id = setInterval(() => setAvatarMode(avatarRef.current?.mode ?? '—'), 400)
+    return () => clearInterval(id)
+  }, [avatarRef])
+
+  // Poll the lip-sync readout fast enough to follow speech. The checkbox
+  // renders from the controller (not local intent) so it stays truthful
+  // when the controller is recreated on model switch.
+  useEffect(() => {
+    const id = setInterval(() => {
+      const controller = avatarRef.current
+      setVowelLipSync(controller?.vowelLipSync ?? false)
+      setViseme(controller?.debugViseme() ?? '-')
+    }, 100)
     return () => clearInterval(id)
   }, [avatarRef])
 
@@ -294,6 +308,17 @@ export default function MotionControlPanel() {
                   className="flex-1 h-1 accent-primary"
                 />
                 <span className="w-10 text-right tabular-nums">{emotionDurationMs}ms</span>
+              </label>
+
+              <label className="flex items-center justify-between gap-2 text-[11px] text-muted-foreground">
+                {t('motion.vowel_lipsync')}
+                <input
+                  type="checkbox"
+                  checked={vowelLipSync}
+                  onChange={(e) => avatarRef.current?.setVowelLipSync(e.target.checked)}
+                  className="h-3.5 w-3.5 accent-primary"
+                />
+                <span className="w-16 text-right tabular-nums">{t('motion.viseme')} {viseme}</span>
               </label>
 
               <div className="flex justify-between text-[10px] text-muted-foreground/60">

@@ -282,6 +282,13 @@ Pipeline: `tts.audio` → `HTMLAudioElement` → `MediaElementAudioSourceNode` �
 - `VisemeSource` interface giữ chỗ cho Mode 2 (phoneme) — **không implement** cho tới khi VieNeu-TTS xuất phonemes.
 - Audio ended → viseme decay về 0 → engagement grace bắt đầu đếm.
 
+> **Cập nhật 08/10/2026 — khuôn miệng theo nguyên âm đã có, không qua phoneme.** VieNeu không xuất
+> phoneme timestamps và sẽ không xuất (engine sinh frame codec, không có duration). Thay vì chờ, khuôn
+> miệng được suy thẳng từ audio: hai đại lượng độ mở và độ sáng của âm, tự chuẩn hoá theo giọng đang
+> nói, pha giữa 5 kênh `aa/ih/ou/ee/oh` (`avatar/mouthShape.ts`). Cách này không phụ thuộc ngôn ngữ
+> hay giọng; kiểu chỉ-âm-lượng mô tả ở trên còn lại làm đường lui. Mức chất lượng, các cách đã loại
+> và giới hạn đã biết: [[08-10-2026-vowel-visemes-report]]. Mode 2 theo phoneme vẫn chưa có.
+
 > **⚠️ Note timing `tts.audio` (chú thích v1.2 — K)**: backend HIỆN fire TTS **async qua Celery**, trả `speech_pending` + `speech_task_id` trong stream rồi client **poll** kết quả — audioUrl **CHƯA sẵn** tại thời điểm stream turn. Nên một event `tts.audio {audioUrl}` đồng bộ trong turn KHÔNG khớp cơ chế hiện tại. Hệ quả cho các phase sau:
 > - **Phase C** (giả lập): test bằng file `.wav` tĩnh, bỏ qua chuyện timing — chấp nhận được.
 > - **Phase D** (contract thật): phải chốt cách deliver audioUrl — hoặc (a) đổi TTS sang trả URL đồng bộ được, hoặc (b) LipSync lắng nghe event `speech_ready` phát ra khi poll xong (một round-trip riêng, ngoài stream turn). Đây là **open question cho backend**, ghi vào api-contract.md ở Phase D.

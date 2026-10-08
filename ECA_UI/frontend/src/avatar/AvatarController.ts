@@ -8,7 +8,7 @@ import { BlinkController } from './BlinkController'
 import { EyeController } from './EyeController'
 import { HeadController } from './HeadController'
 import { IdleBehaviorController } from './IdleBehaviorController'
-import { LipSyncController } from './LipSyncController'
+import { LipSyncController, type LipSyncMode, type LipSyncTuning } from './LipSyncController'
 import { GestureFaceController } from './GestureFaceController'
 import { GestureCameraTrack } from './GestureCameraTrack'
 
@@ -133,6 +133,31 @@ export class AvatarController {
     this.lipSync.stop()
     // Give a short grace so we don't snap to idle the instant audio ends (§1.2).
     this.state.engagedUntil = Math.max(this.state.engagedUntil, now() + TTS_GRACE_MS)
+  }
+
+  /** DEV-only lip-sync mode (forwards to LipSyncController). */
+  get lipSyncMode(): LipSyncMode {
+    return this.lipSync.mode
+  }
+
+  /** DEV-only lip-sync mode switch (forwards to LipSyncController). */
+  setLipSyncMode(mode: LipSyncMode): void {
+    this.lipSync.setMode(mode)
+  }
+
+  /** Currently selected viseme label, or '-' (debug/verification only). */
+  debugViseme(): string {
+    return this.lipSync.debugViseme()
+  }
+
+  /** DEV vowel lip-sync timings (forwards to LipSyncController). */
+  get lipSyncTuning(): Readonly<LipSyncTuning> {
+    return this.lipSync.tuning
+  }
+
+  /** DEV vowel lip-sync timing patch (forwards to LipSyncController). */
+  setLipSyncTuning(patch: Partial<LipSyncTuning>): void {
+    this.lipSync.setTuning(patch)
   }
 
   /** Feed normalized mouse gaze in [-1..1] (x right+, y up+). */

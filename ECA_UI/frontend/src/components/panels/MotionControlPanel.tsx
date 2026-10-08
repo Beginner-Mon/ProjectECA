@@ -5,7 +5,7 @@ import { ScrollArea } from '../ui/scroll-area'
 import { useMotion } from '../../hooks/useMotion'
 import type { CameraMode, CharState } from '../../lib/AnimationStates'
 import { CANONICAL_EMOTIONS, type CanonicalEmotion } from '../../avatar/AvatarProfile'
-import { DEFAULT_VOWEL_TUNING, type LipSyncTuning } from '../../avatar/LipSyncController'
+import { DEFAULT_VOWEL_TUNING, type LipSyncMode, type LipSyncTuning } from '../../avatar/LipSyncController'
 import { getManifest } from '../../avatar/vrmManifest'
 import { fetchMotionStatus } from '../../lib/api'
 
@@ -65,7 +65,7 @@ export default function MotionControlPanel() {
   const [emotionDurationMs, setEmotionDurationMs] = useState(500)
   const [lastEmotion, setLastEmotion] = useState<string>('—')
   const [avatarMode, setAvatarMode] = useState<string>('—')
-  const [vowelLipSync, setVowelLipSync] = useState<boolean>(false)
+  const [lipMode, setLipMode] = useState<LipSyncMode>('general')
   const [viseme, setViseme] = useState<string>('-')
   const [lipTuning, setLipTuning] = useState<LipSyncTuning>({ ...DEFAULT_VOWEL_TUNING })
 
@@ -88,13 +88,13 @@ export default function MotionControlPanel() {
     return () => clearInterval(id)
   }, [avatarRef])
 
-  // Poll the lip-sync readout fast enough to follow speech. The checkbox
+  // Poll the lip-sync readout fast enough to follow speech. The selector
   // renders from the controller (not local intent) so it stays truthful
   // when the controller is recreated on model switch.
   useEffect(() => {
     const id = setInterval(() => {
       const controller = avatarRef.current
-      setVowelLipSync(controller?.vowelLipSync ?? false)
+      setLipMode(controller?.lipSyncMode ?? 'general')
       setViseme(controller?.debugViseme() ?? '-')
       const live = controller?.lipSyncTuning
       if (live) {
@@ -329,13 +329,16 @@ export default function MotionControlPanel() {
               </label>
 
               <label className="flex items-center justify-between gap-2 text-[11px] text-muted-foreground">
-                {t('motion.vowel_lipsync')}
-                <input
-                  type="checkbox"
-                  checked={vowelLipSync}
-                  onChange={(e) => avatarRef.current?.setVowelLipSync(e.target.checked)}
-                  className="h-3.5 w-3.5 accent-primary"
-                />
+                {t('motion.lip_mode')}
+                <select
+                  value={lipMode}
+                  onChange={(e) => avatarRef.current?.setLipSyncMode(e.target.value as LipSyncMode)}
+                  className="bg-transparent text-xs text-foreground font-medium border-none outline-none cursor-pointer"
+                >
+                  <option value="amplitude" className="bg-card text-foreground">{t('motion.lip_mode_amplitude')}</option>
+                  <option value="template" className="bg-card text-foreground">{t('motion.lip_mode_template')}</option>
+                  <option value="general" className="bg-card text-foreground">{t('motion.lip_mode_general')}</option>
+                </select>
                 <span className="w-16 text-right tabular-nums">{t('motion.viseme')} {viseme}</span>
               </label>
 

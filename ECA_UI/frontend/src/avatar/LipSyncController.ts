@@ -8,25 +8,32 @@ import {
   type VowelTemplateSet,
 } from './vowelClassifier'
 import { anneEn } from './vowelTemplates/anne_en'
+import {
+  articulationFeatures,
+  shapeWeights,
+  sharedVoiceRange,
+} from './mouthShape'
 
 /**
- * Lip sync: Mode 1 amplitude (production) + DEV-only vowel visemes (Phase B).
+ * Lip sync: Mode 1 amplitude (production) + two DEV-only viseme modes (Phase B).
  *
- * Mode 1 drives the mouth from RMS (fast attack 40/s, release 12/s) onto aa
- * with a touch of ou. VieNeu-TTS-GGUF exports no phoneme timestamps, so
- * Mode 1 is what production always runs.
+ * - amplitude: mouth from RMS (fast attack 40/s, release 12/s) onto aa with a
+ *   touch of ou. VieNeu-TTS-GGUF exports no phoneme timestamps, so this is
+ *   what production always runs.
+ * - template: Phase-A vowel classifier (12 MFCCs vs the anneEn templates).
+ *   The raw label is noisy (~30% frames wrong), so the target only moves on
+ *   a 5-frame majority vote with a minimum dwell, and five shares ease
+ *   toward it. English templates; needs templates loaded.
+ * - general: language-independent shape from articulation features
+ *   (openness/brightness normalised against the voice being heard, blended
+ *   over five fixed anchors). Continuous output: no voting, no dwell.
  *
- * Mode 2 (vowel) only exists when import.meta.env.DEV: each tick also feeds
- * the analyser's time-domain data through the Phase-A vowel classifier
- * (12 MFCCs vs the anne_en templates). The raw label is noisy (~30% frames
- * wrong), so the target viseme only moves on a 5-frame majority vote with a
- * minimum dwell, and five shares ease toward it. It reads audio already
- * flowing through the render loop — it never stands between decode and chunk
- * scheduling (~30 µs/frame in Phase A).
+ * Both viseme modes read audio already flowing through the render loop — they
+ * never stand between decode and chunk scheduling (~30 µs/frame in Phase A).
  *
  * The four vowel timings live in module-level `vowelTuning` (editable from
  * the dev panel) so they survive controller recreation on model switch.
- * Mode 1 always uses 40/12, for comparison.
+ * Mode amplitude always uses 40/12, for comparison.
  *
  * Owns the mouth viseme channels. Runs AFTER the emotion contributor in the
  * mixer so it OVERRIDES the mouth while audio plays; when silent it decays to 0
@@ -40,8 +47,11 @@ const RELEASE_PER_SEC = 12
 const MIN_VISIBLE = 0.01
 const VOWEL_MIN_TARGET = 0.08
 const VOWEL_VOTE_FRAMES = 5
+const VOWEL_FRAME_SIZE = 1024
 const VISEMES: readonly Viseme[] = ['A', 'I', 'U', 'E', 'O']
 const VISEME_GAIN = [1, 1, 1, 1, 1]
+
+export type LipSyncMode = 'amplitude' | 'template' | 'general'
 
 export interface LipSyncTuning {
   attackPerSec: number
@@ -69,12 +79,15 @@ export class LipSyncController implements ExpressionContributor {
   private active = false
   private weight = 0
 
+  private modeValue: LipSyncMode
   private readonly templates: VowelTemplateSet | null
-  private vowelModeOn = false
   private vowelRun = false
   private extractor: FeatureExtractor | null = null
   private extractorKey = ''
   private readonly mfcc = new Float32Array(MFCC_COEFFS)
+  private readonly feat = new Float32Array(2)
+  private readonly norm = new Float32Array(2)
+  private readonly goal = new Float32Array([1, 0, 0, 0, 0])
   private readonly shares = [1, 0, 0, 0, 0]
   private targetIndex = 0
   private readonly votes = new Array<number>(VOWEL_VOTE_FRAMES).fill(-1)
@@ -87,16 +100,19 @@ export class LipSyncController implements ExpressionContributor {
     this.ouChannel = profile.visemes.U
     this.channels = VISEMES.map((v) => profile.visemes[v])
     this.templates = templates
-    this.vowelModeOn = import.meta.env.DEV && templates !== null
+    this.modeValue = import.meta.env.DEV ? 'general' : 'amplitude'
   }
 
-  /** Only takes effect when import.meta.env.DEV; production stays Mode 1. */
-  setVowelMode(on: boolean): void {
-    this.vowelModeOn = on && import.meta.env.DEV && this.templates !== null
+  /** DEV-only lip-sync mode switch; production stays 'amplitude'. */
+  setMode(mode: LipSyncMode): void {
+    if (!import.meta.env.DEV) {
+      return
+    }
+    this.modeValue = mode
   }
 
-  get vowelMode(): boolean {
-    return this.vowelModeOn
+  get mode(): LipSyncMode {
+    return this.modeValue
   }
 
   get tuning(): Readonly<LipSyncTuning> {
@@ -127,16 +143,31 @@ export class LipSyncController implements ExpressionContributor {
     if (!this.vowelActive || !this.active || this.weight <= MIN_VISIBLE) {
       return '-'
     }
+    if (this.modeValue === 'general') {
+      let best = 0
+      for (let i = 1; i < this.shares.length; i++) {
+        if (this.shares[i] > this.shares[best]) {
+          best = i
+        }
+      }
+      return VISEMES[best]
+    }
     return VISEMES[this.targetIndex]
   }
 
   /**
-   * Vowel path for this play: mode on and the analyser frame size matches
-   * the templates. Stays true through the post-stop tail so the closing
-   * mouth keeps its shape instead of flashing Mode 1.
+   * Viseme path for this play: a viseme mode with a matching frame size
+   * (template mode also needs templates). Stays true through the post-stop
+   * tail so the closing mouth keeps its shape instead of flashing Mode 1.
    */
   private get vowelActive(): boolean {
-    return this.vowelModeOn && this.vowelRun
+    if (!this.vowelRun || this.modeValue === 'amplitude') {
+      return false
+    }
+    if (this.modeValue === 'template') {
+      return this.templates !== null
+    }
+    return true
   }
 
   /** Begin driving the mouth from this analyser (created by the audio glue). */
@@ -144,8 +175,7 @@ export class LipSyncController implements ExpressionContributor {
     this.analyser = analyser
     this.buffer = new Float32Array(analyser.fftSize)
     this.active = true
-    this.vowelRun =
-      this.templates !== null && analyser.fftSize === this.templates.frameSize
+    this.vowelRun = analyser.fftSize === VOWEL_FRAME_SIZE
     this.voteHead = 0
     this.voteCount = 0
     this.votes.fill(-1)
@@ -180,9 +210,9 @@ export class LipSyncController implements ExpressionContributor {
       target = clamp01(rms * RMS_GAIN)
     }
 
-    // Asymmetric, frame-rate-independent smoothing. Vowel plays use the dev
+    // Asymmetric, frame-rate-independent smoothing. Viseme plays use the dev
     // tuning (softer, no full close between syllables); everything else —
-    // including Mode 1 — keeps 40/12 for comparison.
+    // including amplitude mode — keeps 40/12 for comparison.
     const attack = this.vowelActive ? vowelTuning.attackPerSec : ATTACK_PER_SEC
     const release = this.vowelActive ? vowelTuning.releasePerSec : RELEASE_PER_SEC
     const rate = target > this.weight ? attack : release
@@ -191,71 +221,80 @@ export class LipSyncController implements ExpressionContributor {
 
     this.dwellMs += delta * 1000
 
-    // Vowel classification (DEV only): below the audibility floor the old
-    // target is kept, and a rejected frame never votes either. The target
-    // only moves on a 5-frame majority past the minimum dwell.
+    // Viseme target (DEV only): below the audibility floor the old goal is
+    // kept. Template mode votes with a minimum dwell; general mode blends
+    // continuously from the voice-normalised articulation features.
     const templates = this.templates
     const extractor = this.extractor
     if (
-      this.vowelModeOn &&
+      this.modeValue !== 'amplitude' &&
       this.vowelRun &&
-      templates !== null &&
       extractor !== null &&
       this.analyser !== null &&
       target > VOWEL_MIN_TARGET
     ) {
-      extractor.extract(this.buffer, this.mfcc)
-      const hit = nearestTemplate(this.mfcc, templates.templates)
-      if (hit.index >= 0 && hit.distance <= templates.rejectDistance) {
-        const idx = VISEMES.indexOf(templates.templates[hit.index].viseme)
-        if (idx >= 0) {
-          this.votes[this.voteHead] = idx
-          this.voteHead = (this.voteHead + 1) % VOWEL_VOTE_FRAMES
-          if (this.voteCount < VOWEL_VOTE_FRAMES) {
-            this.voteCount++
-          }
-          let candidate = this.targetIndex
-          let candidateVotes = 0
-          for (let j = 0; j < this.voteCount; j++) {
-            if (this.votes[j] === this.targetIndex) {
-              candidateVotes++
+      if (this.modeValue === 'template' && templates !== null) {
+        extractor.extract(this.buffer, this.mfcc)
+        const hit = nearestTemplate(this.mfcc, templates.templates)
+        if (hit.index >= 0 && hit.distance <= templates.rejectDistance) {
+          const idx = VISEMES.indexOf(templates.templates[hit.index].viseme)
+          if (idx >= 0) {
+            this.votes[this.voteHead] = idx
+            this.voteHead = (this.voteHead + 1) % VOWEL_VOTE_FRAMES
+            if (this.voteCount < VOWEL_VOTE_FRAMES) {
+              this.voteCount++
             }
-          }
-          for (let i = 0; i < VISEMES.length; i++) {
-            if (i === this.targetIndex) {
-              continue
-            }
-            let c = 0
+            let candidate = this.targetIndex
+            let candidateVotes = 0
             for (let j = 0; j < this.voteCount; j++) {
-              if (this.votes[j] === i) {
-                c++
+              if (this.votes[j] === this.targetIndex) {
+                candidateVotes++
               }
             }
-            if (c > candidateVotes) {
-              candidate = i
-              candidateVotes = c
+            for (let i = 0; i < VISEMES.length; i++) {
+              if (i === this.targetIndex) {
+                continue
+              }
+              let c = 0
+              for (let j = 0; j < this.voteCount; j++) {
+                if (this.votes[j] === i) {
+                  c++
+                }
+              }
+              if (c > candidateVotes) {
+                candidate = i
+                candidateVotes = c
+              }
+            }
+            if (candidate !== this.targetIndex && this.dwellMs >= vowelTuning.minDwellMs) {
+              this.targetIndex = candidate
+              this.dwellMs = 0
             }
           }
-          if (candidate !== this.targetIndex && this.dwellMs >= vowelTuning.minDwellMs) {
-            this.targetIndex = candidate
-            this.dwellMs = 0
-          }
         }
+        for (let i = 0; i < this.goal.length; i++) {
+          this.goal[i] = i === this.targetIndex ? 1 : 0
+        }
+      } else if (this.modeValue === 'general') {
+        extractor.extract(this.buffer, this.mfcc)
+        articulationFeatures(this.mfcc, this.feat)
+        sharedVoiceRange.update(this.feat)
+        sharedVoiceRange.normalize(this.feat, this.norm)
+        shapeWeights(this.norm[0], this.norm[1], this.goal)
       }
     }
 
-    // Ease the five shares toward one-hot(targetIndex); the sum stays 1.
+    // Ease the five shares toward the goal; the sum stays 1.
     const sk = 1 - Math.exp(-vowelTuning.shapePerSec * delta)
     for (let i = 0; i < this.shares.length; i++) {
-      const goal = i === this.targetIndex ? 1 : 0
-      this.shares[i] += (goal - this.shares[i]) * sk
+      this.shares[i] += (this.goal[i] - this.shares[i]) * sk
     }
   }
 
   contribute(frame: Map<string, number>): void {
     if (this.weight <= MIN_VISIBLE) return
     if (!this.vowelActive) {
-      // Mode 1: open jaw (aa) with a touch of rounding (ou), nothing else.
+      // Amplitude mode: open jaw (aa) with a touch of rounding (ou), nothing else.
       frame.set(this.aaChannel, this.weight)
       frame.set(this.ouChannel, this.weight * 0.35)
       return
@@ -276,6 +315,9 @@ export class LipSyncController implements ExpressionContributor {
     this.targetIndex = 0
     for (let i = 0; i < this.shares.length; i++) {
       this.shares[i] = i === 0 ? 1 : 0
+    }
+    for (let i = 0; i < this.goal.length; i++) {
+      this.goal[i] = i === 0 ? 1 : 0
     }
     this.voteHead = 0
     this.voteCount = 0

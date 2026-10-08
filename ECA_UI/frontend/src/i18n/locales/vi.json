@@ -61,6 +61,10 @@
     "lock_axis": "Khóa {{axis}} — kéo không đổi {{axis}}",
     "lip_attack": "tốc độ mở",
     "lip_dwell": "giữ khuôn (ms)",
+    "lip_mode": "chế độ lip sync",
+    "lip_mode_amplitude": "kiểu cũ (chỉ âm lượng)",
+    "lip_mode_general": "tổng quát",
+    "lip_mode_template": "mẫu tiếng Anh",
     "lip_release": "tốc độ khép",
     "lip_shape": "tốc độ đổi khuôn",
     "mode": "chế độ:",
@@ -75,8 +79,7 @@
     "target_head": "Mục tiêu: Đầu",
     "target_hips": "Mục tiêu: Hông",
     "title": "Điều khiển chuyển động",
-    "viseme": "khuôn miệng",
-    "vowel_lipsync": "Lip sync theo nguyên âm"
+    "viseme": "khuôn miệng"
   },
   "sessions": {
     "delete_confirm_title": "Xóa phiên này?",

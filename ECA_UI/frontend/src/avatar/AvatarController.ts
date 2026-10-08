@@ -8,7 +8,7 @@ import { BlinkController } from './BlinkController'
 import { EyeController } from './EyeController'
 import { HeadController } from './HeadController'
 import { IdleBehaviorController } from './IdleBehaviorController'
-import { LipSyncController, type LipSyncTuning } from './LipSyncController'
+import { LipSyncController, type LipSyncMode, type LipSyncTuning } from './LipSyncController'
 import { GestureFaceController } from './GestureFaceController'
 import { GestureCameraTrack } from './GestureCameraTrack'
 
@@ -135,14 +135,14 @@ export class AvatarController {
     this.state.engagedUntil = Math.max(this.state.engagedUntil, now() + TTS_GRACE_MS)
   }
 
-  /** DEV-only vowel lip sync on/off (forwards to LipSyncController). */
-  setVowelLipSync(on: boolean): void {
-    this.lipSync.setVowelMode(on)
+  /** DEV-only lip-sync mode (forwards to LipSyncController). */
+  get lipSyncMode(): LipSyncMode {
+    return this.lipSync.mode
   }
 
-  /** Whether DEV vowel lip sync is currently on. */
-  get vowelLipSync(): boolean {
-    return this.lipSync.vowelMode
+  /** DEV-only lip-sync mode switch (forwards to LipSyncController). */
+  setLipSyncMode(mode: LipSyncMode): void {
+    this.lipSync.setMode(mode)
   }
 
   /** Currently selected viseme label, or '-' (debug/verification only). */

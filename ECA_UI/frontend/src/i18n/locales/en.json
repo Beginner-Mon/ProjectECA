@@ -61,6 +61,10 @@
     "lock_axis": "Lock {{axis}} — drag won't change {{axis}}",
     "lip_attack": "open speed",
     "lip_dwell": "hold shape (ms)",
+    "lip_mode": "lip sync",
+    "lip_mode_amplitude": "old (volume only)",
+    "lip_mode_general": "general",
+    "lip_mode_template": "English templates",
     "lip_release": "close speed",
     "lip_shape": "shape blend speed",
     "mode": "mode:",
@@ -75,8 +79,7 @@
     "target_hips": "Target: Hips",
     "title": "Motion Controls",
     "unlock_axis": "Unlock {{axis}}",
-    "viseme": "viseme",
-    "vowel_lipsync": "Vowel lip sync"
+    "viseme": "viseme"
   },
   "sessions": {
     "delete_confirm_title": "Delete session?",

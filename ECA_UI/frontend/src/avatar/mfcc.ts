@@ -1,36 +1,18 @@
-import type { Viseme } from './AvatarProfile'
-
 /**
- * Pure-math vowel classifier for lip sync (Phase A — measurement only).
+ * MFCC feature extraction for mouth-shape lip sync.
  *
  * Each audio frame is reduced to 12 MFCCs (cepstral indices 1..12, C0
- * dropped so the features are amplitude-invariant), then matched by
- * Euclidean distance against one template per vowel viseme. Nothing here
- * touches the DOM, audio hardware, or any runtime controller — the lab
- * script (`scripts/visemes/viseme-lab.mjs`) imports this module directly.
+ * dropped so the features are amplitude-invariant), feeding
+ * articulationFeatures() in mouthShape.ts. Nothing here touches the DOM,
+ * audio hardware, or any runtime controller.
  *
  * Constraints: erasable syntax only (no enum/namespace/parameter
- * properties), so Node can run this file directly via type stripping.
- * `extract` allocates nothing; all buffers live in the closure created by
- * `createFeatureExtractor`.
+ * properties). `extract` allocates nothing; all buffers live in the closure
+ * created by `createFeatureExtractor`.
  */
 
 /** MFCC coefficients per frame. */
 export const MFCC_COEFFS = 12
-
-export interface VowelTemplate {
-  viseme: Viseme
-  word: string
-  mfcc: readonly number[]
-}
-
-export interface VowelTemplateSet {
-  version: 1
-  frameSize: number
-  templates: readonly VowelTemplate[]
-  /** Distance to the nearest template above this = not any vowel. */
-  rejectDistance: number
-}
 
 export interface FeatureExtractor {
   /**
@@ -57,7 +39,7 @@ function invMel(m: number): number {
 
 export function createFeatureExtractor(sampleRate: number, frameSize: number): FeatureExtractor {
   if (!Number.isInteger(frameSize) || frameSize <= 0 || (frameSize & (frameSize - 1)) !== 0) {
-    throw new Error(`vowelClassifier: frameSize must be a power of 2, got ${frameSize}`)
+    throw new Error(`mfcc: frameSize must be a power of 2, got ${frameSize}`)
   }
   const half = frameSize / 2
   const binCount = half + 1
@@ -195,34 +177,4 @@ export function createFeatureExtractor(sampleRate: number, frameSize: number): F
   }
 
   return { extract }
-}
-
-export function nearestTemplate(
-  mfcc: ArrayLike<number>,
-  templates: readonly VowelTemplate[],
-): { index: number; distance: number } {
-  let best = -1
-  let bestDist = Number.POSITIVE_INFINITY
-  for (let t = 0; t < templates.length; t++) {
-    const tm = templates[t].mfcc
-    let sum = 0
-    for (let i = 0; i < MFCC_COEFFS; i++) {
-      const d = mfcc[i] - tm[i]
-      sum += d * d
-    }
-    const dist = Math.sqrt(sum)
-    if (dist < bestDist) {
-      bestDist = dist
-      best = t
-    }
-  }
-  return { index: best, distance: bestDist }
-}
-
-export function classify(mfcc: ArrayLike<number>, set: VowelTemplateSet): Viseme | null {
-  const found = nearestTemplate(mfcc, set.templates)
-  if (found.index < 0 || found.distance > set.rejectDistance) {
-    return null
-  }
-  return set.templates[found.index].viseme
 }

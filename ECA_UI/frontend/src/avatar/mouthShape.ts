@@ -29,7 +29,7 @@ function invMel(m: number): number {
   return 700 * (10 ** (m / 2595) - 1)
 }
 
-// Band centres: the 24 interior mel edges, same scale as vowelClassifier.ts.
+// Band centres: the 24 interior mel edges, same scale as mfcc.ts.
 const MEL_LOW = mel(MEL_LOW_HZ)
 const MEL_HIGH = mel(MEL_HIGH_HZ)
 const CENTERS: readonly number[] = Array.from(
@@ -154,6 +154,10 @@ export class VoiceRange {
   private readonly open = new Float32Array(HIST_BINS)
   private readonly bright = new Float32Array(HIST_BINS)
   private total = 0
+  private openLo = DEF_OPEN_LO
+  private openHi = DEF_OPEN_HI
+  private brightLo = DEF_BRIGHT_LO
+  private brightHi = DEF_BRIGHT_HI
 
   /** Feed one voiced frame's features. */
   update(features: ArrayLike<number>): void {
@@ -166,20 +170,20 @@ export class VoiceRange {
   normalize(features: ArrayLike<number>, out: Float32Array): void {
     const trust = Math.min(1, this.total / TRUST_FRAMES)
     let oLo =
-      DEF_OPEN_LO + (histQuantile(this.open, this.total, 0.1, OPEN_LO, OPEN_HI) - DEF_OPEN_LO) * trust
+      this.openLo + (histQuantile(this.open, this.total, 0.1, OPEN_LO, OPEN_HI) - this.openLo) * trust
     let oHi =
-      DEF_OPEN_HI + (histQuantile(this.open, this.total, 0.9, OPEN_LO, OPEN_HI) - DEF_OPEN_HI) * trust
+      this.openHi + (histQuantile(this.open, this.total, 0.9, OPEN_LO, OPEN_HI) - this.openHi) * trust
     if (oHi - oLo < MIN_OPEN_WIDTH) {
       const mid = (oLo + oHi) / 2
       oLo = mid - MIN_OPEN_WIDTH / 2
       oHi = mid + MIN_OPEN_WIDTH / 2
     }
     let bLo =
-      DEF_BRIGHT_LO +
-      (histQuantile(this.bright, this.total, 0.1, BRIGHT_LO, BRIGHT_HI) - DEF_BRIGHT_LO) * trust
+      this.brightLo +
+      (histQuantile(this.bright, this.total, 0.1, BRIGHT_LO, BRIGHT_HI) - this.brightLo) * trust
     let bHi =
-      DEF_BRIGHT_HI +
-      (histQuantile(this.bright, this.total, 0.9, BRIGHT_LO, BRIGHT_HI) - DEF_BRIGHT_HI) * trust
+      this.brightHi +
+      (histQuantile(this.bright, this.total, 0.9, BRIGHT_LO, BRIGHT_HI) - this.brightHi) * trust
     if (bHi - bLo < MIN_BRIGHT_WIDTH) {
       const mid = (bLo + bHi) / 2
       bLo = mid - MIN_BRIGHT_WIDTH / 2
@@ -189,10 +193,73 @@ export class VoiceRange {
     out[1] = (features[1] - bLo) / (bHi - bLo)
   }
 
+  /**
+   * Learned range [openLo, openHi, brightLo, brightHi], or null when too
+   * little has been heard (total < 480). Matches what normalize() uses at
+   * trust 1, so a stored snapshot restarts learning where it left off.
+   */
+  snapshot(): number[] | null {
+    if (this.total < TRUST_FRAMES) {
+      return null
+    }
+    let oLo = histQuantile(this.open, this.total, 0.1, OPEN_LO, OPEN_HI)
+    let oHi = histQuantile(this.open, this.total, 0.9, OPEN_LO, OPEN_HI)
+    if (oHi - oLo < MIN_OPEN_WIDTH) {
+      const mid = (oLo + oHi) / 2
+      oLo = mid - MIN_OPEN_WIDTH / 2
+      oHi = mid + MIN_OPEN_WIDTH / 2
+    }
+    let bLo = histQuantile(this.bright, this.total, 0.1, BRIGHT_LO, BRIGHT_HI)
+    let bHi = histQuantile(this.bright, this.total, 0.9, BRIGHT_LO, BRIGHT_HI)
+    if (bHi - bLo < MIN_BRIGHT_WIDTH) {
+      const mid = (bLo + bHi) / 2
+      bLo = mid - MIN_BRIGHT_WIDTH / 2
+      bHi = mid + MIN_BRIGHT_WIDTH / 2
+    }
+    return [oLo, oHi, bLo, bHi]
+  }
+
+  /**
+   * Adopt a previously learned range as the starting point instead of the
+   * built-ins. Ignored unless four finite numbers with lo < hi per pair,
+   * inside the histogram spans.
+   */
+  seed(range: ArrayLike<number>): void {
+    if (range.length !== 4) {
+      return
+    }
+    const oLo = range[0]
+    const oHi = range[1]
+    const bLo = range[2]
+    const bHi = range[3]
+    if (
+      !Number.isFinite(oLo) ||
+      !Number.isFinite(oHi) ||
+      !Number.isFinite(bLo) ||
+      !Number.isFinite(bHi)
+    ) {
+      return
+    }
+    if (!(oLo < oHi) || !(bLo < bHi)) {
+      return
+    }
+    if (oLo < OPEN_LO || oHi > OPEN_HI || bLo < BRIGHT_LO || bHi > BRIGHT_HI) {
+      return
+    }
+    this.openLo = oLo
+    this.openHi = oHi
+    this.brightLo = bLo
+    this.brightHi = bHi
+  }
+
   reset(): void {
     this.open.fill(0)
     this.bright.fill(0)
     this.total = 0
+    this.openLo = DEF_OPEN_LO
+    this.openHi = DEF_OPEN_HI
+    this.brightLo = DEF_BRIGHT_LO
+    this.brightHi = DEF_BRIGHT_HI
   }
 }
 

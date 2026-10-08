@@ -2,26 +2,19 @@ import { describe, expect, it } from 'vitest'
 import { DEFAULT_VOWEL_TUNING, LipSyncController } from './LipSyncController'
 import { sharedVoiceRange } from './mouthShape'
 import { defaultProfile } from './profiles/default'
-import {
-  MFCC_COEFFS,
-  createFeatureExtractor,
-  type VowelTemplate,
-  type VowelTemplateSet,
-} from './vowelClassifier'
 import type { Viseme } from './AvatarProfile'
 
 /**
- * Lip-sync modes (Phase B, DEV-only). The fake analyser feeds synthetic
- * vowels — harmonic sums with two formant bumps, peak-normalised to 0.5 —
- * and the test template set is built from those same signals, so
- * classification is exact and the tests measure plumbing, not acoustics.
- * Tuning and the shared voice range are module-level, so every test resets
- * both to a known state.
+ * Lip-sync modes (Phase B-ship). The fake analyser feeds synthetic vowels —
+ * harmonic sums with two formant bumps, peak-normalised to 0.5 — so the
+ * tests measure plumbing, not acoustics. Tuning and the shared voice range
+ * are module-level, so every test resets both to a known state.
  */
 
 const FRAME_SIZE = 1024
 const SAMPLE_RATE = 48000
 const TICK = 1 / 60
+const VOICE_RANGE_KEY = 'eca-lipsync-voice-range'
 
 interface FakeVowel {
   viseme: Viseme
@@ -63,16 +56,6 @@ function synthVowel(f0: number, f1: number, f2: number): Float32Array {
   return pcm
 }
 
-function buildTestTemplates(): VowelTemplateSet {
-  const ex = createFeatureExtractor(SAMPLE_RATE, FRAME_SIZE)
-  const out = new Float32Array(MFCC_COEFFS)
-  const templates: VowelTemplate[] = FAKE_VOWELS.map((v) => {
-    ex.extract(synthVowel(220, v.f1, v.f2), out)
-    return { viseme: v.viseme, word: `test-${v.viseme}`, mfcc: Array.from(out) }
-  })
-  return { version: 1, frameSize: FRAME_SIZE, templates, rejectDistance: 1e9 }
-}
-
 function vowelSignal(viseme: Viseme): Float32Array {
   const v = FAKE_VOWELS.find((x) => x.viseme === viseme)
   if (!v) {
@@ -82,10 +65,14 @@ function vowelSignal(viseme: Viseme): Float32Array {
 }
 
 /** Analyser fake: each tick copies the holder's current signal into buf. */
-function fakeAnalyser(holder: { current: Float32Array }): AnalyserNode {
+function fakeAnalyser(
+  holder: { current: Float32Array },
+  fftSize = FRAME_SIZE,
+  sampleRate = SAMPLE_RATE,
+): AnalyserNode {
   return {
-    fftSize: FRAME_SIZE,
-    context: { sampleRate: SAMPLE_RATE },
+    fftSize,
+    context: { sampleRate },
     getFloatTimeDomainData(buf: Float32Array): void {
       buf.set(holder.current.subarray(0, buf.length))
     },
@@ -113,9 +100,16 @@ function patternAnalyser(voiced: Float32Array): AnalyserNode {
   } as unknown as AnalyserNode
 }
 
-describe('LipSyncController vowel mode', () => {
-  it('Mode 1 regression: exactly aa + ou at 0.35x', () => {
-    const controller = new LipSyncController(defaultProfile, buildTestTemplates())
+describe('LipSyncController modes', () => {
+  it('defaults to general in a fresh controller', () => {
+    const controller = new LipSyncController(defaultProfile)
+    controller.setTuning(DEFAULT_VOWEL_TUNING)
+    sharedVoiceRange.reset()
+    expect(controller.mode).toBe('general')
+  })
+
+  it('amplitude: exactly aa + ou at 0.35x', () => {
+    const controller = new LipSyncController(defaultProfile)
     controller.setTuning(DEFAULT_VOWEL_TUNING)
     sharedVoiceRange.reset()
     controller.setMode('amplitude')
@@ -130,70 +124,32 @@ describe('LipSyncController vowel mode', () => {
     expect(frame.get('ou') ?? 0).toBeCloseTo(0.35 * aa, 12)
   })
 
-  it('vowel I: debugViseme I, five channels, ih largest, sum <= 1', () => {
-    const controller = new LipSyncController(defaultProfile, buildTestTemplates())
+  it('general with a synthetic vowel: five channels, sum <= 1, viseme shown', () => {
+    const controller = new LipSyncController(defaultProfile)
     controller.setTuning(DEFAULT_VOWEL_TUNING)
     sharedVoiceRange.reset()
+    controller.setMode('general')
     const holder = { current: vowelSignal('I') }
-    controller.setMode('template')
     controller.start(fakeAnalyser(holder))
     tickTimes(controller, 30)
-    expect(controller.debugViseme()).toBe('I')
     const frame = new Map<string, number>()
     controller.contribute(frame)
     expect(frame.size).toBe(5)
-    const ih = frame.get('ih') ?? 0
-    for (const ch of ['aa', 'ou', 'ee', 'oh']) {
-      expect(ih).toBeGreaterThan(frame.get(ch) ?? 0)
-    }
     let sum = 0
     for (const v of frame.values()) {
       sum += v
     }
     expect(sum).toBeLessThanOrEqual(1 + 1e-9)
+    expect(controller.debugViseme()).not.toBe('-')
   })
 
-  it('switches to A: debugViseme A, aa largest', () => {
-    const controller = new LipSyncController(defaultProfile, buildTestTemplates())
+  it('wrong fftSize: runs like amplitude even in general mode', () => {
+    const controller = new LipSyncController(defaultProfile)
     controller.setTuning(DEFAULT_VOWEL_TUNING)
     sharedVoiceRange.reset()
+    controller.setMode('general')
     const holder = { current: vowelSignal('I') }
-    controller.setMode('template')
-    controller.start(fakeAnalyser(holder))
-    tickTimes(controller, 30)
-    holder.current = vowelSignal('A')
-    tickTimes(controller, 30)
-    expect(controller.debugViseme()).toBe('A')
-    const frame = new Map<string, number>()
-    controller.contribute(frame)
-    const aa = frame.get('aa') ?? 0
-    for (const ch of ['ih', 'ou', 'ee', 'oh']) {
-      expect(aa).toBeGreaterThan(frame.get(ch) ?? 0)
-    }
-  })
-
-  it('silence: no channels, debugViseme -', () => {
-    const controller = new LipSyncController(defaultProfile, buildTestTemplates())
-    controller.setTuning(DEFAULT_VOWEL_TUNING)
-    sharedVoiceRange.reset()
-    const holder = { current: new Float32Array(FRAME_SIZE) }
-    controller.setMode('template')
-    controller.start(fakeAnalyser(holder))
-    tickTimes(controller, 60)
-    const frame = new Map<string, number>()
-    controller.contribute(frame)
-    expect(frame.size).toBe(0)
-    expect(controller.debugViseme()).toBe('-')
-  })
-
-  it('no templates: template falls back to amplitude, general still shapes', () => {
-    const controller = new LipSyncController(defaultProfile, null)
-    controller.setTuning(DEFAULT_VOWEL_TUNING)
-    sharedVoiceRange.reset()
-    controller.setMode('template')
-    expect(controller.mode).toBe('template')
-    const holder = { current: vowelSignal('I') }
-    controller.start(fakeAnalyser(holder))
+    controller.start(fakeAnalyser(holder, 2048))
     tickTimes(controller, 30)
     const frame = new Map<string, number>()
     controller.contribute(frame)
@@ -201,46 +157,14 @@ describe('LipSyncController vowel mode', () => {
     const aa = frame.get('aa') ?? 0
     expect(aa).toBeGreaterThan(0)
     expect(frame.get('ou') ?? 0).toBeCloseTo(0.35 * aa, 12)
-    expect(controller.debugViseme()).toBe('-')
-
-    controller.setMode('general')
-    tickTimes(controller, 30)
-    const frame2 = new Map<string, number>()
-    controller.contribute(frame2)
-    expect(frame2.size).toBe(5)
-    expect(controller.debugViseme()).not.toBe('-')
   })
 
-  it('flickering labels: debugViseme changes at most 5 times in 30 ticks', () => {
-    const controller = new LipSyncController(defaultProfile, buildTestTemplates())
-    controller.setTuning(DEFAULT_VOWEL_TUNING)
-    sharedVoiceRange.reset()
-    const sigA = vowelSignal('A')
-    const sigI = vowelSignal('I')
-    const holder = { current: sigA }
-    controller.setMode('template')
-    controller.start(fakeAnalyser(holder))
-    const seen: string[] = []
-    for (let i = 0; i < 30; i++) {
-      holder.current = i % 2 === 0 ? sigA : sigI
-      controller.tick(TICK)
-      seen.push(controller.debugViseme())
-    }
-    let changes = 0
-    for (let i = 1; i < seen.length; i++) {
-      if (seen[i] !== seen[i - 1]) {
-        changes++
-      }
-    }
-    expect(changes).toBeLessThanOrEqual(5)
-  })
-
-  it('no full close between syllables: vowel trough/peak > 0.6, Mode 1 < 0.5', () => {
-    const ratio = (vowel: boolean): number => {
-      const controller = new LipSyncController(defaultProfile, buildTestTemplates())
+  it('no full close between syllables: trough/peak > 0.6 in general, < 0.5 in amplitude', () => {
+    const ratio = (general: boolean): number => {
+      const controller = new LipSyncController(defaultProfile)
       controller.setTuning(DEFAULT_VOWEL_TUNING)
-    sharedVoiceRange.reset()
-      controller.setMode(vowel ? 'template' : 'amplitude')
+      sharedVoiceRange.reset()
+      controller.setMode(general ? 'general' : 'amplitude')
       controller.start(patternAnalyser(vowelSignal('A')))
       const weights: number[] = []
       for (let i = 0; i < 120; i++) {
@@ -254,52 +178,70 @@ describe('LipSyncController vowel mode', () => {
     expect(ratio(false)).toBeLessThan(0.5)
   })
 
-  it('tail after stop: still five channels, not Mode-1 aa', () => {
-    const controller = new LipSyncController(defaultProfile, buildTestTemplates())
-    controller.setTuning(DEFAULT_VOWEL_TUNING)
-    sharedVoiceRange.reset()
-    const holder = { current: vowelSignal('I') }
-    controller.setMode('template')
-    controller.start(fakeAnalyser(holder))
-    tickTimes(controller, 30)
-    controller.stop()
-    controller.tick(TICK)
-    const frame = new Map<string, number>()
-    controller.contribute(frame)
-    expect(frame.size).toBe(5)
-    const w = controller.debugWeight()
-    expect(frame.get('ih') ?? 0).toBeGreaterThan(0.5 * w)
-    expect(frame.get('aa') ?? 0).toBeLessThan(0.5 * w)
-    expect(controller.debugViseme()).toBe('-')
-  })
-
-  it('clamps tuning: attack 999 -> 60, dwell -5 -> 0', () => {
-    const controller = new LipSyncController(defaultProfile, buildTestTemplates())
-    controller.setTuning(DEFAULT_VOWEL_TUNING)
-    sharedVoiceRange.reset()
-    controller.setMode('template')
-    controller.setTuning({ attackPerSec: 999, minDwellMs: -5 })
-    expect(controller.tuning.attackPerSec).toBe(60)
-    expect(controller.tuning.minDwellMs).toBe(0)
-    expect(controller.tuning.releasePerSec).toBe(6)
-  })
-
-  it('general mode: five channels, sum <= 1, viseme shown', () => {
-    const controller = new LipSyncController(defaultProfile, buildTestTemplates())
+  it('tail after stop in general: still five channels while audible', () => {
+    const controller = new LipSyncController(defaultProfile)
     controller.setTuning(DEFAULT_VOWEL_TUNING)
     sharedVoiceRange.reset()
     controller.setMode('general')
     const holder = { current: vowelSignal('I') }
     controller.start(fakeAnalyser(holder))
     tickTimes(controller, 30)
+    controller.stop()
+    controller.tick(TICK)
+    expect(controller.debugWeight()).toBeGreaterThan(0.01)
     const frame = new Map<string, number>()
     controller.contribute(frame)
     expect(frame.size).toBe(5)
-    let sum = 0
-    for (const v of frame.values()) {
-      sum += v
+    expect(controller.debugViseme()).toBe('-')
+  })
+
+  it('clamps tuning: attack 999 -> 60, shape -5 -> 4', () => {
+    const controller = new LipSyncController(defaultProfile)
+    controller.setTuning(DEFAULT_VOWEL_TUNING)
+    sharedVoiceRange.reset()
+    controller.setTuning({ attackPerSec: 999, shapePerSec: -5 })
+    expect(controller.tuning.attackPerSec).toBe(60)
+    expect(controller.tuning.shapePerSec).toBe(4)
+    expect(controller.tuning.releasePerSec).toBe(6)
+  })
+
+  it('persists the learned voice range to localStorage on stop', () => {
+    const controller = new LipSyncController(defaultProfile)
+    controller.setTuning(DEFAULT_VOWEL_TUNING)
+    sharedVoiceRange.reset()
+    controller.setMode('general')
+    const store = new Map<string, string>()
+    const calls: Array<[string, string]> = []
+    const fakeStorage = {
+      getItem: (k: string): string | null => store.get(k) ?? null,
+      setItem: (k: string, v: string): void => {
+        store.set(k, v)
+        calls.push([k, v])
+      },
     }
-    expect(sum).toBeLessThanOrEqual(1 + 1e-9)
-    expect(controller.debugViseme()).not.toBe('-')
+    const holder = { current: vowelSignal('A') }
+    const scope = globalThis as unknown as { localStorage?: unknown }
+    const prev = scope.localStorage
+    scope.localStorage = fakeStorage
+    try {
+      controller.start(fakeAnalyser(holder))
+      tickTimes(controller, 700)
+      controller.stop()
+    } finally {
+      if (prev === undefined) {
+        delete scope.localStorage
+      } else {
+        scope.localStorage = prev
+      }
+    }
+    const saved = calls.filter(([k]) => k === VOICE_RANGE_KEY)
+    expect(saved.length).toBeGreaterThan(0)
+    const parsed: unknown = JSON.parse(saved[saved.length - 1][1])
+    expect(Array.isArray(parsed)).toBe(true)
+    const nums = parsed as number[]
+    expect(nums.length).toBe(4)
+    for (const v of nums) {
+      expect(Number.isFinite(v)).toBe(true)
+    }
   })
 })

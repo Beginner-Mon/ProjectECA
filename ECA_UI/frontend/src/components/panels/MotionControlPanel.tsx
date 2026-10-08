@@ -101,7 +101,6 @@ export default function MotionControlPanel() {
         setLipTuning((prev) =>
           prev.attackPerSec === live.attackPerSec &&
           prev.releasePerSec === live.releasePerSec &&
-          prev.minDwellMs === live.minDwellMs &&
           prev.shapePerSec === live.shapePerSec
             ? prev
             : { ...live },
@@ -336,7 +335,6 @@ export default function MotionControlPanel() {
                   className="bg-transparent text-xs text-foreground font-medium border-none outline-none cursor-pointer"
                 >
                   <option value="amplitude" className="bg-card text-foreground">{t('motion.lip_mode_amplitude')}</option>
-                  <option value="template" className="bg-card text-foreground">{t('motion.lip_mode_template')}</option>
                   <option value="general" className="bg-card text-foreground">{t('motion.lip_mode_general')}</option>
                 </select>
                 <span className="w-16 text-right tabular-nums">{t('motion.viseme')} {viseme}</span>
@@ -368,20 +366,6 @@ export default function MotionControlPanel() {
                   className="flex-1 h-1 accent-primary"
                 />
                 <span className="w-8 text-right tabular-nums">{lipTuning.releasePerSec}</span>
-              </label>
-
-              <label className="flex items-center justify-between gap-2 text-[11px] text-muted-foreground">
-                {t('motion.lip_dwell')}
-                <input
-                  type="range"
-                  min={0}
-                  max={400}
-                  step={10}
-                  value={lipTuning.minDwellMs}
-                  onChange={(e) => updateLipTuning({ minDwellMs: Number(e.target.value) })}
-                  className="flex-1 h-1 accent-primary"
-                />
-                <span className="w-10 text-right tabular-nums">{lipTuning.minDwellMs}ms</span>
               </label>
 
               <label className="flex items-center justify-between gap-2 text-[11px] text-muted-foreground">

@@ -1,16 +1,9 @@
 import { describe, expect, it } from 'vitest'
-import {
-  MFCC_COEFFS,
-  classify,
-  createFeatureExtractor,
-  nearestTemplate,
-  type VowelTemplate,
-  type VowelTemplateSet,
-} from './vowelClassifier'
+import { MFCC_COEFFS, createFeatureExtractor } from './mfcc'
 import type { Viseme } from './AvatarProfile'
 
 /**
- * Synthetic-signal tests for the vowel classifier core. No files are read;
+ * Synthetic-signal tests for the MFCC front end. No files are read;
  * every signal below is generated deterministically.
  *
  * A fake vowel is a harmonic sum of F0 up to 5 kHz whose harmonic amplitude
@@ -59,17 +52,45 @@ function mfccOf(pcm: Float32Array, sampleRate: number): number[] {
   return Array.from(out)
 }
 
-/** Templates built from fake vowels at F0 = 220 Hz, with a wide-open gate. */
-function buildSet(sampleRate: number): VowelTemplateSet {
-  const templates: VowelTemplate[] = FAKE_VOWELS.map((v) => ({
+interface TestTemplate {
+  viseme: Viseme
+  word: string
+  mfcc: number[]
+}
+
+/** Templates built from fake vowels at F0 = 220 Hz. */
+function buildTemplates(sampleRate: number): TestTemplate[] {
+  return FAKE_VOWELS.map((v) => ({
     viseme: v.viseme,
     word: `fake-${v.viseme}`,
     mfcc: mfccOf(synthVowel(220, sampleRate, v.f1, v.f2), sampleRate),
   }))
-  return { version: 1, frameSize: FRAME_SIZE, templates, rejectDistance: 1e9 }
 }
 
-describe('vowelClassifier', () => {
+/** Euclidean distance on the 12 kept coefficients. */
+function euclid(a: ArrayLike<number>, b: ArrayLike<number>): number {
+  let sum = 0
+  for (let i = 0; i < MFCC_COEFFS; i++) {
+    const d = a[i] - b[i]
+    sum += d * d
+  }
+  return Math.sqrt(sum)
+}
+
+function nearestViseme(mfcc: ArrayLike<number>, templates: readonly TestTemplate[]): Viseme {
+  let best: Viseme = templates[0].viseme
+  let bestDist = Number.POSITIVE_INFINITY
+  for (const t of templates) {
+    const d = euclid(mfcc, t.mfcc)
+    if (d < bestDist) {
+      bestDist = d
+      best = t.viseme
+    }
+  }
+  return best
+}
+
+describe('mfcc', () => {
   it('gives large low-band power to a 300 Hz sine and near-zero to a 3000 Hz sine', () => {
     const ex = createFeatureExtractor(SR_48K, FRAME_SIZE)
     const out = new Float32Array(MFCC_COEFFS)
@@ -99,36 +120,36 @@ describe('vowelClassifier', () => {
   })
 
   it('matches the same vowel across F0 (templates at 220 Hz, queries at 180 and 260 Hz)', () => {
-    const set = buildSet(SR_48K)
+    const templates = buildTemplates(SR_48K)
     for (const v of FAKE_VOWELS) {
       for (const f0 of [180, 260]) {
         const mfcc = mfccOf(synthVowel(f0, SR_48K, v.f1, v.f2), SR_48K)
-        expect(classify(mfcc, set)).toBe(v.viseme)
+        expect(nearestViseme(mfcc, templates)).toBe(v.viseme)
       }
     }
   })
 
   it('matches across sample rates (templates at 48000 Hz, queries synthesised at 44100 Hz)', () => {
-    const set = buildSet(SR_48K)
+    const templates = buildTemplates(SR_48K)
     for (const v of FAKE_VOWELS) {
       for (const f0 of [180, 220, 260]) {
         const mfcc = mfccOf(synthVowel(f0, SR_44K, v.f1, v.f2), SR_44K)
-        expect(classify(mfcc, set)).toBe(v.viseme)
+        expect(nearestViseme(mfcc, templates)).toBe(v.viseme)
       }
     }
   })
 
   it('keeps white noise farther from every template than any vowel is from its own', () => {
-    const set = buildSet(SR_48K)
+    const templates = buildTemplates(SR_48K)
     let vowelMax = 0
     for (const v of FAKE_VOWELS) {
       for (const f0 of [180, 220, 260]) {
         const mfcc = mfccOf(synthVowel(f0, SR_48K, v.f1, v.f2), SR_48K)
-        const own = set.templates.find((t) => t.viseme === v.viseme)
+        const own = templates.find((t) => t.viseme === v.viseme)
         if (!own) {
           throw new Error(`missing template for ${v.viseme}`)
         }
-        const d = nearestTemplate(mfcc, [own]).distance
+        const d = euclid(mfcc, own.mfcc)
         if (d > vowelMax) {
           vowelMax = d
         }
@@ -150,8 +171,8 @@ describe('vowelClassifier', () => {
       }
     }
     let noiseMin = Number.POSITIVE_INFINITY
-    for (const t of set.templates) {
-      const d = nearestTemplate(mean, [t]).distance
+    for (const t of templates) {
+      const d = euclid(mean, t.mfcc)
       if (d < noiseMin) {
         noiseMin = d
       }

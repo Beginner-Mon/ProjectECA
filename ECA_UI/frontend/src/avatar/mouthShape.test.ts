@@ -5,7 +5,7 @@ import {
   articulationFeatures,
   shapeWeights,
 } from './mouthShape'
-import { MFCC_COEFFS, createFeatureExtractor } from './vowelClassifier'
+import { MFCC_COEFFS, createFeatureExtractor } from './mfcc'
 
 /**
  * Language-independent mouth shape (Phase B3, DEV-only). Synthetic signals
@@ -114,5 +114,72 @@ describe('mouthShape', () => {
     expect(Math.abs(np[1])).toBeLessThan(0.15)
     expect(Math.abs(nq[0] - 1)).toBeLessThan(0.15)
     expect(Math.abs(nq[1] - 1)).toBeLessThan(0.15)
+  })
+
+  it('snapshot: null when fresh, four finite lo < hi numbers after learning', () => {
+    const range = new VoiceRange()
+    expect(range.snapshot()).toBeNull()
+    // 800 voiced frames push the decayed total (~591) past the 480 gate.
+    // (600 would sit at ~477 — just short — so the count is 800, not 600.)
+    const P = [5.6, -5]
+    const Q = [7.0, 5]
+    for (let n = 0; n < 800; n++) {
+      range.update(n % 2 === 0 ? P : Q)
+    }
+    const snap = range.snapshot()
+    if (snap === null) {
+      throw new Error('snapshot should be non-null after 800 updates')
+    }
+    expect(snap.length).toBe(4)
+    for (const v of snap) {
+      expect(Number.isFinite(v)).toBe(true)
+    }
+    expect(snap[0]).toBeLessThan(snap[1])
+    expect(snap[2]).toBeLessThan(snap[3])
+  })
+
+  it('seed: adopts a learned range, ignores invalid input', () => {
+    const range = new VoiceRange()
+    range.seed([6.0, 6.5, -5, 0])
+    const a = new Float32Array(2)
+    const b = new Float32Array(2)
+    range.normalize([6.0, -5], a)
+    range.normalize([6.5, 0], b)
+    expect(a[0]).toBe(0)
+    expect(a[1]).toBe(0)
+    expect(b[0]).toBe(1)
+    expect(b[1]).toBe(1)
+
+    const bad: ArrayLike<number>[] = [
+      [6.0, 6.5, -5],
+      [6.0, 6.5, -5, 0, 1],
+      [Number.NaN, 6.5, -5, 0],
+      [6.5, 6.0, -5, 0],
+      [6.0, 6.5, 0, -5],
+      [1.0, 6.5, -5, 0],
+      [6.0, 6.5, -5, 50],
+    ]
+    for (const s of bad) {
+      const r = new VoiceRange()
+      r.seed(s)
+      const out = new Float32Array(2)
+      r.normalize([5.95, -6.2], out)
+      expect(out[0]).toBe(0)
+      expect(out[1]).toBe(0)
+    }
+  })
+
+  it('reset: returns to built-ins after seed', () => {
+    const range = new VoiceRange()
+    range.seed([6.0, 6.5, -5, 0])
+    range.reset()
+    const lo = new Float32Array(2)
+    const hi = new Float32Array(2)
+    range.normalize([5.95, -6.2], lo)
+    range.normalize([6.77, 2.1], hi)
+    expect(lo[0]).toBe(0)
+    expect(lo[1]).toBe(0)
+    expect(hi[0]).toBe(1)
+    expect(hi[1]).toBe(1)
   })
 })

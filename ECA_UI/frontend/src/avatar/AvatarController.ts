@@ -8,7 +8,7 @@ import { BlinkController } from './BlinkController'
 import { EyeController } from './EyeController'
 import { HeadController } from './HeadController'
 import { IdleBehaviorController } from './IdleBehaviorController'
-import { LipSyncController } from './LipSyncController'
+import { LipSyncController, type LipSyncTuning } from './LipSyncController'
 import { GestureFaceController } from './GestureFaceController'
 import { GestureCameraTrack } from './GestureCameraTrack'
 
@@ -148,6 +148,16 @@ export class AvatarController {
   /** Currently selected viseme label, or '-' (debug/verification only). */
   debugViseme(): string {
     return this.lipSync.debugViseme()
+  }
+
+  /** DEV vowel lip-sync timings (forwards to LipSyncController). */
+  get lipSyncTuning(): Readonly<LipSyncTuning> {
+    return this.lipSync.tuning
+  }
+
+  /** DEV vowel lip-sync timing patch (forwards to LipSyncController). */
+  setLipSyncTuning(patch: Partial<LipSyncTuning>): void {
+    this.lipSync.setTuning(patch)
   }
 
   /** Feed normalized mouse gaze in [-1..1] (x right+, y up+). */

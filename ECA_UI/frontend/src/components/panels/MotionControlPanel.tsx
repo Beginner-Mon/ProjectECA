@@ -5,6 +5,7 @@ import { ScrollArea } from '../ui/scroll-area'
 import { useMotion } from '../../hooks/useMotion'
 import type { CameraMode, CharState } from '../../lib/AnimationStates'
 import { CANONICAL_EMOTIONS, type CanonicalEmotion } from '../../avatar/AvatarProfile'
+import { DEFAULT_VOWEL_TUNING, type LipSyncTuning } from '../../avatar/LipSyncController'
 import { getManifest } from '../../avatar/vrmManifest'
 import { fetchMotionStatus } from '../../lib/api'
 
@@ -66,6 +67,7 @@ export default function MotionControlPanel() {
   const [avatarMode, setAvatarMode] = useState<string>('—')
   const [vowelLipSync, setVowelLipSync] = useState<boolean>(false)
   const [viseme, setViseme] = useState<string>('-')
+  const [lipTuning, setLipTuning] = useState<LipSyncTuning>({ ...DEFAULT_VOWEL_TUNING })
 
   // Filter motion files so Character state actions don't leak into the debug picker.
   // The picker used to list bundled sample .bvh files under asset/motions/
@@ -94,9 +96,25 @@ export default function MotionControlPanel() {
       const controller = avatarRef.current
       setVowelLipSync(controller?.vowelLipSync ?? false)
       setViseme(controller?.debugViseme() ?? '-')
+      const live = controller?.lipSyncTuning
+      if (live) {
+        setLipTuning((prev) =>
+          prev.attackPerSec === live.attackPerSec &&
+          prev.releasePerSec === live.releasePerSec &&
+          prev.minDwellMs === live.minDwellMs &&
+          prev.shapePerSec === live.shapePerSec
+            ? prev
+            : { ...live },
+        )
+      }
     }, 100)
     return () => clearInterval(id)
   }, [avatarRef])
+
+  const updateLipTuning = (patch: Partial<LipSyncTuning>) => {
+    avatarRef.current?.setLipSyncTuning(patch)
+    setLipTuning((prev) => ({ ...prev, ...patch }))
+  }
 
   const triggerEmotion = (emotion: CanonicalEmotion) => {
     const controller = avatarRef.current
@@ -319,6 +337,62 @@ export default function MotionControlPanel() {
                   className="h-3.5 w-3.5 accent-primary"
                 />
                 <span className="w-16 text-right tabular-nums">{t('motion.viseme')} {viseme}</span>
+              </label>
+
+              <label className="flex items-center justify-between gap-2 text-[11px] text-muted-foreground">
+                {t('motion.lip_attack')}
+                <input
+                  type="range"
+                  min={4}
+                  max={60}
+                  step={1}
+                  value={lipTuning.attackPerSec}
+                  onChange={(e) => updateLipTuning({ attackPerSec: Number(e.target.value) })}
+                  className="flex-1 h-1 accent-primary"
+                />
+                <span className="w-8 text-right tabular-nums">{lipTuning.attackPerSec}</span>
+              </label>
+
+              <label className="flex items-center justify-between gap-2 text-[11px] text-muted-foreground">
+                {t('motion.lip_release')}
+                <input
+                  type="range"
+                  min={2}
+                  max={30}
+                  step={1}
+                  value={lipTuning.releasePerSec}
+                  onChange={(e) => updateLipTuning({ releasePerSec: Number(e.target.value) })}
+                  className="flex-1 h-1 accent-primary"
+                />
+                <span className="w-8 text-right tabular-nums">{lipTuning.releasePerSec}</span>
+              </label>
+
+              <label className="flex items-center justify-between gap-2 text-[11px] text-muted-foreground">
+                {t('motion.lip_dwell')}
+                <input
+                  type="range"
+                  min={0}
+                  max={400}
+                  step={10}
+                  value={lipTuning.minDwellMs}
+                  onChange={(e) => updateLipTuning({ minDwellMs: Number(e.target.value) })}
+                  className="flex-1 h-1 accent-primary"
+                />
+                <span className="w-10 text-right tabular-nums">{lipTuning.minDwellMs}ms</span>
+              </label>
+
+              <label className="flex items-center justify-between gap-2 text-[11px] text-muted-foreground">
+                {t('motion.lip_shape')}
+                <input
+                  type="range"
+                  min={4}
+                  max={40}
+                  step={1}
+                  value={lipTuning.shapePerSec}
+                  onChange={(e) => updateLipTuning({ shapePerSec: Number(e.target.value) })}
+                  className="flex-1 h-1 accent-primary"
+                />
+                <span className="w-8 text-right tabular-nums">{lipTuning.shapePerSec}</span>
               </label>
 
               <div className="flex justify-between text-[10px] text-muted-foreground/60">

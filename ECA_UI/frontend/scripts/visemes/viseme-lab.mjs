@@ -15,13 +15,14 @@ import {
  *   evaluate  --audio <dir> --words <json> --templates <file.ts> [--report <file.md>]
  *
  * Frames are 1024 samples at a step of round(sampleRate / 60). A frame is a
- * vowel frame when its low-band (100–1000 Hz) power is >= 0.25x the file
- * maximum. A run is consecutive vowel frames; runs shorter than 3 frames
- * are dropped. Items with "take": "first-half" (diphthong tails like "toe")
- * keep only the first half of each run.
+ * vowel frame when its low-band (100–1000 Hz) power is >= VOWEL_FRAME_RATIO
+ * of the file maximum. A run is consecutive vowel frames; runs shorter than
+ * 3 frames are dropped. Items with "take": "first-half" (diphthong tails like
+ * "toe") keep only the first half of each run.
  */
 
 const FRAME_SIZE = 1024
+const VOWEL_FRAME_RATIO = 0.05
 const VISEMES = ['A', 'I', 'U', 'E', 'O']
 
 // ── WAV ─────────────────────────────────────────────────────────────────
@@ -92,7 +93,7 @@ function analyzeFile(wavPath, take) {
       maxP = f.power
     }
   }
-  const threshold = 0.25 * maxP
+  const threshold = VOWEL_FRAME_RATIO * maxP
   const runs = []
   let cur = []
   const flush = () => {
@@ -132,6 +133,20 @@ function majorityLabel(counts) {
   return best
 }
 
+/** All labels tied for the highest count (VISEMES order). Empty counts give []. */
+function topLabels(counts) {
+  let best = 0
+  for (const v of VISEMES) {
+    if (counts[v] > best) {
+      best = counts[v]
+    }
+  }
+  if (best === 0) {
+    return []
+  }
+  return VISEMES.filter((v) => counts[v] === best)
+}
+
 // ── calibrate ───────────────────────────────────────────────────────────
 
 function cmdCalibrate(opts) {
@@ -140,8 +155,7 @@ function cmdCalibrate(opts) {
   for (const item of words.calibration) {
     const wav = resolve(opts.audio, `cal_${item.word}.wav`)
     const a = analyzeFile(wav, item.take)
-    const warn = a.runs.length !== 3 ? '  [warn] runs != 3 — TTS may have misread this word' : ''
-    console.log(`${item.word}: ${a.kept.length} vowel frames, ${a.runs.length} runs${warn}`)
+    console.log(`${item.word}: ${a.kept.length} vowel frames, ${a.runs.length} runs`)
     if (a.kept.length === 0) {
       console.log(`  [warn] ${item.word}: no vowel frames — skipping this word, no template emitted`)
       continue
@@ -241,11 +255,13 @@ async function cmdEvaluate(opts) {
       }
     }
     const n = a.kept.length
-    const maj = majorityLabel(counts)
+    const tops = topLabels(counts)
+    const tied = tops.length > 1
+    const maj = n === 0 ? '-' : tied ? tops.join('/') : tops[0]
     const pct = n === 0 ? 0 : (100 * counts[item.viseme]) / n
-    const ok = n > 0 && maj === item.viseme
-    wordResults.push({ word: item.word, expected: item.viseme, majority: maj, ok })
-    const result = ok ? 'OK' : n === 0 ? 'SAI (0 frame)' : 'SAI'
+    const ok = n > 0 && !tied && tops[0] === item.viseme
+    wordResults.push({ word: item.word, expected: item.viseme, majority: maj, tops, ok })
+    const result = ok ? 'OK' : n === 0 ? 'SAI (0 frame)' : tied ? 'SAI (hoà)' : 'SAI'
     log(
       `| ${item.word} | ${item.viseme} | ${maj} | ${n} | ${n === 0 ? 'n/a' : `${pct.toFixed(1)}%`} | ${result} |`,
     )
@@ -282,6 +298,14 @@ async function cmdEvaluate(opts) {
   log(`- Majority đúng: ${passCount}/10 (cần ≥ 8)`)
   log(`- Mỗi viseme có ≥ 1/2 từ đúng: ${VISEMES.map((v) => `${v} ${perViseme[v]}`).join(', ')}`)
   log(`- Kết luận: ${gate ? 'ĐẠT' : 'KHÔNG ĐẠT'}`)
+  const familyCount = wordResults.filter(
+    (r) =>
+      r.ok ||
+      (r.tops.length > 0 &&
+        (r.expected === 'U' || r.expected === 'O') &&
+        r.tops.every((t) => t === 'U' || t === 'O')),
+  ).length
+  log(`- Đúng khi coi U/O là một họ: ${familyCount}/10`)
 
   // 4. Sentence timelines: 100 ms cells, majority of kept frames with
   // distance <= rejectDistance, else '-'.

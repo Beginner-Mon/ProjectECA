@@ -370,20 +370,30 @@ def _motion_line(messages: list) -> str:
     return ""
 
 
-_VOICE_LINE = "You are speaking this reply aloud in your own voice; the user hears you."
-
-
-def _build_body_state_note(messages: list, speaks_aloud: bool = False) -> str:
-    """Thân thể của nhân vật ở lượt này: cử động (nếu có) và giọng nói (nếu bật).
+def _build_body_state_note(messages: list) -> str:
+    """Thân thể của nhân vật ở lượt này: chỉ cử động.
 
     Rỗng khi không có gì để nói; khối không có dữ liệu không vào prompt.
-    Không nhắc cơ chế.
     """
-    lines = [line for line in (_motion_line(messages),
-                               _VOICE_LINE if speaks_aloud else "") if line]
-    if not lines:
+    line = _motion_line(messages)
+    if not line:
         return ""
-    return "\n\n## Your body this turn\n" + "\n".join(lines)
+    return "\n\n## Your body this turn\n" + line
+
+
+_VOICE_ON_LINE = "Voice replies are on in the app: the user is hearing this reply in your voice."
+_VOICE_OFF_LINE = "Voice replies are off in the app: the user reads your answer."
+
+
+def _build_app_state_note(speaks_aloud: bool | None) -> str:
+    """Cài đặt giọng nói của app ở lượt này: bật, tắt, hay không rõ.
+
+    Không rõ (thiếu cờ) thì rỗng; khối không có dữ liệu không vào prompt.
+    """
+    if speaks_aloud is None:
+        return ""
+    line = _VOICE_ON_LINE if speaks_aloud else _VOICE_OFF_LINE
+    return "\n\n## The app this turn\n" + line
 
 
 def _build_about_you(messages: list) -> str:
@@ -633,12 +643,10 @@ async def synthesizer_node(state: AgentState, config: RunnableConfig) -> dict:
     # Body state sits between persona and task (plan T4; T8 slots About-you
     # after it). Absent when there is no motion message, so chat turns keep
     # the exact prompt they had before.
-    body_note = _build_body_state_note(
-        state.get("messages", []),
-        speaks_aloud=bool(config["configurable"].get("speaks_aloud")),
-    )
+    body_note = _build_body_state_note(state.get("messages", []))
+    app_note = _build_app_state_note(config["configurable"].get("speaks_aloud"))
     about_you = _build_about_you(state.get("messages", []))
-    middle_blocks = [b for b in (body_note, about_you) if b]
+    middle_blocks = [b for b in (body_note, app_note, about_you) if b]
     middle = ("\n\n".join(middle_blocks) + "\n\n") if middle_blocks else ""
     system = f"{persona_system}\n\n---\n\n{middle}{task_system}"
 

@@ -151,30 +151,110 @@ def test_body_note_empty_without_motion_or_on_broken_json():
     assert _build_body_state_note([_motion_tm("{not json")]) == ""
 
 
-def test_voice_line_alone():
-    note = _build_body_state_note([], speaks_aloud=True)
+def test_app_note_on_names_voice_setting():
+    from langgraph_agents.nodes.synthesizer import _build_app_state_note
+
+    note = _build_app_state_note(True)
+    assert "## The app this turn" in note
+    assert ("Voice replies are on in the app: the user is hearing "
+            "this reply in your voice.") in note
+
+
+def test_app_note_off_names_voice_setting():
+    from langgraph_agents.nodes.synthesizer import _build_app_state_note
+
+    note = _build_app_state_note(False)
+    assert "## The app this turn" in note
+    assert ("Voice replies are off in the app: "
+            "the user reads your answer.") in note
+
+
+def test_app_note_none_is_empty():
+    from langgraph_agents.nodes.synthesizer import _build_app_state_note
+
+    assert _build_app_state_note(None) == ""
+
+
+def test_body_note_takes_no_voice_flag():
+    with pytest.raises(TypeError):
+        _build_body_state_note([], speaks_aloud=True)
+
+
+def test_body_note_never_mentions_voice_replies():
+    note = _build_body_state_note([_motion_tm({"state": "unavailable"})])
     assert "## Your body this turn" in note
-    assert "You are speaking this reply aloud in your own voice; the user hears you." in note
-
-
-def test_voice_line_with_motion():
-    note = _build_body_state_note(
-        [_motion_tm({"state": "queued", "prompt": "squat"})],
-        speaks_aloud=True,
-    )
-    assert note.count("## Your body this turn") == 1
-    assert 'You are about to show "squat"' in note
-    assert "You are speaking this reply aloud in your own voice; the user hears you." in note
-
-
-def test_no_voice_line_by_default():
+    assert "Voice replies" not in note
     assert _build_body_state_note([]) == ""
-    assert _build_body_state_note([], speaks_aloud=False) == ""
 
 
 def test_motion_only_output_unchanged():
     note = _build_body_state_note([_motion_tm({"state": "unavailable"})])
     assert "speaking this reply aloud" not in note
+
+
+@pytest.mark.unit
+@pytest.mark.asyncio
+async def test_synthesizer_prompt_marks_voice_off():
+    """speaks_aloud=False: prompt báo app đang tắt giọng nói."""
+    from langgraph_agents.nodes import synthesizer as syn_mod
+
+    state = {
+        "messages": [_tm("kb_search", _KB)],
+        "resolved_query": "dau lung",
+        "required_outputs": [],
+        "needs_clarification": False,
+        "total_tokens": 0,
+    }
+    config = {"configurable": {
+        "request_id": "r", "persona_id": "anne", "query": "dau lung",
+        "locale": "vi", "speaks_aloud": False,
+    }}
+    captured: dict = {}
+    with patch.object(syn_mod, "get_chat_model",
+                      return_value=_capturing_llm(captured)):
+        await syn_mod.synthesizer_node(state, config)
+
+    assert captured.get("msgs"), "synthesizer never called the LLM"
+    prompt = "\n".join(
+        str(getattr(m, "content", "")) for m in captured["msgs"])
+    assert "Voice replies are off in the app" in prompt
+
+
+@pytest.mark.unit
+@pytest.mark.asyncio
+async def test_synthesizer_prompt_omits_app_block_without_flag():
+    """Thiếu cờ speaks_aloud: prompt không có khối app."""
+    from langgraph_agents.nodes import synthesizer as syn_mod
+
+    state = {
+        "messages": [_tm("kb_search", _KB)],
+        "resolved_query": "dau lung",
+        "required_outputs": [],
+        "needs_clarification": False,
+        "total_tokens": 0,
+    }
+    config = {"configurable": {
+        "request_id": "r", "persona_id": "anne", "query": "dau lung",
+        "locale": "vi",
+    }}
+    captured: dict = {}
+    with patch.object(syn_mod, "get_chat_model",
+                      return_value=_capturing_llm(captured)):
+        await syn_mod.synthesizer_node(state, config)
+
+    assert captured.get("msgs"), "synthesizer never called the LLM"
+    prompt = "\n".join(
+        str(getattr(m, "content", "")) for m in captured["msgs"])
+    assert "## The app this turn" not in prompt
+
+
+def test_anne_identity_core_claims_a_voice():
+    from langgraph_agents.nodes._persona_loader import (
+        build_persona_prompt, get_persona,
+    )
+
+    prompt = build_persona_prompt(get_persona("anne", "en"), "chat")
+    assert "You have a voice of your own." in prompt
 
 
 def test_refuse_task_is_narrow_not_whole_turn():

@@ -364,6 +364,15 @@ Nguồn: `docs/worklogs/01-10-2026.md`, `02-10-2026.md`, `02-10-2026-round3.md`,
 - [ ] ⚪ **Gộp Kimodo vào cổng tool** — thử ba cách viết mô tả tool, không cách nào đạt cả hai
       ngưỡng (gọi đủ và không gọi thừa); hiện Kimodo chạy theo tag `motion_descriptor`. Thử lại
       khi đổi model. Khi số tool tăng, cân nhắc lớp lọc top-k tool theo mô tả.
+- [ ] 🟡 **Câu `stage_composing` của Bronya, Miku, Miki còn nói "soạn/viết"** (ghi
+      09/10, nhánh `feature/stage-labels`); đổi khi chuyển đổi ba nhân vật đó.
+- [ ] ⚪ **Kiến thức về hệ thống cho nhân vật**: viết tài liệu nhìn từ phía người
+      dùng và một tool đọc tài liệu, chạy in-process. Tri quyết để sau (09/10).
+      Không dùng bảng năng lực viết tay.
+- [ ] 🟡 **Ở lượt có tra cứu, model mất 3–7 giây mới ra chữ đầu tiên** (đo 09/10, 6
+      lượt local); chưa tách nguyên nhân là suy nghĩ ngầm hay prompt dài.
+- [ ] 🟡 **Nhãn nhiều nguồn được nối thành một dòng**; bong bóng trên đầu nhân vật
+      (`ThinkingBubble`, `whitespace-nowrap`) có thể dài trên màn hình hẹp.
 
 ## 🟡 Nên làm
 

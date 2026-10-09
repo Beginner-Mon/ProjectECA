@@ -3,6 +3,9 @@
 > Viết 11-08-2026. Làm context để add PERSONA cho character.
 > Cập nhật 04-10-2026 (grader-contract): hai chỗ kiểm, grader LLM chấm,
 > câu an toàn + dòng nguồn do code phát, retry viết thêm phần thiếu.
+> Cập nhật 09-10-2026 (stage-labels): nhãn trạng thái theo tin backend
+> (thinking → nhãn nguồn → synthesizer started → chữ, không đồng hồ);
+> khối "Your body this turn" thêm câu giọng nói khi lượt đọc thành tiếng.
 
 ---
 
@@ -217,6 +220,17 @@ system = f"{persona_system}\n\n---\n\n{task_system}"  # ghép với task prompt
 Câu mở đầu (`red_flag_screen`) do code phát vào stream trước chunk LLM đầu;
 `final_answer` = câu mở đầu + chữ LLM. Lượt viết thêm chỉ nối phần thiếu,
 không viết lại. Bất biến: chuỗi đã stream bằng đúng `final_answer`.
+
+Nhãn trạng thái trên giao diện đi đúng thứ tự tin backend gửi: thinking lúc
+gửi → nhãn của mọi nguồn đã tra (chỉ ở lượt có tra cứu) → composing từ lúc
+synthesizer báo bắt đầu (ngay khi node chạy, không đợi chữ đầu tiên của LLM)
+→ chữ. Không đồng hồ dự phòng: lượt không tra nguồn nào giữ nhãn hiện tại
+tới khi synthesizer bắt đầu.
+
+Khối "Your body this turn" trong prompt gồm dòng cử động (nếu có) và câu
+giọng nói "You are speaking this reply aloud in your own voice; the user
+hears you." khi lượt này được đọc thành tiếng (`speaks_aloud` từ
+`output_mode` + TTS bật). Rỗng khi không có gì để nói.
 
 #### 2.5.3 4 mode prompt templates
 

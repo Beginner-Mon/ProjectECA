@@ -30,7 +30,7 @@ Mỗi frame hình, đọc 1024 mẫu audio gần nhất từ `AnalyserNode` sẵ
    - **độ mở**: vùng năng lượng thấp (250–1200 Hz) nằm cao hay thấp, ứng với độ mở hàm;
    - **độ sáng**: năng lượng 1.6–3.5 kHz so với 0.25–1.2 kHz, ứng với môi dẹt hay tròn.
 3. Chuẩn hoá hai số theo dải giá trị của chính giọng đang nói. Dải này được học trong lúc chạy
-   (phân vị 10–90 % trên histogram có quên dần) và cần khoảng 8 giây tiếng nói.
+   (phân vị 10–90 % trên histogram có quên dần) và cần khoảng 10 giây tiếng nói.
 4. Pha 5 khuôn theo khoảng cách tới 5 điểm neo cố định trong mặt phẳng (độ mở, độ sáng).
 5. Độ mở miệng tổng thể vẫn lấy từ RMS, với nhịp mềm hơn kiểu cũ (mở 16/s, khép 6/s, đổi khuôn 12/s)
    để miệng không khép hẳn giữa các âm tiết.

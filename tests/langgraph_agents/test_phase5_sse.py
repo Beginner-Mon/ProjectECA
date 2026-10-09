@@ -675,6 +675,88 @@ def test_config_not_speaking_in_text_mode(api_client, monkeypatch):
     assert captured["config"]["configurable"]["speaks_aloud"] is False
 
 
+def _make_fake_astream_stage_then_token():
+    """Node tự báo synthesizer_started trước khi chữ đầu tiên tới."""
+
+    async def fake_stream(state, config, stream_mode=None):
+        yield ("updates", {"planner": {}})
+        yield ("custom", {"stage": "synthesizer_started"})
+        yield ("custom", {"content": "A"})
+        yield ("updates", {"synthesizer": {
+            "final_answer": "A",
+            "total_tokens": 1,
+        }})
+
+    return fake_stream
+
+
+@pytest.mark.unit
+def test_stage_started_sent_before_tools_finish(api_client, monkeypatch):
+    """Tin synthesizer_started của node thành đúng một sự kiện stage,
+    đứng trước token đầu tiên, và không sinh ra token nào."""
+    client, _, mock_graph = api_client
+    mock_graph.astream = _make_fake_astream_stage_then_token()
+    _set_graph(mock_graph)
+
+    import langgraph_agents.api.main as api_module
+
+    async def fake_write(*args, **kwargs):
+        return None
+
+    monkeypatch.setattr(api_module, "write_session_turn", fake_write)
+
+    resp = client.post("/chat", json={"query": "hello"})
+    assert resp.status_code == 200
+    events = _parse_sse_stream(resp.content)
+    synth_started = [e for e in events
+                     if e["event"] == "stage"
+                     and e["data"].get("node") == "synthesizer"
+                     and e["data"].get("status") == "started"]
+    assert len(synth_started) == 1
+    stage_idx = next(i for i, e in enumerate(events)
+                     if e["event"] == "stage"
+                     and e["data"].get("node") == "synthesizer"
+                     and e["data"].get("status") == "started")
+    token_idx = next(i for i, e in enumerate(events) if e["event"] == "token")
+    assert stage_idx < token_idx
+    assert "".join(e["data"]["content"] for e in events
+                   if e["event"] == "token") == "A"
+
+
+@pytest.mark.unit
+def test_stage_started_only_once(api_client, monkeypatch):
+    """Node báo hai lần thì giao diện vẫn chỉ thấy một sự kiện started."""
+    client, _, mock_graph = api_client
+
+    async def fake_stream(state, config, stream_mode=None):
+        yield ("custom", {"stage": "synthesizer_started"})
+        yield ("custom", {"stage": "synthesizer_started"})
+        yield ("custom", {"content": "A"})
+        yield ("updates", {"synthesizer": {
+            "final_answer": "A",
+            "total_tokens": 1,
+        }})
+
+    mock_graph.astream = fake_stream
+    _set_graph(mock_graph)
+
+    import langgraph_agents.api.main as api_module
+
+    async def fake_write(*args, **kwargs):
+        return None
+
+    monkeypatch.setattr(api_module, "write_session_turn", fake_write)
+
+    resp = client.post("/chat", json={"query": "hello"})
+    assert resp.status_code == 200
+    events = _parse_sse_stream(resp.content)
+    started = [e for e in events
+               if e["event"] == "stage"
+               and e["data"].get("node") == "synthesizer"
+               and e["data"].get("status") == "started"]
+    assert len(started) == 1
+
+
 @pytest.mark.unit
 def test_tts_endpoint_503_when_not_configured(api_client, monkeypatch):
     """POST /tts must refuse rather than open a stream nothing will feed."""

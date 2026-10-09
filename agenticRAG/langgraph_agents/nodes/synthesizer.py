@@ -563,6 +563,16 @@ async def synthesizer_node(state: AgentState, config: RunnableConfig) -> dict:
                      and bool(previous.strip()))
     is_rewrite = state.get("retry_count", 0) >= 1 and not addition_mode
 
+    try:
+        writer = get_stream_writer()
+    except RuntimeError:
+        writer = None
+    if writer is not None and state.get("retry_count", 0) == 0:
+        # Báo cho giao diện là mọi việc tra cứu đã xong và sắp có câu trả lời.
+        # Gửi ngay lúc node chạy, không đợi chữ đầu tiên của LLM.
+        writer({"stage": "synthesizer_started"})
+        await asyncio.sleep(0)
+
     mode = _derive_mode(state)
 
     logger.info("node_start", extra={
@@ -633,11 +643,6 @@ async def synthesizer_node(state: AgentState, config: RunnableConfig) -> dict:
     system = f"{persona_system}\n\n---\n\n{middle}{task_system}"
 
     llm = get_chat_model("synthesizer")
-
-    try:
-        writer = get_stream_writer()
-    except RuntimeError:
-        writer = None
 
     # Include prior conversation (loaded by memory node into state messages)
     # so the model has context for follow-ups ("what did I just say"). Keep

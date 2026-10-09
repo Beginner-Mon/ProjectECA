@@ -640,6 +640,13 @@ async def _stream_chat(req, request_id, config, state, background_tasks, request
                 # synthesizer sends it ahead of the text, already filtered by
                 # the health rules. The browser applies it to the avatar's face.
                 yield encode_event("emotion", payload["emotion"])
+            elif isinstance(payload, dict) and payload.get("stage") == "synthesizer_started":
+                if not conversation_stage_started:
+                    yield encode_event(
+                        "stage",
+                        {"node": "synthesizer", "status": "started"},
+                    )
+                    conversation_stage_started = True
             elif isinstance(payload, dict) and "content" in payload:
                 if not conversation_stage_started:
                     yield encode_event(

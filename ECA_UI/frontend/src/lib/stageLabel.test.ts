@@ -55,14 +55,54 @@ describe('stageLabelFor — nhãn theo nguồn thật (plan T6)', () => {
     ).toBe(vi.stage_video)
   })
 
-  it('retriever không gọi gì, hoặc synthesizer started, ra composing', () => {
+  it('retriever gọi nhiều nguồn ra đủ nhãn theo đúng thứ tự gọi', () => {
+    expect(
+      stageLabelFor(
+        { node: 'retriever_agent', status: 'complete', sources: ['library', 'memory'] },
+        vi,
+        vi.stage_thinking,
+      ),
+    ).toBe(`${vi.stage_searching} ${vi.stage_recalling}`)
+  })
+
+  it('thứ tự nhãn theo đúng thứ tự nguồn', () => {
+    expect(
+      stageLabelFor(
+        { node: 'retriever_agent', status: 'complete', sources: ['memory', 'library'] },
+        vi,
+        vi.stage_thinking,
+      ),
+    ).toBe(`${vi.stage_recalling} ${vi.stage_searching}`)
+  })
+
+  it('nguồn lạ bị bỏ, chỉ giữ nhãn nguồn biết', () => {
+    expect(
+      stageLabelFor(
+        { node: 'retriever_agent', status: 'complete', sources: ['library', 'unknown-source'] },
+        vi,
+        vi.stage_thinking,
+      ),
+    ).toBe(vi.stage_searching)
+  })
+
+  it('retriever không gọi gì thì giữ nhãn hiện tại', () => {
     expect(
       stageLabelFor(
         { node: 'retriever_agent', status: 'complete', sources: [] },
         vi,
         vi.stage_thinking,
       ),
-    ).toBe(vi.stage_composing)
+    ).toBe(vi.stage_thinking)
+    expect(
+      stageLabelFor(
+        { node: 'retriever_agent', status: 'complete' },
+        vi,
+        vi.stage_thinking,
+      ),
+    ).toBe(vi.stage_thinking)
+  })
+
+  it('synthesizer started ra composing', () => {
     expect(
       stageLabelFor({ node: 'synthesizer', status: 'started' }, vi, vi.stage_searching),
     ).toBe(vi.stage_composing)

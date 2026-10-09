@@ -111,7 +111,6 @@ export function ChatProvider({ children }: { children: ReactNode }) {
   const [sessionsDirty, setSessionsDirty] = useState(true)
   const [isSwitching, setIsSwitching] = useState(false)
   const switchingRef = useRef(false)
-  const stageTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null)
 
   // Voice input = dictation into the chat box (lib/dictation.ts). The mic used
   // to record a clip that was shown as an audio bubble and never reached the
@@ -391,7 +390,6 @@ export function ChatProvider({ children }: { children: ReactNode }) {
    * once the Sessions panel is wired up. */
   const startNewSession = useCallback(() => {
     abortControllerRef.current?.abort()
-    if (stageTimeoutRef.current) clearTimeout(stageTimeoutRef.current)
     // The old conversation's voice does not follow the user into a new one —
     // including a replay the abort above would not reach.
     speechPlayer.stop()
@@ -527,7 +525,6 @@ export function ChatProvider({ children }: { children: ReactNode }) {
 
   const handleStop = useCallback(() => {
     abortControllerRef.current?.abort()
-    if (stageTimeoutRef.current) clearTimeout(stageTimeoutRef.current)
     setIsTyping(false)
     setStageLabel(null)
     setIsGenerating(false)
@@ -565,12 +562,6 @@ export function ChatProvider({ children }: { children: ReactNode }) {
     // Trung tính (thinking) — nhãn nguồn thật tới sau qua sự kiện stage (T6).
     setIsTyping(false)
     setStageLabel(stageLabelFor(null, uiRef.current, null))
-    // Fallback: nếu backend không emit retriever (chat thuần hoặc miss event)
-    // thì sau 2.5s tự chuyển từ THINKING sang COMPOSING để không treo
-    if (stageTimeoutRef.current) clearTimeout(stageTimeoutRef.current)
-    stageTimeoutRef.current = setTimeout(() => {
-      setStageLabel((prev) => (prev === uiRef.current.stage_thinking ? uiRef.current.stage_composing : prev))
-    }, 2500)
     setIsGenerating(true)
     thinkingRef.current = true
     void transitionTo('thinking_intro')
@@ -612,7 +603,6 @@ export function ChatProvider({ children }: { children: ReactNode }) {
     const lifecycle = createTurnLifecycle(speech, {
       isCurrent,
       releaseComposing: () => {
-        if (stageTimeoutRef.current) clearTimeout(stageTimeoutRef.current)
         setStageLabel(null)
         setIsGenerating(false)
         endThinking()
@@ -673,11 +663,9 @@ export function ChatProvider({ children }: { children: ReactNode }) {
               setIsTyping(false)
               setStageLabel((prev) => stageLabelFor({ node, status }, uiRef.current, prev))
             } else if (node === 'retriever_agent' && status === 'complete') {
-              if (stageTimeoutRef.current) clearTimeout(stageTimeoutRef.current)
               setStageLabel((prev) => stageLabelFor({ node, status, sources }, uiRef.current, prev))
             } else if (node === 'synthesizer' && status === 'started') {
-              // Giữ COMPOSING tới token đầu để che TTFT, không tắt ở đây
-              if (stageTimeoutRef.current) clearTimeout(stageTimeoutRef.current)
+              // Nhãn cuối hiện từ lúc backend báo synthesizer bắt đầu tới chữ đầu tiên.
               setStageLabel((prev) => stageLabelFor({ node, status }, uiRef.current, prev))
             }
           } else if (type === 'emotion') {
@@ -687,7 +675,6 @@ export function ChatProvider({ children }: { children: ReactNode }) {
             const emotion = parseReplyEmotion(data)
             if (emotion) avatarRef.current?.setEmotion(emotion.name, emotion.intensity, REPLY_EMOTION_FADE_MS)
           } else if (type === 'token') {
-            if (stageTimeoutRef.current) clearTimeout(stageTimeoutRef.current)
             setStageLabel(null)
             setIsTyping(false)
             endThinking()
@@ -732,7 +719,6 @@ export function ChatProvider({ children }: { children: ReactNode }) {
               notice(copy.motion_busy)
             } else if (m.job_id) {
               const jobId = m.job_id
-              if (stageTimeoutRef.current) clearTimeout(stageTimeoutRef.current)
               setStageLabel(copy.motion_rendering)
               notice(copy.motion_rendering)
               void (async () => {

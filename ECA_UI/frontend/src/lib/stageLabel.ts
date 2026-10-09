@@ -1,10 +1,9 @@
 /**
- * Nhãn trạng thái chat theo nguồn tra cứu thật (plan T6).
+ * Nhãn trạng thái chat theo tin backend gửi (stage-labels).
  *
- * Trước đây ChatContext đặt cứng `stage_searching` ("Đang tìm trong thư
- * viện...") cho MỌI lượt — kể cả "xin chào" không tra gì. Giờ backend gửi
- * kèm `sources` (id nguồn từ bảng sources.py) trong sự kiện stage của
- * retriever_agent, và hàm thuần này quyết định nhãn kế tiếp.
+ * Thứ tự nhãn: thinking lúc gửi → nhãn nguồn (chỉ ở lượt có tra) →
+ * composing từ lúc backend báo synthesizer bắt đầu → chữ. Không đồng hồ,
+ * không đoán: nhãn chỉ đổi khi có sự kiện stage thật.
  */
 import type { UiStrings } from './characterCopy'
 
@@ -37,14 +36,16 @@ export function stageLabelFor(
   if (event === null) return copy.stage_thinking
   // planner complete: giữ nguyên nhãn hiện tại.
   if (event.node === 'planner' && event.status === 'complete') return current
-  // retriever_agent complete có sources: nhãn của nguồn đầu tiên.
+  // retriever_agent complete: nhãn của mọi nguồn được tra, theo thứ tự gọi.
+  // Các tool chạy song song nên các nhãn hiện cùng lúc.
   if (event.node === 'retriever_agent' && event.status === 'complete') {
-    const first = event.sources?.[0]
-    if (first) {
-      const key = SOURCE_TO_KEY[first]
-      if (key) return copy[key]
-    }
-    return copy.stage_composing
+    const labels = (event.sources ?? [])
+      .map((source) => SOURCE_TO_KEY[source])
+      .filter((key): key is StageCopyKey => Boolean(key))
+      .map((key) => copy[key])
+    // Không tra nguồn nào: giữ nhãn hiện tại. Nhãn cuối chỉ đổi khi backend
+    // báo synthesizer bắt đầu.
+    return labels.length > 0 ? labels.join(' ') : current
   }
   // retriever rỗng đã xử lý ở trên; synthesizer started: composing.
   if (event.node === 'synthesizer' && event.status === 'started') {

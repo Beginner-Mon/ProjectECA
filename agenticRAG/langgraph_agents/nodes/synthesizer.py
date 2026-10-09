@@ -323,11 +323,11 @@ def _build_avatar_switch_note(
     )
 
 
-def _build_body_state_note(messages: list) -> str:
+def _motion_line(messages: list) -> str:
     """What this character's own 3D body is doing this turn (plan T4).
 
     Reads the newest motion-source message (kimodo node today, show_movement
-    tool after T9) and returns a short first-person-able block. Empty when
+    tool after T9) and returns a short first-person-able line. Empty when
     there is no motion message or its payload is broken — blocks with no
     data never enter the prompt (~10K token window).
 
@@ -359,17 +359,31 @@ def _build_body_state_note(messages: list) -> str:
         eta = data.get("eta_seconds")
         time_clause = f", in about {eta} seconds" if eta else ""
         return (
-            "\n\n## Your body this turn\n"
             f"You are about to show \"{prompt}\" with your own body{time_clause}. "
             "Speak as the one doing it."
         )
     if state in ("unavailable", "busy"):
         return (
-            "\n\n## Your body this turn\n"
             "You are not able to show a movement right now. Do not promise to, "
             "and give no technical reason. You may describe it in words instead."
         )
     return ""
+
+
+_VOICE_LINE = "You are speaking this reply aloud in your own voice; the user hears you."
+
+
+def _build_body_state_note(messages: list, speaks_aloud: bool = False) -> str:
+    """Thân thể của nhân vật ở lượt này: cử động (nếu có) và giọng nói (nếu bật).
+
+    Rỗng khi không có gì để nói; khối không có dữ liệu không vào prompt.
+    Không nhắc cơ chế.
+    """
+    lines = [line for line in (_motion_line(messages),
+                               _VOICE_LINE if speaks_aloud else "") if line]
+    if not lines:
+        return ""
+    return "\n\n## Your body this turn\n" + "\n".join(lines)
 
 
 def _build_about_you(messages: list) -> str:
@@ -609,7 +623,10 @@ async def synthesizer_node(state: AgentState, config: RunnableConfig) -> dict:
     # Body state sits between persona and task (plan T4; T8 slots About-you
     # after it). Absent when there is no motion message, so chat turns keep
     # the exact prompt they had before.
-    body_note = _build_body_state_note(state.get("messages", []))
+    body_note = _build_body_state_note(
+        state.get("messages", []),
+        speaks_aloud=bool(config["configurable"].get("speaks_aloud")),
+    )
     about_you = _build_about_you(state.get("messages", []))
     middle_blocks = [b for b in (body_note, about_you) if b]
     middle = ("\n\n".join(middle_blocks) + "\n\n") if middle_blocks else ""

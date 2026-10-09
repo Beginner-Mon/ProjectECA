@@ -151,6 +151,32 @@ def test_body_note_empty_without_motion_or_on_broken_json():
     assert _build_body_state_note([_motion_tm("{not json")]) == ""
 
 
+def test_voice_line_alone():
+    note = _build_body_state_note([], speaks_aloud=True)
+    assert "## Your body this turn" in note
+    assert "You are speaking this reply aloud in your own voice; the user hears you." in note
+
+
+def test_voice_line_with_motion():
+    note = _build_body_state_note(
+        [_motion_tm({"state": "queued", "prompt": "squat"})],
+        speaks_aloud=True,
+    )
+    assert note.count("## Your body this turn") == 1
+    assert 'You are about to show "squat"' in note
+    assert "You are speaking this reply aloud in your own voice; the user hears you." in note
+
+
+def test_no_voice_line_by_default():
+    assert _build_body_state_note([]) == ""
+    assert _build_body_state_note([], speaks_aloud=False) == ""
+
+
+def test_motion_only_output_unchanged():
+    note = _build_body_state_note([_motion_tm({"state": "unavailable"})])
+    assert "speaking this reply aloud" not in note
+
+
 def test_refuse_task_is_narrow_not_whole_turn():
     assert "You cannot answer this one" not in _REFUSE_TASK
     assert "that part only" in _REFUSE_TASK

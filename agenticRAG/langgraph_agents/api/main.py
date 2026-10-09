@@ -345,6 +345,9 @@ def create_app() -> FastAPI:
             "persona_id": req.persona_id,
             "previous_persona_id": req.previous_persona_id,
             "output_mode": req.output_mode,
+            # Lượt này câu trả lời có được đọc thành tiếng không. Synthesizer
+            # đọc cờ này để báo cho nhân vật (không báo cơ chế).
+            "speaks_aloud": req.output_mode in ("speech", "both") and tts_enabled(),
             "request_id": request_id,
             "token_limit": req.token_limit,
             "web_search": req.web_search,

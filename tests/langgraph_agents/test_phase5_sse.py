@@ -593,6 +593,88 @@ def test_sse_chat_speech_mode_without_tts_configured(api_client, monkeypatch):
     assert "speech_task_id" not in events[-1]["data"]
 
 
+def _make_fake_astream_capture_config(captured: dict):
+    """Astream giả ghi lại `config` nhận được, rồi kết thúc lượt bình thường."""
+
+    async def fake_stream(state, config, stream_mode=None):
+        captured["config"] = config
+        yield ("updates", {"synthesizer": {
+            "final_answer": "Hi.",
+            "total_tokens": 1,
+        }})
+
+    return fake_stream
+
+
+@pytest.mark.unit
+def test_config_speaks_aloud_when_voice_on(api_client, monkeypatch):
+    """output_mode "both" + TTS bật: lượt này được đọc thành tiếng."""
+    client, _, mock_graph = api_client
+    captured: dict = {}
+    mock_graph.astream = _make_fake_astream_capture_config(captured)
+    _set_graph(mock_graph)
+
+    import langgraph_agents.api.main as api_module
+    monkeypatch.setattr(api_module, "tts_enabled", lambda: True)
+
+    async def fake_write(*args, **kwargs):
+        return None
+
+    monkeypatch.setattr(api_module, "write_session_turn", fake_write)
+
+    async def _no_speech(*args, **kwargs):
+        if False:
+            yield
+
+    monkeypatch.setattr(api_module, "_stream_speech", _no_speech)
+
+    resp = client.post("/chat", json={"query": "hello", "output_mode": "both"})
+    assert resp.status_code == 200
+    assert captured["config"]["configurable"]["speaks_aloud"] is True
+
+
+@pytest.mark.unit
+def test_config_not_speaking_when_tts_off(api_client, monkeypatch):
+    """output_mode "both" nhưng TTS tắt: không đọc thành tiếng."""
+    client, _, mock_graph = api_client
+    captured: dict = {}
+    mock_graph.astream = _make_fake_astream_capture_config(captured)
+    _set_graph(mock_graph)
+
+    import langgraph_agents.api.main as api_module
+    monkeypatch.setattr(api_module, "tts_enabled", lambda: False)
+
+    async def fake_write(*args, **kwargs):
+        return None
+
+    monkeypatch.setattr(api_module, "write_session_turn", fake_write)
+
+    resp = client.post("/chat", json={"query": "hello", "output_mode": "both"})
+    assert resp.status_code == 200
+    assert captured["config"]["configurable"]["speaks_aloud"] is False
+
+
+@pytest.mark.unit
+def test_config_not_speaking_in_text_mode(api_client, monkeypatch):
+    """output_mode "text": không đọc thành tiếng dù TTS có bật."""
+    client, _, mock_graph = api_client
+    captured: dict = {}
+    mock_graph.astream = _make_fake_astream_capture_config(captured)
+    _set_graph(mock_graph)
+
+    import langgraph_agents.api.main as api_module
+    monkeypatch.setattr(api_module, "tts_enabled", lambda: True)
+
+    async def fake_write(*args, **kwargs):
+        return None
+
+    monkeypatch.setattr(api_module, "write_session_turn", fake_write)
+
+    resp = client.post("/chat", json={"query": "hello", "output_mode": "text"})
+    assert resp.status_code == 200
+    assert captured["config"]["configurable"]["speaks_aloud"] is False
+
+
 @pytest.mark.unit
 def test_tts_endpoint_503_when_not_configured(api_client, monkeypatch):
     """POST /tts must refuse rather than open a stream nothing will feed."""

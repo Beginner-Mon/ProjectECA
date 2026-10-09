@@ -311,6 +311,10 @@ Không sync vào DB. Bronya, Miku, Miki giữ nguyên.
 Bộ đo `run_context_probe.py` không cần chạy lại: bộ đo chạy ở chế độ chữ nên prompt
 của synthesizer không đổi, và kế hoạch này không thêm lời gọi LLM nào.
 
+Ghi chú T6 (09/10): khối prompt có thêm dòng cài đặt giọng nói của app
+(`## The app this turn`, chỉ hiện khi lượt rõ bật/tắt) và lõi danh tính có câu
+"You have a voice of your own."; vẫn không thêm lời gọi LLM nào.
+
 ## Việc của Tri khi ship (agent không làm)
 
 Câu `stage_composing` của Anne nằm trong DB ở prod. Ngay trước `git push origin

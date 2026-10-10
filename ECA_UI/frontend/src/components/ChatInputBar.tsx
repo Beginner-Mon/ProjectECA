@@ -77,9 +77,13 @@ export default function ChatInputBar({ embedded = false }: { embedded?: boolean 
                 />
                 <button
                   onClick={() => removeImage(i)}
-                  className="absolute -top-1.5 -left-1.5 w-5 h-5 rounded-full bg-black/70 hover:bg-black flex items-center justify-center transition-colors opacity-0 group-hover:opacity-100 cursor-pointer"
+                  // Dark chip with a white X in light mode; light chip with a
+                  // dark X in dark mode, where the dark chip disappeared.
+                  // Always shown in the phone layout (no hover on a touch
+                  // screen); hover-to-show only on the desktop layout.
+                  className="absolute -top-1.5 -left-1.5 w-5 h-5 rounded-full bg-black/70 hover:bg-black dark:bg-white/85 dark:hover:bg-white flex items-center justify-center transition-colors opacity-100 desktop:opacity-0 desktop:group-hover:opacity-100 cursor-pointer"
                 >
-                  <X className="w-3 h-3 text-white" />
+                  <X className="w-3 h-3 text-white dark:text-neutral-900" />
                 </button>
               </div>
             ))}

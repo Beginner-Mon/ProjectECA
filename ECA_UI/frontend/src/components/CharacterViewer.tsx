@@ -33,6 +33,7 @@ import ThinkingBubble from './scene/ThinkingBubble'
 import { GraphicsProvider } from '../contexts/GraphicsContext'
 import { useGraphics } from '../hooks/useGraphics'
 import { clearanceBackoff, keepAway, limitAimOffset, noseFocus, partnerEyes } from '../lib/faceLock'
+import { DOME_MARGIN, keepInsideSphere, panCorrection } from '../lib/cameraBounds'
 
 /**
  * Where the model group is authored. The "Reset position" button returns the
@@ -134,6 +135,17 @@ const HAND_CLEARANCE = 0.16
  * independent.
  */
 const TRACK_DAMPING = 8
+
+/** The stage dome the camera must stay inside (StageDome is centred on the
+ *  character's home, at the horizon height). Null for other backdrops. */
+const DOME_CENTRE = new THREE.Vector3(
+  ENV_CONFIG.character.home[0],
+  ENV_CONFIG.character.home[1],
+  ENV_CONFIG.environment.background.dome.horizonZ,
+)
+const DOME_LIMIT = ENV_CONFIG.environment.background.kind === 'dome'
+  ? ENV_CONFIG.environment.background.dome.radius - DOME_MARGIN
+  : null
 /**
  * Hips framing carries the camera along with the character's travel (see the
  * follow loop). The hips are low-passed first at this rate (1/s, ~0.5 s time
@@ -702,6 +714,8 @@ function Scene({ theme, vrmUrl, modelId, onReady, avatarRef }: SceneProps) {
   const lookPos = useMemo(() => new THREE.Vector3(), [])
   const trackPos = useMemo(() => new THREE.Vector3(), [])
   const hipsPos = useMemo(() => new THREE.Vector3(), [])
+  const boundsAnchor = useMemo(() => new THREE.Vector3(), [])
+  const boundsFix = useMemo(() => new THREE.Vector3(), [])
   const hipsDelta = useMemo(() => new THREE.Vector3(), [])
   /** Smoothed hips position for the hips-framing carry; invalid = re-baseline. */
   const hipsFollowRef = useRef({ smooth: new THREE.Vector3(), valid: false })
@@ -1074,6 +1088,31 @@ function Scene({ theme, vrmUrl, modelId, onReady, avatarRef }: SceneProps) {
       lockPrevPosRef.current.z = pos.z
     }
     if (needsUpdate) controlsRef.current.update()
+  })
+
+  // Third: keep panning inside the scene (lib/cameraBounds.ts, 03-10). A pan
+  // used to carry the orbit point and camera out through the stage dome into
+  // empty space. Runs last, after OrbitControls and the axis locks; a no-op
+  // while the view is inside its bounds, which every preset and transition is.
+  useFrame(() => {
+    const controls = controlsRef.current
+    const vrm = vrmRef.current
+    if (!controls || !vrm || !cameraInitializedRef.current) return
+    const hips = vrm.humanoid.getNormalizedBoneNode(VRMHumanBoneName.Hips)
+    if (!hips) return
+    hips.getWorldPosition(boundsAnchor)
+    const target = controls.target as THREE.Vector3
+    panCorrection(target, boundsAnchor, boundsFix)
+    let moved = false
+    if (boundsFix.lengthSq() > 0) {
+      // Same shift for both: the view keeps its angle and distance, only the
+      // pan stops at the edge.
+      target.add(boundsFix)
+      camera.position.add(boundsFix)
+      moved = true
+    }
+    if (DOME_LIMIT !== null && keepInsideSphere(camera.position, DOME_CENTRE, DOME_LIMIT)) moved = true
+    if (moved) controls.update()
   })
 
 return (

@@ -60,6 +60,7 @@ _DEFAULT_TEMPS = {
     "synthesizer": 0.7,
     "conversation": 0.7,
     "retriever": 0.0,
+    "grader": 0.0,
     "health_check": 0.0,
 }
 
@@ -87,6 +88,22 @@ _TIMEOUT_FAST = 20.0
 # Cheap built-in retry for transient network blips only — kept low (1) so a
 # slow-but-succeeding call isn't retried 3x and made worse (fix #2).
 _MAX_RETRIES = 1
+
+# Per-role overrides for the grader judge (T8b, Tri 04/10): deepseek-v4-flash
+# runs hidden reasoning by default and spent 193-5417 thinking tokens on a
+# ~100-char JSON verdict (1.7-23s per judge call). A checklist verdict needs
+# no reasoning — disabled, the call drops to ~0.8s and judges more accurately.
+# Planner, retriever and synthesizer keep the default thinking mode: saving
+# 1-2s there is not worth the risk of changing tool choice (Tri 04/10).
+_ROLE_EXTRA_BODY: dict[str, dict] = {
+    "grader": {"thinking": {"type": "disabled"}},
+}
+_ROLE_TIMEOUT: dict[str, float] = {
+    "grader": 5.0,
+}
+_ROLE_MAX_RETRIES: dict[str, int] = {
+    "grader": 0,
+}
 
 # Output token ceiling per role (fix #3). _LONG_OUTPUT_ROLES needs headroom for longer
 # clinical answers with citations; other roles (planner JSON / retriever tool-call
@@ -116,6 +133,17 @@ def _model_for_role(role: str) -> str:
 
 def _timeout_for_role(role: str) -> float:
     return _TIMEOUT_HEAVY if role in _HEAVY_ROLES or role in _LONG_OUTPUT_ROLES else _TIMEOUT_FAST
+
+
+def role_timeout(role: str) -> float:
+    """The request timeout get_chat_model gives this role, in seconds.
+
+    httpx applies it to each read, not to the whole call: DeepSeek sends
+    keep-alive lines while a request waits under load, and each one restarts
+    the clock. A caller that needs a hard cap wraps the call in
+    asyncio.wait_for with this value (nodes/grader.py::_judge).
+    """
+    return _ROLE_TIMEOUT.get(role, _timeout_for_role(role))
 
 
 def _max_tokens_for_role(role: str) -> int:
@@ -273,11 +301,12 @@ def get_chat_model(role: str, *, temperature: float | None = None):
     """
     model_name = _model_for_role(role)
     temp = _DEFAULT_TEMPS.get(role, 0.7) if temperature is None else temperature
-    timeout = _timeout_for_role(role)
+    timeout = role_timeout(role)
+    max_retries = _ROLE_MAX_RETRIES.get(role, _MAX_RETRIES)
     max_tokens = _max_tokens_for_role(role)
     logger.info("llm_init", extra={
         "role": role, "model": model_name, "temperature": temp,
-        "timeout": timeout, "max_retries": _MAX_RETRIES, "max_tokens": max_tokens,
+        "timeout": timeout, "max_retries": max_retries, "max_tokens": max_tokens,
     })
     api_key = _resolve_api_key()
     if not api_key:
@@ -286,6 +315,7 @@ def get_chat_model(role: str, *, temperature: float | None = None):
         })
         return get_fallback_chat_model(role)
     base_url = os.getenv("DEEPSEEK_BASE_URL", _DEFAULT_BASE_URL)
+    extra_kwargs = {"extra_body": _ROLE_EXTRA_BODY[role]} if role in _ROLE_EXTRA_BODY else {}
     model = ChatOpenAI(
         model=model_name,
         temperature=temp,
@@ -293,8 +323,9 @@ def get_chat_model(role: str, *, temperature: float | None = None):
         base_url=base_url,
         streaming=True,
         timeout=timeout,
-        max_retries=_MAX_RETRIES,
+        max_retries=max_retries,
         max_tokens=max_tokens,
+        **extra_kwargs,
     )
     return _apply_circuit_breaker(model, role)
 

@@ -59,6 +59,12 @@
     "last": "vừa rồi:",
     "lock_axes": "Khóa trục (kéo chuột phải)",
     "lock_axis": "Khóa {{axis}} — kéo không đổi {{axis}}",
+    "lip_attack": "tốc độ mở",
+    "lip_mode": "chế độ lip sync",
+    "lip_mode_amplitude": "kiểu cũ (chỉ âm lượng)",
+    "lip_mode_general": "tổng quát",
+    "lip_release": "tốc độ khép",
+    "lip_shape": "tốc độ đổi khuôn",
     "mode": "chế độ:",
     "unlock_axis": "Mở khóa {{axis}}",
     "no_avatar": "chưa gắn avatar",
@@ -70,7 +76,8 @@
     "subtitle": "Nguồn animation & phát lại",
     "target_head": "Mục tiêu: Đầu",
     "target_hips": "Mục tiêu: Hông",
-    "title": "Điều khiển chuyển động"
+    "title": "Điều khiển chuyển động",
+    "viseme": "khuôn miệng"
   },
   "sessions": {
     "delete_confirm_title": "Xóa phiên này?",

@@ -144,6 +144,53 @@ answers:
              exercise_steps: false, contraindication: false, evidence_citation: false, motion_descriptor: false}
     note: "playful 'warning', reminder 'do not forget'"
 
+  - id: ja-backpain-exercises
+    lang: ja
+    text: |
+      軽い腰痛には、グルートブリッジを試してみてください:
+      1. 膝を曲げ、足を床につけて仰向けになります。
+      2. お尻を締めて、肩から膝まで一直線になるまで腰を持ち上げます。
+      3. 3秒キープして、ゆっくり下ろします。
+      2セット、1セット10回、週3回行います。持ち上げる際に息を止めないでください。
+      次に、背骨をほぐすキャットカウを追加できます。正しくできているサインは、腰ではなくお尻が少し疲れることです。
+    labels: {red_flag_screen: false, referral_advice: false, scope_disclaimer: false, exercise_protocol: true,
+             exercise_steps: true, contraindication: false, evidence_citation: false, motion_descriptor: true}
+    note: "Japanese translation of vi-backpain-exercises; labels kept"
+
+  - id: ja-plank-complete
+    lang: ja
+    text: |
+      NHS (nhs.uk) のガイドによると、プランクは体幹の持久力を高める種目です:
+      1. 両肘を床につけ、肘が肩の真下に来るようにします。
+      2. 体を持ち上げ、肩からかかとまで一直線を保ち、お腹を引き締めます。
+      20秒キープ、3セット、週3回行います。
+      急性の椎間板ヘルニアの方、妊娠後期の方、血圧が管理されていない方はプランクを行わないでください。
+      始める前に医師に相談してください。この情報は参考用であり、医療診断に代わるものではありません。
+    labels: {red_flag_screen: false, referral_advice: true, scope_disclaimer: true, exercise_protocol: true,
+             exercise_steps: true, contraindication: true, evidence_citation: true, motion_descriptor: true}
+    note: "Japanese translation of vi-plank-complete; labels kept"
+
+  - id: fr-backpain-exercises
+    lang: fr
+    text: |
+      Essayez le pont fessier pour une légère douleur lombaire :
+      1. Allongez-vous sur le dos, genoux pliés, pieds à plat au sol.
+      2. Serrez les fessiers et soulevez les hanches jusqu'à ce que le corps soit droit des épaules aux genoux.
+      3. Tenez 3 secondes, puis redescendez lentement.
+      Faites 3 séries de 10 répétitions, 3 fois par semaine. Évitez de bloquer votre respiration en soulevant.
+    labels: {red_flag_screen: false, referral_advice: false, scope_disclaimer: false, exercise_protocol: true,
+             exercise_steps: true, contraindication: false, evidence_citation: false, motion_descriptor: true}
+    note: "French translation of en-backpain-exercises; labels kept"
+
+  - id: fr-cauda-equina
+    lang: fr
+    text: |
+      Un engourdissement des deux jambes ou une perte de contrôle de la vessie peut être un signe du syndrome de la queue de cheval.
+      Arrêtez de faire de l'exercice et rendez-vous aux urgences ou appelez le 15 maintenant. N'essayez pas de continuer malgré ces symptômes.
+    labels: {red_flag_screen: true, referral_advice: true, scope_disclaimer: false, exercise_protocol: false,
+             exercise_steps: false, contraindication: true, evidence_citation: false, motion_descriptor: false}
+    note: "French translation of en-cauda-equina; labels kept"
+
 cases:
   # ── red_flag_screen ──
   - {id: rf-vi-pos-1, tag: red_flag_screen, lang: vi, expect: true,

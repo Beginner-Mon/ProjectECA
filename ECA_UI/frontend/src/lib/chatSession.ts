@@ -50,7 +50,7 @@
  * vitest runs in the `node` environment here.
  */
 
-export const SESSION_KEY = 'vva_session_id'
+export const SESSION_KEY = 'eca-session-id'
 
 /** How long a conversation stays "the one you are in" after the last message. */
 export const SESSION_TTL_MS = 2 * 60 * 60 * 1000 // 2 hours

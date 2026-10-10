@@ -183,10 +183,10 @@ def test_default_lang_keeps_existing_callers_on_vietnamese():
 
 @pytest.mark.asyncio
 async def test_english_answer_gets_an_english_warning_injected():
-    """End to end through the node — the behaviour Tri would actually observe."""
+    """End to end through the node — dòng kết đúng locale, nằm ở cuối."""
     state: AgentState = {
         "messages": [], "errors": [], "retry_count": 0, "total_tokens": 0,
-        "required_outputs": ["red_flag_screen"],
+        "required_outputs": ["referral_advice"],
         "final_answer": (
             "Try three sets of ten repetitions and stop if the pain goes above "
             "4 out of 10, then rest for a full day before the next session."
@@ -202,17 +202,17 @@ async def test_english_answer_gets_an_english_warning_injected():
     }
     result = await grader_node(state, config)
 
-    assert result["grader_result"] == "pass_with_warning"
-    injected = result["final_answer"]
-    assert get_safety_text("red_flag_screen", "anne", "en") in injected
-    assert get_safety_text("red_flag_screen", "anne", "vi") not in injected
+    assert result["grader_result"] == "pass"
+    assert result["final_answer"].endswith(
+        get_safety_text("referral_advice", "anne", "en"))
+    assert get_safety_text("referral_advice", "anne", "vi") not in result["final_answer"]
 
 
 @pytest.mark.asyncio
 async def test_vietnamese_answer_still_gets_the_vietnamese_warning():
     state: AgentState = {
         "messages": [], "errors": [], "retry_count": 0, "total_tokens": 0,
-        "required_outputs": ["red_flag_screen"],
+        "required_outputs": ["referral_advice"],
         "final_answer": "Bạn nên tập bài kéo giãn cơ lưng dưới, mỗi hiệp 10 lần, thở đều.",
     }
     config = {
@@ -224,20 +224,21 @@ async def test_vietnamese_answer_still_gets_the_vietnamese_warning():
     }
     result = await grader_node(state, config)
 
-    assert get_safety_text("red_flag_screen", "anne", "vi") in result["final_answer"]
+    assert result["final_answer"].endswith(
+        get_safety_text("referral_advice", "anne", "vi"))
 
 
 @pytest.mark.asyncio
 async def test_node_works_without_a_locale_in_config():
-    """An older client that sends no locale still gets a warning, not a crash.
+    """An older client that sends no locale still gets a closing line, not a crash.
 
-    It gets the ENGLISH one, because that is the declared default everywhere.
-    A Vietnamese answer with an English warning is the accepted trade of
-    preferring a declared locale over a detected language."""
+    It gets the ENGLISH one, because that is the declared default everywhere."""
     state: AgentState = {
         "messages": [], "errors": [], "retry_count": 0, "total_tokens": 0,
-        "required_outputs": ["red_flag_screen"],
+        "required_outputs": ["referral_advice"],
         "final_answer": "Bạn nên ngừng tập và đi khám bác sĩ ngay.",
     }
     result = await grader_node(state, {"configurable": {"persona_id": "anne"}})
-    assert result["grader_result"] in ("pass", "pass_with_warning")
+    assert result["grader_result"] == "pass"
+    assert result["final_answer"].endswith(
+        get_safety_text("referral_advice", "anne", "en"))

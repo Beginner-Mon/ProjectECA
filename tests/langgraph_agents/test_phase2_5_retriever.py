@@ -9,7 +9,7 @@ from langgraph_agents.state import AgentState
 
 @pytest.mark.unit
 class TestRetrieverRouting:
-    """Verify route_after_retriever and route_after_retriever_or_tools."""
+    """Verify route_after_retriever and route_after_tools."""
 
     def test_route_retriever_with_tool_calls(self):
         from langgraph_agents.routing import route_after_retriever
@@ -20,21 +20,23 @@ class TestRetrieverRouting:
         result = route_after_retriever(state)
         assert result == "tools"
 
-    def test_route_retriever_no_tool_calls_to_synthesizer(self):
+    def test_route_retriever_no_tool_calls_goes_back_once(self):
         from langgraph_agents.routing import route_after_retriever
         from langchain_core.messages import AIMessage
         msg = AIMessage(content="no tools needed")
         state: AgentState = {"messages": [msg], "errors": [], "retry_count": 0,
-                             "total_tokens": 0}
-        result = route_after_retriever(state)
-        assert result == "synthesizer"
+                             "total_tokens": 0, "retriever_rounds": 1,
+                             "required_outputs": []}
+        assert route_after_retriever(state) == "retriever_agent"
+        capped = {**state, "retriever_rounds": 2}
+        assert route_after_retriever(capped) == "synthesizer"
 
     def test_route_retriever_to_kimodo(self):
         from langgraph_agents.routing import route_after_retriever
         from langchain_core.messages import AIMessage
         msg = AIMessage(content="motion needed", tool_calls=[])
         state: AgentState = {"messages": [msg], "errors": [], "retry_count": 0,
-                             "total_tokens": 0,
+                             "total_tokens": 0, "retriever_rounds": 2,
                              "required_outputs": ["motion_descriptor"]}
         result = route_after_retriever(state)
         assert result == "kimodo"
@@ -51,19 +53,19 @@ class TestRetrieverRouting:
         result = route_after_retriever(state)
         assert result == "error_handler"
 
-    def test_route_after_retriever_or_tools_with_motion(self):
-        from langgraph_agents.graph import route_after_retriever_or_tools
+    def test_route_after_tools_with_motion(self):
+        from langgraph_agents.routing import route_after_tools
         state: AgentState = {"messages": [], "errors": [], "retry_count": 0,
                              "total_tokens": 0,
                              "required_outputs": ["motion_descriptor"]}
-        result = route_after_retriever_or_tools(state)
+        result = route_after_tools(state)
         assert result == "kimodo"
 
-    def test_route_after_retriever_or_tools_no_motion(self):
-        from langgraph_agents.graph import route_after_retriever_or_tools
+    def test_route_after_tools_no_motion(self):
+        from langgraph_agents.routing import route_after_tools
         state: AgentState = {"messages": [], "errors": [], "retry_count": 0,
                              "total_tokens": 0, "required_outputs": []}
-        result = route_after_retriever_or_tools(state)
+        result = route_after_tools(state)
         assert result == "synthesizer"
 
 
@@ -226,8 +228,8 @@ class TestRetrieverNode:
             assert errors[0]["severity"] == "critical"
 
     @pytest.mark.asyncio
-    async def test_retriever_agent_receives_grader_feedback_on_retry(self):
-        """On retry, grader_feedback should be injected into the retriever prompt."""
+    async def test_retriever_agent_second_attempt_on_no_tool(self):
+        """Vòng 2 sau khi không gọi tool: prompt mang khối Second attempt."""
         from langgraph_agents.nodes.retriever_agent import retriever_agent_node
         from langchain_core.runnables import RunnableConfig
         from langchain_core.messages import AIMessage
@@ -238,11 +240,10 @@ class TestRetrieverNode:
             "request_id": "req-001", "web_search": False,
         })
         state: AgentState = {
-            "messages": [], "errors": [], "retry_count": 1,
-            "total_tokens": 0,
+            "messages": [AIMessage(content="")], "errors": [], "retry_count": 0,
+            "total_tokens": 0, "retriever_rounds": 1,
             "required_outputs": ["exercise_protocol", "exercise_steps"],
             "resolved_query": "bai tap squat",
-            "grader_feedback": "Missing exercise_steps. Add step-by-step instructions.",
         }
 
         fake_ai = AIMessage(content="", tool_calls=[{
@@ -256,8 +257,9 @@ class TestRetrieverNode:
             result = await retriever_agent_node(state, config)
             assert "messages" in result
 
-            # Verify grader_feedback was injected into the prompt
+            # Khối Second attempt được đưa vào prompt, không đọc grader_feedback
             call_args = mock_llm.return_value.bind_tools.return_value.ainvoke.call_args
             msgs = call_args[0][0]
             prompt_text = str(msgs)
-            assert "exercise_steps" in prompt_text.lower() or "retry" in prompt_text.lower()
+            assert "## Second attempt" in prompt_text
+            assert "called no tool" in prompt_text

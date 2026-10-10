@@ -18,7 +18,7 @@ from langgraph_agents.shared.logging import get_logger
 
 logger = get_logger("langgraph.db.postgres")
 
-_LOCAL_DSN = "postgresql://vva:vva_dev@localhost:5433/vva"
+_LOCAL_DSN = "postgresql://eca:eca_dev@localhost:5433/eca"
 
 
 # Whose rows the next statement may touch. Set once per request by
@@ -33,7 +33,7 @@ _LOCAL_DSN = "postgresql://vva:vva_dev@localhost:5433/vva"
 # nodes/summarizer.py, called from the /chat stream — inherits the user it was
 # produced for, with nothing threaded through by hand.
 _request_user_id: ContextVar[Optional[str]] = ContextVar(
-    "vva_request_user_id", default=None,
+    "eca_request_user_id", default=None,
 )
 
 
@@ -58,7 +58,7 @@ def current_request_user() -> Optional[str]:
 # persona slug (e.g. "anne") — it comes from the catalog-validated request,
 # never from model output.
 _request_character: ContextVar[Optional[str]] = ContextVar(
-    "vva_request_character", default=None,
+    "eca_request_character", default=None,
 )
 
 

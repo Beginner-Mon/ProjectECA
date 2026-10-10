@@ -16,7 +16,7 @@ const DEFAULTS: GraphicsSettings = {
   mtoon: ENV_CONFIG.mtoon.enabled,
 }
 
-const STORAGE_KEY = 'vva-graphics-settings'
+const STORAGE_KEY = 'eca-graphics-settings'
 
 function load(): GraphicsSettings {
   try {

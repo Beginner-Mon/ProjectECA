@@ -29,8 +29,19 @@ from langchain_core.runnables import RunnableConfig
 from langgraph.config import get_stream_writer
 from langgraph_agents.shared import reply_emotion
 from langgraph_agents.shared.context import budget_chars, estimate_tokens
+from langgraph_agents.evidence import (
+    classify_tool_result as _classify_tool_result,
+    evidence_items,
+    evidence_messages as _evidence_messages,
+    render_evidence,
+)
 from langgraph_agents.sources import source_for_tool
 from langgraph_agents.state import AgentState, ErrorSeverity
+from langgraph_agents.tag_contract import (
+    closing_items_note,
+    model_tags,
+    opening_line,
+)
 from langgraph_agents.llm import get_chat_model, get_fallback_chat_model, extract_cache_tokens
 from langgraph_agents.nodes._persona_loader import (
     PersonaError,
@@ -60,56 +71,6 @@ _LANGUAGE_RULE = """## LANGUAGE (which language to answer in — not how to soun
 """
 
 
-# ── Safety warning prefix (D32: safety = ĐẦU output, mọi persona) ─────
-
-_SAFETY_TAG_RULES = {
-    "red_flag_screen":
-        "Your FIRST sentence must warn that the symptom could be serious and "
-        "that the user should stop exercising and get it looked at.",
-    "referral_advice":
-        "Say plainly, somewhere in the answer, that the user should see a "
-        "medical professional.",
-    "scope_disclaimer":
-        "Near the end, note that this is wellness guidance and not a clinical "
-        "diagnosis.",
-}
-_SAFETY_TAGS = frozenset(_SAFETY_TAG_RULES)
-
-
-def _build_safety_rules(persona: dict, required_outputs: list) -> str:
-    """Safety instructions for this turn, worded in the character's own voice.
-
-    Every persona already ships its own phrasing for these three tags (the
-    `## Safety Templates` section of personas/*.md). The generating model never
-    saw them: grader.py:368 used them to repair an answer after the fact, while
-    the prompt showed two hard-coded Vietnamese sentences in a flat clinical
-    register instead.
-
-    Those two sentences were the most imitable text in the entire prompt — a
-    complete, well-formed example sitting next to a persona that offered only
-    adjectives — so every character delivered its safety warning in the same
-    borrowed voice. Showing the character's own line instead costs nothing and
-    removes the thing that was overriding it.
-
-    Only the tags actually required this turn are described. The old block
-    listed all three whenever any one of them fired, which spent tokens telling
-    the model about obligations it did not have.
-    """
-    tags = [t for t in _SAFETY_TAG_RULES if t in required_outputs]
-    if not tags:
-        return ""
-
-    templates = persona.get("safety_templates") or {}
-    lines = []
-    for tag in tags:
-        lines.append(f"- `{tag}`: {_SAFETY_TAG_RULES[tag]}")
-        example = templates.get(tag)
-        if example:
-            lines.append(f'  Say it your way, e.g. "{example}"')
-
-    return "## SAFETY — required this turn (D32, D33)\n" + "\n".join(lines) + "\n"
-
-
 # ── Per-tag instructions (B3: chỉ tag của lượt mới được hướng dẫn) ──────
 
 # Tách từ _SYNTHESIZE_TASK: mỗi dòng "For <tag>" trước đây có mặt ở MỌI lượt
@@ -128,8 +89,6 @@ _TAG_INSTRUCTIONS = {
         "should NOT be done",
     "motion_descriptor":
         "- For motion_descriptor: describe the movement + joints involved clearly",
-    "evidence_citation":
-        "- For evidence_citation: mention sources (document title, web source)",
 }
 
 
@@ -140,13 +99,30 @@ def _build_tag_instructions(required_outputs: list) -> str:
     )
 
 
+def _build_contract_note(opening: str, required_outputs: list) -> str:
+    """Báo cho model câu đã hiện và các dòng sẽ được thêm; "" khi không có gì."""
+    blocks = []
+    if opening:
+        blocks.append(
+            "## Already on the user's screen\n"
+            "This line was shown to the user just before your reply:\n"
+            f'"{opening}"\n'
+            "Start from there. Do not repeat it, quote it or rephrase it.")
+    closing = closing_items_note(required_outputs)
+    if closing:
+        blocks.append(
+            "## Added after your reply\n"
+            f"These are added automatically when you finish: {closing}.\n"
+            "Do not write any of them yourself.")
+    return "\n\n".join(blocks)
+
+
 # ── Mode-specific prompts ────────────────────────────────────────────────
 
 _SYNTHESIZE_TASK = """## This turn
 Answer the user's wellness question from the evidence below.
 
 {language_rule}
-{safety_rules}
 
 ## Required deliverables (tags)
 {required_outputs}
@@ -161,7 +137,8 @@ Instructions:
 - Cover ALL required_outputs tags in your response
 - Base your answer on the retrieved evidence — cite sources when available
 {tag_instructions}
-- Do not pad or repeat safety disclaimers — state each once.
+- Numbers for sets, reps, hold times or frequency come only from the evidence.
+  If the evidence gives none, give none.
 - Length and layout are set by your own Formatting rules, not by this list.
 """
 
@@ -170,7 +147,6 @@ You have no reliable source for the guidance the user asked for. Do not make
 up exercise or health guidance. Say so for that part only.
 
 {language_rule}
-{safety_rules}
 
 ## Situation
 The guidance the user asked for has no reliable source: the question is
@@ -185,10 +161,11 @@ Speak only to that part — anything else in the turn you can still answer.
 
 Instructions:
 - Be honest: explain WHY you cannot give that guidance (out of scope / no sources)
-- If referral_advice tag is present: strongly recommend seeing a medical professional
 - If no sources were found: state this clearly, suggest the user rephrase or ask a professional
 - Keep it brief
 - Do NOT invent exercises, diagnoses, or medical advice
+- Numbers for sets, reps, hold times or frequency come only from the evidence.
+  If the evidence gives none, give none.
 """
 
 _CLARIFY_TASK = """## This turn
@@ -226,72 +203,6 @@ Instructions:
 
 # ── Helpers ──────────────────────────────────────────────────────────────
 
-_EVIDENCE_PER_MESSAGE_CAP = 1500
-# Trần evidence/about-you đọc từ config qua budget_chars() (plan T11); số cũ
-# giữ làm default khi config thiếu (shared/context.py::_CONTEXT_BUDGET_DEFAULTS).
-
-
-def _evidence_messages(messages: list) -> list:
-    """ToolMessages that count as retrieved evidence (plan T3).
-
-    Sources flagged is_evidence=False (self, motion) are body/self state,
-    not lookup results — the synthesizer reads them through their own
-    prompt blocks (T4/T8), never as evidence.
-    """
-    out = []
-    for m in messages:
-        if not isinstance(m, ToolMessage):
-            continue
-        src = source_for_tool(m.name or "")
-        if src is not None and not src.is_evidence:
-            continue
-        out.append(m)
-    return out
-
-
-def _evidence_title(m: ToolMessage) -> str:
-    """Section header naming WHERE the evidence comes from (plan T2/T3)."""
-    src = source_for_tool(m.name or "")
-    if src is None:
-        return "[From another source]"
-    return f"[From {src.label}]"
-
-
-def _split_message_parts(m: ToolMessage) -> list[tuple[str, str]]:
-    """Tách một ToolMessage thành các cặp (tiêu đề, nội dung).
-
-    Mặc định một message = một cặp. Riêng kb_search tách theo từng đoạn
-    dựa trên source_type của đoạn (B5): exercise_db và nhs_uk mang hai tiêu
-    đề khác nhau, kèm document_title. Đoạn có source_type lạ bị bỏ
-    (đã bị loại ở SQL, đây là chốt chặn thứ hai).
-    """
-    if (m.name or "") != "kb_search":
-        return [(_evidence_title(m), str(m.content))]
-    import json
-
-    from langgraph_agents.sources import kb_segment_label
-
-    try:
-        data = json.loads(str(m.content))
-    except (json.JSONDecodeError, TypeError):
-        return [(_evidence_title(m), str(m.content))]
-    if not isinstance(data, list):
-        return [(_evidence_title(m), str(m.content))]
-    if not data:
-        return [(_evidence_title(m), str(m.content))]
-    parts: list[tuple[str, str]] = []
-    for seg in data:
-        if not isinstance(seg, dict):
-            continue
-        label = kb_segment_label(seg.get("source_type", ""))
-        if label is None:
-            continue
-        doc = seg.get("document_title") or ""
-        title = f"[From {label}]" if not doc else f"[From {label}: {doc}]"
-        parts.append((title, str(seg.get("content", ""))))
-    # Toàn đoạn lạ → message không đóng góp gì (không hiện JSON thô).
-    return parts
-
 
 def _extract_tool_results(messages: list) -> str:
     """Format ToolMessage content from retriever tool calls, newest kept first.
@@ -313,34 +224,7 @@ def _extract_tool_results(messages: list) -> str:
     B5: kb_search messages are split per segment first (titles differ by
     source_type); the budget below counts split pieces, newest first.
     """
-    tools = _evidence_messages(messages)
-
-    pieces: list[tuple[str, str]] = []
-    for m in tools:
-        pieces.extend(_split_message_parts(m))
-
-    parts: list[str] = []
-    used = 0
-    evidence_budget = budget_chars("evidence")
-    for title, text in reversed(pieces):
-        content = text[:_EVIDENCE_PER_MESSAGE_CAP]
-        if parts and used + len(content) > evidence_budget:
-            break
-        parts.append(f"{title}\n{content}")
-        used += len(content)
-
-    parts.reverse()
-    return "\n\n".join(parts) if parts else ""
-
-
-def _classify_tool_result(content: str) -> str:
-    """'empty' | 'error' | 'hits' — the one rule both mode and logging use."""
-    # Empty result (D23: {found: false} or [])
-    if content in ("", "[]", "{}", '{"found": false}'):
-        return "empty"
-    if '"error"' in content:
-        return "error"
-    return "hits"
+    return render_evidence(evidence_items(messages))
 
 
 def _has_tool_results(messages: list) -> bool:
@@ -558,6 +442,95 @@ def _derive_mode(state: AgentState) -> str:
 
 # ── Node ─────────────────────────────────────────────────────────────────
 
+_ADD_MISSING_BLOCK = """
+
+## Add what is missing
+Your reply above is already on the user's screen. It left out:
+{feedback}
+Write only that part, as a short continuation in the same voice: one to four
+sentences or a short list. Do not repeat or rewrite anything you already said.
+Take it from the evidence. If the evidence does not state it, say so in one
+sentence."""
+
+
+async def _run_addition(state, config, llm, writer, msgs, previous,
+                        request_id, t0, persona_system, body_note, about_you,
+                        task_system, tool_results, history, voice_card,
+                        tag_stream) -> dict:
+    """Lượt viết thêm: chỉ nối phần thiếu vào bản đã hiện, không viết lại.
+
+    Chuỗi "\\n\\n" đi cùng chunk chữ đầu tiên của LLM. LLM lỗi: giữ đúng phần
+    đã hiện (cả đoạn viết thêm dở nếu đã stream), không fallback, không lỗi
+    CRITICAL.
+    """
+    addition = ""
+    tokens = 0
+    ai_msg = None
+    try:
+        if writer is not None:
+            async for chunk in llm.astream(msgs):
+                raw = chunk.content if hasattr(chunk, "content") else str(chunk)
+                _, content = tag_stream.feed(raw) if raw else (None, "")
+                if content:
+                    if not addition:
+                        content = f"\n\n{content}"
+                    addition += content
+                    writer({"content": content})
+                    await asyncio.sleep(0)
+                if hasattr(chunk, "usage_metadata") and chunk.usage_metadata:
+                    tokens = chunk.usage_metadata.get("total_tokens", 0)
+                    ai_msg = chunk
+                elif (getattr(chunk, "response_metadata", None) or {}).get("token_usage"):
+                    ai_msg = chunk
+            _, content = tag_stream.flush()
+            if content:
+                if not addition:
+                    content = f"\n\n{content}"
+                addition += content
+                writer({"content": content})
+        else:
+            ai_msg = await llm.ainvoke(msgs)
+            _, text = reply_emotion.parse_emotion_tag(ai_msg.content or "")
+            addition = f"\n\n{text}" if text else ""
+            tokens = 0
+            if hasattr(ai_msg, "usage_metadata") and ai_msg.usage_metadata:
+                tokens = ai_msg.usage_metadata.get("total_tokens", 0)
+    except Exception as exc:
+        elapsed_ms = round((time.perf_counter() - t0) * 1000)
+        logger.warning("addition_failed", extra={
+            "node": "synthesizer", "request_id": request_id,
+            "elapsed_ms": elapsed_ms, "error": type(exc).__name__,
+        })
+        # Phần đã stream không rút lại được: lưu đúng như màn hình.
+        return {"final_answer": previous + addition, "total_tokens": 0}
+
+    final_answer = previous + addition if addition else previous
+    cache_hit_tokens, cache_miss_tokens = extract_cache_tokens(ai_msg)
+    usage = getattr(ai_msg, "usage_metadata", None) or {}
+    history_chars = sum(len(str(getattr(m, "content", "") or "")) for m in history)
+    elapsed_ms = round((time.perf_counter() - t0) * 1000)
+    logger.info("node_complete", extra={
+        "node": "synthesizer", "request_id": request_id,
+        "elapsed_ms": elapsed_ms, "tokens": tokens, "mode": "addition",
+        "output_chars": len(addition),
+        "streamed": writer is not None,
+        "cache_hit_tokens": cache_hit_tokens,
+        "cache_miss_tokens": cache_miss_tokens,
+        "prompt_blocks": {
+            "persona": len(persona_system),
+            "body_state": len(body_note),
+            "about_you": len(about_you),
+            "task": len(task_system),
+            "evidence": len(tool_results),
+            "history": history_chars,
+            "voice_card": len(voice_card),
+        },
+        "input_tokens": usage.get("input_tokens", 0),
+        "output_tokens": usage.get("output_tokens", 0),
+    })
+    return {"final_answer": final_answer, "total_tokens": tokens}
+
+
 async def synthesizer_node(state: AgentState, config: RunnableConfig) -> dict:
     """Synthesizer node — universal responder (M.3b).
 
@@ -569,6 +542,12 @@ async def synthesizer_node(state: AgentState, config: RunnableConfig) -> dict:
     persona_id = config["configurable"].get("persona_id", "anne")
     resolved_query = state.get("resolved_query") or config["configurable"]["query"]
     required_outputs = state.get("required_outputs", [])
+
+    previous = state.get("final_answer") or ""
+    feedback = state.get("grader_feedback")
+    addition_mode = (state.get("retry_count", 0) >= 1 and bool(feedback)
+                     and bool(previous.strip()))
+    is_rewrite = state.get("retry_count", 0) >= 1 and not addition_mode
 
     mode = _derive_mode(state)
 
@@ -589,10 +568,9 @@ async def synthesizer_node(state: AgentState, config: RunnableConfig) -> dict:
     locale = config["configurable"].get("locale", "en")
     persona = get_persona(persona_id, locale)
     tool_results = _extract_tool_results(state.get("messages", []))
-    tags_str = ", ".join(required_outputs) if required_outputs else "(none — free response)"
-
-    # Safety rules: only the tags actually required this turn (D32, D33)
-    safety_rules = _build_safety_rules(persona, required_outputs)
+    opening = opening_line(required_outputs, persona_id, locale)
+    prefix = f"{opening}\n\n" if opening else ""
+    tags_str = ", ".join(model_tags(required_outputs)) or "(none — free response)"
 
     # Tag instructions: only the tags actually required this turn (B3)
     tag_instructions = _build_tag_instructions(required_outputs)
@@ -606,14 +584,12 @@ async def synthesizer_node(state: AgentState, config: RunnableConfig) -> dict:
     elif mode == "refuse":
         task_system = _REFUSE_TASK.format(
             language_rule=_LANGUAGE_RULE,
-            safety_rules=safety_rules,
             required_outputs=tags_str,
             resolved_query=resolved_query,
         )
     elif mode == "synthesize":
         task_system = _SYNTHESIZE_TASK.format(
             language_rule=_LANGUAGE_RULE,
-            safety_rules=safety_rules,
             required_outputs=tags_str,
             tool_results=tool_results or "(no evidence)",
             resolved_query=resolved_query,
@@ -625,6 +601,9 @@ async def synthesizer_node(state: AgentState, config: RunnableConfig) -> dict:
             resolved_query=resolved_query,
         )
 
+    contract_note = _build_contract_note(opening, required_outputs)
+    if contract_note:
+        task_system = f"{task_system}\n{contract_note}\n"
     # Persona prompt (D30: applies to ALL modes)
     persona_system = build_persona_prompt(persona, mode)
     # Body state sits between persona and task (plan T4; T8 slots About-you
@@ -664,20 +643,34 @@ async def synthesizer_node(state: AgentState, config: RunnableConfig) -> dict:
     # Reply-driven avatar emotion: the model opens with [emotion: NAME N],
     # stripped below before anything else sees the text (shared/reply_emotion).
     # Last, beside the voice card, where instructions are followed most reliably.
-    if reply_emotion.enabled():
+    # Lượt viết thêm không gợi emotion mới: mặt hiện tại thuộc về bản đã hiện.
+    if reply_emotion.enabled() and not addition_mode:
         voice_card += reply_emotion.PROMPT_RULE
-    msgs = [
-        SystemMessage(content=system),
-        *history,
-        HumanMessage(content=resolved_query),
-        SystemMessage(content=voice_card),
-    ]
+    if addition_mode:
+        msgs = [
+            SystemMessage(content=system),
+            *history,
+            HumanMessage(content=resolved_query),
+            AIMessage(content=previous),
+            SystemMessage(content=voice_card + _ADD_MISSING_BLOCK.format(
+                feedback=feedback)),
+        ]
+    else:
+        msgs = [
+            SystemMessage(content=system),
+            *history,
+            HumanMessage(content=resolved_query),
+            SystemMessage(content=voice_card),
+        ]
 
     ai_msg = None  # kept for prompt-cache telemetry (fix #1)
     used_fallback = False
     tag_stream = reply_emotion.EmotionTagStream()
 
     def send_emotion(emotion: dict | None) -> None:
+        # Lượt viết thêm không gửi emotion mới.
+        if addition_mode:
+            return
         # Its own custom-stream item, ahead of the text: api/main.py turns it
         # into the `emotion` SSE event. Health rules applied here, where the
         # turn's mode and safety tags are known.
@@ -685,10 +678,18 @@ async def synthesizer_node(state: AgentState, config: RunnableConfig) -> dict:
         if emotion is not None and writer is not None:
             writer({"emotion": emotion})
 
+    if addition_mode:
+        return await _run_addition(
+            state, config, llm, writer, msgs, previous,
+            request_id, t0, persona_system, body_note, about_you,
+            task_system, tool_results, history, voice_card, tag_stream)
+
     try:
         if writer is not None:
             final = ""
             tokens = 0
+            if prefix and not (is_rewrite and previous.startswith(prefix)):
+                writer({"content": prefix})
             async for chunk in llm.astream(msgs):
                 raw = chunk.content if hasattr(chunk, "content") else str(chunk)
                 # Hold back only while the start could still be the emotion tag;
@@ -779,7 +780,7 @@ async def synthesizer_node(state: AgentState, config: RunnableConfig) -> dict:
             # through here rather than translating this literal.
             fallback = get_ui_string(persona_id, "error_unavailable", locale)
             return {
-                "final_answer": fallback,
+                "final_answer": prefix + fallback,
                 "errors": [{
                     "node": "synthesizer",
                     "severity": ErrorSeverity.CRITICAL,
@@ -826,6 +827,6 @@ async def synthesizer_node(state: AgentState, config: RunnableConfig) -> dict:
     })
 
     return {
-        "final_answer": final or "",
+        "final_answer": prefix + (final or ""),
         "total_tokens": tokens,
     }

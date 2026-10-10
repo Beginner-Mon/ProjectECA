@@ -1,10 +1,28 @@
 # LangGraph Flow + Persona Integration
 
 > Viết 11-08-2026. Làm context để add PERSONA cho character.
+> Cập nhật 04-10-2026 (grader-contract): hai chỗ kiểm, grader LLM chấm,
+> câu an toàn + dòng nguồn do code phát, retry viết thêm phần thiếu.
 
 ---
 
 ## 1. Tổng quan 8 node
+
+```
+planner → retriever_agent → tools → [kimodo] → synthesizer → grader → END
+              ↑                │                    ↑           │
+              └── kiểm 1 ──────┘                    └── kiểm 2 ─┘
+```
+
+Kiểm 1 (sau `tools`, không tốn LLM): không gọi tool hoặc tool lỗi thì quay lại
+`retriever_agent`, tối đa một lần (`routing.retrieval_fault`). Kết quả rỗng
+không phải lỗi (D24). Tool ném lỗi thành `ToolMessage {"error": ...}`, lượt
+không chết.
+
+Kiểm 2 (trong `grader`, một lời gọi LLM thinking-disabled): từng mục kiểm có
+trong evidence mà câu trả lời thiếu thì quay lại `synthesizer` viết thêm phần
+thiếu, tối đa một lần. Câu an toàn và dòng nguồn do code phát thẳng vào luồng
+stream — model không tự viết.
 
 ```
 START
@@ -33,12 +51,12 @@ START
      │                   │  _agent    │  │              │
      │                   └─────┬──────┘  └──────────────┘
      │                         │
-     │                    ┌────┴────┐
-     │                    ▼         │ max 2 rounds
-     │               ┌────────┐    │
-     │               │ tools  │────┘
-     │               └───┬────┘
-     │                   │ done → route kiểm tra needs_motion
+      │                    ┌────┴────┐
+      │                    ▼         │ kiểm 1: no_tool_called → quay lại
+      │               ┌────────┐    │ retriever (tối đa 1 lần);
+      │               │ tools  │────┘ tool_error → quay lại retriever
+      │               └───┬────┘    │ (tối đa 1 lần); rỗng đi tiếp (D24)
+      │                   │ done → route kiểm tra motion tag
      │                   │
      │      ┌────────────┘
      │      ▼
@@ -58,14 +76,15 @@ START
      │        ├── required_outputs == [] ──┼── END (fast-path)
      │        │                            │
      │        │              ┌─────────────┘
-     │        │              ▼
-     │        │       ┌─────────┐   0 LLM calls (regex rule-based)
-     │        │       │ grader  │   Tag-driven check:
-     │        │       └────┬────┘     - Safety missing → chèn template cứng
-     │        │            │          - Quality missing → retry (max 1)
-     │        │            │          - All pass → END
-     │        │            │
-     │        │    retry ──┘─── quay lại retriever_agent
+      │        │              ▼
+      │        │       ┌─────────┐   1 LLM call (judge, thinking disabled)
+      │        │       │ grader  │   LLM chấm từng mục kiểm:
+      │        │       └────┬────┘     - Thiếu mà evidence có → retry viết thêm
+      │        │            │          - Thiếu mà evidence im → pass
+      │        │            │          - Dòng kết do code nối (referral, nguồn,
+      │        │            │            disclaimer), không regex
+      │        │            │
+      │        │    retry ──┘─── quay lại synthesizer (chỉ nối phần thiếu)
      │        │
      │        ▼
      │      END
@@ -131,7 +150,10 @@ START
 - `youtube_transcript` — lấy transcript YouTube link
 - `search_medical` — web search (MCP), chỉ khi `web_search=true`
 
-**Loop rule**: Max 2 rounds (`MAX_RETRIEVER_ROUNDS=2`). Tool calls được gọi song song.
+**Loop rule (kiểm 1)**: `retriever_agent` chạy tối đa 2 lần
+(`MAX_RETRIEVER_ROUNDS=2`). Không gọi tool → quay lại một lần với khối
+`## Second attempt`; tool lỗi → quay lại một lần; kết quả rỗng đi tiếp.
+Tool calls được gọi song song.
 
 **P3 execution guard** (`_make_guarded_tools_node`): Nếu `web_search=false` mà retriever vẫn gọi `search_medical` → chặn cứng, trả ToolMessage `{"blocked": "web_search_disabled"}`.
 
@@ -186,11 +208,15 @@ system = f"{persona_system}\n\n---\n\n{task_system}"  # ghép với task prompt
 ---
 [TASK BLOCK]                 ← thay đổi theo mode
   - LANGUAGE_RULE (luôn có)
-  - SAFETY_PREFIX_RULES (nếu có safety tag)
-  - Required deliverables (tags)
+  - Required deliverables (chỉ tag do model viết)
   - Retrieved evidence (tool results)
   - User's question
+  - Contract note (câu đã hiện + dòng sẽ thêm, nếu có tag do code viết)
 ```
+
+Câu mở đầu (`red_flag_screen`) do code phát vào stream trước chunk LLM đầu;
+`final_answer` = câu mở đầu + chữ LLM. Lượt viết thêm chỉ nối phần thiếu,
+không viết lại. Bất biến: chuỗi đã stream bằng đúng `final_answer`.
 
 #### 2.5.3 4 mode prompt templates
 
@@ -201,27 +227,42 @@ system = f"{persona_system}\n\n---\n\n{task_system}"  # ghép với task prompt
 | `clarify` | `_CLARIFY_TASK` | Thiếu thông tin → hỏi lại user |
 | `chat` | `_CHAT_TASK` | Chào hỏi, casual → trả lời ngắn gọn |
 
-### 2.6 grader — `nodes/grader.py`
+### 2.6 grader — `nodes/grader.py` + `tag_contract.py`
 
 | | |
 |---|---|
-| LLM calls | 0 (rule-based, regex) |
-| Input | state.final_answer + state.required_outputs |
-| Output | grader_result: "pass" / "retry" / "pass_with_warning" |
-| Persona | ❌ Không liên quan trực tiếp |
+| LLM calls | 1 (judge, role `grader`: thinking disabled, timeout 5s, no retry) |
+| Input | state.final_answer (bỏ câu mở đầu) + checklist `check_items` + evidence |
+| Output | grader_result: "pass" / "retry" / "pass_with_warning" + `grader_detail` |
+| Persona | ❌ Không liên quan trực tiếp (câu chữ lấy từ persona overlay qua `get_safety_text`) |
 
-**Cơ chế**: Tag-driven, regex marker-based (D31). KHÔNG dùng LLM.
+**Cơ chế**: LLM chấm từng mục kiểm (`_judge`), không regex. Tám hàm `_has_*`
+cũ giữ lại làm công cụ đo (`scripts/eval_grader_rules.py`).
 
-**2 loại tag**:
-- **Safety** (red_flag_screen, referral_advice, scope_disclaimer): thiếu → chèn **template cứng** (D6), không retry
-- **Quality** (exercise_protocol, exercise_steps, contraindication, evidence_citation, motion_descriptor): thiếu → **retry max 1** lần
+**Bảng 8 tag** (`TAG_CONTRACT` — ai viết, vị trí, mục kiểm):
+
+| Tag | Ai viết | Vị trí | Mục kiểm |
+|---|---|---|---|
+| `red_flag_screen` | code | mở đầu | — (câu an toàn do code phát) |
+| `referral_advice` | code | kết | — |
+| `evidence_citation` | code | kết | — (dòng nguồn do code phát) |
+| `scope_disclaimer` | code | kết | — |
+| `exercise_protocol` | model | thân | `amount` (sets/reps/giữ bao lâu), `frequency` (mỗi ngày/tuần) |
+| `exercise_steps` | model | thân | ≥2 bước có thứ tự |
+| `contraindication` | model | thân | ai không nên tập / cần cẩn trọng |
+| `motion_descriptor` | model | thân | chuyển động + khớp liên quan |
 
 **Flow grader**:
 1. `required_outputs=[]` → skip (không gọi grader, routing xử lý ở D15)
-2. Safety tag thiếu → `pass_with_warning`, chèn template cứng vào ĐẦU answer (D32)
-3. Quality tag thiếu + `retry_count=0` → `retry`, quay lại retriever_agent
-4. Quality tag thiếu + `retry_count>=1` → `pass_with_warning`, gắn disclaimer CUỐI (D32)
-5. Tất cả pass → `pass` → END
+2. Thân rỗng → `retry` một lần, không chấm
+3. `retry_count>=1` → không chấm lại → `_finish` nối dòng kết
+4. Không evidence hits → `pass`, mọi mục `no_evidence`
+5. LLM chấm lỗi/JSON hỏng → `pass` (log `grader_judge_failed`)
+6. Thiếu mà evidence có (`synth_missed`) → `retry`, `grader_feedback` là các
+   định nghĩa mục thiếu → synthesizer viết thêm
+7. Thiếu mà evidence im (`source_silent`) → `pass`
+8. `_finish` nối dòng kết (referral → dòng nguồn → disclaimer) vào stream và
+   `final_answer`; `grader_detail` vào `meta` API
 
 ### 2.7 error_handler — `nodes/error_handler.py`
 
@@ -311,7 +352,7 @@ Persona KHÔNG ảnh hưởng đến:
 - **memory** — chỉ assemble context, không LLM
 - **planner** — dùng system prompt riêng, không persona (planner không phải user-facing)
 - **retriever_agent** — dùng system prompt riêng, persona không liên quan đến search strategy
-- **grader** — rule-based regex, không LLM
+- **grader** — LLM chấm từng mục kiểm, không regex
 
 ### 4.6 3 persona hiện có
 
@@ -331,11 +372,11 @@ class AgentState(TypedDict):
     required_outputs:    list[str]   # Planner set — Grader reads
     resolved_query:      str         # Planner set — Retriever + Synthesizer reads
     needs_retrieval:     bool        # Planner set — Routing reads
-    needs_motion:        bool        # Planner set — Routing + Kimodo reads
     needs_clarification: bool        # Planner set — Routing + Synthesizer reads
     grader_result:       str         # Grader set — Routing reads ("pass"|"retry"|"pass_with_warning")
-    grader_feedback:     str|None    # Grader set — Retriever reads (on retry)
-    retry_count:         int         # Grader set — Grader reads (max 1)
+    grader_feedback:     str|None    # Grader set — các mục thiếu, Synthesizer đọc (viết thêm)
+    retry_count:         int         # Grader set — Grader/Synthesizer reads (max 1)
+    grader_detail:       dict        # Grader set — mục kiểm → ok|synth_missed|source_silent|no_evidence
     final_answer:        str         # Synthesizer/Grader/ErrorHandler set — API response
     total_tokens:        int         # Accumulated via operator.add
     retriever_rounds:    int         # Retriever set — Routing reads (hard cap 2)
@@ -362,9 +403,8 @@ Frontend thêm `persona_id` vào request body → API truyền vào `configurabl
 
 | Muốn persona ảnh hưởng đến... | Sửa ở đâu |
 |---|---|
-| Tone grader template cứng | `grader.py` — các template string trong TAG_RULES |
+| Tone câu an toàn / dòng nguồn | `tag_contract.py` — template mặc định; câu chữ persona trong `personas/*/*.md` |
 | Cách planner phân loại intent | `planner.py` — `_PLANNER_SYSTEM_PROMPT` (hiếm khi cần) |
-| Safety disclaimer text | `grader.py:222-224` — `_UNAUTHORIZED_DISCLAIMER` |
 | Retriever search strategy | `retriever_agent.py` — `_RETRIEVER_PROMPT_BASE` (hiếm khi cần) |
 
 ---
@@ -375,13 +415,15 @@ Frontend thêm `persona_id` vào request body → API truyền vào `configurabl
 |---|---|
 | `graph.py` | Định nghĩa StateGraph, 8 node, edges, routing |
 | `state.py` | AgentState TypedDict |
-| `routing.py` | 5 hàm routing + check_errors |
+| `routing.py` | `retrieval_fault`, `route_after_*`, `check_errors` |
+| `evidence.py` | `EvidenceItem` dùng chung (synthesizer, grader, dòng nguồn) |
+| `tag_contract.py` | `TAG_CONTRACT` + câu mở đầu/dòng kết/dòng nguồn do code phát |
 | `nodes/memory.py` | Memory node |
 | `nodes/planner.py` | Planner node + PlanOutput + TAG vocabulary |
 | `nodes/retriever_agent.py` | Retriever agent + tool list + system prompt |
 | `nodes/kimodo.py` | Kimodo motion generation node |
 | `nodes/synthesizer.py` | **Synthesizer — nơi persona được inject** |
-| `nodes/grader.py` | TAG_RULES + 8 rule functions + grader logic |
+| `nodes/grader.py` | LLM chấm (`_judge`) + `_finish` nối dòng kết; TAG_RULES + 8 hàm `_has_*` (công cụ đo) |
 | `nodes/error_handler.py` | Error handler node |
 | `nodes/_persona_loader.py` | Load/cache persona MD, build prompt |
 | `personas/*.md` | 3 persona definitions |

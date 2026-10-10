@@ -148,7 +148,7 @@ docker exec eca-postgres psql -U eca -d eca -c "SELECT COUNT(*) FROM kb_embeddin
 |---|:---:|---|
 | `DEEPSEEK_API_KEY` | ✅ | LLM chính |
 | `GEMINI_API_KEYS` | ➖ | Fallback, phân tách bằng dấu phẩy |
-| `VVA_PG_DSN` | ➖ | `postgresql://vva:eca_dev@localhost:5433/vva` |
+| `VVA_PG_DSN` | ➖ | `postgresql://eca:eca_dev@localhost:5433/eca` |
 | `SEARXNG_URL` | ➖ | `http://localhost:6666` |
 | `REQUIRE_AUTH` | ➖ | `false` khi dev. Production phải `true` |
 | `LOG_LEVEL` / `LOG_FILE` | ➖ | Ghi log |

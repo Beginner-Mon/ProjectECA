@@ -209,7 +209,7 @@ export function evictionIds(metas: readonly CacheMeta[], max = TTS_CACHE_MAX_ENT
 // `audio` (the chunks). Every sweep reads only `meta`, so deciding what to
 // delete never pulls tens of MB of audio into memory just to look at dates.
 
-const DB_NAME = 'vva-tts-cache'
+const DB_NAME = 'eca-tts-cache'
 const DB_VERSION = 1
 const META = 'meta'
 const AUDIO = 'audio'

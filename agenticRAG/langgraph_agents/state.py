@@ -1,4 +1,4 @@
-"""VVA Agent State — REUPDATE_PLAN.md §M.1 (3-axis model).
+"""ECA Agent State — REUPDATE_PLAN.md §M.1 (3-axis model).
 
 Replaces old 6-enum intent system. Key changes (33 decisions D1-D33):
   - D1:  Intent 6-enum → 3-axis (required_outputs / resolved_query / routing bits)
@@ -54,8 +54,9 @@ class AgentState(TypedDict):
 
     # ── Grader output (tag-driven, rule-based — M.3) ───────────────────
     grader_result: str               # "pass" | "retry" | "pass_with_warning"
-    grader_feedback: Optional[str]   # injected into retriever on retry
+    grader_feedback: Optional[str]   # các mục thiếu, đưa cho synthesizer ở lần viết thêm
     retry_count: int                 # 0 → max 1 (D6: safety no retry, quality retry 1)
+    grader_detail: dict              # mục kiểm → "ok" | "synth_missed" | "source_silent" | "no_evidence"
 
     # ── Synthesizer / error_handler output ─────────────────────────────
     final_answer: str

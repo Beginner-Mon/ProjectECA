@@ -59,6 +59,12 @@
     "last": "last:",
     "lock_axes": "Lock Axes (right-drag)",
     "lock_axis": "Lock {{axis}} — drag won't change {{axis}}",
+    "lip_attack": "open speed",
+    "lip_mode": "lip sync",
+    "lip_mode_amplitude": "old (volume only)",
+    "lip_mode_general": "general",
+    "lip_release": "close speed",
+    "lip_shape": "shape blend speed",
     "mode": "mode:",
     "no_avatar": "no avatar attached",
     "replay_hint": "Pick one to replay —",
@@ -70,7 +76,8 @@
     "target_head": "Target: Head",
     "target_hips": "Target: Hips",
     "title": "Motion Controls",
-    "unlock_axis": "Unlock {{axis}}"
+    "unlock_axis": "Unlock {{axis}}",
+    "viseme": "viseme"
   },
   "sessions": {
     "delete_confirm_title": "Delete session?",

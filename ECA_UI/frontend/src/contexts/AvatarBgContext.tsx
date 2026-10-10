@@ -3,7 +3,7 @@ import { AVATAR_BG_OPTIONS, type AvatarBgId } from '@/lib/avatarPalette'
 import { AvatarBgContext } from '@/hooks/useAvatarBg'
 import { usePreferences } from '@/hooks/usePreferences'
 
-const STORAGE_KEY = 'vva_avatar_bg'
+const STORAGE_KEY = 'eca-avatar-bg'
 
 function readLocal(): AvatarBgId | null {
   try {

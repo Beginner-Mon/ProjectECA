@@ -53,7 +53,7 @@ const FORBIDDEN_IN_BUILD = [
 
 function requireBuildEnv(mode: string): Plugin {
   return {
-    name: 'vva-require-build-env',
+    name: 'eca-require-build-env',
     apply: 'build',
     config() {
       // loadEnv, not process.env: it applies Vite's own .env resolution order,

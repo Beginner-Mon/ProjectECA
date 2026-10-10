@@ -142,13 +142,9 @@ build/
 # =========================
 # Reference voices (voice cloning) — MUST come after the *.wav rules above
 # =========================
-# `voices/` holds the reference recordings a character is cloned from. New
-# recordings are NOT committed (decided 10/10/2026): in production the private
-# S3 voice bucket is the source of truth, and scripts/upload_characters_to_s3.py
-# uploads from this folder, so a recording only has to be on disk here. The
-# blanket `*.wav` rules above therefore apply inside voices/ too.
-#
-# anne_vi.wav, anne_en.wav and reporter_vi.wav were committed before that
-# decision and stay tracked; an ignore rule never untracks a file. To run TTS
-# locally with any other character, copy its <slug>_<lang>.wav in by hand.
+# `voices/` holds the reference recordings a character is cloned from: source
+# assets, not output. The blanket `*.wav` (twice, lines ~35 and ~105) swept them
+# up, and since git does not track empty directories, nobody who cloned the repo
+# saw `voices/` at all — the character voices simply were not there.
 !voices/
+!voices/*.wav

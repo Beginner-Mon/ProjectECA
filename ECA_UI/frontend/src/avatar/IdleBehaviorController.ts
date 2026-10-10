@@ -8,32 +8,26 @@ import type { EyeController } from './EyeController'
  * DIRECTLY (not through AvatarController.setEmotion) so it never refreshes the
  * engagement timer.
  *
- * Emotion wanderer alternates rest <-> a weighted calm emotion so it always
+ * Emotion wanderer alternates rest <-> one calm emotion so it always
  * passes through neutral (never jumps between two expressions). Gaze wanderer
  * nudges a look target; EyeController still lets a live mouse win.
  */
-const EMOTION_INTERVAL_SEC: [number, number] = [4, 9]
+// Decided by Tri, 10/10/2026: idle shows only `relaxed`, at full intensity,
+// 50-60 s apart. Replaces the earlier happy/relaxed mix at 0.15-0.4 every 4-9 s.
+const IDLE_EMOTION: CanonicalEmotion = 'relaxed'
+const EMOTION_INTENSITY = 1
+const REST_GAP_SEC: [number, number] = [50, 60] // neutral, before an expression
+const EMOTION_HOLD_SEC: [number, number] = [4, 9] // expression held before neutral
 const EMOTION_TRANSITION_MS = 800
 const GAZE_INTERVAL_SEC: [number, number] = [2, 5]
 const GAZE_RANGE = 0.3
-
-// Product owner decision, 10/10/2026: idle expressions play at full intensity
-// and lean relaxed over happy. This replaces the earlier low-intensity
-// (0.15-0.4), happy-leaning (62/38) values.
-const EMOTION_INTENSITY = 1
-
-// Weighted calm emotions. Only calm expressions in idle.
-const EMOTION_WEIGHTS: Array<{ emotion: CanonicalEmotion; weight: number }> = [
-  { emotion: 'relaxed', weight: 0.62 },
-  { emotion: 'happy', weight: 0.38 },
-]
 
 export class IdleBehaviorController {
   private readonly expression: ExpressionController
   private readonly eye: EyeController
   private readonly skipEmotions: Set<CanonicalEmotion>
 
-  private emotionTimer = randomRange(EMOTION_INTERVAL_SEC)
+  private emotionTimer = randomRange(REST_GAP_SEC)
   private gazeTimer = randomRange(GAZE_INTERVAL_SEC)
   private atRest = true
 
@@ -49,7 +43,7 @@ export class IdleBehaviorController {
 
   /** Called when the avatar (re)enters IDLE — restart wander timers. */
   reset(): void {
-    this.emotionTimer = randomRange(EMOTION_INTERVAL_SEC)
+    this.emotionTimer = randomRange(REST_GAP_SEC)
     this.gazeTimer = randomRange(GAZE_INTERVAL_SEC)
     this.atRest = true
   }
@@ -59,14 +53,14 @@ export class IdleBehaviorController {
     this.emotionTimer -= delta
     if (this.emotionTimer <= 0) {
       if (this.atRest) {
-        const emotion = this.pickWeighted()
-        this.expression.setEmotion(emotion, EMOTION_INTENSITY, EMOTION_TRANSITION_MS)
+        this.expression.setEmotion(this.idleEmotion(), EMOTION_INTENSITY, EMOTION_TRANSITION_MS)
         this.atRest = false
+        this.emotionTimer = randomRange(EMOTION_HOLD_SEC)
       } else {
         this.expression.setEmotion('neutral', 1, EMOTION_TRANSITION_MS)
         this.atRest = true
+        this.emotionTimer = randomRange(REST_GAP_SEC)
       }
-      this.emotionTimer = randomRange(EMOTION_INTERVAL_SEC)
     }
 
     // Gaze wanderer: occasional saccade to a nearby point, sometimes back to center.
@@ -81,17 +75,9 @@ export class IdleBehaviorController {
     }
   }
 
-  /** Pick a calm emotion, excluding binary (on/off) morphs that can't blend. */
-  private pickWeighted(): CanonicalEmotion {
-    const available = EMOTION_WEIGHTS.filter((w) => !this.skipEmotions.has(w.emotion))
-    if (available.length === 0) return 'neutral'
-    const total = available.reduce((s, w) => s + w.weight, 0)
-    let r = Math.random() * total
-    for (const { emotion, weight } of available) {
-      r -= weight
-      if (r <= 0) return emotion
-    }
-    return 'neutral'
+  /** The idle emotion, or neutral if the profile lists it as binary (on/off morphs can't blend). */
+  private idleEmotion(): CanonicalEmotion {
+    return this.skipEmotions.has(IDLE_EMOTION) ? 'neutral' : IDLE_EMOTION
   }
 }
 

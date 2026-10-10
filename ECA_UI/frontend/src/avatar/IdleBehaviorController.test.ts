@@ -10,7 +10,7 @@ interface Call {
   durationMs: number
 }
 
-const TICKS = 4000
+const TICKS = 100000
 
 function seededRandom(seed: number): () => number {
   let state = seed >>> 0
@@ -29,7 +29,7 @@ function drive(binary?: readonly CanonicalEmotion[]): Call[] {
   } as unknown as ExpressionController
   const eye = { setWander: () => {} } as unknown as EyeController
   const idle = new IdleBehaviorController(expression, eye, binary)
-  for (let i = 0; i < TICKS; i++) idle.tick(10)
+  for (let i = 0; i < TICKS; i++) idle.tick(1)
   return calls
 }
 
@@ -47,15 +47,10 @@ describe('IdleBehaviorController emotion wanderer', () => {
     for (const c of shown) expect(c.intensity).toBe(1)
   })
 
-  it('leans relaxed (about 62%) over happy, and uses both', () => {
+  it('shows relaxed only, never happy', () => {
     const shown = drive().filter((c) => c.emotion !== 'neutral')
-    const relaxed = shown.filter((c) => c.emotion === 'relaxed').length
-    const happy = shown.filter((c) => c.emotion === 'happy').length
-    expect(relaxed).toBeGreaterThan(0)
-    expect(happy).toBeGreaterThan(0)
-    const share = relaxed / shown.length
-    expect(share).toBeGreaterThanOrEqual(0.55)
-    expect(share).toBeLessThanOrEqual(0.69)
+    expect(shown.length).toBeGreaterThan(0)
+    for (const c of shown) expect(c.emotion).toBe('relaxed')
   })
 
   it('always returns to neutral between two expressions', () => {
@@ -70,6 +65,60 @@ describe('IdleBehaviorController emotion wanderer', () => {
   it('never plays an emotion listed as binary', () => {
     const calls = drive(['relaxed'])
     expect(calls.some((c) => c.emotion === 'relaxed')).toBe(false)
-    expect(calls.some((c) => c.emotion === 'happy')).toBe(true)
+  })
+
+  describe('timing', () => {
+    function rig() {
+      const log: Array<{ at: number; emotion: string }> = []
+      let now = 0
+      const expression = {
+        setEmotion: (emotion: string) => {
+          log.push({ at: now, emotion })
+        },
+      } as unknown as ExpressionController
+      const eye = { setWander: () => {} } as unknown as EyeController
+      const idle = new IdleBehaviorController(expression, eye)
+      const run = (seconds: number) => {
+        for (let i = 0; i < seconds; i++) {
+          now += 1
+          idle.tick(1)
+        }
+      }
+      return { idle, log, run, clock: () => now }
+    }
+
+    function expectCycles(log: Array<{ at: number; emotion: string }>, start: number) {
+      expect(log.length).toBeGreaterThanOrEqual(8)
+      let prev = start
+      log.forEach((c, i) => {
+        const gap = c.at - prev
+        if (i % 2 === 0) {
+          expect(c.emotion).toBe('relaxed')
+          expect(gap).toBeGreaterThanOrEqual(50)
+          expect(gap).toBeLessThanOrEqual(60)
+        } else {
+          expect(c.emotion).toBe('neutral')
+          expect(gap).toBeGreaterThanOrEqual(4)
+          expect(gap).toBeLessThanOrEqual(9)
+        }
+        prev = c.at
+      })
+    }
+
+    it('waits 50-60 s before an expression, then holds it 4-9 s, over several cycles', () => {
+      const { log, run } = rig()
+      run(600)
+      expectCycles(log, 0)
+    })
+
+    it('waits 50-60 s again after reset()', () => {
+      const { idle, log, run, clock } = rig()
+      run(200)
+      idle.reset()
+      log.length = 0
+      const start = clock()
+      run(600)
+      expectCycles(log, start)
+    })
   })
 })

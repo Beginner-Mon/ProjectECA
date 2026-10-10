@@ -25,6 +25,10 @@ it names personas/<slug>/ and the S3 keys, and Linux is case-sensitive.
 checked against ECA_UI/frontend/src/avatar/vrmManifest.ts before any
 credentials exist.
 
+A real run that renders greeting clips also needs httpx, numpy and soundfile in
+the interpreter that runs this script, next to boto3 and asyncpg. Without
+soundfile, pass --skip-audio; otherwise every clip fails and is skipped.
+
 Requires VVA_PG_DSN for the real run — the same variable the backend and
 Alembic read, so there is no way to seed one database while the app reads
 another.
@@ -57,6 +61,7 @@ import argparse
 import asyncio
 import base64
 import hashlib
+import io
 import json
 import os
 import re
@@ -495,8 +500,7 @@ def _collect_speechllm_audio(text: str, voice_path: str, language: str, speechll
                     audio_bytes = base64.b64decode(audio_b64)
                     # Each chunk is a FLAC file; decode to PCM
                     try:
-                        import io as _io
-                        data, _sr = sf.read(_io.BytesIO(audio_bytes), dtype="float32")
+                        data, _sr = sf.read(io.BytesIO(audio_bytes), dtype="float32")
                         if sr is None:
                             sr = _sr
                         pcm_parts.append(data)

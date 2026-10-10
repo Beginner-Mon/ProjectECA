@@ -295,3 +295,29 @@ def test_build_records_rejects_a_model_whose_name_is_not_a_slug(tmp_path, name):
     msg = str(exc.value)
     assert name in msg
     assert "rename" in msg.lower()
+
+
+@pytest.mark.unit
+def test_every_global_a_function_loads_exists():
+    """A name loaded as a global that the module never defines is a NameError
+    waiting for the one code path nobody ran (a missing ``import io``)."""
+    import builtins
+    import dis
+    import types
+
+    known = set(vars(up)) | set(vars(builtins))
+    missing: list[str] = []
+
+    def walk(code: types.CodeType, owner: str) -> None:
+        for instr in dis.get_instructions(code):
+            if instr.opname == "LOAD_GLOBAL" and instr.argval not in known:
+                missing.append(f"{owner}: {instr.argval}")
+        for const in code.co_consts:
+            if isinstance(const, types.CodeType):
+                walk(const, f"{owner}.{const.co_name}")
+
+    for name, obj in vars(up).items():
+        if isinstance(obj, types.FunctionType) and obj.__module__ == up.__name__:
+            walk(obj.__code__, name)
+
+    assert not missing, "undefined globals: " + "; ".join(sorted(set(missing)))

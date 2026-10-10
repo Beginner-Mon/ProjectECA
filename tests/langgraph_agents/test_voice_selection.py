@@ -11,7 +11,7 @@ EN = "Try three sets of ten repetitions, and stop if the pain goes above 4/10."
 
 
 @pytest.mark.unit
-@pytest.mark.parametrize("slug", ["anne", "bronya", "miki", "hatsune-miku"])
+@pytest.mark.parametrize("slug", ["anne", "bronya", "miki", "hatsune-miku", "mei"])
 def test_path_follows_character_and_language(slug):
     assert resolve_voice(slug, VI) == (f"voices/{slug}_vi.wav", "vi")
     assert resolve_voice(slug, EN) == (f"voices/{slug}_en.wav", "en")

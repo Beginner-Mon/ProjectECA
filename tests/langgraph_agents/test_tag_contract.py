@@ -35,7 +35,7 @@ def test_model_tags_and_check_items():
         "exercise_protocol.amount", "exercise_protocol.frequency"]
 
 
-@pytest.mark.parametrize("slug", ["anne", "bronya", "hatsune-miku", "miki"])
+@pytest.mark.parametrize("slug", ["anne", "bronya", "hatsune-miku", "miki", "mei"])
 @pytest.mark.parametrize("locale", ["vi", "en"])
 def test_every_persona_has_an_opening_line(slug, locale):
     assert opening_line(["red_flag_screen"], slug, locale) == get_safety_text(

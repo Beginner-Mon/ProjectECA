@@ -339,9 +339,9 @@ def build_records(cdn_base: str, models_dir: Path) -> list[dict]:
             f"No .vrm files in {models_dir} and no {MANIFEST_PATH.name} to fall\n"
             f"back on. The models were removed from the repo once they lived on the\n"
             f"CDN, so seeding a fresh database needs one of:\n"
-            f"  git checkout <commit-before-removal> -- ECA_UI/frontend/src/asset/models\n"
-            f"  and pass a folder holding the .vrm files as --models-dir\n"
-            f"  then re-run with --write-manifest to recreate {MANIFEST_PATH.name}\n"
+            f"  download each active character's model from the URL in\n"
+            f"  characters.vrm_url into one folder as <slug>.vrm, then pass that\n"
+            f"  folder as --models-dir\n"
             f"or copy the characters rows from a database that already has them."
         )
 

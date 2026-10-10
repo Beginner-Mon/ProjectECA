@@ -32,6 +32,8 @@ export class EyeController {
   private wanderYaw = 0
   private wanderPitch = 0
   private lastMouseAt = -Infinity
+  /** Set while thinking (ThinkingGaze): wins over the mouse and the wander. */
+  private override: { yaw: number; pitch: number } | null = null
 
   constructor(vrm: VRM) {
     this.vrm = vrm
@@ -55,10 +57,22 @@ export class EyeController {
     this.wanderPitch = -clampUnit(ny) * PITCH_MAX_DEG // negate: three-vrm pitch+ = down
   }
 
+  /**
+   * Look here regardless of the mouse, in [-1..1] like setWander. A person
+   * thinking looks away — following the cursor would break the cue.
+   */
+  setOverride(nx: number, ny: number): void {
+    this.override = { yaw: clampUnit(nx) * YAW_MAX_DEG, pitch: -clampUnit(ny) * PITCH_MAX_DEG }
+  }
+
+  clearOverride(): void {
+    this.override = null
+  }
+
   tick(delta: number, now: number): void {
     const mouseActive = now - this.lastMouseAt < MOUSE_ACTIVE_MS
-    const targetYaw = mouseActive ? this.mouseYaw : this.wanderYaw
-    const targetPitch = mouseActive ? this.mousePitch : this.wanderPitch
+    const targetYaw = this.override ? this.override.yaw : mouseActive ? this.mouseYaw : this.wanderYaw
+    const targetPitch = this.override ? this.override.pitch : mouseActive ? this.mousePitch : this.wanderPitch
 
     // Exponential smoothing, frame-rate independent.
     const k = 1 - Math.exp(-SMOOTH_PER_SEC * delta)

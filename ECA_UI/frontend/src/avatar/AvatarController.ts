@@ -8,6 +8,7 @@ import { BlinkController } from './BlinkController'
 import { EyeController } from './EyeController'
 import { HeadController } from './HeadController'
 import { IdleBehaviorController } from './IdleBehaviorController'
+import { ThinkingGaze } from './ThinkingGaze'
 import { LipSyncController, type LipSyncMode, type LipSyncTuning } from './LipSyncController'
 import { GestureFaceController } from './GestureFaceController'
 import { GestureCameraTrack } from './GestureCameraTrack'
@@ -16,6 +17,8 @@ const DEFAULT_EMOTION_DURATION_MS = 500
 const EVENT_GRACE_MS = 3000
 const TTS_GRACE_MS = 1500
 const IDLE_NEUTRAL_FADE_MS = 800
+/** Face eases to neutral when a thinking spell starts. */
+const THINKING_FACE_FADE_MS = 600
 
 /**
  * Single facade over the avatar animation stack (facial-animation-plan.md §3).
@@ -36,6 +39,9 @@ export class AvatarController {
   private readonly eye: EyeController
   private readonly head: HeadController
   private readonly idle: IdleBehaviorController
+  private readonly thinkingGaze: ThinkingGaze
+  /** In a thinking state (setThinking): thinking gaze instead of idle wander. */
+  private thinking = false
   private readonly lipSync: LipSyncController
   private readonly gestureFace: GestureFaceController
   private readonly cameraZoom = new GestureCameraTrack(1)
@@ -53,6 +59,7 @@ export class AvatarController {
     this.lipSync = new LipSyncController(profile)
     this.gestureFace = new GestureFaceController(profile)
     this.idle = new IdleBehaviorController(this.expression, this.eye, this.profile.binaryEmotions)
+    this.thinkingGaze = new ThinkingGaze(this.eye)
     // Order = layering (§5). Emotion first; lip-sync overrides the mouth; blink
     // next; a gesture's face track LAST, so while it plays it owns mouth + eyes.
     this.contributors = [this.expression, this.lipSync, this.blink, this.gestureFace]
@@ -160,6 +167,23 @@ export class AvatarController {
     this.lipSync.setTuning(patch)
   }
 
+  /**
+   * The body entered or left a thinking state (AnimationStates `mood`). While
+   * thinking: a calm neutral face (no idle smiles while the user waits), and
+   * the eyes glance up and aside instead of following the cursor. Idempotent.
+   */
+  setThinking(on: boolean): void {
+    if (on === this.thinking) return
+    this.thinking = on
+    if (on) {
+      this.expression.setEmotion('neutral', 1, THINKING_FACE_FADE_MS)
+      this.thinkingGaze.start()
+    } else {
+      this.eye.clearOverride()
+      this.idle.reset()
+    }
+  }
+
   /** Feed normalized mouse gaze in [-1..1] (x right+, y up+). */
   setMouse(nx: number, ny: number): void {
     this.eye.setMouse(nx, ny, now())
@@ -188,7 +212,8 @@ export class AvatarController {
       this.idle.reset()
     }
 
-    if (!engaged) this.idle.tick(delta)
+    if (this.thinking) this.thinkingGaze.tick(delta)
+    else if (!engaged) this.idle.tick(delta)
 
     this.expression.tick(delta)
     this.blink.tick(delta)

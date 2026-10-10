@@ -23,7 +23,8 @@ export type CharState =
   | 'idle' //            Default: Standard Idle, looping, close camera
   | 'greeting' //        One-shot on boot: action_greeting → idle
   | 'bored' //           One-shot idle filler: random_* → idle
-  | 'thinking_intro' //  Sequence: → freeze at last frame, wait for outro
+  | 'thinking_intro' //  Sequence: hand to chin → thinking_loop
+  | 'thinking_loop' //   Sequence: ponder (ping-pong) until the answer arrives
   | 'thinking_outro' //  Sequence: → idle
   | 'exercise' //        One-shot generated motion → idle (wide camera + cooldown)
   | 'gesture' //         One-shot per-character animation → idle (clip at runtime)
@@ -81,18 +82,32 @@ interface StateBase {
   blendSecTo?: Partial<Record<CharState, number>>
   /** Declarative timer trigger: after this long IN this state, go to `to`. */
   autoAfter?: { to: CharState; minSec: number; maxSec: number }
+  /** Playback speed of this state's clip (1 = as authored). */
+  timeScale?: number
+  /**
+   * Breathing layer (avatar/BreathingLayer.ts) always on in this state, not
+   * only once the pose has gone still. For states whose clip barely moves.
+   */
+  breathe?: boolean
+  /**
+   * Face while in this state: 'thinking' = no idle smiles, eyes look up and
+   * aside in short glances (AvatarController.setThinking).
+   */
+  mood?: 'thinking'
 }
 
 export type StateDef = StateBase &
   (
     | { loop: 'once'; onFinished: CharState }
+    /** Looping forever; `pingPong` plays forward then backward, so a section
+     *  whose ends do not match (the middle of Thinking.fbx) never jumps. */
+    | { loop: 'repeat'; onFinished: null; pingPong?: true }
     /** One-shot that deliberately FREEZES on its last frame and waits for
      *  something else to move it on — `thinking_intro` holds the pose until the
      *  answer arrives. Spelling it out keeps the guarantee above intact: a
      *  one-shot still cannot be left without a successor *by accident*, only on
      *  purpose. */
     | { loop: 'once'; onFinished: null; holdsLastFrame: true }
-    | { loop: 'repeat'; onFinished: null }
   )
 
 export const STATES: Record<CharState, StateDef> = {
@@ -133,13 +148,48 @@ export const STATES: Record<CharState, StateDef> = {
       match: /thinking/i,
       subclip: { name: 'intro', start: 0, end: 38, fps: 30 },
     },
+    // Used to freeze on its last frame until the answer came — 5–15 s of a
+    // statue, which users read as the app hanging (Owner, 10-10). It now hands
+    // over to thinking_loop, which continues from the very frame it ends on.
     loop: 'once',
-    onFinished: null,
-    holdsLastFrame: true,
+    onFinished: 'thinking_loop',
     reach: 'anytime',
     camera: 'head',
     facial: { wander: false, hold: 'neutral' },
-    debugLabel: 'Thinking (intro→freeze)',
+    debugLabel: 'Thinking (intro→ponder)',
+    // To the loop: it starts on this clip's last frame, so a short blend.
+    // To the outro (the answer came during the intro): see thinking_loop.
+    blendSecTo: { thinking_loop: 0.15, thinking_outro: 0.4 },
+    breathe: true,
+    mood: 'thinking',
+  },
+  /**
+   * The middle of Thinking.fbx (hand at the chin), measured 10-10: from frame
+   * 38 the right arm settles ~12–15° and the head ~4°, then 48–66 is nearly
+   * still, then it starts to lower. Played forward and back (its ends differ by
+   * ~10° in the arm, so a plain repeat would jump) and slowed to 0.6×, it reads
+   * as an unhurried "hmm" for however long the answer takes. The breathing
+   * layer and the thinking gaze carry the rest of the life.
+   */
+  thinking_loop: {
+    source: {
+      loader: 'fbx',
+      match: /thinking/i,
+      subclip: { name: 'ponder', start: 38, end: 75, fps: 30 },
+    },
+    loop: 'repeat',
+    onFinished: null,
+    pingPong: true,
+    timeScale: 0.6,
+    // The answer arrives at any point of the loop, but the outro always starts
+    // at frame 75 — up to ~5° away (10° near frame 38). 0.4 s settles that
+    // instead of the default 0.3 s jolt (10-10).
+    blendSecTo: { thinking_outro: 0.4 },
+    reach: { after: ['thinking_intro'] },
+    camera: 'head',
+    facial: { wander: false, hold: 'neutral' },
+    breathe: true,
+    mood: 'thinking',
   },
   thinking_outro: {
     source: {
@@ -155,7 +205,13 @@ export const STATES: Record<CharState, StateDef> = {
     },
     loop: 'once',
     onFinished: 'idle',
-    reach: { after: ['thinking_intro'] },
+    // From either: the answer can arrive during the 1.3 s intro or later.
+    reach: { after: ['thinking_intro', 'thinking_loop'] },
+    // Thinking.fbx and Standard Idle stand differently — measured 10-10 at the
+    // handover: arms ~30°, legs 9–13°, head 12°, hips 7.6°. Blended in the
+    // default 0.3 s the feet slid and she looked to jump; 0.8 s lets her settle
+    // into idle, as the exercise → idle hand-over already does.
+    blendSecTo: { idle: 0.8 },
     camera: 'head',
     facial: { wander: false, hold: 'neutral' },
   },
@@ -223,6 +279,20 @@ export const loopModeOf = (state: CharState): 'once' | 'repeat' => STATES[state]
 export const cameraModeOf = (state: CharState): CameraMode => STATES[state].camera
 
 export const facialOf = (state: CharState) => STATES[state].facial
+
+/** Repeat as forward-then-backward instead of wrapping to the start. */
+export const pingPongOf = (state: CharState): boolean => {
+  const def = STATES[state]
+  return def.loop === 'repeat' && def.pingPong === true
+}
+
+export const timeScaleOf = (state: CharState): number => STATES[state].timeScale ?? 1
+
+/** Breathing layer forced on in this state (see StateBase.breathe). */
+export const breathesIn = (state: CharState): boolean => STATES[state].breathe === true
+
+/** The avatar is waiting on an answer (bubble shown, thinking gaze on). */
+export const isThinkingState = (state: CharState): boolean => STATES[state].mood === 'thinking'
 
 /** Static clip descriptor, or null when the clip is supplied at runtime. */
 export function staticSourceOf(state: CharState): StaticSource | null {

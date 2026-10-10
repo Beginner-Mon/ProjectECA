@@ -13,7 +13,7 @@ import type { AnimationRegistry } from '../lib/AnimationRegistry'
 import { ActivityDispatcher } from '../avatar/ActivityDispatcher'
 import type { UserActivity } from '../avatar/userActivity'
 import { CameraController } from '../lib/CameraController'
-import { STATE_OPTIONS, type CameraMode, type CharState } from '../lib/AnimationStates'
+import { STATE_OPTIONS, isThinkingState, type CameraMode, type CharState } from '../lib/AnimationStates'
 import { MOTION_FILES, resolveMotionByName } from '../lib/motionAssets'
 import { fetchCharacters, fetchCharacter, isCompatible, type Character, type CharacterLite } from '../lib/characters'
 import { useAutoAfterTrigger } from '../hooks/useFsmTriggers'
@@ -229,6 +229,9 @@ export function MotionProvider({ children }: { children: ReactNode }) {
         // face track running on the next animation. Natural ends are harmless:
         // the track has already finished by then.
         if (state !== 'gesture') avatarRef.current?.stopGestureTracks()
+        // Thinking face and gaze for as long as the body is in a thinking
+        // state (intro and the ponder loop), off on the outro.
+        avatarRef.current?.setThinking(isThinkingState(state))
       })
 
       return () => {

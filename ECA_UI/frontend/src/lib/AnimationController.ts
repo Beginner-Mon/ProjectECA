@@ -23,6 +23,8 @@ import {
   cameraModeOf,
   loopModeOf,
   onFinishedOf,
+  pingPongOf,
+  timeScaleOf,
   type CharState,
 } from './AnimationStates'
 import { PoseInertializer } from './Inertializer'
@@ -156,8 +158,12 @@ export class AnimationController {
     const from = this.state
     const once = loopModeOf(next) === 'once'
     const action = this.mixer.clipAction(clip)
-    action.setLoop(once ? THREE.LoopOnce : THREE.LoopRepeat, once ? 1 : Infinity)
+    const loopMode = once ? THREE.LoopOnce : pingPongOf(next) ? THREE.LoopPingPong : THREE.LoopRepeat
+    action.setLoop(loopMode, once ? 1 : Infinity)
     action.clampWhenFinished = once
+    // Per-state playback speed. The debug speed slider scales the whole mixer,
+    // so the two multiply rather than fight.
+    action.timeScale = timeScaleOf(next)
 
     // `clipAction` returns the SAME action instance for a given clip. A one-shot
     // that already ran is parked on its last frame with `paused = true`, and

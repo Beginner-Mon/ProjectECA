@@ -247,17 +247,35 @@ describe('AnimationController — one-shot completion', () => {
     expect(controller.currentState).toBe('idle')
   })
 
-  it('freezes on the last frame when the state holds it', async () => {
-    // thinking_intro has onFinished: null + holdsLastFrame — it waits for the
-    // answer to arrive rather than dropping back to idle on its own.
+  it('hands the thinking intro over to the ponder loop instead of freezing', async () => {
+    // thinking_intro used to hold its last frame until the answer came — a
+    // statue for 5–15 s (10-10). It now continues into thinking_loop, which
+    // keeps going until the outro is asked for.
     const { registry } = makeRegistry()
     const controller = new AnimationController(vrm, registry)
 
     await controller.transitionTo('thinking_intro')
     controller.update(1.5)
     await Promise.resolve()
+    await Promise.resolve()
 
-    expect(controller.currentState).toBe('thinking_intro')
+    expect(controller.currentState).toBe('thinking_loop')
+    controller.update(10) // a long wait: still pondering, not back to idle
+    await Promise.resolve()
+    expect(controller.currentState).toBe('thinking_loop')
+    expect(await controller.transitionTo('thinking_outro')).toBe(true)
+  })
+
+  it('plays the ponder loop forward and back, slowed down', async () => {
+    const { registry, clipFor } = makeRegistry()
+    const controller = new AnimationController(vrm, registry)
+    await controller.transitionTo('thinking_intro')
+    await controller.transitionTo('thinking_loop')
+
+    const mixer = (controller as unknown as { mixer: THREE.AnimationMixer }).mixer
+    const action = mixer.clipAction(clipFor('thinking_loop')!)
+    expect(action.loop).toBe(THREE.LoopPingPong)
+    expect(action.timeScale).toBeCloseTo(0.6)
   })
 })
 

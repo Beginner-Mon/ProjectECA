@@ -14,7 +14,8 @@ import { DEFAULT_GROUND_CLAMP, GroundClamp } from '../lib/groundClamp'
 import { RootMotionAccumulator } from '../lib/rootMotionAccumulator'
 import type { CameraResponsivePreset } from '../lib/CameraConfig'
 import type { CameraMode } from '../lib/AnimationStates'
-import { cameraModeOf, loopModeOf } from '../lib/AnimationStates'
+import { breathesIn, cameraModeOf, loopModeOf } from '../lib/AnimationStates'
+import { BreathingLayer } from '../avatar/BreathingLayer'
 import { useFsmBoot } from '../hooks/useFsmTriggers'
 import { useMotion } from '../hooks/useMotion'
 import { AvatarController } from '../avatar/AvatarController'
@@ -245,6 +246,7 @@ function VRMCharacter({ vrmUrl, modelId, onReady, vrmRef, avatarRef, onTeleport 
   })
 
   const vrm: VRM = gltf.userData.vrm
+  const breathing = useMemo(() => new BreathingLayer(vrm.humanoid), [vrm])
 
   // Cache rest poses immediately upon load, before any animations mutate the bones.
   // The retargeter (BVH/Mixamo) needs these pure bind poses to calculate offsets.
@@ -499,6 +501,10 @@ function VRMCharacter({ vrmUrl, modelId, onReady, vrmRef, avatarRef, onTeleport 
       animControllerRef.current.setGroupTarget(modelGroupRef.current)
     }
     animControllerRef.current?.update(delta)
+    // Breathing on top of the mixer's pose: in any held pose, and always in
+    // states that ask for it (the thinking pose). Before the avatar tick, whose
+    // HeadController writes the head on top of this.
+    breathing.update(delta, breathesIn(animControllerRef.current?.currentState ?? 'idle'))
     avatarControllerRef.current?.tick(delta)
     // The clamp reads the pose this frame actually produced — which the mixer
     // and inertializer have already written to the normalized bones, so it

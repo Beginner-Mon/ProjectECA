@@ -7,6 +7,7 @@ import type { VRM } from '@pixiv/three-vrm'
 import * as THREE from 'three'
 import { useMotion } from '../../hooks/useMotion'
 import { useChat } from '../../hooks/useChat'
+import { isThinkingState } from '../../lib/AnimationStates'
 
 interface ThinkingBubbleProps {
   vrmRef: React.MutableRefObject<VRM | null>
@@ -29,8 +30,12 @@ export default function ThinkingBubble({ vrmRef }: ThinkingBubbleProps) {
   const tail2Ref = useRef<HTMLSpanElement>(null)
   const initializedRef = useRef(false)
 
-  const visible = currentState === 'thinking_intro' && !!stageLabel
-  const displayText = stageLabel ?? ''
+  // Through the whole wait (intro AND the ponder loop that follows it), not
+  // only the 1.3 s intro. Without a label yet, the dots alone say "working".
+  const visible = isThinkingState(currentState)
+  // The labels end in "..." ("Thinking...") — that ellipsis is drawn as the
+  // animated dots below instead, so the bubble visibly ticks while it waits.
+  const displayText = (stageLabel ?? '').replace(/\s*(\.{2,}|…)\s*$/, '')
 
   // Scratch vectors to avoid alloc per frame
   const headNdc = useRef(new THREE.Vector3())
@@ -132,6 +137,17 @@ export default function ThinkingBubble({ vrmRef }: ThinkingBubbleProps) {
                         {char === ' ' ? '\u00A0' : char}
                       </motion.span>
                     ))}
+                    {/* Live "typing" dots: always moving, so the wait never looks stalled. */}
+                    <span className={`inline-flex items-end gap-[3px] ${displayText ? 'ml-1' : ''}`} aria-hidden>
+                      {[0, 1, 2].map((i) => (
+                        <motion.span
+                          key={i}
+                          className="block w-[4px] h-[4px] rounded-full bg-current"
+                          animate={{ opacity: [0.25, 1, 0.25], y: [0, -2, 0] }}
+                          transition={{ duration: 1.1, repeat: Infinity, delay: i * 0.18, ease: 'easeInOut' }}
+                        />
+                      ))}
+                    </span>
                   </span>
                 </div>
               </motion.div>

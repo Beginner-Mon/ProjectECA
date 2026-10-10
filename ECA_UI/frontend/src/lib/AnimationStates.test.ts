@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { CHAR_STATES, STATES, canTransition, staticSourceOf } from './AnimationStates'
+import { CHAR_STATES, STATES, blendDurationFor, canTransition, staticSourceOf } from './AnimationStates'
 
 /**
  * Pins the reachability decisions for `gesture` — the state that carries every
@@ -19,6 +19,7 @@ describe('gesture reachability', () => {
     // thinking_intro holds its pose until the LLM answers; exercise is a
     // generated clinical motion; greeting is the boot sequence.
     expect(canTransition('thinking_intro', 'gesture')).toBe(false)
+    expect(canTransition('thinking_loop', 'gesture')).toBe(false)
     expect(canTransition('exercise', 'gesture')).toBe(false)
     expect(canTransition('greeting', 'gesture')).toBe(false)
   })
@@ -60,5 +61,22 @@ describe('FSM invariants', () => {
       if (next === null) continue
       expect(CHAR_STATES).toContain(next)
     }
+  })
+})
+
+describe('thinking hand-over blends (10-10)', () => {
+  it('settles from the thinking outro into idle slowly, not in the default 0.3 s', () => {
+    // The two clips stand differently (arms ~30°, legs 9–13°); a short blend
+    // slid the feet and read as a jump.
+    expect(blendDurationFor('thinking_outro', 'idle')).toBe(0.8)
+  })
+
+  it('eases into the outro from wherever the ponder loop is', () => {
+    expect(blendDurationFor('thinking_loop', 'thinking_outro')).toBe(0.4)
+    expect(blendDurationFor('thinking_intro', 'thinking_outro')).toBe(0.4)
+  })
+
+  it('keeps the seamless intro → loop hand-over short', () => {
+    expect(blendDurationFor('thinking_intro', 'thinking_loop')).toBe(0.15)
   })
 })

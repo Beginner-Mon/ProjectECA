@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Upload VRM models to S3 and seed the `characters` table.
 
-For each model in ECA_UI/frontend/src/asset/models/*.vrm:
+For each model in the folder given by --models-dir (*.vrm, file stem = slug):
 
     1. parse the GLB for humanoid + blendShape metadata
     2. upload to s3://<bucket>/characters/{slug}/{sha256[:8]}.vrm  (models/ prefix, not characters/)
@@ -12,9 +12,14 @@ For each model in ECA_UI/frontend/src/asset/models/*.vrm:
 Re-runnable: keyed on slug, and an unchanged file produces the same content
 hash and therefore the same S3 key.
 
-    python scripts/upload_characters_to_s3.py --dry-run    # no AWS, no DB
-    python scripts/upload_characters_to_s3.py --bucket vva-assets-123456789012 \\
-        --cdn https://d111111abcdef8.cloudfront.net
+    python scripts/upload_characters_to_s3.py --models-dir <folder> --dry-run   # no AWS, no DB
+    python scripts/upload_characters_to_s3.py --models-dir <folder> \\
+        --bucket vva-assets-123456789012 --cdn https://d111111abcdef8.cloudfront.net
+
+The models are no longer in the repo, so --models-dir is required: point it at
+a folder holding the .vrm files. Each file's stem is the character's slug and
+must be lower-case letters, digits and hyphens (anne.vrm, hatsune-miku.vrm) —
+it names personas/<slug>/ and the S3 keys, and Linux is case-sensitive.
 
 --dry-run needs nothing but Node and the repo, so metadata extraction can be
 checked against ECA_UI/frontend/src/avatar/vrmManifest.ts before any
@@ -26,9 +31,14 @@ another.
 
 D5e — voices + static audio (2026-09):
     Voices (reference .wav for cloning) go to a PRIVATE bucket with NO
-    CloudFront behavior. Keys are content-hashed so re-running is idempotent:
-        voices/{slug}_{lang}_{sha256[:8]}.wav  (or characters/{slug}/voice/{hash}.wav)
-    Stored in characters.voice_vi_key / voice_en_key (S3 keys, not URLs).
+    CloudFront behavior. The key is NOT content-hashed: it is the exact name
+    the chat path asks SpeechLLm for (voice_key() in
+    langgraph_agents/services/vieneu_tts/voice.py), and SpeechLLm downloads that
+    key as-is:
+        voices/{slug}_{lang}.wav
+    Because the name is fixed, every run uploads again (a re-recorded voice
+    replaces the old object). Stored in characters.voice_vi_key / voice_en_key
+    (S3 keys, not URLs); nothing reads those columns at runtime.
 
     Static audio (T6: greeting.morning/afternoon/evening/night x vi/en) is
     pre-rendered once per slot per language by calling SpeechLLm with the
@@ -49,6 +59,7 @@ import base64
 import hashlib
 import json
 import os
+import re
 import struct
 import subprocess
 import sys
@@ -56,7 +67,6 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
-MODELS_DIR = REPO_ROOT / "ECA_UI" / "frontend" / "src" / "asset" / "models"
 PROFILE_EXPORTER = REPO_ROOT / "ECA_UI" / "frontend" / "scripts" / "export-avatar-profiles.mjs"
 MANIFEST_PATH = Path(__file__).resolve().parent / "characters.seed.json"
 VOICES_DIR = REPO_ROOT / "SpeechLLm" / "voices"
@@ -316,20 +326,34 @@ def build_records_from_manifest(cdn_base: str) -> list[dict]:
     return records
 
 
-def build_records(cdn_base: str) -> list[dict]:
-    vrm_files = sorted(MODELS_DIR.glob("*.vrm"))
+_SLUG_RE = re.compile(r"[a-z0-9-]+")
+
+
+def build_records(cdn_base: str, models_dir: Path) -> list[dict]:
+    vrm_files = sorted(models_dir.glob("*.vrm"))
     if not vrm_files:
         if MANIFEST_PATH.exists():
-            print(f"No .vrm files in {MODELS_DIR} — seeding from {MANIFEST_PATH.name}")
+            print(f"No .vrm files in {models_dir} — seeding from {MANIFEST_PATH.name}")
             return build_records_from_manifest(cdn_base)
         raise SystemExit(
-            f"No .vrm files in {MODELS_DIR} and no {MANIFEST_PATH.name} to fall\n"
+            f"No .vrm files in {models_dir} and no {MANIFEST_PATH.name} to fall\n"
             f"back on. The models were removed from the repo once they lived on the\n"
             f"CDN, so seeding a fresh database needs one of:\n"
-            f"  git checkout <commit-before-removal> -- {MODELS_DIR.relative_to(REPO_ROOT)}\n"
-            f"  then re-run with --write-manifest to recreate {MANIFEST_PATH.name}\n"
+            f"  download each active character's model from the URL in\n"
+            f"  characters.vrm_url into one folder as <slug>.vrm, then pass that\n"
+            f"  folder as --models-dir\n"
             f"or copy the characters rows from a database that already has them."
         )
+
+    for f in vrm_files:
+        # The stem is the slug. The frontend lowercases character ids and
+        # Windows resolves personas/mei/ for Mei.vrm, so a bad name would seed
+        # fine here and break on Linux — refuse it now instead.
+        if not _SLUG_RE.fullmatch(f.stem):
+            raise SystemExit(
+                f"{f.name}: file name is not a valid slug (lower-case letters, "
+                f"digits and hyphens only: ^[a-z0-9-]+$). Rename the file."
+            )
 
     slugs = [f.stem for f in vrm_files]
     profiles = load_avatar_profiles(slugs)
@@ -384,22 +408,21 @@ def upload(records: list[dict], bucket: str) -> None:
 
 # ── D5e: voices + static audio ─────────────────────────────────────────────
 
-def _hash_file(path: Path) -> str:
-    return hashlib.sha256(path.read_bytes()).hexdigest()[:8]
-
-
 def upload_voices(records: list[dict], voice_bucket: str) -> dict[str, dict[str, str]]:
     """Upload reference voices to the private voice bucket.
 
     For each character and each language vi/en, looks for
-    SpeechLLm/voices/{slug}_{lang}.wav locally. If present, hashes content,
-    uploads to s3://voice_bucket/voices/{slug}_{lang}_{hash}.wav (content-
-    addressed, re-runnable) and returns a map slug -> {lang: s3_key}.
+    SpeechLLm/voices/{slug}_{lang}.wav locally. If present, uploads it to
+    s3://voice_bucket/voices/{slug}_{lang}.wav — the name voice_key() gives and
+    the chat path requests — and returns a map slug -> {lang: s3_key}. The
+    upload always happens: the key is not content-addressed, so "already
+    there" says nothing about whether it is the current recording.
 
     Keys are returned even on --dry-run (as would-be keys) so the DB upsert
     can be previewed. Actual S3 upload is skipped on dry-run.
     """
     import boto3
+    from langgraph_agents.services.vieneu_tts.voice import voice_key
 
     s3 = boto3.client("s3") if voice_bucket else None
     voice_keys: dict[str, dict[str, str]] = {}
@@ -414,25 +437,23 @@ def upload_voices(records: list[dict], voice_bucket: str) -> dict[str, dict[str,
             if not local.is_file():
                 # Try alternative naming: {slug}_{lang}.wav only
                 continue
-            h = _hash_file(local)
-            # Chose voices/{slug}_{lang}_{hash}.wav over characters/... to keep
-            # voice keys visually distinct from audio clips (characters/*/audio/*)
-            s3_key = f"voices/{slug}_{lang}_{h}.wav"
+            # The key SpeechLLm is asked for at chat time, not a hashed name:
+            # nothing reads characters.voice_*_key, so a hashed object would
+            # sit in the bucket and never be requested.
+            s3_key = voice_key(slug, lang)
             keys[lang] = s3_key
             if voice_bucket:
-                # Check if already exists (idempotent)
-                try:
-                    s3.head_object(Bucket=voice_bucket, Key=s3_key)
-                    print(f"  voice exists {slug}_{lang} -> s3://{voice_bucket}/{s3_key} (skip)")
-                except Exception:
-                    print(f"  uploading voice {local.name} -> s3://{voice_bucket}/{s3_key}")
-                    s3.upload_file(
-                        str(local), voice_bucket, s3_key,
-                        ExtraArgs={
-                            "ContentType": "audio/wav",
-                            "CacheControl": "private, max-age=31536000, immutable",
-                        },
-                    )
+                # No "already exists, skip": the key is fixed, so a re-recorded
+                # voice would otherwise never replace the old one.
+                print(f"  uploading voice {local.name} -> s3://{voice_bucket}/{s3_key}")
+                s3.upload_file(
+                    str(local), voice_bucket, s3_key,
+                    ExtraArgs={
+                        "ContentType": "audio/wav",
+                        # Mutable object: revalidate, never "immutable".
+                        "CacheControl": "private, no-cache",
+                    },
+                )
             else:
                 print(f"  [dry-run] voice {local.name} -> {s3_key}")
         if keys:
@@ -598,7 +619,12 @@ def build_static_audio(
 async def upsert(records: list[dict], voice_keys: dict[str, dict[str, str]] | None = None, static_audio_map: dict[str, dict] | None = None) -> None:
     from langgraph_agents.shared import get_pg_client
 
-    pg = get_pg_client()
+    # The app role has SELECT only on `characters` (007_rls); sync_personas_to_db
+    # already resolves a role that can write it (owner DSN first, then app).
+    sys.path.insert(0, str(Path(__file__).resolve().parent))
+    from sync_personas_to_db import _writer_client
+
+    pg = _writer_client() or get_pg_client()
     await pg.connect()
     for rec in records:
         slug = rec["slug"]
@@ -614,9 +640,13 @@ async def upsert(records: list[dict], voice_keys: dict[str, dict[str, str]] | No
             INSERT INTO characters (
                 slug, display_name, description, vrm_url, vrm_metadata,
                 avatar_profile, persona, voice_language, sort_order,
-                voice_vi_key, voice_en_key, static_audio
+                voice_vi_key, voice_en_key, static_audio, ui_strings
             )
-            VALUES ($1, $2, $3, $4, $5::jsonb, $6::jsonb, $7::jsonb, $8, $9, $10, $11, $12::jsonb)
+            -- A new row goes to the end of the list; an existing row keeps its
+            -- sort_order (deliberately absent from DO UPDATE below).
+            VALUES ($1, $2, $3, $4, $5::jsonb, $6::jsonb, $7::jsonb, $8,
+                    COALESCE((SELECT MAX(sort_order) + 1 FROM characters), 0),
+                    $9, $10, $11::jsonb, $12::jsonb)
             ON CONFLICT (slug) DO UPDATE SET
                 display_name   = EXCLUDED.display_name,
                 vrm_url        = EXCLUDED.vrm_url,
@@ -624,19 +654,20 @@ async def upsert(records: list[dict], voice_keys: dict[str, dict[str, str]] | No
                 avatar_profile = EXCLUDED.avatar_profile,
                 persona        = EXCLUDED.persona,
                 voice_language = EXCLUDED.voice_language,
-                sort_order     = EXCLUDED.sort_order,
                 voice_vi_key   = COALESCE(EXCLUDED.voice_vi_key, characters.voice_vi_key),
                 voice_en_key   = COALESCE(EXCLUDED.voice_en_key, characters.voice_en_key),
                 static_audio   = CASE
                     WHEN EXCLUDED.static_audio::text = '{}' THEN characters.static_audio
                     ELSE EXCLUDED.static_audio
                 END,
+                ui_strings     = EXCLUDED.ui_strings,
                 updated_at     = now()
             """,
             rec["slug"], rec["display_name"], rec["description"], rec["vrm_url"],
             json.dumps(rec["vrm_metadata"]), json.dumps(rec["avatar_profile"]),
-            json.dumps(rec["persona"]), rec["voice_language"], rec["sort_order"],
+            json.dumps(rec["persona"]), rec["voice_language"],
             vk.get("vi"), vk.get("en"), json.dumps(sa),
+            json.dumps(_ui_strings_for(rec["persona"]), ensure_ascii=False),
         )
         extra = ""
         if vk:
@@ -648,6 +679,8 @@ async def upsert(records: list[dict], voice_keys: dict[str, dict[str, str]] | No
 
 def main() -> None:
     ap = argparse.ArgumentParser(description=__doc__)
+    ap.add_argument("--models-dir", required=True, type=Path,
+                    help="folder holding the .vrm files; each file stem is the character slug")
     ap.add_argument("--bucket", help="S3 bucket (AssetStack output AssetBucketName)")
     ap.add_argument("--voice-bucket", help="S3 bucket for voices (AssetStack output VoiceBucketName)")
     ap.add_argument("--cdn", default="", help="CloudFront base URL (AssetStack output AssetBaseUrl)")
@@ -661,7 +694,7 @@ def main() -> None:
     args = ap.parse_args()
 
     if args.write_manifest:
-        records = build_records(args.cdn)
+        records = build_records(args.cdn, args.models_dir)
         manifest = {
             r["slug"]: {
                 "display_name": r["display_name"],
@@ -680,9 +713,9 @@ def main() -> None:
     if not args.dry_run and not args.cdn:
         ap.error("--cdn is required unless --dry-run")
 
-    records = build_records(args.cdn)
+    records = build_records(args.cdn, args.models_dir)
 
-    print(f"\n{len(records)} character(s) from {MODELS_DIR}\n")
+    print(f"\n{len(records)} character(s) from {args.models_dir}\n")
     for rec in records:
         m = rec["vrm_metadata"]
         bs = m["blendshape_groups"]
@@ -750,8 +783,8 @@ def main() -> None:
 
     print("\nSeeding characters ...")
     asyncio.run(upsert(records, voice_keys, static_map))
-    print("\nDone. Voices and static audio are now data, not derived from persona_id.")
-    print("Add a new voice: upload + one UPDATE characters SET voice_vi_key=... .")
+    print("\nDone. Voices are stored as voices/<slug>_<lang>.wav, the name the chat path requests.")
+    print("Add a new voice: put SpeechLLm/voices/<slug>_<lang>.wav in place and re-run.")
     print("Add clips: author ui_strings.greeting slots in the persona, sync, re-run.")
 
 

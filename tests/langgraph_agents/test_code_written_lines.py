@@ -72,6 +72,37 @@ async def test_opening_is_streamed_first():
 
 
 @pytest.mark.asyncio
+async def test_synthesizer_announces_start_first():
+    from langgraph_agents.nodes import synthesizer as syn_mod
+
+    sent: list = []
+    with patch.object(syn_mod, "get_chat_model",
+                       return_value=_streaming_llm([], "ok")), \
+         patch.object(syn_mod, "get_stream_writer", return_value=sent.append):
+        await syn_mod.synthesizer_node(_state(["exercise_steps"]), _config())
+    assert sent[0] == {"stage": "synthesizer_started"}
+    first_content = next(i for i, p in enumerate(sent) if "content" in p)
+    assert first_content > 0
+
+
+@pytest.mark.asyncio
+async def test_no_start_announcement_on_second_pass():
+    from langgraph_agents.nodes import synthesizer as syn_mod
+
+    sent: list = []
+    state = _state(["exercise_steps"])
+    state["retry_count"] = 1
+    state["grader_feedback"] = "add more detail"
+    state["final_answer"] = "First answer."
+    with patch.object(syn_mod, "get_chat_model",
+                       return_value=_streaming_llm([], "More detail.")), \
+         patch.object(syn_mod, "get_stream_writer", return_value=sent.append):
+        await syn_mod.synthesizer_node(state, _config())
+    assert sent, "lượt viết thêm phải stream phần thiếu"
+    assert all("stage" not in p for p in sent)
+
+
+@pytest.mark.asyncio
 async def test_prompt_tells_model_what_is_already_said():
     from langgraph_agents.nodes import synthesizer as syn_mod
 

@@ -48,7 +48,7 @@ cdk deploy VvaCharacterStack     # needs Docker running (layer bundling)
 cdk deploy VvaAssetStack
 
 # Then seed the catalog and upload the models:
-python ../scripts/upload_characters_to_s3.py \
+python ../scripts/upload_characters_to_s3.py --models-dir "<folder with the .vrm files>" \
     --bucket "<AssetBucketName>" --cdn "https://<AssetBaseUrl>"
 ```
 

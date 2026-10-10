@@ -345,6 +345,9 @@ def create_app() -> FastAPI:
             "persona_id": req.persona_id,
             "previous_persona_id": req.previous_persona_id,
             "output_mode": req.output_mode,
+            # Lượt này câu trả lời có được đọc thành tiếng không. Synthesizer
+            # đọc cờ này để báo cho nhân vật (không báo cơ chế).
+            "speaks_aloud": req.output_mode in ("speech", "both") and tts_enabled(),
             "request_id": request_id,
             "token_limit": req.token_limit,
             "web_search": req.web_search,
@@ -637,6 +640,13 @@ async def _stream_chat(req, request_id, config, state, background_tasks, request
                 # synthesizer sends it ahead of the text, already filtered by
                 # the health rules. The browser applies it to the avatar's face.
                 yield encode_event("emotion", payload["emotion"])
+            elif isinstance(payload, dict) and payload.get("stage") == "synthesizer_started":
+                if not conversation_stage_started:
+                    yield encode_event(
+                        "stage",
+                        {"node": "synthesizer", "status": "started"},
+                    )
+                    conversation_stage_started = True
             elif isinstance(payload, dict) and "content" in payload:
                 if not conversation_stage_started:
                     yield encode_event(

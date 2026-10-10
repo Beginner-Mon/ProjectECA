@@ -364,6 +364,15 @@ Nguồn: `docs/worklogs/01-10-2026.md`, `02-10-2026.md`, `02-10-2026-round3.md`,
 - [ ] ⚪ **Gộp Kimodo vào cổng tool** — thử ba cách viết mô tả tool, không cách nào đạt cả hai
       ngưỡng (gọi đủ và không gọi thừa); hiện Kimodo chạy theo tag `motion_descriptor`. Thử lại
       khi đổi model. Khi số tool tăng, cân nhắc lớp lọc top-k tool theo mô tả.
+- [ ] 🟡 **Câu `stage_composing` của Bronya, Miku, Miki còn nói "soạn/viết"** (ghi
+      09/10, nhánh `feature/stage-labels`); đổi khi chuyển đổi ba nhân vật đó.
+- [ ] ⚪ **Kiến thức về hệ thống cho nhân vật**: viết tài liệu nhìn từ phía người
+      dùng và một tool đọc tài liệu, chạy in-process. Tri quyết để sau (09/10).
+      Không dùng bảng năng lực viết tay.
+- [ ] 🟡 **Ở lượt có tra cứu, model mất 3–7 giây mới ra chữ đầu tiên** (đo 09/10, 6
+      lượt local); chưa tách nguyên nhân là suy nghĩ ngầm hay prompt dài.
+- [ ] 🟡 **Nhãn nhiều nguồn được nối thành một dòng**; bong bóng trên đầu nhân vật
+      (`ThinkingBubble`, `whitespace-nowrap`) có thể dài trên màn hình hẹp.
 
 ## 🟡 Nên làm
 
@@ -375,6 +384,11 @@ Nguồn: `docs/worklogs/01-10-2026.md`, `02-10-2026.md`, `02-10-2026-round3.md`,
 - [ ] **So sánh arm64** — rẻ 20% Duration nhưng CI chỉ build một kiến trúc (x86_64). Vì sao nợ: cần QEMU hoặc runner ARM + kiểm lại wheel `onnxruntime`. Dấu hiệu sẵn sàng: CI build được image arm64 chạy được test khói.
 - [ ] **`infra/.venv` của checkout gốc đã nâng lên 2.270.0 ở đợt này** (cần ≥2.269 cho `CfnResourcePolicy`; bản cũ 2.257 synth gãy). Ghi lại để phiên sau khỏi nghi ngờ — không phải việc làm, chỉ là ghi chú.
 - [ ] **Gộp `owasp-check`** — nhánh đó tách **trước** đợt viết lại TTS nên `client.py` bên đó ghi failure vào circuit breaker cho **mọi** mã HTTP kể cả 4xx. Vì sao phải cẩn thận: giữ phân loại 4xx/5xx của bản hiện tại (4xx là lỗi client, không phải outage), chỉ lấy phần log bên đó. Dấu hiệu nhận ra khi gộp sai: breaker nhảy open sau vài request 4xx bình thường.
+
+### Character seed — nợ ghi 10/10 (nhánh `feature/character-seed`)
+
+- [ ] **Giọng tham chiếu giữ tên cố định ⇒ thu âm lại không đổi version.** File giọng nằm ở key cố định `voices/<slug>_<lang>.wav` (prod dùng đúng kiểu này cho Anne từ 23/09). Với key S3, `_voice_version()` trong `SpeechLLm/src/services/vieneu_client.py` lấy version từ hash nhúng trong key (`_extract_hash_from_s3_key`), không có thì băm chính chuỗi key — nên key không đổi thì version không đổi. Hậu quả: cache audio TTS ở trình duyệt vẫn phát giọng cũ tới hết TTL, và instance SpeechLLm đang ấm giữ bản đã tải trong `/tmp` tới lần cold start kế. Comment của `_extract_hash_from_s3_key` vẫn ghi "uploader luôn nhúng content hash" — không còn đúng với giọng. Vì sao chưa sửa: đụng `SpeechLLm/**` là redeploy Lambda TTS. Dấu hiệu nhận ra: thay file giọng mà loa vẫn ra tiếng cũ (cùng triệu chứng với mục "Agent suy tên file giọng" ở trên).
+- [ ] **Có thể còn object giọng có hash trong bucket giọng (CHƯA XÁC MINH — chưa ai liệt kê bucket).** Các lần chạy cũ của script seed có thể đã để lại `voices/<slug>_<lang>_<hash>.wav`. `_enrol_known_voices()` liệt kê mọi `.wav` trong bucket lúc cold start và encode từng file, nên mỗi file thừa cộng thêm thời gian cold start. Việc cần làm: liệt kê bucket giọng, xoá file có hash nếu có.
 
 ### TTS streaming — nợ ghi 12/09 (worklog `11-09-2026.md`, branch `feature/tts-streaming`)
 

@@ -9,10 +9,9 @@ are reconciled.
 
 Separate from upload_characters_to_s3.py on purpose. That script seeds a
 character whole — GLB parsing, content hash, S3 upload, avatar profile, persona
-— and it cannot run any more: the .vrm files were removed from the repo once
-they lived on the CDN, and scripts/characters.seed.json (its fallback) was
-deleted too, so it exits with the recovery instructions in build_records().
-Persona text meanwhile changes on every iteration of writing a character and
+— and it needs the .vrm files, which are no longer in the repo: pass the folder
+that holds them as --models-dir (scripts/characters.seed.json, its old fallback,
+was deleted too). Persona text meanwhile changes on every iteration of writing a character and
 needs none of that machinery. This touches one column.
 
 Only UPDATEs. Creating a character row is still the seed script's job, so a

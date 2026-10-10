@@ -27,7 +27,7 @@ from langgraph_agents.nodes._persona_loader import (
 )
 from langgraph_agents.shared.lang import _VN_EXCLUSIVE
 
-CHARACTERS = ["anne", "bronya", "hatsune-miku", "miki"]
+CHARACTERS = ["anne", "bronya", "hatsune-miku", "miki", "mei"]
 MODES = ["chat", "clarify", "refuse", "synthesize"]
 
 _VN_CHARS = frozenset(_VN_EXCLUSIVE + _VN_EXCLUSIVE.upper())

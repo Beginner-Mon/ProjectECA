@@ -149,8 +149,8 @@ class TestSynthesizerEmotion:
             mock_llm.return_value.astream = _astream("[emo", "tion: happy 0.7]", " Xin chào", " bạn!")
             result = await syn_mod.synthesizer_node(_state(), _config())
 
-        assert sent[0] == {"emotion": {"name": "happy", "intensity": 0.7}}
-        assert "".join(p["content"] for p in sent[1:]) == "Xin chào bạn!"
+        assert next(p for p in sent if "emotion" in p) == {"emotion": {"name": "happy", "intensity": 0.7}}
+        assert "".join(p["content"] for p in sent if "content" in p) == "Xin chào bạn!"
         assert result["final_answer"] == "Xin chào bạn!"  # history, TTS, grader see no tag
 
     @pytest.mark.asyncio

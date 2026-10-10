@@ -323,11 +323,11 @@ def _build_avatar_switch_note(
     )
 
 
-def _build_body_state_note(messages: list) -> str:
+def _motion_line(messages: list) -> str:
     """What this character's own 3D body is doing this turn (plan T4).
 
     Reads the newest motion-source message (kimodo node today, show_movement
-    tool after T9) and returns a short first-person-able block. Empty when
+    tool after T9) and returns a short first-person-able line. Empty when
     there is no motion message or its payload is broken — blocks with no
     data never enter the prompt (~10K token window).
 
@@ -359,17 +359,41 @@ def _build_body_state_note(messages: list) -> str:
         eta = data.get("eta_seconds")
         time_clause = f", in about {eta} seconds" if eta else ""
         return (
-            "\n\n## Your body this turn\n"
             f"You are about to show \"{prompt}\" with your own body{time_clause}. "
             "Speak as the one doing it."
         )
     if state in ("unavailable", "busy"):
         return (
-            "\n\n## Your body this turn\n"
             "You are not able to show a movement right now. Do not promise to, "
             "and give no technical reason. You may describe it in words instead."
         )
     return ""
+
+
+def _build_body_state_note(messages: list) -> str:
+    """Thân thể của nhân vật ở lượt này: chỉ cử động.
+
+    Rỗng khi không có gì để nói; khối không có dữ liệu không vào prompt.
+    """
+    line = _motion_line(messages)
+    if not line:
+        return ""
+    return "\n\n## Your body this turn\n" + line
+
+
+_VOICE_ON_LINE = "Voice replies are on in the app: the user is hearing this reply in your voice."
+_VOICE_OFF_LINE = "Voice replies are off in the app: the user reads your answer."
+
+
+def _build_app_state_note(speaks_aloud: bool | None) -> str:
+    """Cài đặt giọng nói của app ở lượt này: bật, tắt, hay không rõ.
+
+    Không rõ (thiếu cờ) thì rỗng; khối không có dữ liệu không vào prompt.
+    """
+    if speaks_aloud is None:
+        return ""
+    line = _VOICE_ON_LINE if speaks_aloud else _VOICE_OFF_LINE
+    return "\n\n## The app this turn\n" + line
 
 
 def _build_about_you(messages: list) -> str:
@@ -549,6 +573,16 @@ async def synthesizer_node(state: AgentState, config: RunnableConfig) -> dict:
                      and bool(previous.strip()))
     is_rewrite = state.get("retry_count", 0) >= 1 and not addition_mode
 
+    try:
+        writer = get_stream_writer()
+    except RuntimeError:
+        writer = None
+    if writer is not None and state.get("retry_count", 0) == 0:
+        # Báo cho giao diện là mọi việc tra cứu đã xong và sắp có câu trả lời.
+        # Gửi ngay lúc node chạy, không đợi chữ đầu tiên của LLM.
+        writer({"stage": "synthesizer_started"})
+        await asyncio.sleep(0)
+
     mode = _derive_mode(state)
 
     logger.info("node_start", extra={
@@ -610,17 +644,13 @@ async def synthesizer_node(state: AgentState, config: RunnableConfig) -> dict:
     # after it). Absent when there is no motion message, so chat turns keep
     # the exact prompt they had before.
     body_note = _build_body_state_note(state.get("messages", []))
+    app_note = _build_app_state_note(config["configurable"].get("speaks_aloud"))
     about_you = _build_about_you(state.get("messages", []))
-    middle_blocks = [b for b in (body_note, about_you) if b]
+    middle_blocks = [b for b in (body_note, app_note, about_you) if b]
     middle = ("\n\n".join(middle_blocks) + "\n\n") if middle_blocks else ""
     system = f"{persona_system}\n\n---\n\n{middle}{task_system}"
 
     llm = get_chat_model("synthesizer")
-
-    try:
-        writer = get_stream_writer()
-    except RuntimeError:
-        writer = None
 
     # Include prior conversation (loaded by memory node into state messages)
     # so the model has context for follow-ups ("what did I just say"). Keep

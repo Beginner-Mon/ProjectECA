@@ -475,7 +475,7 @@ class TestFix3MaxTokens:
         assert not re.search(r"\bunder \d+ words\b", _SYNTHESIZE_TASK)
         assert "come only from the evidence" in _SYNTHESIZE_TASK
 
-        for persona_id in ("anne", "anne", "bronya", "hatsune-miku", "miki"):
+        for persona_id in ("anne", "anne", "bronya", "hatsune-miku", "miki", "mei"):
             formatting = get_persona(persona_id)["response_formatting"]
             assert re.search(r"\d+\s*(từ|words)", formatting), \
                 f"{persona_id} sets no output length — nothing bounds it now"

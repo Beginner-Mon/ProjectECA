@@ -111,6 +111,13 @@ data/knowledge_base/humanml3d_descriptions.jsonl
 # throwaway Docker stage. Never commit it.
 models/
 
+# VRM character models: 9-18 MB binaries that live on S3 and are served through
+# CloudFront, never from git. They were removed from the repo on 16/08
+# (e4a4b05f), and scripts/upload_characters_to_s3.py reads them from any folder
+# via --models-dir. Ignored everywhere so a model dropped into the working tree
+# cannot ride along on `git add -A`.
+*.vrm
+
 # Ad-hoc VieNeu sample clips generated while testing TTS streaming locally
 SpeechLLm/sample_*.ogg
 

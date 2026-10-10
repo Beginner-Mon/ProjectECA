@@ -12,6 +12,8 @@ interface MobileChatDockProps {
   maxHeight: number
   dockRef: RefObject<HTMLDivElement | null>
   contentRef: RefObject<HTMLDivElement | null>
+  /** Hidden (still laid out) while the character is loading. */
+  concealed?: boolean
 }
 
 interface Drag {
@@ -22,7 +24,7 @@ interface Drag {
 }
 
 /** The handle resizes the conversation; the composer always stays mounted below it. */
-export default function MobileChatDock({ chatOpen, onOpenChange, maxHeight, dockRef, contentRef }: MobileChatDockProps) {
+export default function MobileChatDock({ chatOpen, onOpenChange, maxHeight, dockRef, contentRef, concealed = false }: MobileChatDockProps) {
   const { t } = useTranslation()
   const contentId = useId()
   const drag = useRef<Drag | null>(null)
@@ -83,13 +85,13 @@ export default function MobileChatDock({ chatOpen, onOpenChange, maxHeight, dock
   return (
     <div
       ref={dockRef}
-      className="dark block desktop:hidden fixed bottom-0 inset-x-0 z-40 bg-transparent"
+      className={`block desktop:hidden fixed bottom-0 inset-x-0 z-40 bg-transparent transition-opacity duration-300 ${concealed ? 'invisible opacity-0 pointer-events-none' : 'opacity-100'}`}
       style={{ paddingBottom: 'calc(0.75rem + env(safe-area-inset-bottom, 0px))' }}
     >
       {/* Replay chips sit ABOVE the whole conversation frame — handle included —
           so they stay put while the conversation resizes/collapses beneath them. */}
       <MobileMotionChips />
-      <div className="mobile-chat-conversation mx-3 bg-white border border-border/40 rounded-2xl p-2 flex flex-col">
+      <div className="mobile-chat-conversation mx-3 bg-card border border-border/40 rounded-2xl p-2 flex flex-col">
         <div className="flex justify-center shrink-0">
           <button
             type="button"

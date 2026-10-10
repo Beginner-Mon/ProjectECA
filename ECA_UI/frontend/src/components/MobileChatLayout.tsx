@@ -2,6 +2,7 @@ import { useLayoutEffect, useRef, useState } from 'react'
 import type { NavItem, PanelId } from './FloatingNavBar'
 import MobileChatDock from './MobileChatDock'
 import MobileNavBar from './MobileNavBar'
+import { useMotion } from '../hooks/useMotion'
 import { chatHeightLimit, chatRailTop, dockRightInset, isLandscape } from '../lib/mobileChatLayout'
 
 interface MobileChatLayoutProps {
@@ -19,6 +20,12 @@ export default function MobileChatLayout({ activePanel, onIconClick, onChatOpenC
   const railRef = useRef<HTMLDivElement>(null)
   const insetRef = useRef<HTMLDivElement>(null)
   const [maxHeight, setMaxHeight] = useState(() => window.innerHeight * 0.35)
+  // Rail and dock stay hidden while the viewer's "loading character" overlay is
+  // up: they are fixed above it (rail z-10000 vs overlay z-9999) and showed
+  // through it. Not when the catalog failed — the overlay then stays for good,
+  // and the user still needs settings and sign-out.
+  const { isAvatarReady, isAvatarSwitching, vrmOptionsError } = useMotion()
+  const concealed = (!isAvatarReady || isAvatarSwitching) && !vrmOptionsError
 
   useLayoutEffect(() => {
     const dock = dockRef.current
@@ -76,6 +83,7 @@ export default function MobileChatLayout({ activePanel, onIconClick, onChatOpenC
         maxHeight={maxHeight}
         dockRef={dockRef}
         contentRef={contentRef}
+        concealed={concealed}
       />
       <MobileNavBar
         activePanel={activePanel}
@@ -83,6 +91,7 @@ export default function MobileChatLayout({ activePanel, onIconClick, onChatOpenC
         navItems={navItems}
         panelContent={panelContent}
         railRef={railRef}
+        concealed={concealed}
       />
     </>
   )

@@ -24,7 +24,9 @@ export default function LoadingOverlay({ text = 'Loading...', fullScreen = false
         </div>
         
         {/* Animated loading text */}
-        <span className="text-sm font-medium text-foreground/80 tracking-[0.2em] uppercase animate-pulse">
+        {/* text-center + side padding: a long label wraps on a phone, and its
+            lines used to sit flush left (03-10). */}
+        <span className="max-w-full px-6 text-center text-sm font-medium text-foreground/80 tracking-[0.2em] uppercase animate-pulse">
           {text}
         </span>
       </div>

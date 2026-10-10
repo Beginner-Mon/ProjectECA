@@ -11,6 +11,8 @@ interface MobileNavBarProps {
   navItems: NavItem[]
   panelContent?: React.ReactNode
   railRef: RefObject<HTMLDivElement | null>
+  /** Hidden (still laid out) while the character is loading. */
+  concealed?: boolean
 }
 
 /**
@@ -29,6 +31,7 @@ export default function MobileNavBar({
   navItems,
   panelContent,
   railRef,
+  concealed = false,
 }: MobileNavBarProps) {
   const { t } = useTranslation()
   const { bg } = useAvatarBg()
@@ -54,7 +57,7 @@ export default function MobileNavBar({
       {/* ── Right-edge vertical rail ── */}
       <div
         ref={railRef}
-        className="mobile-nav-rail fixed right-2 top-1/2 -translate-y-1/2 z-[10000] flex flex-col items-center gap-1 p-1.5 rounded-2xl bg-white overflow-y-auto [&>*]:shrink-0"
+        className={`mobile-nav-rail fixed right-2 top-1/2 -translate-y-1/2 z-[10000] flex flex-col items-center gap-1 p-1.5 rounded-2xl bg-card dark:border dark:border-border/40 overflow-y-auto [&>*]:shrink-0 transition-opacity duration-300 ${concealed ? 'invisible opacity-0 pointer-events-none' : 'opacity-100'}`}
       >
         {railItems.map((item) => {
           const Icon = item.icon

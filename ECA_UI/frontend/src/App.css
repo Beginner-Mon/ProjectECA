@@ -435,11 +435,15 @@
   }
 }
 
-@media (width < 768px) {
-  /* White mobile surfaces in either app theme; the outer dock stays transparent. */
-  .mobile-chat-composer,
-  .mobile-chat-conversation,
-  .mobile-nav-rail {
+/* The phone layout (lib/layoutQuery.ts MOBILE_LAYOUT_QUERY — keep in step).
+   Was `width < 768px`, which missed phones held sideways. */
+@media (max-width: 767px), (max-height: 500px) and (pointer: coarse) {
+  /* White mobile surfaces in LIGHT mode only. In dark mode they take the app's
+     dark card colours (03-10: they stayed white on a dark phone). The outer
+     dock stays transparent. */
+  :root:not(.dark) .mobile-chat-composer,
+  :root:not(.dark) .mobile-chat-conversation,
+  :root:not(.dark) .mobile-nav-rail {
     --background: #fff;
     --foreground: #202024;
     --card: #fff;
@@ -458,8 +462,8 @@
     color: var(--foreground);
   }
 
-  /* The dock remains in a dark scope, so override inverted Markdown colors
-     locally as well as the app tokens (links, code and quotes included). */
+  /* Markdown follows the surface's own tokens in both themes (links, code and
+     quotes included), so it never inherits an inverted palette. */
   .mobile-chat-conversation .prose {
     --tw-prose-body: var(--foreground);
     --tw-prose-headings: var(--foreground);

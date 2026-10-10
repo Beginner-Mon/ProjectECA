@@ -59,6 +59,10 @@ export function MotionProvider({ children }: { children: ReactNode }) {
   // Lag is only in Canvas (GLB parse), but both overlays share violet style and same lifecycle.
   const [switchingId, setSwitchingId] = useState<string | null>(null)
   const [isAvatarSwitching, setIsAvatarSwitching] = useState(false)
+  // Whether the viewer has a posed character on screen (its loading overlay is
+  // gone). The phone rail and chat dock wait for it — they sit above that
+  // overlay and used to appear over "loading character".
+  const [isAvatarReady, setIsAvatarReady] = useState(false)
   const prevAvatarRef = useRef<string | null>(null)
 
   // Lazy catalog for AvatarsPanel — only when panel opens does it need the lite cards.
@@ -406,6 +410,7 @@ export function MotionProvider({ children }: { children: ReactNode }) {
   // Lag is only in Canvas (GLB parse), but both overlays share violet style.
   // isAvatarSwitching is true from click until VRMCharacter revealed (posed && avatarAttached).
   const setAvatarReady = useCallback((ready: boolean) => {
+    setIsAvatarReady(ready)
     if (ready) {
       setIsAvatarSwitching(false)
       setSwitchingId(null)
@@ -513,6 +518,7 @@ export function MotionProvider({ children }: { children: ReactNode }) {
       ensureCatalogLoaded,
       switchingId,
       isAvatarSwitching,
+      isAvatarReady,
       setAvatarReady,
       transitionTo,
       currentState,
@@ -557,6 +563,7 @@ export function MotionProvider({ children }: { children: ReactNode }) {
       ensureCatalogLoaded,
       switchingId,
       isAvatarSwitching,
+      isAvatarReady,
       setAvatarReady,
       transitionTo,
       currentState,

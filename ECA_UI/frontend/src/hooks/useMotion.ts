@@ -60,6 +60,8 @@ export interface MotionContextType {
   switchingId: string | null
   /** True while the new avatar is loading/parse (from click until VRMCharacter revealed). Viewer reads this. */
   isAvatarSwitching: boolean
+  /** True once the viewer shows a posed character (its loading overlay is gone). */
+  isAvatarReady: boolean
   /** Called by CharacterViewer when revealed (posed && avatarAttached) changes. */
   setAvatarReady: (ready: boolean) => void
 

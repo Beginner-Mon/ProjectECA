@@ -94,3 +94,13 @@ def test_persona_voice_path_is_no_longer_consulted():
             f"{slug}/_core.md declares voice_path again; resolve_voice derives "
             "the name from the slug and will ignore it"
         )
+
+
+@pytest.mark.unit
+def test_voice_key_is_the_name_resolve_voice_asks_for():
+    from langgraph_agents.services.vieneu_tts.voice import voice_key
+
+    assert voice_key("anne", "vi") == "voices/anne_vi.wav"
+    assert voice_key("hatsune-miku", "en") == "voices/hatsune-miku_en.wav"
+    # One source of truth: the live chat path and the seed script cannot drift.
+    assert resolve_voice("anne", VI)[0] == voice_key("anne", "vi")

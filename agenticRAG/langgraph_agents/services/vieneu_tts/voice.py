@@ -27,7 +27,7 @@ from langgraph_agents.shared.logging import get_logger
 
 logger = get_logger("langgraph.tts.voice")
 
-__all__ = ["resolve_voice", "VOICES_DIR"]
+__all__ = ["resolve_voice", "voice_key", "VOICES_DIR"]
 
 VOICES_DIR = "voices"
 
@@ -35,6 +35,16 @@ VOICES_DIR = "voices"
 # `persona_id` reaches us from the request body, and it is about to become part
 # of a path on another host.
 _SAFE_SLUG = re.compile(r"[A-Za-z0-9_-]{1,64}")
+
+
+def voice_key(persona_id: str, lang: str) -> str:
+    """The reference-voice path for a character and language.
+
+    One definition for the two sides that must agree: this module asks SpeechLLm
+    for it, and scripts/upload_characters_to_s3.py stores the file under it.
+    Does not validate ``persona_id``; ``resolve_voice`` does that.
+    """
+    return f"{VOICES_DIR}/{persona_id}_{lang}.wav"
 
 
 def resolve_voice(
@@ -59,7 +69,7 @@ def resolve_voice(
         )
         return None, str(lang)
 
-    voice_path = f"{VOICES_DIR}/{persona_id}_{lang}.wav"
+    voice_path = voice_key(persona_id, str(lang))
     logger.info(
         "voice_selected",
         extra={

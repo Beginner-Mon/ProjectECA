@@ -155,6 +155,11 @@ idleConfig = {
 ```
 Luân chuyển qua neutral, không nhảy happy→sad trực tiếp.
 
+> **Cập nhật 10/10/2026 (quyết định của Tri):** biểu cảm lúc idle giờ chạy ở
+> cường độ 100% cho mọi nhân vật, tỉ lệ `relaxed` 62% / `happy` 38%. Quy tắc
+> "idle KHÔNG BAO GIỜ full intensity" ở khối trên không còn áp dụng. Giá trị
+> thật nằm ở `ECA_UI/frontend/src/avatar/IdleBehaviorController.ts`.
+
 ### 4.2 Gaze wanderer
 Khi mouse tĩnh >3s: saccade ngẫu nhiên mỗi 2–5s tới điểm lân cận (±0.3 normalized), rồi về center. Mouse động → nhường quyền ngay.
 

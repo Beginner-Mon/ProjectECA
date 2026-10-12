@@ -44,6 +44,7 @@ from langgraph_agents.api.motion_status import motion_status
 from langgraph_agents.api.routes_characters import router as characters_router
 from langgraph_agents.api.routes_crud import router as crud_router
 from langgraph_agents.api.routes_feedback import router as feedback_router
+from langgraph_agents.api.routes_llm import router as llm_router
 from langgraph_agents.api.routes_preferences import router as preferences_router
 from langgraph_agents.api.schemas import (
     ChatRequest, TTSRequest,
@@ -242,6 +243,7 @@ def create_app() -> FastAPI:
     application.include_router(crud_router)
     application.include_router(preferences_router)
     application.include_router(feedback_router)
+    application.include_router(llm_router)
 
     @application.get("/health")
     async def health():

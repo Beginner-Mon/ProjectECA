@@ -78,6 +78,7 @@ def test_crud_app_does_not_import_the_heavy_stack():
     ("DELETE", "/me/memory/00000000-0000-0000-0000-000000000009"),
     ("POST", "/me/feedback/messages/00000000-0000-0000-0000-000000000009"),
     ("DELETE", "/me/feedback/messages/00000000-0000-0000-0000-000000000009"),
+    ("GET", "/llm/config"),
 ])
 def test_every_crud_route_requires_a_token(method, path):
     """No route serves an unauthenticated caller, in any environment.
@@ -109,6 +110,27 @@ def test_health_needs_no_token():
 
     assert response.status_code == 200
     assert response.json()["status"] == "ok"
+
+
+@pytest.mark.unit
+def test_llm_config_needs_auth_but_serves_user(monkeypatch):
+    """GET /llm/config advertises BYOK without touching the heavy stack."""
+    from langgraph_agents.api.auth import current_user_id, override_user
+    from langgraph_agents.api.crud_app import create_crud_app
+
+    monkeypatch.delenv("BYOK_ALLOW_LOCAL", raising=False)
+    app = create_crud_app()
+    app.dependency_overrides[current_user_id] = override_user(
+        "00000000-0000-0000-0000-000000000001"
+    )
+    client = TestClient(app)
+    response = client.get("/llm/config")
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["byok"] is True
+    assert body["local_endpoints"] is False
+    assert body["eca"] == {"capabilities": ["text", "answer", "tools"]}
 
 
 @pytest.mark.unit

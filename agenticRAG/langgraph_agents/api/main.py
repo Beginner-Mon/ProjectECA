@@ -66,7 +66,7 @@ from langgraph_agents.db.session_store import (
 from langgraph_agents.shared.logging import (
     configure_root_logger, get_logger, with_request_id,
 )
-from langgraph_agents.shared import get_pg_client
+from langgraph_agents.shared import get_embedding_service, get_pg_client
 from langgraph_agents.shared.env import env_source
 from langgraph_agents.shared.stm import get_stm
 from langgraph_agents.shared.preflight import run_preflight
@@ -170,6 +170,26 @@ def _get_graph():
     return _graph
 
 
+# Strong references, as for _pending_summarizer_tasks: create_task holds only a
+# weak one.
+_warmup_tasks: set[asyncio.Task] = set()
+
+
+async def _warm_embedding() -> None:
+    t0 = time.perf_counter()
+    try:
+        await asyncio.to_thread(get_embedding_service().warm_up)
+        logger.info("embedding_warm_done", extra={
+            "elapsed_ms": round((time.perf_counter() - t0) * 1000),
+        })
+    except Exception as exc:
+        # The first kb_search then loads the model itself, as it always did.
+        logger.warning("embedding_warm_failed", extra={
+            "error": type(exc).__name__, "detail": str(exc)[:200],
+            "elapsed_ms": round((time.perf_counter() - t0) * 1000),
+        })
+
+
 @asynccontextmanager
 async def lifespan(application: FastAPI):
     configure_root_logger(level=os.getenv("LOG_LEVEL", "INFO"))
@@ -179,6 +199,18 @@ async def lifespan(application: FastAPI):
     # fail its deploy rather than answer 401 to everyone and look like a user
     # problem. Unlike run_preflight() below, this one is not survivable.
     verify_auth_config()
+
+    # Load the embedding model in a thread while the rest of start-up runs.
+    # Lazy loading cost the user's first kb_search in every Lambda container a
+    # median 9.3 s (later searches: 0.05 s). Warmer pings only hit /health, and
+    # Lambda freezes the container between invocations, so the load has to start
+    # here, inside INIT, to finish before anyone searches. Not awaited: a chat
+    # turn that needs no search must not wait for it. EMBEDDING_WARMUP=1 is set
+    # in the agent image only, so tests and local runs skip it.
+    if os.getenv("EMBEDDING_WARMUP") == "1":
+        task = asyncio.create_task(_warm_embedding())
+        _warmup_tasks.add(task)
+        task.add_done_callback(_warmup_tasks.discard)
 
     # Before anything else: import the packages that are otherwise imported
     # lazily, so a missing one surfaces here instead of mid-incident. See

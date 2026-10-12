@@ -105,6 +105,15 @@ class E5EmbeddingService:
         """Convenience: embed with explicit prefix choice."""
         return self.embed_query(text) if is_query else self.embed_passage(text)
 
+    def warm_up(self) -> None:
+        """Load the model and run one encode, so the first search does not pay for it.
+
+        On Lambda the first kb_search in each container took a median 9.3 s and
+        every later one 0.05 s (prod logs 20/09–03/10): loading the model, not
+        searching. api/main.py runs this in a thread at start-up.
+        """
+        self.embed_query("warm-up")
+
     # ── Async wrappers (non-blocking) ───────────────────────────────────
 
     async def aembed_query(self, query: str) -> list[float]:

@@ -15,6 +15,7 @@ Decisions encoded:
 from __future__ import annotations
 
 import asyncio
+import time
 from typing import Optional
 
 from langchain_core.runnables import RunnableConfig
@@ -109,10 +110,13 @@ async def kb_search(query: str, top_k: int = 5) -> list[dict]:
     try:
         embed_svc = get_embedding_service()
         pg = get_pg_client()
+        t0 = time.perf_counter()
         await pg.connect()
+        t_connect = time.perf_counter()
 
         # Generate embedding with query: prefix for search
         query_vec = await embed_svc.aembed_query(query)
+        t_embed = time.perf_counter()
 
         rows = await pg.fetch(
             """
@@ -129,6 +133,7 @@ async def kb_search(query: str, top_k: int = 5) -> list[dict]:
             top_k,
             list(LIBRARY_SOURCE_TYPES),
         )
+        t_db = time.perf_counter()
 
         min_sim = _kb_min_similarity()
 
@@ -144,9 +149,14 @@ async def kb_search(query: str, top_k: int = 5) -> list[dict]:
             if min_sim is None or float(r["similarity"]) >= min_sim
         ]
 
+        # Per-stage times: a slow search is either the model (embed_ms) or the
+        # database (connect_ms, db_ms), and the logs should say which.
         logger.info("kb_search_done", extra={
             "query": query[:80], "results": len(results),
             "top_similarity": results[0]["similarity"] if results else None,
+            "connect_ms": round((t_connect - t0) * 1000),
+            "embed_ms": round((t_embed - t_connect) * 1000),
+            "db_ms": round((t_db - t_embed) * 1000),
         })
         return results
 

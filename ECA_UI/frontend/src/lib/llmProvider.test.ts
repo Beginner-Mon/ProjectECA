@@ -3,6 +3,7 @@ import {
   activeLlmChoice,
   clearAllLlmState,
   defaultLlmState,
+  llmChoiceToSend,
   loadLlmState,
   saveLlmState,
   type LlmState,
@@ -25,6 +26,16 @@ function fakeStorage(initial: Record<string, string> = {}) {
 
 let local: ReturnType<typeof fakeStorage>
 let session: ReturnType<typeof fakeStorage>
+
+const base = {
+  presetId: 'openai',
+  name: 'OpenAI',
+  baseUrl: 'https://api.openai.com/v1',
+  apiKey: 'k',
+  model: 'gpt-4o',
+  capabilities: ['text', 'answer', 'tools'] as const,
+  omit: [] as const,
+}
 
 beforeEach(() => {
   local = fakeStorage()
@@ -89,16 +100,6 @@ describe('clearAllLlmState', () => {
 })
 
 describe('activeLlmChoice', () => {
-  const base = {
-    presetId: 'openai',
-    name: 'OpenAI',
-    baseUrl: 'https://api.openai.com/v1',
-    apiKey: 'k',
-    model: 'gpt-4o',
-    capabilities: ['text', 'answer', 'tools'] as const,
-    omit: [] as const,
-  }
-
   it('returns null when ECA is active', () => {
     expect(activeLlmChoice({ active: 'eca', connections: { openai: { ...base, status: 'configured' } } })).toBeNull()
   })
@@ -133,5 +134,45 @@ describe('activeLlmChoice', () => {
         connections: { openai: { ...base, status: 'configured', model: '' } },
       }),
     ).toBeNull()
+  })
+})
+
+describe('llmChoiceToSend', () => {
+  const configured: LlmState = {
+    active: 'openai',
+    connections: { openai: { ...base, status: 'configured' } },
+  }
+
+  it('returns the connection when BYOK is enabled', () => {
+    expect(
+      llmChoiceToSend(configured, { byokEnabled: true, configLoading: false }),
+    ).toMatchObject({ base_url: 'https://api.openai.com/v1', model: 'gpt-4o' })
+  })
+
+  it('returns null when BYOK is off and loading has finished', () => {
+    expect(
+      llmChoiceToSend(configured, { byokEnabled: false, configLoading: false }),
+    ).toBeNull()
+  })
+
+  it('keeps the current behaviour while the config is still loading', () => {
+    expect(
+      llmChoiceToSend(configured, { byokEnabled: false, configLoading: true }),
+    ).toMatchObject({ model: 'gpt-4o' })
+  })
+
+  it('returns null for ECA in every flag combination', () => {
+    const eca: LlmState = {
+      active: 'eca',
+      connections: { openai: { ...base, status: 'configured' } },
+    }
+    for (const flags of [
+      { byokEnabled: true, configLoading: false },
+      { byokEnabled: false, configLoading: false },
+      { byokEnabled: false, configLoading: true },
+      { byokEnabled: true, configLoading: true },
+    ]) {
+      expect(llmChoiceToSend(eca, flags)).toBeNull()
+    }
   })
 })

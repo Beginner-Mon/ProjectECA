@@ -422,44 +422,51 @@ class ProviderCallError(RuntimeError):
     """A BYOK call failed after streaming started — message holds kind/status only."""
 
 
+# openai-SDK exception names by kind. Matched by NAME over the exception's MRO
+# rather than isinstance so this module never imports openai: it was the only
+# `import openai` in the codebase and tripped two repo invariants — every lazy
+# import must be listed in preflight.LAZY_DEPENDENCIES (test_preflight.py) and
+# every import declared in requirements-langgraph.txt
+# (test_requirements_complete.py). Order below mirrors the old isinstance
+# chain: specific subclasses before APIStatusError, which they all derive from.
+_AUTH_ERROR_NAMES = {"AuthenticationError", "PermissionDeniedError"}
+_QUOTA_ERROR_NAMES = {"RateLimitError"}
+_NOT_FOUND_ERROR_NAMES = {"NotFoundError"}
+_BAD_REQUEST_ERROR_NAMES = {"BadRequestError", "UnprocessableEntityError"}
+_UNREACHABLE_ERROR_NAMES = {"APITimeoutError", "APIConnectionError"}
+_STATUS_ERROR_NAMES = {"APIStatusError"}
+
+
 def classify_provider_error(exc: BaseException) -> dict:
     """Map an openai-SDK (or timeout) exception to ``{"kind", "status"}``.
 
     Never includes the exception text: provider messages can echo fragments
     of the request, and the key must not reach logs or the wire.
     """
-    try:
-        import openai
-    except Exception:  # noqa: BLE001
-        openai = None  # type: ignore[assignment]
-
     status = getattr(exc, "status_code", None)
     if not isinstance(status, int):
         status = None
 
-    if openai is not None:
-        if isinstance(exc, (openai.AuthenticationError, openai.PermissionDeniedError)):
-            return {"kind": "auth", "status": status}
-        if isinstance(exc, openai.RateLimitError):
-            return {"kind": "quota", "status": status}
-        if isinstance(exc, openai.NotFoundError):
-            return {"kind": "model_not_found", "status": status}
-        if isinstance(
-            exc, (openai.BadRequestError, openai.UnprocessableEntityError)
-        ):
-            return {"kind": "bad_request", "status": status}
-        if isinstance(exc, (openai.APITimeoutError, openai.APIConnectionError)):
-            return {"kind": "unreachable", "status": status}
-        if isinstance(exc, openai.APIStatusError):
-            if status == 402:
-                return {"kind": "quota", "status": status}
-            if status is not None and status >= 500:
-                return {"kind": "server", "status": status}
-            return {"kind": "other", "status": status}
-
+    names = {cls.__name__ for cls in type(exc).__mro__}
+    if names & _AUTH_ERROR_NAMES:
+        return {"kind": "auth", "status": status}
+    if names & _QUOTA_ERROR_NAMES:
+        return {"kind": "quota", "status": status}
+    if names & _NOT_FOUND_ERROR_NAMES:
+        return {"kind": "model_not_found", "status": status}
+    if names & _BAD_REQUEST_ERROR_NAMES:
+        return {"kind": "bad_request", "status": status}
+    if names & _UNREACHABLE_ERROR_NAMES:
+        return {"kind": "unreachable", "status": status}
     if isinstance(exc, asyncio.TimeoutError):
         return {"kind": "unreachable", "status": status}
-    # openai not installed, or an unexpected shape: 402/5xx still classify.
+    if names & _STATUS_ERROR_NAMES:
+        if status == 402:
+            return {"kind": "quota", "status": status}
+        if status is not None and status >= 500:
+            return {"kind": "server", "status": status}
+        return {"kind": "other", "status": status}
+    # An unexpected shape: 402/5xx still classify.
     if status == 402:
         return {"kind": "quota", "status": status}
     if status is not None and status >= 500:

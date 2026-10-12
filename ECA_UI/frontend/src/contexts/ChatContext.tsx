@@ -24,7 +24,7 @@ import { stageLabelFor } from '../lib/stageLabel'
 import { resolveGreeting, type CapturedGreeting } from '../lib/greeting'
 import { useLocale } from '../hooks/useLocale'
 import { useLlm } from '../hooks/useLlm'
-import { activeLlmChoice } from '../lib/llmProvider'
+import { llmChoiceToSend } from '../lib/llmProvider'
 import { useTranslation } from 'react-i18next'
 
 export type { SessionItem, ChatContextType } from '../hooks/useChat'
@@ -130,9 +130,11 @@ export function ChatProvider({ children }: { children: ReactNode }) {
   const { t } = useTranslation()
   // The BYOK connection in force, read at send time through the ref — never
   // frozen in the handleSend closure below.
-  const { state: llmState, markInvalid } = useLlm()
+  const { state: llmState, markInvalid, byokEnabled, configLoading } = useLlm()
   const llmStateRef = useRef(llmState)
   llmStateRef.current = llmState
+  const llmFlagsRef = useRef({ byokEnabled, configLoading })
+  llmFlagsRef.current = { byokEnabled, configLoading }
   const startRecord = useCallback(() => {
     // Whatever is typed now stays; what is heard is appended after it.
     startDictation(inputRef.current, setInput)
@@ -647,10 +649,10 @@ export function ChatProvider({ children }: { children: ReactNode }) {
     const copy = uiRef.current
     // Which provider answers this turn, and which card to blame when it fails.
     // Read here — at send time — so a connection picked after this render but
-    // before the tap still applies.
-    const sentLlm = activeLlmChoice(llmStateRef.current) ?? undefined
-    const sentPresetId =
-      llmStateRef.current.active !== 'eca' ? llmStateRef.current.active : null
+    // before the tap still applies. On an old backend without /llm/config the
+    // key is withheld entirely instead of being sent and silently ignored.
+    const sentLlm = llmChoiceToSend(llmStateRef.current, llmFlagsRef.current) ?? undefined
+    const sentPresetId = sentLlm !== undefined ? llmStateRef.current.active : null
 
     try {
       await streamChat(

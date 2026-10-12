@@ -111,25 +111,17 @@ def _addr_is_blocked(addr: str) -> bool:
     except ValueError:
         # Not parseable as an IP — treat as blocked (fail closed).
         return True
-    return (
-        ip.is_private
-        or ip.is_loopback
-        or ip.is_link_local
-        or ip.is_reserved
-        or ip.is_multicast
-        or ip.is_unspecified
-    )
+    return (not ip.is_global) or ip.is_multicast
 
 
 def validate_endpoint_url(url: str) -> str:
     """Return the normalized URL, or raise :class:`EndpointNotAllowed`.
 
-    The server is about to call a user-supplied address, so internal
-    targets are blocked: no userinfo, https only (http additionally when
-    :func:`local_endpoints_allowed`), no IP-literal hosts, and the hostname
-    must resolve to at least one address with every address public —
-    anything private/loopback/link-local/reserved/multicast/unspecified
-    fails, as does an unresolvable name.
+    The server is about to call a user-supplied address, so only globally
+    reachable targets are accepted: no userinfo, https only (http additionally
+    when :func:`local_endpoints_allowed`), no IP-literal hosts, and the hostname
+    must resolve to at least one address with every address public — anything
+    else fails, as does an unresolvable name.
     """
     if not isinstance(url, str):
         raise EndpointNotAllowed("endpoint must be a string")

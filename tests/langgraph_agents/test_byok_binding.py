@@ -65,6 +65,34 @@ def test_rejects_hostname_resolving_to_link_local(monkeypatch):
         llm_byok.validate_endpoint_url("https://provider.example/v1")
 
 
+@pytest.mark.parametrize("addr", ["100.64.0.1", "224.0.1.1", "fc00::1"])
+def test_rejects_non_global_resolved_addresses(monkeypatch, addr):
+    """Only globally reachable addresses may be called: shared CGNAT space,
+    multicast and unique-local IPv6 are all non-global and must fail."""
+    from langgraph_agents import llm_byok
+
+    monkeypatch.delenv("BYOK_ALLOW_LOCAL", raising=False)
+    monkeypatch.setattr(
+        "langgraph_agents.llm_byok.socket.getaddrinfo",
+        lambda host, port, *a, **k: [(2, 1, 6, "", (addr, 0))],
+    )
+    with pytest.raises(llm_byok.EndpointNotAllowed):
+        llm_byok.validate_endpoint_url("https://provider.example/v1")
+
+
+@pytest.mark.parametrize("addr", ["8.8.8.8", "2606:4700:4700::1111"])
+def test_allows_global_v4_and_v6_addresses(monkeypatch, addr):
+    from langgraph_agents import llm_byok
+
+    monkeypatch.delenv("BYOK_ALLOW_LOCAL", raising=False)
+    monkeypatch.setattr(
+        "langgraph_agents.llm_byok.socket.getaddrinfo",
+        lambda host, port, *a, **k: [(2, 1, 6, "", (addr, 0))],
+    )
+    out = llm_byok.validate_endpoint_url("https://provider.example/v1")
+    assert out == "https://provider.example/v1"
+
+
 def test_rejects_userinfo(monkeypatch):
     from langgraph_agents import llm_byok
 

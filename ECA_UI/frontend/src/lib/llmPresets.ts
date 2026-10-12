@@ -1,10 +1,18 @@
-// Provider presets for BYOK — name + address prefilled, key never leaves the browser.
+// The providers on the BYOK screen.
 //
-// Names and addresses taken from Project AIRI's provider-inference definitions
-// (github.com/moeru-ai/airi, packages/provider-inference, MIT) on 12/10/2026.
-// The "browser check" column in the plan is K's 12/10/2026 probe of whether a
-// browser could reach each provider directly (no valid key); it does not affect
-// chat time, when the server is the caller — only the pre-connect check.
+// The list itself comes from the open catalog (models.dev): every provider it
+// describes as speaking chat completions at a fixed address gets a card, with
+// the catalog's own name, address and logo — see catalogProviders().
+//
+// What is written by hand here is only what the catalog cannot supply:
+//  - the entry that takes any address the user types;
+//  - providers the catalog knows but describes through their own SDK, with no
+//    chat-completions address to read (OpenAI, Anthropic, Google, …). Their
+//    addresses were taken from Project AIRI's provider definitions
+//    (github.com/moeru-ai/airi, packages/provider-inference, MIT) on 12/10/2026;
+//  - programs on the user's own machine.
+
+import { catalogProviders } from './modelCatalog'
 
 export interface LlmPreset {
   id: string
@@ -20,7 +28,8 @@ export interface LlmPreset {
   note?: string
 }
 
-// The order here is the order of the cards on the Providers screen, after ECA.
+// The order here is the order of these cards on the Providers screen, after
+// ECA and ahead of everything read from the catalog.
 export const LLM_PRESETS: LlmPreset[] = [
   // First, next to ECA: the entry that takes any endpoint, so a provider with
   // no card of its own is not something to scroll to the bottom to find.
@@ -30,6 +39,7 @@ export const LLM_PRESETS: LlmPreset[] = [
     id: 'anthropic',
     name: 'Anthropic',
     baseUrl: 'https://api.anthropic.com/v1/',
+    catalogId: 'anthropic',
     checkHeaders: { 'anthropic-dangerous-direct-browser-access': 'true' },
   },
   {
@@ -38,28 +48,15 @@ export const LLM_PRESETS: LlmPreset[] = [
     baseUrl: 'https://generativelanguage.googleapis.com/v1beta/openai/',
     catalogId: 'google',
   },
-  { id: 'deepseek', name: 'DeepSeek', baseUrl: 'https://api.deepseek.com/', catalogId: 'deepseek' },
   { id: 'groq', name: 'Groq', baseUrl: 'https://api.groq.com/openai/v1/', catalogId: 'groq' },
   { id: 'mistral', name: 'Mistral', baseUrl: 'https://api.mistral.ai/v1/', catalogId: 'mistral' },
-  { id: 'xai', name: 'xAI', baseUrl: 'https://api.x.ai/v1' },
-  { id: 'openrouter', name: 'OpenRouter', baseUrl: 'https://openrouter.ai/api/v1/' },
-  { id: 'together', name: 'Together.ai', baseUrl: 'https://api.together.xyz/v1/' },
-  { id: 'fireworks', name: 'Fireworks.ai', baseUrl: 'https://api.fireworks.ai/inference/v1/' },
-  { id: 'perplexity', name: 'Perplexity', baseUrl: 'https://api.perplexity.ai/' },
-  { id: 'moonshot', name: 'Moonshot AI', baseUrl: 'https://api.moonshot.ai/v1/' },
+  { id: 'xai', name: 'xAI', baseUrl: 'https://api.x.ai/v1', catalogId: 'xai' },
+  { id: 'openrouter', name: 'OpenRouter', baseUrl: 'https://openrouter.ai/api/v1/', catalogId: 'openrouter' },
+  { id: 'together', name: 'Together.ai', baseUrl: 'https://api.together.xyz/v1/', catalogId: 'togetherai' },
+  { id: 'perplexity', name: 'Perplexity', baseUrl: 'https://api.perplexity.ai/', catalogId: 'perplexity' },
   { id: 'minimax', name: 'MiniMax', baseUrl: 'https://api.minimaxi.com/v1/' },
-  { id: 'xiaomi-mimo', name: 'Xiaomi MiMo', baseUrl: 'https://api.xiaomimimo.com/v1/' },
-  { id: 'modelscope', name: 'ModelScope', baseUrl: 'https://api-inference.modelscope.cn/v1/' },
-  { id: 'novita', name: 'Novita', baseUrl: 'https://api.novita.ai/openai/' },
-  { id: 'featherless', name: 'Featherless.ai', baseUrl: 'https://api.featherless.ai/v1/' },
-  { id: 'atlascloud', name: 'Atlas Cloud', baseUrl: 'https://api.atlascloud.ai/v1' },
-  { id: '302ai', name: '302.AI', baseUrl: 'https://api.302.ai/v1/' },
-  { id: 'aihubmix', name: 'AIHubMix', baseUrl: 'https://aihubmix.com/v1/' },
-  { id: 'cometapi', name: 'CometAPI', baseUrl: 'https://api.cometapi.com/v1/' },
-  { id: 'n1n', name: 'n1n', baseUrl: 'https://api.n1n.ai/v1' },
-  { id: 'cerebras', name: 'Cerebras', baseUrl: 'https://api.cerebras.ai/v1/' },
-  { id: 'zai', name: 'Z.ai', baseUrl: 'https://api.z.ai/api/paas/v4' },
-  { id: 'openpaths', name: 'OpenPaths', baseUrl: 'https://openpaths.io/v1' },
+  { id: 'aihubmix', name: 'AIHubMix', baseUrl: 'https://aihubmix.com/v1/', catalogId: 'aihubmix' },
+  { id: 'cerebras', name: 'Cerebras', baseUrl: 'https://api.cerebras.ai/v1/', catalogId: 'cerebras' },
   {
     id: 'bedrock',
     name: 'Amazon Bedrock',
@@ -70,6 +67,17 @@ export const LLM_PRESETS: LlmPreset[] = [
   { id: 'lm-studio', name: 'LM Studio', baseUrl: 'http://localhost:1234/v1/', local: true },
 ]
 
-export function presetById(id: string): LlmPreset | undefined {
-  return LLM_PRESETS.find((p) => p.id === id)
+/**
+ * Every card after ECA: the hand-written entries, then the catalog's.
+ *
+ * A catalog provider already written by hand is not repeated — whichever of
+ * its two ids matches. Without a catalog (still loading, or unreachable) the
+ * hand-written entries are the whole list, so the screen never comes up empty.
+ */
+export function providerList(catalog: unknown | null): LlmPreset[] {
+  const byHand = new Set(LLM_PRESETS.flatMap((p) => (p.catalogId ? [p.id, p.catalogId] : [p.id])))
+  const fromCatalog = catalogProviders(catalog)
+    .filter((p) => !byHand.has(p.id))
+    .map((p): LlmPreset => ({ ...p, catalogId: p.id }))
+  return [...LLM_PRESETS, ...fromCatalog]
 }

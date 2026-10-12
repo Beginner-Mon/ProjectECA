@@ -8,7 +8,7 @@
  * the ECA origin, and every request here goes elsewhere by design.
  */
 
-import { lookupModel, suggestModel } from './modelCatalog'
+import { catalogIdForBaseUrl, lookupModel, suggestModel } from './modelCatalog'
 import type { LlmCapability, LlmOmit } from './llmProvider'
 
 export interface CheckConn {
@@ -40,6 +40,17 @@ export interface CheckResult {
   suggested?: string
   capabilities: LlmCapability[]
   omit: LlmOmit[]
+  /**
+   * Set when the models were listed but the trial message could not be sent:
+   * this provider lets a web page read its model list and nothing more. Not a
+   * verdict on the key — ECA's server makes the real calls and no such limit
+   * applies to it. `capabilities` and `omit` then hold what the catalog says
+   * about the model, since no trial could.
+   */
+  untested?: {
+    /** The provider refuses a wrong key on the listing, and did not refuse this one. */
+    keyAccepted: boolean
+  }
 }
 
 const TIMEOUT_MS = 20_000
@@ -104,6 +115,24 @@ export async function listModels(conn: CheckConn): Promise<{ models: string[]; l
   // Anything else (quota, server, …) is not a verdict on the key — the ping
   // below says that. Treat as "unlisted" and carry on.
   return { models: [], listed: false }
+}
+
+/** Not a key any provider issued. Sent once, to see whether a key is looked at. */
+const WRONG_KEY = 'eca-key-check-not-a-real-key'
+
+/**
+ * Did the listing look at the key at all? Some providers list their models to
+ * anyone, so a list that came back proves nothing by itself. Ask once more
+ * with a key that cannot be right: if THAT is refused, the provider checks
+ * keys on this address — and it did not refuse the user's.
+ */
+async function listingChecksKey(conn: CheckConn): Promise<boolean> {
+  try {
+    await listModels({ ...conn, apiKey: WRONG_KEY })
+    return false
+  } catch (e) {
+    return (e as CheckError)?.kind === 'auth'
+  }
 }
 
 // ── Ping stream reading ──────────────────────────────────────────────
@@ -327,18 +356,23 @@ export async function checkConnection(
     return { ok: false, error: { kind: 'network' }, models: [], modelsListed: false, capabilities: [], omit: [] }
   }
 
+  // A preset names its catalog provider. A typed endpoint does not, so it is
+  // recognised by its address — otherwise a model id is matched across every
+  // provider and may be described the way some other provider serves it.
+  const catalogId = conn.catalogId ?? catalogIdForBaseUrl(catalog ?? null, conn.baseUrl)
+
   if (!model) {
     return {
       ok: true,
       models,
       modelsListed: listed,
-      suggested: suggestModel(catalog ?? null, models, conn.catalogId),
+      suggested: suggestModel(catalog ?? null, models, catalogId),
       capabilities: [],
       omit: [],
     }
   }
 
-  const meta = lookupModel(catalog ?? null, model, conn.catalogId)
+  const meta = lookupModel(catalog ?? null, model, catalogId)
 
   const variants: PingVariant[] = [
     { includeTemperature: meta?.temperature !== false, includeMaxTokens: true, includeFinalSystem: true },
@@ -359,6 +393,25 @@ export async function checkConnection(
       break
     }
     lastError = res.error
+    if (res.error.kind === 'network' && listed) {
+      // The listing came back, so the address is right and the network is up:
+      // it is the trial message this provider will not take from a browser.
+      // Report what can be known without one — whether the key was looked at,
+      // and what the catalog says the model can do (unknown: assume it can
+      // call tools, as before; the first chat turn settles it).
+      const capabilities: LlmCapability[] = ['text', 'answer']
+      if (meta ? meta.tools : true) capabilities.push('tools')
+      if (meta?.image) capabilities.push('image')
+      return {
+        ok: false,
+        error: res.error,
+        models,
+        modelsListed: listed,
+        capabilities,
+        omit: meta?.temperature === false ? ['temperature'] : [],
+        untested: { keyAccepted: await listingChecksKey(conn) },
+      }
+    }
     if (res.error.kind !== 'bad_request') {
       return { ok: false, error: res.error, models, modelsListed: listed, capabilities: [], omit: [] }
     }

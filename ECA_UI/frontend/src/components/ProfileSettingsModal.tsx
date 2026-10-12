@@ -1,6 +1,7 @@
 ﻿import { useState, useEffect, useCallback, lazy, Suspense } from 'react'
 import { useTranslation } from 'react-i18next'
 import { X, ChevronLeft } from 'lucide-react'
+import type { LlmPreset } from '@/lib/llmPresets'
 
 const ProfileContent = lazy(() => import('./ProfileContent'))
 const SettingsContent = lazy(() => import('./SettingsContent'))
@@ -20,7 +21,7 @@ const ROOT_VIEW = 'main' as const
 export default function ProfileSettingsModal({ type, onClose, onBack }: ProfileSettingsModalProps) {
   const { t } = useTranslation()
   const [settingsView, setSettingsView] = useState<'main' | 'providers' | 'provider-detail' | 'graphics' | 'about' | 'language'>(ROOT_VIEW)
-  const [selectedProvider, setSelectedProvider] = useState<{ id: string; name: string } | undefined>()
+  const [selectedProvider, setSelectedProvider] = useState<LlmPreset | undefined>()
 
   useEffect(() => {
     // eslint-disable-next-line react-hooks/set-state-in-effect -- reset view when type changes
@@ -61,7 +62,7 @@ export default function ProfileSettingsModal({ type, onClose, onBack }: ProfileS
     }
   }
 
-  const handleSelectProvider = (provider: { id: string; name: string }) => {
+  const handleSelectProvider = (provider: LlmPreset) => {
     setSelectedProvider(provider)
     setSettingsView('provider-detail')
   }

@@ -1,16 +1,23 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { Check, ChevronDown, RefreshCw, Trash2 } from 'lucide-react'
-import { presetById } from '../lib/llmPresets'
-import { groupModels, loadCatalog, normalizeModelId } from '../lib/modelCatalog'
-import { checkConnection, type CheckConn, type CheckError } from '../lib/llmCheck'
+import type { LlmPreset } from '../lib/llmPresets'
+import { catalogIdForBaseUrl, groupModels, loadCatalog, normalizeModelId } from '../lib/modelCatalog'
+import { checkConnection, type CheckConn, type CheckError, type CheckResult } from '../lib/llmCheck'
 import { useLlm } from '../hooks/useLlm'
-import type { LlmCapability, LlmStatus } from '../lib/llmProvider'
+import type { LlmCapability, LlmOmit, LlmStatus } from '../lib/llmProvider'
 
 interface ProviderDetailViewProps {
-  provider?: { id: string; name: string }
+  /** The card that was opened: a hand-written preset or one read from the catalog. */
+  provider?: LlmPreset
   /** Called once the user chooses to use this key. The settings modal closes on it. */
   onUsed?: () => void
+}
+
+/** What the last check learned about the chosen model — saved only on "use". */
+interface Checked {
+  capabilities: LlmCapability[]
+  omit: LlmOmit[]
 }
 
 function errorKey(kind: CheckError['kind']): string {
@@ -42,16 +49,19 @@ const ICON_BUTTON =
  * delete beside it), one status line, the model picker, the "use" action, and
  * the endpoint tucked into Advanced settings.
  *
- * The model is picked from the provider's own list, never typed: a person
+ * NOTHING IS SAVED UNTIL "USE THIS API KEY" IS PRESSED. Typing or pasting a key
+ * checks it, and the result lives in this component only: leave the screen and
+ * it is gone, whether the key was accepted or rejected. A key that was tried
+ * and abandoned must not linger on the provider's card.
+ *
+ * The model is picked from the provider's own list and never typed: a person
  * cannot be expected to know a model id, and a mistyped one fails the check.
- * The single exception is a provider that publishes no list at all — then, and
- * only then, a model-name field appears under Advanced settings.
  */
 export default function ProviderDetailView({ provider, onUsed }: ProviderDetailViewProps) {
   const { t } = useTranslation()
   const { state, saveConnection, removeConnection, setActive } = useLlm()
   const presetId = provider?.id ?? ''
-  const preset = presetId ? presetById(presetId) : undefined
+  const preset = provider
   const stored = presetId ? state.connections[presetId] : undefined
 
   const [baseUrl, setBaseUrl] = useState(() => stored?.baseUrl ?? preset?.baseUrl ?? '')
@@ -61,6 +71,11 @@ export default function ProviderDetailView({ provider, onUsed }: ProviderDetailV
   /** True once a listing has been tried, whatever it returned. */
   const [listAttempted, setListAttempted] = useState(false)
   const [status, setStatus] = useState<LlmStatus>(() => stored?.status ?? 'unconfigured')
+  const [checked, setChecked] = useState<Checked | null>(() =>
+    stored ? { capabilities: stored.capabilities, omit: stored.omit } : null,
+  )
+  /** With status 'unverified': the provider checks keys and took this one. */
+  const [keyAccepted, setKeyAccepted] = useState(() => stored?.keyAccepted === true)
   const [checking, setChecking] = useState(false)
   const [error, setError] = useState<CheckError | null>(null)
   const [catalog, setCatalog] = useState<unknown | null>(null)
@@ -83,8 +98,8 @@ export default function ProviderDetailView({ provider, onUsed }: ProviderDetailV
     [preset],
   )
 
-  // Catalog loads once per session (cached in the module); the detail view is
-  // what triggers it — never the chat path.
+  // Catalog loads once per session (cached in the module, normally already by
+  // the provider list) — never on the chat path.
   useEffect(() => {
     let cancelled = false
     void loadCatalog().then((cat) => {
@@ -117,68 +132,40 @@ export default function ProviderDetailView({ provider, onUsed }: ProviderDetailV
   // a different provider remounts this view, so the useState initialisers
   // above are the reset — no synchronising effect needed.
 
-  const applyOk = useCallback(
-    (
-      seq: number,
-      base: string,
-      key: string,
-      modelUsed: string,
-      result: { models: string[]; capabilities: LlmCapability[]; omit: Parameters<typeof saveConnection>[0]['omit'] },
-    ) => {
-      if (seqRef.current !== seq) return
-      lastCheckedModel.current = modelUsed
-      setModels(result.models)
-      setListAttempted(true)
-      setError(null)
-      setStatus('configured')
-      setChecking(false)
-      if (provider) {
-        saveConnection({
-          presetId,
-          name: provider.name,
-          baseUrl: base.trim(),
-          apiKey: key,
-          model: modelUsed,
-          capabilities: result.capabilities,
-          omit: result.omit,
-          status: 'configured',
-        })
-      }
-    },
-    [presetId, provider, saveConnection],
-  )
+  const applyOk = useCallback((seq: number, modelUsed: string, result: Checked & { models: string[] }) => {
+    if (seqRef.current !== seq) return
+    lastCheckedModel.current = modelUsed
+    setModels(result.models)
+    setListAttempted(true)
+    setChecked({ capabilities: result.capabilities, omit: result.omit })
+    setError(null)
+    setStatus('configured')
+    setChecking(false)
+  }, [])
 
-  const applyFail = useCallback(
-    (seq: number, err: CheckError, base: string, key: string, modelUsed: string, listed: string[]) => {
-      if (seqRef.current !== seq) return
-      setModels(listed)
-      setListAttempted(true)
-      setError(err)
-      setChecking(false)
-      if (err.kind === 'network') {
-        // The provider may simply refuse browser calls. Stay saveable through
-        // the explicit "save anyway" button, which needs a typed model name —
-        // so show where to type it. Nothing is persisted yet.
-        setStatus((prev) => (prev === 'configured' ? prev : 'unconfigured'))
-        setAdvancedOpen(true)
-        return
-      }
-      setStatus('invalid')
-      if (provider) {
-        saveConnection({
-          presetId,
-          name: provider.name,
-          baseUrl: base.trim(),
-          apiKey: key,
-          model: modelUsed.trim(),
-          capabilities: [],
-          omit: [],
-          status: 'invalid',
-        })
-      }
-    },
-    [presetId, provider, saveConnection],
-  )
+  const applyFail = useCallback((seq: number, result: CheckResult, modelUsed: string) => {
+    if (seqRef.current !== seq) return
+    const err = result.error ?? { kind: 'network' as const }
+    setModels(result.models)
+    setListAttempted(true)
+    setChecking(false)
+    if (result.untested && modelUsed) {
+      // The models were listed; it is the trial message this provider refuses
+      // from a browser. That is not a verdict on the key — the server makes
+      // the real calls and is not subject to it. Usable, marked unverified,
+      // and the first chat turn is the test of the model.
+      lastCheckedModel.current = modelUsed
+      setChecked({ capabilities: result.capabilities, omit: result.omit })
+      setKeyAccepted(result.untested.keyAccepted)
+      setError(null)
+      setStatus('unverified')
+      return
+    }
+    setChecked(null)
+    setKeyAccepted(false)
+    setError(err)
+    setStatus(err.kind === 'network' ? 'unconfigured' : 'invalid')
+  }, [])
 
   /** Full auto flow: list → suggest → check the suggestion. */
   const runAuto = useCallback(
@@ -191,28 +178,24 @@ export default function ProviderDetailView({ provider, onUsed }: ProviderDetailV
       const listed = await checkConnection(buildConn(base, key), undefined, catalog)
       if (seqRef.current !== seq) return
       if (!listed.ok) {
-        applyFail(seq, listed.error ?? { kind: 'network' }, base, key, '', [])
+        applyFail(seq, listed, '')
         return
       }
       const suggested = listed.suggested ?? ''
       if (!suggested) {
-        // The key works but the provider publishes no model list: the one case
-        // where a model name has to be typed. Open the place to type it.
+        // The key was not refused, but there is no model to pick from.
         setModels(listed.models)
         setListAttempted(true)
+        setChecked(null)
         setChecking(false)
         setStatus('unconfigured')
-        setAdvancedOpen(true)
         return
       }
       setModel(suggested)
-      const checked = await checkConnection(buildConn(base, key), suggested, catalog)
+      const result = await checkConnection(buildConn(base, key), suggested, catalog)
       if (seqRef.current !== seq) return
-      if (checked.ok) {
-        applyOk(seq, base, key, suggested, checked)
-      } else {
-        applyFail(seq, checked.error ?? { kind: 'network' }, base, key, suggested, checked.models)
-      }
+      if (result.ok) applyOk(seq, suggested, result)
+      else applyFail(seq, result, suggested)
     },
     [applyFail, applyOk, buildConn, catalog],
   )
@@ -224,13 +207,10 @@ export default function ProviderDetailView({ provider, onUsed }: ProviderDetailV
       setChecking(true)
       setStatus('validating')
       setError(null)
-      const checked = await checkConnection(buildConn(base, key), modelId.trim(), catalog)
+      const result = await checkConnection(buildConn(base, key), modelId.trim(), catalog)
       if (seqRef.current !== seq) return
-      if (checked.ok) {
-        applyOk(seq, base, key, modelId.trim(), checked)
-      } else {
-        applyFail(seq, checked.error ?? { kind: 'network' }, base, key, modelId.trim(), checked.models)
-      }
+      if (result.ok) applyOk(seq, modelId.trim(), result)
+      else applyFail(seq, result, modelId.trim())
     },
     [applyFail, applyOk, buildConn, catalog],
   )
@@ -262,6 +242,7 @@ export default function ProviderDetailView({ provider, onUsed }: ProviderDetailV
         if (timerRef.current) clearTimeout(timerRef.current)
         seqRef.current++
         setChecking(false)
+        setChecked(null)
         setError(null)
         setStatus('unconfigured')
         return
@@ -282,16 +263,6 @@ export default function ProviderDetailView({ provider, onUsed }: ProviderDetailV
     [apiKey, baseUrl, runModelCheck],
   )
 
-  /** Typed (providers with no list only): wait for the typing to stop. */
-  const onModelType = useCallback(
-    (value: string) => {
-      setModel(value)
-      if (value === lastCheckedModel.current) return
-      schedule(() => void runModelCheck(baseUrl, apiKey, value))
-    },
-    [apiKey, baseUrl, runModelCheck, schedule],
-  )
-
   const onPasteKey = useCallback(
     (e: React.ClipboardEvent<HTMLInputElement>) => {
       if (timerRef.current) clearTimeout(timerRef.current)
@@ -307,26 +278,25 @@ export default function ProviderDetailView({ provider, onUsed }: ProviderDetailV
     void (model.trim() ? runModelCheck(baseUrl, apiKey, model) : runAuto(baseUrl, apiKey))
   }, [apiKey, baseUrl, model, runAuto, runModelCheck])
 
-  const handleStillSave = useCallback(() => {
-    if (!provider || !model.trim()) return
+  const usable = (status === 'configured' || status === 'unverified') && checked !== null && model !== ''
+
+  /** The one place a key is written to storage. */
+  const handleUse = useCallback(() => {
+    if (!provider || !usable || !checked) return
     saveConnection({
       presetId,
       name: provider.name,
       baseUrl: baseUrl.trim(),
       apiKey,
-      model: model.trim(),
-      capabilities: ['text', 'answer', 'tools'],
-      omit: [],
-      status: 'unverified',
+      model,
+      capabilities: checked.capabilities,
+      omit: checked.omit,
+      status: status === 'unverified' ? 'unverified' : 'configured',
+      ...(status === 'unverified' && keyAccepted ? { keyAccepted: true } : {}),
     })
-    setStatus('unverified')
-    setError(null)
-  }, [apiKey, baseUrl, model, presetId, provider, saveConnection])
-
-  const handleUse = useCallback(() => {
     setActive(presetId)
     onUsed?.()
-  }, [onUsed, presetId, setActive])
+  }, [apiKey, baseUrl, checked, keyAccepted, model, onUsed, presetId, provider, saveConnection, setActive, status, usable])
 
   const handleStop = useCallback(() => {
     setActive('eca')
@@ -342,6 +312,7 @@ export default function ProviderDetailView({ provider, onUsed }: ProviderDetailV
     lastCheckedModel.current = ''
     setModels([])
     setListAttempted(false)
+    setChecked(null)
     setChecking(false)
     setStatus('unconfigured')
     setError(null)
@@ -349,20 +320,25 @@ export default function ProviderDetailView({ provider, onUsed }: ProviderDetailV
   }, [preset, presetId, removeConnection])
 
   const groups = useMemo(
-    () => groupModels(catalog, models, preset?.catalogId),
-    [catalog, models, preset],
+    () => groupModels(catalog, models, preset?.catalogId ?? catalogIdForBaseUrl(catalog, baseUrl)),
+    [baseUrl, catalog, models, preset],
   )
 
   if (!provider) return null
 
-  const canUse = status === 'configured' || status === 'unverified'
-  // Read from the SAVED connection, not the local status: re-checking a model
-  // while the key is in use must not make the "in use" badge blink away.
-  const inUse =
-    state.active === presetId && (stored?.status === 'configured' || stored?.status === 'unverified')
   const busy = status === 'validating' || checking
-  // A provider that answered but published no list: the model has to be typed.
-  const needsTypedModel = listAttempted && models.length === 0
+  // "In use" means: what is on screen is exactly what is saved and selected.
+  // Change the model or the key and it becomes a draft again, with the button
+  // back, until "use" is pressed — nothing on this screen applies by itself.
+  const matchesSaved =
+    stored !== undefined &&
+    stored.apiKey === apiKey &&
+    stored.baseUrl === baseUrl.trim() &&
+    stored.model === model
+  const inUse =
+    matchesSaved &&
+    state.active === presetId &&
+    (stored.status === 'configured' || stored.status === 'unverified')
 
   const statusText = error
     ? t(errorKey(error.kind))
@@ -371,7 +347,7 @@ export default function ProviderDetailView({ provider, onUsed }: ProviderDetailV
       : status === 'configured'
         ? t('providers.connected')
         : status === 'unverified'
-          ? t('providers.unverified')
+          ? t(keyAccepted ? 'providers.key_accepted_hint' : 'providers.unverified_hint')
           : status === 'invalid'
             ? t('providers.invalid')
             : t('providers.not_connected')
@@ -379,7 +355,7 @@ export default function ProviderDetailView({ provider, onUsed }: ProviderDetailV
     ? 'bg-red-500'
     : busy
       ? 'bg-yellow-500 animate-pulse'
-      : status === 'configured'
+      : status === 'configured' || (status === 'unverified' && keyAccepted)
         ? 'bg-green-500'
         : status === 'unverified'
           ? 'bg-blue-500'
@@ -387,12 +363,13 @@ export default function ProviderDetailView({ provider, onUsed }: ProviderDetailV
 
   const modelPlaceholder = busy
     ? t('providers.model_loading')
-    : needsTypedModel
+    : listAttempted && models.length === 0
       ? t('providers.model_unlisted')
       : t('providers.model_need_key')
   // The saved model may not be in the list (or the list may not have loaded
   // yet); it still has to be shown as the current choice.
-  const modelMissingFromList = model !== '' && !models.includes(model)
+  const modelMissingFromList =
+    model !== '' && !groups.recommended.includes(model) && !groups.other.includes(model)
   const grouped = groups.recommended.length > 0 && groups.other.length > 0
 
   return (
@@ -433,23 +410,10 @@ export default function ProviderDetailView({ provider, onUsed }: ProviderDetailV
             <Trash2 className="w-[18px] h-[18px]" />
           </button>
         </div>
-        <div className="flex items-center gap-2 min-h-5">
-          <span className={`w-2.5 h-2.5 rounded-full shrink-0 ${dotClass}`} />
+        <div className="flex items-start gap-2 min-h-5">
+          <span className={`w-2.5 h-2.5 mt-[5px] rounded-full shrink-0 ${dotClass}`} />
           <span className={`text-sm ${error ? 'text-destructive' : 'text-muted-foreground'}`}>{statusText}</span>
         </div>
-        {error?.kind === 'network' && (
-          <div className="space-y-2">
-            <p className="text-xs text-muted-foreground">{t('providers.network_hint')}</p>
-            <button
-              type="button"
-              onClick={handleStillSave}
-              disabled={!model.trim()}
-              className="px-4 py-2 rounded-lg text-sm font-medium border border-border/40 hover:border-foreground transition-colors disabled:opacity-50"
-            >
-              {t('providers.save_anyway')}
-            </button>
-          </div>
-        )}
         {preset?.note && <p className="text-xs text-muted-foreground">{t(`providers.${preset.note}`)}</p>}
       </div>
 
@@ -494,6 +458,11 @@ export default function ProviderDetailView({ provider, onUsed }: ProviderDetailV
           </select>
           <ChevronDown className="pointer-events-none absolute right-4 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
         </div>
+        {groups.unsupported.length > 0 && (
+          <p className="text-xs text-muted-foreground">
+            {t('providers.model_unsupported_note', { n: groups.unsupported.length })}
+          </p>
+        )}
       </div>
 
       {inUse ? (
@@ -511,17 +480,15 @@ export default function ProviderDetailView({ provider, onUsed }: ProviderDetailV
               {t('providers.stop_using')}
             </button>
           </div>
-          {stored?.model && (
-            <p className="text-xs text-muted-foreground">
-              {t('providers.in_use_caption', { model: normalizeModelId(stored.model) })}
-            </p>
-          )}
+          <p className="text-xs text-muted-foreground">
+            {t('providers.in_use_caption', { model: normalizeModelId(model) })}
+          </p>
         </div>
       ) : (
         <button
           type="button"
           onClick={handleUse}
-          disabled={!canUse}
+          disabled={!usable || busy}
           className="px-4 py-2 rounded-lg text-sm font-medium bg-primary text-primary-foreground hover:bg-primary/90 disabled:opacity-50 transition-colors"
         >
           {t('providers.use_api_key')}
@@ -539,37 +506,20 @@ export default function ProviderDetailView({ provider, onUsed }: ProviderDetailV
           <ChevronDown className={`w-4 h-4 transition-transform ${advancedOpen ? 'rotate-180' : ''}`} />
         </button>
         {advancedOpen && (
-          <div className="space-y-4">
-            <div className="space-y-2">
-              <label htmlFor={`llm-endpoint-${presetId}`} className="block text-sm font-medium text-foreground">
-                {t('providers.endpoint_url')}
-              </label>
-              <input
-                id={`llm-endpoint-${presetId}`}
-                type="text"
-                value={baseUrl}
-                onChange={(e) => onBaseUrlChange(e.target.value)}
-                placeholder={t('providers.base_url_placeholder')}
-                className={`w-full ${FIELD}`}
-              />
-              {preset?.baseUrl && (
-                <p className="text-xs text-muted-foreground">{t('providers.endpoint_hint', { name: provider.name })}</p>
-              )}
-            </div>
-            {needsTypedModel && (
-              <div className="space-y-2">
-                <label htmlFor={`llm-model-name-${presetId}`} className="block text-sm font-medium text-foreground">
-                  {t('providers.model_name')}
-                </label>
-                <input
-                  id={`llm-model-name-${presetId}`}
-                  type="text"
-                  value={model}
-                  onChange={(e) => onModelType(e.target.value)}
-                  className={`w-full ${FIELD}`}
-                />
-                <p className="text-xs text-muted-foreground">{t('providers.model_name_hint')}</p>
-              </div>
+          <div className="space-y-2">
+            <label htmlFor={`llm-endpoint-${presetId}`} className="block text-sm font-medium text-foreground">
+              {t('providers.endpoint_url')}
+            </label>
+            <input
+              id={`llm-endpoint-${presetId}`}
+              type="text"
+              value={baseUrl}
+              onChange={(e) => onBaseUrlChange(e.target.value)}
+              placeholder={t('providers.base_url_placeholder')}
+              className={`w-full ${FIELD}`}
+            />
+            {preset?.baseUrl && (
+              <p className="text-xs text-muted-foreground">{t('providers.endpoint_hint', { name: provider.name })}</p>
             )}
           </div>
         )}

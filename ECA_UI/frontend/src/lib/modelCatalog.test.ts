@@ -1,5 +1,44 @@
 import { describe, expect, it } from 'vitest'
-import { groupModels, lookupModel, normalizeModelId, suggestModel } from './modelCatalog'
+import {
+  catalogIdForBaseUrl,
+  catalogProviders,
+  groupModels,
+  lookupModel,
+  normalizeModelId,
+  suggestModel,
+} from './modelCatalog'
+
+// A gateway: one key, many models, not all served over chat completions.
+// Shaped like models.dev's entry for OpenCode Zen.
+const GATEWAY = {
+  gateway: {
+    api: 'https://gateway.example/zen/v1',
+    npm: '@ai-sdk/openai-compatible',
+    models: {
+      'plain-chat': {
+        modalities: { input: ['text'], output: ['text'] },
+        tool_call: true,
+        cost: { input: 1 },
+        release_date: '2025-01-01',
+      },
+      // Free and newest — the natural default, and unusable: Responses format.
+      'free-responses': {
+        modalities: { input: ['text'], output: ['text'] },
+        tool_call: true,
+        cost: { input: 0 },
+        release_date: '2026-01-01',
+        provider: { npm: '@ai-sdk/openai' },
+      },
+      'claude-like': {
+        modalities: { input: ['text'], output: ['text'] },
+        tool_call: true,
+        cost: { input: 3 },
+        release_date: '2025-06-01',
+        provider: { npm: '@ai-sdk/anthropic' },
+      },
+    },
+  },
+}
 
 const CATALOG = {
   openai: {
@@ -123,6 +162,141 @@ describe('groupModels', () => {
   })
 
   it('lists everything as other when there is no catalog', () => {
-    expect(groupModels(null, ['a', 'b'])).toEqual({ recommended: [], other: ['a', 'b'] })
+    expect(groupModels(null, ['a', 'b'])).toEqual({ recommended: [], other: ['a', 'b'], unsupported: [] })
+  })
+
+  it('sets aside models the provider serves over another API', () => {
+    const groups = groupModels(GATEWAY, ['free-responses', 'plain-chat', 'claude-like', 'brand-new'], 'gateway')
+    expect(groups.recommended).toEqual(['plain-chat'])
+    expect(groups.other).toEqual(['brand-new']) // unknown: may work, stays selectable
+    expect(groups.unsupported).toEqual(['free-responses', 'claude-like'])
+  })
+})
+
+describe('models served over another API', () => {
+  it('marks a per-model adapter override as not chat, and nothing else', () => {
+    expect(lookupModel(GATEWAY, 'plain-chat', 'gateway')?.chat).toBe(true)
+    expect(lookupModel(GATEWAY, 'free-responses', 'gateway')?.chat).toBe(false)
+    // No per-model override: usable, whatever the provider's own default SDK.
+    expect(lookupModel(CATALOG, 'gpt-4o', 'openai')?.chat).toBe(true)
+  })
+
+  it('never suggests one, however cheap and new', () => {
+    expect(suggestModel(GATEWAY, ['free-responses', 'claude-like', 'plain-chat'], 'gateway')).toBe('plain-chat')
+  })
+
+  it('suggests nothing when every listed model is unusable', () => {
+    expect(suggestModel(GATEWAY, ['free-responses', 'claude-like'], 'gateway')).toBeUndefined()
+  })
+
+  it('falls back to an unknown id rather than a known-unusable one', () => {
+    expect(suggestModel(GATEWAY, ['free-responses', 'brand-new'], 'gateway')).toBe('brand-new')
+  })
+})
+
+describe('the floor: text in, text out', () => {
+  // One key lists all of these side by side; only two of them can hold a chat.
+  const MIXED = {
+    studio: {
+      models: {
+        'text-only': { modalities: { input: ['text'], output: ['text'] }, tool_call: true, release_date: '2025-01-01' },
+        'text-and-image': {
+          modalities: { input: ['text', 'image'], output: ['text'] },
+          tool_call: true,
+          release_date: '2025-02-01',
+        },
+        // Newest of all, so a careless default would land on it.
+        'image-maker': { modalities: { input: ['text'], output: ['image'] }, tool_call: true, release_date: '2026-01-01' },
+        'listener': { modalities: { input: ['audio'], output: ['text'] }, tool_call: true, release_date: '2026-02-01' },
+      },
+    },
+  }
+  const IDS = ['image-maker', 'listener', 'text-only', 'text-and-image']
+
+  it('offers text and text+image models, and sets aside what cannot chat', () => {
+    const groups = groupModels(MIXED, IDS, 'studio')
+    expect(groups.recommended).toEqual(['text-and-image', 'text-only'])
+    expect(groups.other).toEqual([])
+    expect(groups.unsupported).toEqual(['image-maker', 'listener'])
+  })
+
+  it('never suggests a model that cannot chat', () => {
+    expect(suggestModel(MIXED, IDS, 'studio')).toBe('text-and-image')
+    expect(suggestModel(MIXED, ['image-maker', 'listener'], 'studio')).toBeUndefined()
+  })
+
+  it('records that a model takes images alongside text', () => {
+    expect(lookupModel(MIXED, 'text-and-image', 'studio')?.image).toBe(true)
+    expect(lookupModel(MIXED, 'text-only', 'studio')?.image).toBe(false)
+  })
+})
+
+describe('catalogProviders', () => {
+  const CHAT = '@ai-sdk/openai-compatible'
+  const entry = (name: string, api: string | undefined, npm = CHAT, models: string[] = []) => ({
+    name,
+    ...(api ? { api } : {}),
+    npm,
+    models: Object.fromEntries(models.map((id) => [id, {}])),
+  })
+
+  it('lists what speaks chat completions at a fixed https address, by name', () => {
+    const list = catalogProviders({
+      zeta: entry('Zeta', 'https://api.zeta.example/v1'),
+      alpha: entry('alpha.dev', 'https://api.alpha.example/v1'),
+      beta: entry('Beta', 'https://api.beta.example/v1'),
+    })
+    expect(list).toEqual([
+      { id: 'alpha', name: 'alpha.dev', baseUrl: 'https://api.alpha.example/v1' },
+      { id: 'beta', name: 'Beta', baseUrl: 'https://api.beta.example/v1' },
+      { id: 'zeta', name: 'Zeta', baseUrl: 'https://api.zeta.example/v1' },
+    ])
+  })
+
+  it('leaves out what ECA cannot be pointed at as described', () => {
+    const list = catalogProviders({
+      'own-sdk': entry('Own SDK', undefined, '@ai-sdk/openai'), // no address at all
+      'other-format': entry('Other Format', 'https://api.other.example/v1', '@ai-sdk/anthropic'),
+      'fill-in': entry('Fill In', 'https://${ACCOUNT}.fill.example/v1'), // needs the user's account id
+      'on-machine': entry('On Machine', 'http://127.0.0.1:1234/v1'),
+    })
+    expect(list).toEqual([])
+  })
+
+  it('leaves out coding-tool subscriptions and keeps the same company pay-per-use entry', () => {
+    const list = catalogProviders({
+      acme: entry('Acme', 'https://api.acme.example/v1'),
+      'acme-coding-plan': entry('Acme Coding Plan', 'https://coding.acme.example/v1'),
+      'acme-token-plan': entry('Acme Token Plan (China)', 'https://plan.acme.example/v1'),
+      'acme-code': entry('Acme For Coding (acme.ai)', 'https://api.acme.example/coding/v1'),
+      // "plan" inside another word is not a plan.
+      planetary: entry('Planetary', 'https://api.planetary.example/v1'),
+    })
+    expect(list.map((p) => p.id)).toEqual(['acme', 'planetary'])
+  })
+
+  it('shows an address listed twice once, under the entry with more models', () => {
+    const list = catalogProviders({
+      'gw-pass': entry('Pass (Gateway)', 'https://api.gw.example/v1', CHAT, ['a']),
+      gw: entry('Gateway', 'https://api.gw.example/v1/', CHAT, ['a', 'b', 'c']),
+    })
+    expect(list).toEqual([{ id: 'gw', name: 'Gateway', baseUrl: 'https://api.gw.example/v1/' }])
+  })
+
+  it('returns nothing without a catalog', () => {
+    expect(catalogProviders(null)).toEqual([])
+  })
+})
+
+describe('catalogIdForBaseUrl', () => {
+  it('recognises a provider by its API address, ignoring case and trailing slashes', () => {
+    expect(catalogIdForBaseUrl(GATEWAY, 'https://gateway.example/zen/v1')).toBe('gateway')
+    expect(catalogIdForBaseUrl(GATEWAY, ' HTTPS://Gateway.example/zen/v1/ ')).toBe('gateway')
+  })
+
+  it('returns nothing for an unknown or half-typed address, or without a catalog', () => {
+    expect(catalogIdForBaseUrl(GATEWAY, 'https://gateway.example/zen/v')).toBeUndefined()
+    expect(catalogIdForBaseUrl(GATEWAY, '')).toBeUndefined()
+    expect(catalogIdForBaseUrl(null, 'https://gateway.example/zen/v1')).toBeUndefined()
   })
 })

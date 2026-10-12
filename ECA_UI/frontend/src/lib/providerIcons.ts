@@ -9,6 +9,9 @@
  * A preset with no file has no logo in that set and falls back to a neutral
  * icon. Showing another company's mark in its place would be the very mistake
  * this module exists to remove.
+ *
+ * These files cover the hand-written presets only. A provider read from the
+ * catalog brings its logo with it: see catalogLogoUrl.
  */
 
 const FILES = import.meta.glob<string>('../asset/provider-icons/*.svg', {
@@ -24,6 +27,15 @@ const URL_BY_ID = new Map<string, string>(
 /** The logo's URL for a preset id, or undefined when the provider has none. */
 export function providerIconUrl(presetId: string): string | undefined {
   return URL_BY_ID.get(presetId)
+}
+
+/**
+ * The catalog's own logo for one of its providers. models.dev serves one per
+ * provider id (a generic mark when the provider gave none), as a single-colour
+ * SVG with open CORS, which is what the mask in ProviderIcon needs.
+ */
+export function catalogLogoUrl(catalogId: string): string {
+  return `https://models.dev/logos/${encodeURIComponent(catalogId)}.svg`
 }
 
 /** Every preset id that has a logo file. */

@@ -50,7 +50,18 @@ class JsonFormatter(logging.Formatter):
                 payload[k] = v
         if record.exc_info:
             payload["exc"] = self.formatException(record.exc_info)
-        return json.dumps(payload, ensure_ascii=False, default=str)
+        out = json.dumps(payload, ensure_ascii=False, default=str)
+        # BYOK: nodes log str(exc) with exc_info=True; a provider error can
+        # repeat part of the request, so redact the bound key if it appears.
+        try:
+            from langgraph_agents.llm_byok import current_secret
+
+            secret = current_secret()
+        except Exception:  # noqa: BLE001
+            secret = None
+        if secret and len(secret) >= 8:
+            out = out.replace(secret, "[redacted]")
+        return out
 
 
 @contextmanager

@@ -70,6 +70,9 @@ describe('locale catalogues', () => {
       'notifications.version', // product name + version
       'chat.chip_web', // "Web" is the same word in both
       'graphics.ssao', // acronym
+      'providers.base_url_placeholder', // URL scheme, not language
+      'providers.eca', // product name
+      'providers.model_label', // "Model" is the same loanword in both
     ])
 
     const untranslated = [...flatVi]

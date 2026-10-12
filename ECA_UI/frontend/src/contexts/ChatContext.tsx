@@ -23,6 +23,9 @@ import { uiStringsFor, getGreetingForSlot, getTimeSlot, buildGreetingKey, type U
 import { stageLabelFor } from '../lib/stageLabel'
 import { resolveGreeting, type CapturedGreeting } from '../lib/greeting'
 import { useLocale } from '../hooks/useLocale'
+import { useLlm } from '../hooks/useLlm'
+import { activeLlmChoice } from '../lib/llmProvider'
+import { useTranslation } from 'react-i18next'
 
 export type { SessionItem, ChatContextType } from '../hooks/useChat'
 import { useDictation } from '../hooks/useDictation'
@@ -124,6 +127,12 @@ export function ChatProvider({ children }: { children: ReactNode }) {
 
   const inputRef = useRef(input)
   inputRef.current = input
+  const { t } = useTranslation()
+  // The BYOK connection in force, read at send time through the ref — never
+  // frozen in the handleSend closure below.
+  const { state: llmState, markInvalid } = useLlm()
+  const llmStateRef = useRef(llmState)
+  llmStateRef.current = llmState
   const startRecord = useCallback(() => {
     // Whatever is typed now stays; what is heard is appended after it.
     startDictation(inputRef.current, setInput)
@@ -636,6 +645,12 @@ export function ChatProvider({ children }: { children: ReactNode }) {
      * user. (Nhãn stage là ngoại lệ: stageLabelFor đọc uiRef.current trực
      * tiếp để mỗi sự kiện dùng copy mới nhất.) */
     const copy = uiRef.current
+    // Which provider answers this turn, and which card to blame when it fails.
+    // Read here — at send time — so a connection picked after this render but
+    // before the tap still applies.
+    const sentLlm = activeLlmChoice(llmStateRef.current) ?? undefined
+    const sentPresetId =
+      llmStateRef.current.active !== 'eca' ? llmStateRef.current.active : null
 
     try {
       await streamChat(
@@ -654,6 +669,7 @@ export function ChatProvider({ children }: { children: ReactNode }) {
           // and any safety warning the backend inserts — both are text a person
           // reads verbatim, so a declared choice beats a detected one.
           locale,
+          llm: sentLlm,
         },
         (type, data) => {
           if (lifecycle(type, data)) return
@@ -756,6 +772,34 @@ export function ChatProvider({ children }: { children: ReactNode }) {
                 }
               })()
             }
+          } else if (type === 'provider_notice') {
+            // The user's provider failed mid-turn, so ECA answered instead.
+            // Same shape as motionNotice above: one muted line under the reply.
+            // An auth failure additionally retires the card — its key is dead,
+            // and every later turn would fail the same way.
+            const p = data as { kind?: string }
+            const kind = typeof p.kind === 'string' ? p.kind : 'other'
+            const key =
+              kind === 'auth'
+                ? 'chat.provider_fallback_auth'
+                : kind === 'quota'
+                  ? 'chat.provider_fallback_quota'
+                  : kind === 'model_not_found'
+                    ? 'chat.provider_fallback_model_not_found'
+                    : kind === 'bad_request'
+                      ? 'chat.provider_fallback_bad_request'
+                      : kind === 'unreachable'
+                        ? 'chat.provider_fallback_unreachable'
+                        : kind === 'server'
+                          ? 'chat.provider_fallback_server'
+                          : 'chat.provider_fallback_other'
+            const text = t(key)
+            setMessages((prev) =>
+              prev.map((msg) =>
+                msg.id === assistantMsgId ? { ...msg, providerNotice: text } : msg
+              )
+            )
+            if (kind === 'auth' && sentPresetId) markInvalid(sentPresetId)
           }
         },
         controller.signal,
@@ -794,7 +838,7 @@ export function ChatProvider({ children }: { children: ReactNode }) {
     // request. Without it the closure keeps whichever locale was active when the
     // callback was created, and the backend would keep serving the old
     // character voice and the old safety-warning language.
-  }, [webSearch, voiceReply, selectedVrmId, locale, transitionTo, endThinking, playMotionFile, ensureSessionId, avatarRef, cancelDictation, consumePreviousAvatar])
+  }, [webSearch, voiceReply, selectedVrmId, locale, transitionTo, endThinking, playMotionFile, ensureSessionId, avatarRef, cancelDictation, consumePreviousAvatar, t, markInvalid])
 
   useEffect(() => {
     return () => {

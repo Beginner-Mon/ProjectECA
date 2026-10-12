@@ -1,7 +1,11 @@
 # ECA — Status & Roadmap
 
-> Last update: 2026-08-17 (K) | Branch: `feature/langgraph-rewrite`
+> Last update: 2026-10-12 (opencode agent, BYOK) | Branch: `feature/langgraph-rewrite`
 > Audience: K/N/Owner takeover after context compaction — đọc mục 0 trước tiên.
+> - **BYOK cho LLM (12/10, `feature/byok` → đã merge xuống `feature/langgraph-rewrite`,
+>   đã push origin):** user dán key → browser check thẳng provider → gửi kèm
+>   `POST /chat`, server dùng thay key ECA trong request đó rồi bỏ (không lưu/log).
+>   Chi tiết: [[12-10-2026-byok]]. Chưa kiểm tay với key thật (mục 5.4/5.5 của plan).
 
 ---
 

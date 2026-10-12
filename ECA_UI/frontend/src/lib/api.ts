@@ -228,6 +228,14 @@ export interface StreamChatOptions {
    *  voice and the safety warnings it may have to insert. It does NOT decide
    *  what language the assistant answers in: that still mirrors the question. */
   locale?: string
+  /** The caller's own LLM connection (BYOK). Absent → the turn runs on ECA. */
+  llm?: {
+    base_url: string
+    model: string
+    api_key: string
+    capabilities: Array<'text' | 'answer' | 'tools' | 'image'>
+    omit: Array<'temperature' | 'max_tokens'>
+  }
 }
 
 /**
@@ -253,6 +261,7 @@ export async function streamChat(
     outputMode = 'text',
     webSearch = false,
     locale = 'en',
+    llm,
   } = options
 
   const extraHeaders = await authHeader()
@@ -274,6 +283,7 @@ export async function streamChat(
       output_mode: outputMode,
       locale,
       web_search: webSearch,
+      ...(llm ? { llm } : {}),
     }),
     signal,
   })
@@ -476,6 +486,23 @@ export async function fetchMotionStatus(
     if (status === 404) return { status: 'not_found' }
     throw e
   }
+}
+
+// ── BYOK config ──────────────────────────────────────────────────────────────
+
+export interface LlmConfig {
+  byok: boolean
+  local_endpoints: boolean
+  eca: { capabilities: Array<'text' | 'answer' | 'tools' | 'image'> }
+}
+
+/**
+ * Whether this backend offers BYOK. Throws when the route is absent (an older
+ * backend) — the caller treats that as "BYOK off", not as an error to show.
+ */
+export async function fetchLlmConfig(): Promise<LlmConfig> {
+  const { data } = await http.get('/llm/config')
+  return data as LlmConfig
 }
 
 // ── User memory CRUD ───────────────────────────────────────────────────────────

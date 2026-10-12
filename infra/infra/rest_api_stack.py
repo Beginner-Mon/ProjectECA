@@ -271,6 +271,15 @@ class RestApiStack(Stack):
         feedback_msg.add_method("POST", crud, **authed)
         feedback_msg.add_method("DELETE", crud, **authed)
 
+        # ── /llm/config — authenticated, buffered CRUD ───────────────────
+        # Served by the CRUD Lambda (api/routes_llm.py, mounted in crud_app.py
+        # alongside the other CRUD routers), not the streaming agent Lambda:
+        # it is one small JSON document, nothing to stream. As with
+        # /me/preferences above, the function could serve it without this
+        # declaration, but the deployed API would answer 403.
+        llm = self.api.root.add_resource("llm")
+        llm.add_resource("config").add_method("GET", crud, **authed)
+
         # ── /chat — authenticated, and STREAMED ─────────────────────────
         #
         # The endpoint this API was chosen for. The module docstring above says

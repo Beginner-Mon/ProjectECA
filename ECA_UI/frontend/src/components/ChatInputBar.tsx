@@ -3,6 +3,7 @@ import { useTranslation } from 'react-i18next'
 import { ArrowUp, Mic, Square, Plus, Globe, Image, X, Volume2 } from 'lucide-react'
 import TextareaAutosize from 'react-textarea-autosize'
 import { useChat } from '../hooks/useChat'
+import { useLlm } from '../hooks/useLlm'
 import { dictationErrorKey } from '../lib/dictation'
 
 /**
@@ -37,6 +38,7 @@ export default function ChatInputBar({ embedded = false }: { embedded?: boolean 
   } = useChat()
 
   const { t } = useTranslation()
+  const { activeCapabilities } = useLlm()
   const recordingErrorKey = recordingError ? dictationErrorKey(recordingError) : null
   const recordingErrorText = recordingErrorKey ? t(recordingErrorKey) : null
   const [showAddMenu, setShowAddMenu] = useState(false)
@@ -88,6 +90,13 @@ export default function ChatInputBar({ embedded = false }: { embedded?: boolean 
               </div>
             ))}
           </div>
+        )}
+        {imageUrls.length > 0 && (
+          <p className="text-xs text-muted-foreground mx-3 pb-1">
+            {activeCapabilities.includes('image')
+              ? t('chat.image_not_sent')
+              : t('chat.image_no_capability')}
+          </p>
         )}
         <TextareaAutosize
           minRows={1}

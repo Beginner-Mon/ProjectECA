@@ -44,6 +44,7 @@ from langgraph_agents.api.motion_status import motion_status
 from langgraph_agents.api.routes_characters import router as characters_router
 from langgraph_agents.api.routes_crud import router as crud_router
 from langgraph_agents.api.routes_feedback import router as feedback_router
+from langgraph_agents.api.routes_llm import router as llm_router
 from langgraph_agents.api.routes_preferences import router as preferences_router
 from langgraph_agents.api.schemas import (
     ChatRequest, TTSRequest,
@@ -242,6 +243,7 @@ def create_app() -> FastAPI:
     application.include_router(crud_router)
     application.include_router(preferences_router)
     application.include_router(feedback_router)
+    application.include_router(llm_router)
 
     @application.get("/health")
     async def health():
@@ -338,6 +340,29 @@ def create_app() -> FastAPI:
         # (catalog-validated persona_id), not from the token.
         from langgraph_agents.db.postgres import bind_request_character
         bind_request_character(req.persona_id)
+        # BYOK: bind the caller's key for this turn only. Validated as a URL
+        # the server is about to call (SSRF guard); the key itself is never
+        # logged, never put into config/state, and never persisted.
+        from langgraph_agents.llm_byok import (
+            EndpointNotAllowed,
+            RequestLLM,
+            bind_request_llm,
+            validate_endpoint_url_async,
+        )
+        llm_req = None
+        if req.llm is not None:
+            try:
+                validated_base = await validate_endpoint_url_async(req.llm.base_url)
+            except EndpointNotAllowed as exc:
+                raise HTTPException(422, f"llm.base_url not allowed: {exc}")
+            llm_req = RequestLLM(
+                base_url=validated_base,
+                model=req.llm.model,
+                api_key=req.llm.api_key,
+                capabilities=frozenset(req.llm.capabilities),
+                omit=frozenset(req.llm.omit),
+            )
+        bind_request_llm(llm_req)
         config = {"configurable": {
             "user_id": uid,
             "session_id": req.session_id,
@@ -359,7 +384,7 @@ def create_app() -> FastAPI:
 
         async def event_generator():
             with with_request_id(request_id):
-                async for sse_event in _stream_chat(req, request_id, config, state, background_tasks, request, uid):
+                async for sse_event in _stream_chat(req, request_id, config, state, background_tasks, request, uid, llm_req):
                     yield sse_event
 
         return stream_response(event_generator())
@@ -533,12 +558,14 @@ def create_app() -> FastAPI:
 # ── Chat stream helper ─────────────────────────────────────────────
 
 
-async def _stream_chat(req, request_id, config, state, background_tasks, request=None, resolved_user_id=None):
+async def _stream_chat(req, request_id, config, state, background_tasks, request=None, resolved_user_id=None, llm_req=None):
     """Core SSE stream: graph execution + post-processing.
 
     Wrapped in with_request_id by the caller so every log line from this
     coroutine carries the correct request_id.
     """
+    from langgraph_agents.llm import close_request_llm
+
     t0 = time.time()
     final_state: dict = {}
     streamed_text = ""
@@ -547,250 +574,265 @@ async def _stream_chat(req, request_id, config, state, background_tasks, request
     graph = _get_graph()
     logger.info("chat_start", extra={"query": req.query[:120], "session_id": req.session_id})
 
-    async for mode, payload in graph.astream(
-        state, config, stream_mode=["updates", "custom"]
-    ):
-        if request is not None and await request.is_disconnected():
-            logger.info("client_disconnected", extra={"request_id": request_id})
-            return
+    try:
+        async for mode, payload in graph.astream(
+            state, config, stream_mode=["updates", "custom"]
+        ):
+            if request is not None and await request.is_disconnected():
+                logger.info("client_disconnected", extra={"request_id": request_id})
+                return
 
-        if mode == "updates":
-            if not isinstance(payload, dict):
-                continue
-            for node_name, node_output in payload.items():
-                if node_name == "kimodo" and isinstance(node_output, dict):
-                    # kimodo stays out of _STAGE_NODES (R26) and this branch
-                    # still runs ahead of that gate. `stage` reports node
-                    # progress; `motion` carries a job the client has to act on.
-                    # They are different kinds of event — do not "fix" the
-                    # asymmetry by adding kimodo to _STAGE_NODES.
-                    #
-                    # R26 deferred emitting anything because no client listened.
-                    # ChatContext's motion handler listens now, and without the
-                    # event the browser has no way to learn the job id during
-                    # the turn: it is captured into final_state and written to
-                    # Postgres, so the only alternative is re-fetching the
-                    # session afterwards — a round trip in front of a render
-                    # that already takes seconds.
-                    #
-                    # TWO SEPARATE JOBS, deliberately not sharing a condition:
-                    #   emit  — all four states. `busy` and `unavailable` are
-                    #           precisely what a user needs told, and the worker
-                    #           is scaled to zero by default, so `unavailable`
-                    #           is the common path. Filtering them here is what
-                    #           made "the GPU is off" and "this turn had no
-                    #           motion" identical from the UI's side.
-                    #   store — queued/cache_hit only. Those are the only states
-                    #           with a real job to resume later; the others
-                    #           carry no job_id at all.
-                    #
-                    # Defensive: a malformed/unexpected ToolMessage must not
-                    # raise inside the streaming loop and kill the response —
-                    # a missing motion id is a far smaller failure than a
-                    # broken chat turn. A payload that fails to parse also
-                    # emits nothing, rather than a half-formed event.
-                    try:
-                        for msg in node_output.get("messages", []):
-                            content = getattr(msg, "content", None)
-                            if not isinstance(content, str):
-                                continue
-                            job_payload = json.loads(content)
-                            if not isinstance(job_payload, dict):
-                                continue
-                            yield encode_event("motion", job_payload)
-                            if job_payload.get("state") in ("queued", "cache_hit"):
-                                job_id = job_payload.get("job_id")
-                                if job_id:
-                                    final_state["motion_job_id"] = job_id
-                                    final_state["motion_prompt"] = job_payload.get("prompt")
-                    except Exception as exc:
-                        logger.warning("kimodo_job_id_capture_failed", extra={"error": str(exc)})
-
-                if node_name not in _STAGE_NODES:
+            if mode == "updates":
+                if not isinstance(payload, dict):
                     continue
+                for node_name, node_output in payload.items():
+                    if node_name == "kimodo" and isinstance(node_output, dict):
+                        # kimodo stays out of _STAGE_NODES (R26) and this branch
+                        # still runs ahead of that gate. `stage` reports node
+                        # progress; `motion` carries a job the client has to act on.
+                        # They are different kinds of event — do not "fix" the
+                        # asymmetry by adding kimodo to _STAGE_NODES.
+                        #
+                        # R26 deferred emitting anything because no client listened.
+                        # ChatContext's motion handler listens now, and without the
+                        # event the browser has no way to learn the job id during
+                        # the turn: it is captured into final_state and written to
+                        # Postgres, so the only alternative is re-fetching the
+                        # session afterwards — a round trip in front of a render
+                        # that already takes seconds.
+                        #
+                        # TWO SEPARATE JOBS, deliberately not sharing a condition:
+                        #   emit  — all four states. `busy` and `unavailable` are
+                        #           precisely what a user needs told, and the worker
+                        #           is scaled to zero by default, so `unavailable`
+                        #           is the common path. Filtering them here is what
+                        #           made "the GPU is off" and "this turn had no
+                        #           motion" identical from the UI's side.
+                        #   store — queued/cache_hit only. Those are the only states
+                        #           with a real job to resume later; the others
+                        #           carry no job_id at all.
+                        #
+                        # Defensive: a malformed/unexpected ToolMessage must not
+                        # raise inside the streaming loop and kill the response —
+                        # a missing motion id is a far smaller failure than a
+                        # broken chat turn. A payload that fails to parse also
+                        # emits nothing, rather than a half-formed event.
+                        try:
+                            for msg in node_output.get("messages", []):
+                                content = getattr(msg, "content", None)
+                                if not isinstance(content, str):
+                                    continue
+                                job_payload = json.loads(content)
+                                if not isinstance(job_payload, dict):
+                                    continue
+                                yield encode_event("motion", job_payload)
+                                if job_payload.get("state") in ("queued", "cache_hit"):
+                                    job_id = job_payload.get("job_id")
+                                    if job_id:
+                                        final_state["motion_job_id"] = job_id
+                                        final_state["motion_prompt"] = job_payload.get("prompt")
+                        except Exception as exc:
+                            logger.warning("kimodo_job_id_capture_failed", extra={"error": str(exc)})
 
-                extra: dict = {}
-                if node_name == "planner" and isinstance(node_output, dict):
-                    extra["required_outputs"] = node_output.get("required_outputs")
-                    extra["needs_retrieval"] = node_output.get("needs_retrieval", False)
-                    extra["needs_clarification"] = node_output.get("needs_clarification", False)
-                if node_name == "retriever_agent" and isinstance(node_output, dict):
-                    extra["sources"] = _stage_sources(node_output)
-                if node_name == "grader" and isinstance(node_output, dict):
-                    extra["result"] = node_output.get("grader_result")
+                    if node_name not in _STAGE_NODES:
+                        continue
 
-                yield encode_event(
-                    "stage",
-                    {"node": node_name, "status": "complete", **extra},
+                    extra: dict = {}
+                    if node_name == "planner" and isinstance(node_output, dict):
+                        extra["required_outputs"] = node_output.get("required_outputs")
+                        extra["needs_retrieval"] = node_output.get("needs_retrieval", False)
+                        extra["needs_clarification"] = node_output.get("needs_clarification", False)
+                    if node_name == "retriever_agent" and isinstance(node_output, dict):
+                        extra["sources"] = _stage_sources(node_output)
+                    if node_name == "grader" and isinstance(node_output, dict):
+                        extra["result"] = node_output.get("grader_result")
+
+                    yield encode_event(
+                        "stage",
+                        {"node": node_name, "status": "complete", **extra},
+                    )
+
+                    if isinstance(node_output, dict):
+                        # Capture tracking fields from any node as they arrive
+                        if "required_outputs" in node_output:
+                            final_state["required_outputs"] = node_output["required_outputs"]
+                        if "grader_result" in node_output:
+                            final_state["grader_result"] = node_output["grader_result"]
+                        # synthesizer / error_handler / grader can set final_answer
+                        if node_output.get("final_answer"):
+                            final_state.update(node_output)
+
+            elif mode == "custom":
+                if isinstance(payload, dict) and "emotion" in payload:
+                    # Reply-driven avatar emotion (shared/reply_emotion.py): the
+                    # synthesizer sends it ahead of the text, already filtered by
+                    # the health rules. The browser applies it to the avatar's face.
+                    yield encode_event("emotion", payload["emotion"])
+                elif isinstance(payload, dict) and payload.get("stage") == "synthesizer_started":
+                    if not conversation_stage_started:
+                        yield encode_event(
+                            "stage",
+                            {"node": "synthesizer", "status": "started"},
+                        )
+                        conversation_stage_started = True
+                elif isinstance(payload, dict) and "content" in payload:
+                    if not conversation_stage_started:
+                        yield encode_event(
+                            "stage",
+                            {"node": "synthesizer", "status": "started"},
+                        )
+                        conversation_stage_started = True
+                    yield encode_event("token", {"content": payload["content"]})
+                    streamed_text += str(payload["content"])
+
+        if llm_req is not None and getattr(llm_req, "failure", None):
+            yield encode_event(
+                "provider_notice",
+                {**llm_req.failure, "answered_by": "eca"},
+            )
+
+        stored = final_state.get("final_answer") or ""
+        if streamed_text and stored and streamed_text != stored:
+            logger.warning("stream_final_mismatch", extra={
+                "request_id": request_id,
+                "streamed_chars": len(streamed_text), "final_chars": len(stored),
+            })
+
+        final_answer = final_state.get("final_answer") or get_ui_string(
+            req.persona_id or "anne", "error_unavailable", req.locale
+        )
+
+        # Eager session write
+        if final_state.get("final_answer"):
+            try:
+                # Turn context snapshot — written into the assistant
+                # row's extras.meta, never logged as-is. It exists so a 👎 vote can
+                # be traced back to request_id (→ CloudWatch) without a second
+                # table, and so ops SQL can group by persona/locale/grader result.
+                meta = {
+                    "request_id": request_id,
+                    "persona_id": req.persona_id,
+                    "ui_locale": req.locale,
+                    "output_mode": req.output_mode,
+                    "web_search": req.web_search,
+                    "required_outputs": final_state.get("required_outputs"),
+                    "grader_result": final_state.get("grader_result"),
+                    "grader_detail": final_state.get("grader_detail"),
+                    "latency_ms": int((time.time() - t0) * 1000),
+                }
+                assistant_message_id = await write_session_turn(
+                    user_id=resolved_user_id,
+                    session_id=req.session_id,
+                    user_query=req.query,
+                    assistant_answer=final_answer,
+                    total_tokens=final_state.get("total_tokens", 0),
+                    grader_result=final_state.get("grader_result", "pass"),
+                    motion_job_id=final_state.get("motion_job_id"),
+                    motion_prompt=final_state.get("motion_prompt"),
+                    meta=meta,
                 )
+                yield encode_event(
+                    "session_persisted",
+                    {"session_id": req.session_id, "assistant_message_id": assistant_message_id},
+                )
+            except Exception as exc:
+                logger.warning("session_persist_failed", extra={"error": str(exc)})
 
-                if isinstance(node_output, dict):
-                    # Capture tracking fields from any node as they arrive
-                    if "required_outputs" in node_output:
-                        final_state["required_outputs"] = node_output["required_outputs"]
-                    if "grader_result" in node_output:
-                        final_state["grader_result"] = node_output["grader_result"]
-                    # synthesizer / error_handler / grader can set final_answer
-                    if node_output.get("final_answer"):
-                        final_state.update(node_output)
+        # Background summarizer M.5 — SCHEDULED, not awaited. Diagnosed 11-09
+        # alongside write_session_turn above (see that function's docstring): the
+        # send button stayed in "stop" for 6.5-7.9s after the answer text was
+        # already fully shown, on text-mode turns with no TTS involved.
+        # maybe_summarize's OWN body — before it ever gets to the point of
+        # backgrounding _run_summarize — does two Neon round trips just to decide
+        # whether enough NEW tokens have accumulated (fetchval, then a fetch of
+        # every uncached message's content). None of that outcome is needed for
+        # THIS turn's response; it only ever matters for a FUTURE turn's context.
+        # `await`ing it here bought nothing but latency.
+        #
+        # Lambda caveat: a task the runtime freezes mid-flight when the response
+        # returns just doesn't finish this turn — no different from the exposure
+        # _run_summarize (a task-of-a-task, scheduled from inside maybe_summarize
+        # once IT decides there is enough to summarize) already had. Both are
+        # idempotent by construction: a frozen check re-runs its own query on the
+        # NEXT turn and either now sees enough tokens or still doesn't — there is
+        # no partial state to recover, because nothing has been written yet at
+        # the point a freeze could land.
+        # Unbind before the background summarizer is scheduled: the task
+        # copies the current context, so it must not inherit the key — the
+        # summarizer always runs on ECA, and its HTTP client is about to close.
+        from langgraph_agents.llm_byok import bind_request_llm as _unbind_llm
 
-        elif mode == "custom":
-            if isinstance(payload, dict) and "emotion" in payload:
-                # Reply-driven avatar emotion (shared/reply_emotion.py): the
-                # synthesizer sends it ahead of the text, already filtered by
-                # the health rules. The browser applies it to the avatar's face.
-                yield encode_event("emotion", payload["emotion"])
-            elif isinstance(payload, dict) and payload.get("stage") == "synthesizer_started":
-                if not conversation_stage_started:
-                    yield encode_event(
-                        "stage",
-                        {"node": "synthesizer", "status": "started"},
-                    )
-                    conversation_stage_started = True
-            elif isinstance(payload, dict) and "content" in payload:
-                if not conversation_stage_started:
-                    yield encode_event(
-                        "stage",
-                        {"node": "synthesizer", "status": "started"},
-                    )
-                    conversation_stage_started = True
-                yield encode_event("token", {"content": payload["content"]})
-                streamed_text += str(payload["content"])
+        _unbind_llm(None)
+        if final_state.get("final_answer"):
+            summarizer_task = asyncio.create_task(maybe_summarize(req.session_id))
+            # Strong reference — same reason _pending_summarizer_tasks already
+            # exists (nodes/summarizer.py, also used by the GDPR delete-message
+            # route below): asyncio.create_task() only holds a WEAK one, and a
+            # task the event loop garbage-collects mid-run vanishes silently.
+            _pending_summarizer_tasks.add(summarizer_task)
+            summarizer_task.add_done_callback(_pending_summarizer_tasks.discard)
 
-    stored = final_state.get("final_answer") or ""
-    if streamed_text and stored and streamed_text != stored:
-        logger.warning("stream_final_mismatch", extra={
-            "request_id": request_id,
-            "streamed_chars": len(streamed_text), "final_chars": len(stored),
+        # Speak the answer if requested. This used to fire a background task,
+        # yield speech_pending, and poll Redis every 250ms for up to 130s — SpeechLLm
+        # built one complete wav before responding at all, so there was nothing to
+        # forward until it finished. Now SpeechLLm streams, so the producer
+        # (SpeechLLm) and the consumer (this generator) run in the SAME async
+        # generator: _stream_speech opens one httpx stream and `yield`s each
+        # translated SSE event as it arrives. No task, no queue, no Redis, no
+        # task_id — see _stream_speech below.
+        if req.output_mode in ("speech", "both") and final_state.get("final_answer"):
+            if not tts_enabled():
+                # Emit speech_disabled, and specifically NOT a "pending" event.
+                #
+                # The difference matters to the client, not just to the log. A
+                # "pending" event is a promise that a speech event follows; the UI
+                # shows "generating audio" and waits for it. With no TTS service
+                # configured, nothing would ever follow, so the promise would be a
+                # permanent spinner.
+                logger.info("speech_disabled", extra={"reason": "VIENEU_TTS_URL not set"})
+                yield encode_event("speech_disabled", {
+                    "reason": "text-to-speech is not configured on this deployment",
+                })
+            else:
+                persona = get_persona(req.persona_id)
+                # The query is the tie-breaker: a reply of "Có." or "OK" carries no
+                # language signal, and the synthesizer was told to answer in the
+                # query's language anyway.
+                voice_path, speech_language = resolve_voice(
+                    req.persona_id,
+                    final_answer,
+                    query=req.query,
+                    persona_lang=persona.get("voice_identity", {}).get("language", "vi"),
+                )
+                # Nice property, worth being explicit about: this is an ordinary
+                # `async for` over the SAME generator FastAPI is already streaming
+                # to the browser. If the browser disconnects, EventSourceResponse
+                # closes this generator (GeneratorExit), which unwinds out of
+                # _stream_speech's `async with` blocks and closes the httpx stream
+                # to SpeechLLm, which stops synthesizing. The old background task
+                # had no such link — a closed tab left `synthesize_speech_async`
+                # running to completion on the CPU for audio nobody would ever
+                # fetch.
+                async for sse_event in _stream_speech(final_answer, voice_path, speech_language):
+                    yield sse_event
+
+        elapsed_ms = round((time.time() - t0) * 1000)
+        logger.info("chat_complete", extra={
+            "elapsed_ms": elapsed_ms,
+            "total_tokens": final_state.get("total_tokens", 0),
+            "required_outputs": final_state.get("required_outputs", []),
         })
 
-    final_answer = final_state.get("final_answer") or get_ui_string(
-        req.persona_id or "anne", "error_unavailable", req.locale
-    )
-
-    # Eager session write
-    if final_state.get("final_answer"):
-        try:
-            # Turn context snapshot — written into the assistant
-            # row's extras.meta, never logged as-is. It exists so a 👎 vote can
-            # be traced back to request_id (→ CloudWatch) without a second
-            # table, and so ops SQL can group by persona/locale/grader result.
-            meta = {
-                "request_id": request_id,
-                "persona_id": req.persona_id,
-                "ui_locale": req.locale,
-                "output_mode": req.output_mode,
-                "web_search": req.web_search,
-                "required_outputs": final_state.get("required_outputs"),
-                "grader_result": final_state.get("grader_result"),
-                "grader_detail": final_state.get("grader_detail"),
-                "latency_ms": int((time.time() - t0) * 1000),
-            }
-            assistant_message_id = await write_session_turn(
-                user_id=resolved_user_id,
-                session_id=req.session_id,
-                user_query=req.query,
-                assistant_answer=final_answer,
-                total_tokens=final_state.get("total_tokens", 0),
-                grader_result=final_state.get("grader_result", "pass"),
-                motion_job_id=final_state.get("motion_job_id"),
-                motion_prompt=final_state.get("motion_prompt"),
-                meta=meta,
-            )
-            yield encode_event(
-                "session_persisted",
-                {"session_id": req.session_id, "assistant_message_id": assistant_message_id},
-            )
-        except Exception as exc:
-            logger.warning("session_persist_failed", extra={"error": str(exc)})
-
-    # Background summarizer M.5 — SCHEDULED, not awaited. Diagnosed 11-09
-    # alongside write_session_turn above (see that function's docstring): the
-    # send button stayed in "stop" for 6.5-7.9s after the answer text was
-    # already fully shown, on text-mode turns with no TTS involved.
-    # maybe_summarize's OWN body — before it ever gets to the point of
-    # backgrounding _run_summarize — does two Neon round trips just to decide
-    # whether enough NEW tokens have accumulated (fetchval, then a fetch of
-    # every uncached message's content). None of that outcome is needed for
-    # THIS turn's response; it only ever matters for a FUTURE turn's context.
-    # `await`ing it here bought nothing but latency.
-    #
-    # Lambda caveat: a task the runtime freezes mid-flight when the response
-    # returns just doesn't finish this turn — no different from the exposure
-    # _run_summarize (a task-of-a-task, scheduled from inside maybe_summarize
-    # once IT decides there is enough to summarize) already had. Both are
-    # idempotent by construction: a frozen check re-runs its own query on the
-    # NEXT turn and either now sees enough tokens or still doesn't — there is
-    # no partial state to recover, because nothing has been written yet at
-    # the point a freeze could land.
-    if final_state.get("final_answer"):
-        summarizer_task = asyncio.create_task(maybe_summarize(req.session_id))
-        # Strong reference — same reason _pending_summarizer_tasks already
-        # exists (nodes/summarizer.py, also used by the GDPR delete-message
-        # route below): asyncio.create_task() only holds a WEAK one, and a
-        # task the event loop garbage-collects mid-run vanishes silently.
-        _pending_summarizer_tasks.add(summarizer_task)
-        summarizer_task.add_done_callback(_pending_summarizer_tasks.discard)
-
-    # Speak the answer if requested. This used to fire a background task,
-    # yield speech_pending, and poll Redis every 250ms for up to 130s — SpeechLLm
-    # built one complete wav before responding at all, so there was nothing to
-    # forward until it finished. Now SpeechLLm streams, so the producer
-    # (SpeechLLm) and the consumer (this generator) run in the SAME async
-    # generator: _stream_speech opens one httpx stream and `yield`s each
-    # translated SSE event as it arrives. No task, no queue, no Redis, no
-    # task_id — see _stream_speech below.
-    if req.output_mode in ("speech", "both") and final_state.get("final_answer"):
-        if not tts_enabled():
-            # Emit speech_disabled, and specifically NOT a "pending" event.
-            #
-            # The difference matters to the client, not just to the log. A
-            # "pending" event is a promise that a speech event follows; the UI
-            # shows "generating audio" and waits for it. With no TTS service
-            # configured, nothing would ever follow, so the promise would be a
-            # permanent spinner.
-            logger.info("speech_disabled", extra={"reason": "VIENEU_TTS_URL not set"})
-            yield encode_event("speech_disabled", {
-                "reason": "text-to-speech is not configured on this deployment",
-            })
-        else:
-            persona = get_persona(req.persona_id)
-            # The query is the tie-breaker: a reply of "Có." or "OK" carries no
-            # language signal, and the synthesizer was told to answer in the
-            # query's language anyway.
-            voice_path, speech_language = resolve_voice(
-                req.persona_id,
-                final_answer,
-                query=req.query,
-                persona_lang=persona.get("voice_identity", {}).get("language", "vi"),
-            )
-            # Nice property, worth being explicit about: this is an ordinary
-            # `async for` over the SAME generator FastAPI is already streaming
-            # to the browser. If the browser disconnects, EventSourceResponse
-            # closes this generator (GeneratorExit), which unwinds out of
-            # _stream_speech's `async with` blocks and closes the httpx stream
-            # to SpeechLLm, which stops synthesizing. The old background task
-            # had no such link — a closed tab left `synthesize_speech_async`
-            # running to completion on the CPU for audio nobody would ever
-            # fetch.
-            async for sse_event in _stream_speech(final_answer, voice_path, speech_language):
-                yield sse_event
-
-    elapsed_ms = round((time.time() - t0) * 1000)
-    logger.info("chat_complete", extra={
-        "elapsed_ms": elapsed_ms,
-        "total_tokens": final_state.get("total_tokens", 0),
-        "required_outputs": final_state.get("required_outputs", []),
-    })
-
-    # No speech_task_id: there is no task any more, so nothing for the client
-    # to look one up by. The frontend slice of this change is told not to rely
-    # on this field.
-    yield encode_event("done", {
-        "request_id": request_id,
-        "total_tokens": final_state.get("total_tokens", 0),
-        "required_outputs": final_state.get("required_outputs", []),
-    })
+        # No speech_task_id: there is no task any more, so nothing for the client
+        # to look one up by. The frontend slice of this change is told not to rely
+        # on this field.
+        yield encode_event("done", {
+            "request_id": request_id,
+            "total_tokens": final_state.get("total_tokens", 0),
+            "required_outputs": final_state.get("required_outputs", []),
+        })
+    finally:
+        await close_request_llm(llm_req)
 
 
 # ── Speech streaming helper ─────────────────────────────────────────

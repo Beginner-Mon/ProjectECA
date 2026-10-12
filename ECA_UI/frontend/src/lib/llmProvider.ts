@@ -125,3 +125,13 @@ export function activeLlmChoice(state: LlmState): LlmChoice | null {
     omit: conn.omit,
   }
 }
+
+export function llmChoiceToSend(
+  state: LlmState,
+  flags: { byokEnabled: boolean; configLoading: boolean },
+): LlmChoice | null {
+  // Backend đã trả lời là không hỗ trợ → không gửi key đi.
+  // Đang tải cấu hình → chưa biết, giữ hành vi hiện tại.
+  if (!flags.byokEnabled && !flags.configLoading) return null
+  return activeLlmChoice(state)
+}

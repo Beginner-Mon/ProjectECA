@@ -1,3 +1,4 @@
+import { lazy, Suspense } from 'react'
 import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom'
 import AuthGuard from './components/AuthGuard'
 import MainLayout from './layouts/MainLayout'
@@ -8,6 +9,9 @@ import CreateAccountPage from './pages/CreateAccountPage'
 import SetPasswordPage from './pages/SetPasswordPage'
 import './App.css'
 
+// Lazy: the two documents are ~25 KB of text most visits never open.
+const LegalPage = lazy(() => import('./pages/LegalPage'))
+
 export default function App() {
   return (
     <BrowserRouter>
@@ -16,6 +20,8 @@ export default function App() {
         <Route path="/login" element={<LoginPage />} />
         <Route path="/enter-password" element={<EnterPasswordPage />} />
         <Route path="/create-account" element={<CreateAccountPage />} />
+        <Route path="/terms" element={<Suspense><LegalPage doc="terms" /></Suspense>} />
+        <Route path="/privacy" element={<Suspense><LegalPage doc="privacy" /></Suspense>} />
 
         {/* Protected */}
         <Route element={<AuthGuard />}>

@@ -16,6 +16,7 @@ interface SettingsContentProps {
   onNavigateToGraphics?: () => void
   onNavigateToAbout?: () => void
   onNavigateToLanguage?: () => void
+  onNavigateToLegal?: () => void
   onSelectProvider?: (provider: { id: string; name: string }) => void
   selectedProvider?: { id: string; name: string }
   /** The user chose to use a provider's key — the modal closes on it. */
@@ -201,7 +202,7 @@ function ProvidersView({ onSelectProvider }: { onSelectProvider?: SettingsConten
   )
 }
 
-export default function SettingsContent({ view = 'main', onNavigateToProviders, onNavigateToGraphics, onNavigateToLanguage, onSelectProvider, selectedProvider, onProviderUsed }: SettingsContentProps) {
+export default function SettingsContent({ view = 'main', onNavigateToProviders, onNavigateToGraphics, onNavigateToLanguage, onNavigateToLegal, onSelectProvider, selectedProvider, onProviderUsed }: SettingsContentProps) {
   const { t } = useTranslation()
 
   if (view === 'provider-detail') {
@@ -232,7 +233,7 @@ export default function SettingsContent({ view = 'main', onNavigateToProviders, 
     { id: 'providers', icon: KeyRound, label: t('settings.providers'), description: t('settings.providers_desc'), onClick: onNavigateToProviders },
     { id: 'graphics', icon: MonitorCog, label: t('settings.graphics'), description: t('settings.graphics_desc'), onClick: onNavigateToGraphics },
     { id: 'about', icon: Info, label: t('settings.about'), description: t('settings.about_desc') },
-    { id: 'terms', icon: ScrollText, label: t('settings.terms'), description: t('settings.terms_desc') },
+    { id: 'terms', icon: ScrollText, label: t('settings.terms'), description: t('settings.terms_desc'), onClick: onNavigateToLegal },
   ]
 
   return (

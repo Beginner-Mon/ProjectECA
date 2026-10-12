@@ -1,13 +1,16 @@
 import { useState } from 'react'
 import { useNavigate, useLocation } from 'react-router-dom'
+import { useTranslation } from 'react-i18next'
 import { signUp, confirmSignUp, signIn } from 'aws-amplify/auth'
 import { errorMessage } from '../lib/errors'
 import { useRedirectIfAuthenticated } from '../hooks/useRedirectIfAuthenticated'
 import { Loader2 } from 'lucide-react'
 import AuthLayout from '../layouts/AuthLayout'
 import { PasswordInput } from '../components/ui/password-input'
+import { LEGAL_PATH } from '../legal'
 
 export default function CreateAccountPage() {
+  const { t } = useTranslation()
   const navigate = useNavigate()
   const location = useLocation()
   useRedirectIfAuthenticated()
@@ -110,6 +113,18 @@ export default function CreateAccountPage() {
                 {loading ? <Loader2 className="w-4 h-4 animate-spin" /> : null}
                 Create Account
               </button>
+              {/* Consent at sign-up (SCRUM-41). New tab, so the form keeps what was typed. */}
+              <p className="text-xs text-muted-foreground text-center">
+                {t('legal.signup_agree')}{' '}
+                <a href={LEGAL_PATH.terms} target="_blank" rel="noopener noreferrer" className="underline hover:text-foreground transition-colors">
+                  {t('legal.terms')}
+                </a>{' '}
+                {t('legal.and')}{' '}
+                <a href={LEGAL_PATH.privacy} target="_blank" rel="noopener noreferrer" className="underline hover:text-foreground transition-colors">
+                  {t('legal.privacy')}
+                </a>
+                .
+              </p>
             </div>
 
             {/* Sign-up is email-only: reaching this page means the user already

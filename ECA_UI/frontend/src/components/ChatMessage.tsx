@@ -53,6 +53,8 @@ export interface Message {
    *  user who asked to SEE a movement needs telling — silence reads as the
    *  request having been misunderstood. */
   motionNotice?: string
+  /** One line when the user's own provider failed and ECA answered instead. */
+  providerNotice?: string
   /** Restored turns only: the motion this reply rendered, and when it dies.
    *  A live turn plays its motion straight from the SSE event and needs
    *  neither. */
@@ -109,6 +111,12 @@ export default function ChatMessage({ message, isStreaming }: ChatMessageProps) 
           // answer. It disappears on its own once the avatar starts moving.
           <p className="mt-1 text-[0.7rem] italic text-muted-foreground">
             {message.motionNotice}
+          </p>
+        )}
+        {message.providerNotice && (
+          // Same aside slot: the user's provider failed and ECA answered.
+          <p className="mt-1 text-[0.7rem] italic text-muted-foreground">
+            {message.providerNotice}
           </p>
         )}
         <AssistantActions message={message} isStreaming={isStreaming} />

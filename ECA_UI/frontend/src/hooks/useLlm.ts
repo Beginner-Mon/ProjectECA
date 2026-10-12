@@ -25,6 +25,8 @@ export interface LlmContextType {
   setActive: (id: 'eca' | string) => void
   saveConnection: (conn: LlmConnection) => void
   removeConnection: (presetId: string) => void
+  /** Mark one connection invalid (e.g. its key was rejected mid-chat). */
+  markInvalid: (presetId: string) => void
 }
 
 export const LlmContext = createContext<LlmContextType | null>(null)

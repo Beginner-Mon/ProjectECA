@@ -40,6 +40,7 @@ from typing import Any
 
 from langchain_openai import ChatOpenAI
 from langgraph_agents.core.circuit_breaker import CircuitBreaker
+from langgraph_agents.llm_byok import current_request_llm
 from langgraph_agents.shared.env import load_env
 
 logger = logging.getLogger("langgraph.llm")
@@ -293,7 +294,7 @@ def _apply_circuit_breaker(model: ChatOpenAI, role: str) -> ChatOpenAI:
 
 
 @lru_cache(maxsize=8)
-def get_chat_model(role: str, *, temperature: float | None = None):
+def _eca_chat_model(role: str, *, temperature: float | None = None):
     """Return a LangChain ChatModel for the given node role, guarded by circuit breaker.
 
     Cached per (role, temperature). Build via ChatOpenAI pointing at the DeepSeek
@@ -328,6 +329,191 @@ def get_chat_model(role: str, *, temperature: float | None = None):
         **extra_kwargs,
     )
     return _apply_circuit_breaker(model, role)
+
+
+# ── BYOK (user-supplied key replaces the ECA key for this request) ────
+
+_ECA_ONLY_ROLES = frozenset({"grader", "health_check"})
+_ROLE_NEEDS = {"synthesizer": "answer", "planner": "tools", "retriever": "tools"}  # default "text"
+
+
+def get_chat_model(role: str, *, temperature: float | None = None):
+    """ECA model, or the user's provider when bound and capable.
+
+    Request without ``llm`` behaves exactly as before: ``current_request_llm``
+    is ``None`` and this returns the cached ECA model. With a binding, the
+    planner / retriever / synthesizer run on the user's key when the probed
+    capabilities cover the role; grader and health_check always stay on ECA
+    so every user is judged by the same clinical standard.
+    """
+    req = current_request_llm()
+    if (
+        req is None
+        or req.failure is not None
+        or role in _ECA_ONLY_ROLES
+        or _ROLE_NEEDS.get(role, "text") not in req.capabilities
+    ):
+        return _eca_chat_model(role, temperature=temperature)
+    return _guard_byok(_byok_chat_model(req, role, temperature), req, role, temperature)
+
+
+# 13 places in tests/ call get_chat_model.cache_clear(); keep them working
+# without touching old tests.
+get_chat_model.cache_clear = _eca_chat_model.cache_clear
+get_chat_model.cache_info = _eca_chat_model.cache_info
+
+
+def _byok_http_client(req):
+    """One non-redirecting async client per request, reused across roles.
+
+    The openai SDK follows redirects by default; a public host could redirect
+    to an internal address, re-opening the SSRF the endpoint guard closed.
+    """
+    if req.http_client is None:
+        import httpx  # lazy — the CRUD Lambda image has no httpx
+
+        req.http_client = httpx.AsyncClient(follow_redirects=False)
+    return req.http_client
+
+
+def _byok_chat_model(req, role: str, temperature: float | None = None):
+    """Build a ChatOpenAI pointing at the user's provider. No cache, no breaker.
+
+    No ``lru_cache``: a cached model would keep the key past the request. No
+    circuit breaker: the breaker is per role and shared by every user in the
+    process — one person's dead key must not trip ECA's breaker. No
+    ``extra_body``: ``_ROLE_EXTRA_BODY`` carries DeepSeek-only flags.
+    """
+    api_key = req.api_key.get_secret_value() if req.api_key is not None else ""
+    kwargs: dict[str, Any] = {
+        "model": req.model,
+        "api_key": api_key or "not-needed",
+        "base_url": req.base_url,
+        "streaming": True,
+        "timeout": role_timeout(role),
+        "max_retries": 0,
+        "http_async_client": _byok_http_client(req),
+    }
+    if "temperature" not in req.omit:
+        kwargs["temperature"] = (
+            _DEFAULT_TEMPS.get(role, 0.7) if temperature is None else temperature
+        )
+    if "max_tokens" not in req.omit:
+        kwargs["max_tokens"] = _max_tokens_for_role(role)
+    return ChatOpenAI(**kwargs)
+
+
+async def close_request_llm(req) -> None:
+    """Close the per-request HTTP client. Never raises."""
+    if req is None:
+        return
+    client = req.http_client
+    if client is None:
+        return
+    try:
+        await client.aclose()
+    except Exception:  # noqa: BLE001
+        pass
+    finally:
+        req.http_client = None
+
+
+class ProviderCallError(RuntimeError):
+    """A BYOK call failed after streaming started — message holds kind/status only."""
+
+
+def classify_provider_error(exc: BaseException) -> dict:
+    """Map an openai-SDK (or timeout) exception to ``{"kind", "status"}``.
+
+    Never includes the exception text: provider messages can echo fragments
+    of the request, and the key must not reach logs or the wire.
+    """
+    try:
+        import openai
+    except Exception:  # noqa: BLE001
+        openai = None  # type: ignore[assignment]
+
+    status = getattr(exc, "status_code", None)
+    if not isinstance(status, int):
+        status = None
+
+    if openai is not None:
+        if isinstance(exc, (openai.AuthenticationError, openai.PermissionDeniedError)):
+            return {"kind": "auth", "status": status}
+        if isinstance(exc, openai.RateLimitError):
+            return {"kind": "quota", "status": status}
+        if isinstance(exc, openai.NotFoundError):
+            return {"kind": "model_not_found", "status": status}
+        if isinstance(
+            exc, (openai.BadRequestError, openai.UnprocessableEntityError)
+        ):
+            return {"kind": "bad_request", "status": status}
+        if isinstance(exc, (openai.APITimeoutError, openai.APIConnectionError)):
+            return {"kind": "unreachable", "status": status}
+        if isinstance(exc, openai.APIStatusError):
+            if status == 402:
+                return {"kind": "quota", "status": status}
+            if status is not None and status >= 500:
+                return {"kind": "server", "status": status}
+            return {"kind": "other", "status": status}
+
+    if isinstance(exc, asyncio.TimeoutError):
+        return {"kind": "unreachable", "status": status}
+    # openai not installed, or an unexpected shape: 402/5xx still classify.
+    if status == 402:
+        return {"kind": "quota", "status": status}
+    if status is not None and status >= 500:
+        return {"kind": "server", "status": status}
+    return {"kind": "other", "status": status}
+
+
+def _guard_byok(model, req, role: str, temperature: float | None = None):
+    """Fall back to ECA when the user's provider fails. Patches the instance.
+
+    Same technique as ``_apply_circuit_breaker``: patch ``ainvoke``/``astream``
+    on the instance so ``.with_structured_output()`` and ``.bind_tools()``
+    (which call back into ``model.ainvoke``/``model.astream``) stay guarded.
+    First error wins (``req.failure``); later roles see it and go straight
+    to ECA. ``from None`` is deliberate: the original chain can repeat part
+    of the key.
+    """
+    raw_ainvoke, raw_astream = model.ainvoke, model.astream
+
+    def _fail(exc: BaseException) -> None:
+        if req.failure is None:                      # first error wins
+            req.failure = classify_provider_error(exc)
+        logger.warning("byok_call_failed", extra={"role": role, **req.failure})
+
+    async def guarded_ainvoke(*args, **kwargs):
+        try:
+            return await raw_ainvoke(*args, **kwargs)
+        except Exception as exc:                      # noqa: BLE001
+            _fail(exc)
+        eca = _eca_chat_model(role, temperature=temperature)
+        if eca is None:
+            raise ProviderCallError(str(req.failure))
+        return await eca.ainvoke(*args, **kwargs)
+
+    async def guarded_astream(*args, **kwargs):
+        started = False
+        try:
+            async for chunk in raw_astream(*args, **kwargs):
+                started = True
+                yield chunk
+            return
+        except Exception as exc:                      # noqa: BLE001
+            _fail(exc)
+            if started:
+                raise ProviderCallError(str(req.failure)) from None
+        eca = _eca_chat_model(role, temperature=temperature)
+        if eca is None:
+            raise ProviderCallError(str(req.failure))
+        async for chunk in eca.astream(*args, **kwargs):
+            yield chunk
+
+    object.__setattr__(model, "ainvoke", guarded_ainvoke)
+    object.__setattr__(model, "astream", guarded_astream)
+    return model
 
 
 @lru_cache(maxsize=8)

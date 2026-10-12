@@ -141,6 +141,8 @@ export default function ProfileSettingsModal({ type, onClose, onBack }: ProfileS
             <SettingsContent
               view="provider-detail"
               selectedProvider={selectedProvider}
+              // Choosing "use this API key" is the end of the errand: back to the chat.
+              onProviderUsed={onClose}
             />
           ) : settingsView === 'language' ? (
             <SettingsContent view="language" />

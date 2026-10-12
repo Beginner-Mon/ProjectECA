@@ -20,7 +20,11 @@ export interface LlmPreset {
   note?: string
 }
 
+// The order here is the order of the cards on the Providers screen, after ECA.
 export const LLM_PRESETS: LlmPreset[] = [
+  // First, next to ECA: the entry that takes any endpoint, so a provider with
+  // no card of its own is not something to scroll to the bottom to find.
+  { id: 'openai-compatible', name: 'OpenAI Compatible', baseUrl: '' },
   { id: 'openai', name: 'OpenAI', baseUrl: 'https://api.openai.com/v1', catalogId: 'openai' },
   {
     id: 'anthropic',
@@ -64,7 +68,6 @@ export const LLM_PRESETS: LlmPreset[] = [
   },
   { id: 'ollama', name: 'Ollama', baseUrl: 'http://localhost:11434/v1/', local: true },
   { id: 'lm-studio', name: 'LM Studio', baseUrl: 'http://localhost:1234/v1/', local: true },
-  { id: 'openai-compatible', name: 'OpenAI Compatible', baseUrl: '' },
 ]
 
 export function presetById(id: string): LlmPreset | undefined {

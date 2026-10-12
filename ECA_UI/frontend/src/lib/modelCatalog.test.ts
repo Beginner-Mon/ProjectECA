@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { lookupModel, normalizeModelId, suggestModel } from './modelCatalog'
+import { groupModels, lookupModel, normalizeModelId, suggestModel } from './modelCatalog'
 
 const CATALOG = {
   openai: {
@@ -96,5 +96,33 @@ describe('suggestModel', () => {
   it('falls back to the first id when nothing resolves', () => {
     expect(suggestModel(null, ['custom-a', 'custom-b'])).toBe('custom-a')
     expect(suggestModel(CATALOG, ['unknown-1'])).toBe('unknown-1')
+  })
+})
+
+describe('groupModels', () => {
+  it('puts chat-capable models first, newest first, and keeps the rest in provider order', () => {
+    const groups = groupModels(
+      CATALOG,
+      ['text-embedding-9', 'gpt-4o', 'o1-no-tools', 'gpt-4o-mini', 'whisper-9'],
+      'openai',
+    )
+    // gpt-4o-mini (2024-07) is newer than gpt-4o (2024-05).
+    expect(groups.recommended).toEqual(['gpt-4o-mini', 'gpt-4o'])
+    // Unknown ids and the known model that cannot call tools: nothing is hidden.
+    expect(groups.other).toEqual(['text-embedding-9', 'o1-no-tools', 'whisper-9'])
+  })
+
+  it('matches ids carrying the models/ prefix and returns them unchanged', () => {
+    const groups = groupModels(CATALOG, ['models/gemini-2.5-flash', 'models/embedding-001'], 'google')
+    expect(groups.recommended).toEqual(['models/gemini-2.5-flash'])
+    expect(groups.other).toEqual(['models/embedding-001'])
+  })
+
+  it('finds a model outside the catalogId provider', () => {
+    expect(groupModels(CATALOG, ['gpt-4o'], 'google').recommended).toEqual(['gpt-4o'])
+  })
+
+  it('lists everything as other when there is no catalog', () => {
+    expect(groupModels(null, ['a', 'b'])).toEqual({ recommended: [], other: ['a', 'b'] })
   })
 })

@@ -1,11 +1,14 @@
-import { KeyRound, Bot, Sparkles, Brain, Cpu, Zap, Wind, Server, MonitorCog, Info, ScrollText, Languages, Package, Check } from 'lucide-react'
+import { KeyRound, MonitorCog, Info, ScrollText, Languages, Check } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
+import EcaLogo from './EcaLogo'
 import ProviderDetailView from './ProviderDetailView'
+import ProviderIcon from './ProviderIcon'
 import { useLocale } from '@/hooks/useLocale'
 import { LOCALES, LOCALE_LABELS } from '@/i18n/locale'
 import { LLM_PRESETS, type LlmPreset } from '@/lib/llmPresets'
+import { activeLlmChoice } from '@/lib/llmProvider'
+import { normalizeModelId } from '@/lib/modelCatalog'
 import { useLlm } from '@/hooks/useLlm'
-import type { ComponentType } from 'react'
 
 interface SettingsContentProps {
   view?: 'main' | 'providers' | 'provider-detail' | 'language'
@@ -15,7 +18,21 @@ interface SettingsContentProps {
   onNavigateToLanguage?: () => void
   onSelectProvider?: (provider: { id: string; name: string }) => void
   selectedProvider?: { id: string; name: string }
+  /** The user chose to use a provider's key — the modal closes on it. */
+  onProviderUsed?: () => void
 }
+
+// A provider card: the one in use is outlined and says so.
+const CARD = 'flex justify-between items-center w-full rounded-xl border bg-card hover:border-foreground transition-colors group overflow-hidden'
+const CARD_IDLE = 'border-border/40'
+const CARD_IN_USE = 'border-green-500'
+const IN_USE_BADGE = 'text-xs font-semibold text-green-700 dark:text-green-400 mt-1 flex items-center gap-1'
+// The ECA mark, drawn at 1.5x the other logos' 72px box: its drawing fills only
+// about half of its own frame, so at 1x it reads much smaller than the rest.
+// Scaled with a transform rather than a bigger box so the card keeps its
+// height: the box still measures 72px, only the drawing grows. Hover keeps the
+// same 1.25x lift the other cards have (1.5 x 1.25).
+const ECA_LOGO = 'w-[72px] h-[72px] scale-[1.5] text-muted-foreground group-hover:scale-[1.875] group-hover:text-foreground transition-all duration-300'
 
 /**
  * Detail view for website language. Rendered only after the user taps the
@@ -69,21 +86,13 @@ function LanguageSelectionView() {
   )
 }
 
-const PRESET_ICONS: Record<string, ComponentType<{ className?: string }>> = {
-  anthropic: Bot,
-  gemini: Sparkles,
-  deepseek: Brain,
-  openai: Cpu,
-  groq: Zap,
-  mistral: Wind,
-}
-
 function ProvidersView({ onSelectProvider }: { onSelectProvider?: SettingsContentProps['onSelectProvider'] }) {
   const { t } = useTranslation()
   const { config, configLoading, state, setActive, byokEnabled } = useLlm()
 
   if (!byokEnabled && !configLoading) {
-    const cards = [{ id: 'eca', name: t('providers.eca'), official: true, active: state.active === 'eca' }]
+    // With BYOK off nothing but ECA can answer, whatever a stale state says.
+    const cards = [{ id: 'eca', name: t('providers.eca'), official: true, active: true }]
     return (
       <div className="flex-1 overflow-y-auto p-6">
         <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
@@ -91,7 +100,7 @@ function ProvidersView({ onSelectProvider }: { onSelectProvider?: SettingsConten
             <button
               key={provider.id}
               onClick={() => setActive('eca')}
-              className="flex justify-between items-center w-full rounded-xl border border-border/40 bg-card hover:border-foreground transition-colors group overflow-hidden"
+              className={`${CARD} ${provider.active ? CARD_IN_USE : CARD_IDLE}`}
             >
               <div className="flex flex-col justify-center py-5 px-6">
                 <div className="flex items-center gap-2">
@@ -99,13 +108,13 @@ function ProvidersView({ onSelectProvider }: { onSelectProvider?: SettingsConten
                   <span className="text-[10px] font-semibold uppercase tracking-wider text-primary bg-primary/10 px-2 py-0.5 rounded-full">{t('settings.official')}</span>
                 </div>
                 {provider.active && (
-                  <span className="text-xs text-primary mt-1 flex items-center gap-1">
+                  <span className={IN_USE_BADGE}>
                     <Check className="w-3 h-3" />{t('providers.active')}
                   </span>
                 )}
               </div>
               <div className="flex items-end justify-end w-20 shrink-0 pr-1">
-                <Server className="w-[72px] h-[72px] text-muted-foreground group-hover:scale-125 group-hover:text-foreground transition-all duration-300" />
+                <EcaLogo className={ECA_LOGO} />
               </div>
             </button>
           ))}
@@ -115,6 +124,10 @@ function ProvidersView({ onSelectProvider }: { onSelectProvider?: SettingsConten
   }
 
   const visible: LlmPreset[] = LLM_PRESETS.filter((p) => !p.local || config?.local_endpoints === true)
+  // "In use" follows what will actually answer the next message, not just the
+  // selection: a selected key that has since been rejected falls back to ECA,
+  // and the cards must say ECA.
+  const usedPresetId = activeLlmChoice(state) !== null ? state.active : 'eca'
 
   return (
     <div className="flex-1 overflow-y-auto p-6">
@@ -122,45 +135,47 @@ function ProvidersView({ onSelectProvider }: { onSelectProvider?: SettingsConten
         <button
           key="eca"
           onClick={() => setActive('eca')}
-          className="flex justify-between items-center w-full rounded-xl border border-border/40 bg-card hover:border-foreground transition-colors group overflow-hidden"
+          className={`${CARD} ${usedPresetId === 'eca' ? CARD_IN_USE : CARD_IDLE}`}
         >
           <div className="flex flex-col justify-center py-5 px-6">
             <div className="flex items-center gap-2">
               <span className="text-base font-semibold text-foreground">{t('providers.eca')}</span>
               <span className="text-[10px] font-semibold uppercase tracking-wider text-primary bg-primary/10 px-2 py-0.5 rounded-full">{t('settings.official')}</span>
             </div>
-            {state.active === 'eca' && (
-              <span className="text-xs text-primary mt-1 flex items-center gap-1">
+            {usedPresetId === 'eca' && (
+              <span className={IN_USE_BADGE}>
                 <Check className="w-3 h-3" />{t('providers.active')}
               </span>
             )}
           </div>
           <div className="flex items-end justify-end w-20 shrink-0 pr-1">
-            <Server className="w-[72px] h-[72px] text-muted-foreground group-hover:scale-125 group-hover:text-foreground transition-all duration-300" />
+            <EcaLogo className={ECA_LOGO} />
           </div>
         </button>
         {visible.map((preset) => {
-          const Icon = PRESET_ICONS[preset.id] ?? Package
           const conn = state.connections[preset.id]
-          const isActive = state.active === preset.id
+          const isActive = usedPresetId === preset.id
           return (
             <button
               key={preset.id}
               onClick={() => {
                 onSelectProvider?.({ id: preset.id, name: preset.name })
               }}
-              className="flex justify-between items-center w-full rounded-xl border border-border/40 bg-card hover:border-foreground transition-colors group overflow-hidden"
+              className={`${CARD} ${isActive ? CARD_IN_USE : CARD_IDLE}`}
             >
-              <div className="flex flex-col justify-center py-5 px-6">
+              <div className="flex flex-col justify-center py-5 px-6 min-w-0">
                 <div className="flex items-center gap-2">
                   <span className="text-base font-semibold text-foreground">{preset.name}</span>
                 </div>
                 {isActive && (
-                  <span className="text-xs text-primary mt-1 flex items-center gap-1">
+                  <span className={IN_USE_BADGE}>
                     <Check className="w-3 h-3" />{t('providers.active')}
                   </span>
                 )}
-                {conn && conn.status !== 'unconfigured' && (
+                {isActive && conn?.model && (
+                  <span className="text-xs text-muted-foreground mt-1 truncate">{normalizeModelId(conn.model)}</span>
+                )}
+                {!isActive && conn && conn.status !== 'unconfigured' && (
                   <span className="text-xs text-muted-foreground mt-1">
                     {conn.status === 'configured'
                       ? t('providers.connected')
@@ -173,7 +188,10 @@ function ProvidersView({ onSelectProvider }: { onSelectProvider?: SettingsConten
                 )}
               </div>
               <div className="flex items-end justify-end w-20 shrink-0 pr-1">
-                <Icon className="w-[72px] h-[72px] text-muted-foreground group-hover:scale-125 group-hover:text-foreground transition-all duration-300" />
+                <ProviderIcon
+                  presetId={preset.id}
+                  className="w-[72px] h-[72px] text-muted-foreground group-hover:scale-125 group-hover:text-foreground transition-all duration-300"
+                />
               </div>
             </button>
           )
@@ -183,13 +201,13 @@ function ProvidersView({ onSelectProvider }: { onSelectProvider?: SettingsConten
   )
 }
 
-export default function SettingsContent({ view = 'main', onNavigateToProviders, onNavigateToGraphics, onNavigateToLanguage, onSelectProvider, selectedProvider }: SettingsContentProps) {
+export default function SettingsContent({ view = 'main', onNavigateToProviders, onNavigateToGraphics, onNavigateToLanguage, onSelectProvider, selectedProvider, onProviderUsed }: SettingsContentProps) {
   const { t } = useTranslation()
 
   if (view === 'provider-detail') {
     // Keyed by provider: switching provider remounts the detail view, which
     // is its reset (its useState initialisers read the stored connection).
-    return <ProviderDetailView key={selectedProvider?.id ?? 'none'} provider={selectedProvider} />
+    return <ProviderDetailView key={selectedProvider?.id ?? 'none'} provider={selectedProvider} onUsed={onProviderUsed} />
   }
 
   if (view === 'language') {

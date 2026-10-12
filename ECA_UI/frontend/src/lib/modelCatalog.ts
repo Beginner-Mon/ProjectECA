@@ -130,6 +130,55 @@ export function lookupModel(
   return null
 }
 
+export interface ModelGroups {
+  /** Known to answer in text and call tools — newest first. */
+  recommended: string[]
+  /** Everything else the key may call, in the provider's own order. */
+  other: string[]
+}
+
+/**
+ * Split a provider's model list for the picker.
+ *
+ * A provider lists every model the key may call — embedding, image and speech
+ * models included — and nobody choosing a chat model can tell them apart by id.
+ * The catalog can: what it knows to answer in text and call tools goes first,
+ * newest first. Nothing is hidden; an id the catalog does not know stays
+ * selectable in the second group.
+ *
+ * Indexes the catalog once rather than calling lookupModel per id: a long list
+ * (several hundred ids) against several thousand entries is otherwise a
+ * visible stall on the settings screen.
+ */
+export function groupModels(
+  catalog: unknown | null,
+  modelIds: string[],
+  catalogId?: string,
+): ModelGroups {
+  const preferred = new Map<string, Record<string, unknown>>()
+  const anywhere = new Map<string, Record<string, unknown>>()
+  for (const e of collectEntries(catalog)) {
+    const keys = [normalizeModelId(e.modelId)]
+    if (typeof e.entry.id === 'string') keys.push(normalizeModelId(e.entry.id))
+    for (const key of keys) {
+      if (catalogId && e.providerId === catalogId && !preferred.has(key)) preferred.set(key, e.entry)
+      if (!anywhere.has(key)) anywhere.set(key, e.entry)
+    }
+  }
+
+  const recommended: { id: string; date: string }[] = []
+  const other: string[] = []
+  for (const id of modelIds) {
+    const key = normalizeModelId(id)
+    const entry = preferred.get(key) ?? anywhere.get(key)
+    const meta = entry ? toMeta(entry) : null
+    if (meta && meta.textOutput && meta.tools) recommended.push({ id, date: meta.releaseDate ?? '' })
+    else other.push(id)
+  }
+  recommended.sort((a, b) => b.date.localeCompare(a.date))
+  return { recommended: recommended.map((r) => r.id), other }
+}
+
 /**
  * Default pick: among ids known to take text and call tools, the cheapest of
  * the 5 newest by release date (priceless sorts last). Unknown ids never win —

@@ -24,13 +24,14 @@ class TestSummarizerThreshold:
         ]
 
         with patch("langgraph_agents.nodes.summarizer.get_pg_client", return_value=mock_pg):
-            with patch("asyncio.create_task") as mock_task:
+            with patch("langgraph_agents.nodes.summarizer._run_summarize",
+                       new=AsyncMock()) as mock_run:
                 await maybe_summarize("test-session")
-                mock_task.assert_not_called()
+                mock_run.assert_not_awaited()
 
     @pytest.mark.asyncio
     async def test_above_threshold_fires_task(self):
-        """10.1k tokens → summarizer fires background task."""
+        """10.1k tokens → summarizer runs (inline, inside the invocation)."""
         from langgraph_agents.nodes.summarizer import maybe_summarize
         mock_pg = AsyncMock()
         mock_pg.fetchval.return_value = 0
@@ -40,9 +41,10 @@ class TestSummarizerThreshold:
         ]
 
         with patch("langgraph_agents.nodes.summarizer.get_pg_client", return_value=mock_pg):
-            with patch("asyncio.create_task") as mock_task:
+            with patch("langgraph_agents.nodes.summarizer._run_summarize",
+                       new=AsyncMock()) as mock_run:
                 await maybe_summarize("test-session")
-                mock_task.assert_called_once()
+                mock_run.assert_awaited_once()
 
     @pytest.mark.asyncio
     async def test_partial_summary_tokens_added_to_prior(self):
@@ -57,9 +59,10 @@ class TestSummarizerThreshold:
         ]
 
         with patch("langgraph_agents.nodes.summarizer.get_pg_client", return_value=mock_pg):
-            with patch("asyncio.create_task") as mock_task:
+            with patch("langgraph_agents.nodes.summarizer._run_summarize",
+                       new=AsyncMock()) as mock_run:
                 await maybe_summarize("test-session")
-                mock_task.assert_called_once()
+                mock_run.assert_awaited_once()
 
     @pytest.mark.asyncio
     async def test_uses_estimate_when_token_count_null(self):
@@ -74,9 +77,10 @@ class TestSummarizerThreshold:
         ]
 
         with patch("langgraph_agents.nodes.summarizer.get_pg_client", return_value=mock_pg):
-            with patch("asyncio.create_task") as mock_task:
+            with patch("langgraph_agents.nodes.summarizer._run_summarize",
+                       new=AsyncMock()) as mock_run:
                 await maybe_summarize("test-session")
-                mock_task.assert_called_once()
+                mock_run.assert_awaited_once()
 
 
 @pytest.mark.unit

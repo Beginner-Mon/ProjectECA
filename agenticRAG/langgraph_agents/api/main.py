@@ -59,7 +59,7 @@ from langgraph_agents.services.exceptions import ServiceUnavailableError
 from langgraph_agents.services.vieneu_tts.client import get_vieneu_tts_client
 from langgraph_agents.services.vieneu_tts.voice import resolve_voice
 from langgraph_agents.services.vieneu_tts.text_budget import plan_spoken_text
-from langgraph_agents.nodes.summarizer import maybe_summarize, _pending_summarizer_tasks
+from langgraph_agents.nodes.summarizer import housekeep, _pending_summarizer_tasks
 from langgraph_agents.db.session_store import (
     load_session_messages, populate_stm_from_messages, write_session_turn,
 )
@@ -590,6 +590,11 @@ def create_app() -> FastAPI:
 # ── Chat stream helper ─────────────────────────────────────────────
 
 
+# Upper bound on waiting for the turn's summaries after `done`. Two finished
+# sessions are two LLM calls plus two embeddings, a few seconds each.
+_HOUSEKEEPING_TIMEOUT_S = 30.0
+
+
 async def _stream_chat(req, request_id, config, state, background_tasks, request=None, resolved_user_id=None, llm_req=None):
     """Core SSE stream: graph execution + post-processing.
 
@@ -605,6 +610,13 @@ async def _stream_chat(req, request_id, config, state, background_tasks, request
 
     graph = _get_graph()
     logger.info("chat_start", extra={"query": req.query[:120], "session_id": req.session_id})
+
+    # Summaries (long-term memory) start with the turn and are awaited after
+    # `done`: the user is not kept waiting, and the invocation stays open until
+    # they are written — Lambda freezes the container once the response ends,
+    # which is what broke the old fire-and-forget summarizer (12/10).
+    housekeeping = (asyncio.create_task(housekeep(resolved_user_id, req.session_id))
+                    if resolved_user_id else None)
 
     try:
         async for mode, payload in graph.astream(
@@ -770,39 +782,11 @@ async def _stream_chat(req, request_id, config, state, background_tasks, request
             except Exception as exc:
                 logger.warning("session_persist_failed", extra={"error": str(exc)})
 
-        # Background summarizer M.5 — SCHEDULED, not awaited. Diagnosed 11-09
-        # alongside write_session_turn above (see that function's docstring): the
-        # send button stayed in "stop" for 6.5-7.9s after the answer text was
-        # already fully shown, on text-mode turns with no TTS involved.
-        # maybe_summarize's OWN body — before it ever gets to the point of
-        # backgrounding _run_summarize — does two Neon round trips just to decide
-        # whether enough NEW tokens have accumulated (fetchval, then a fetch of
-        # every uncached message's content). None of that outcome is needed for
-        # THIS turn's response; it only ever matters for a FUTURE turn's context.
-        # `await`ing it here bought nothing but latency.
-        #
-        # Lambda caveat: a task the runtime freezes mid-flight when the response
-        # returns just doesn't finish this turn — no different from the exposure
-        # _run_summarize (a task-of-a-task, scheduled from inside maybe_summarize
-        # once IT decides there is enough to summarize) already had. Both are
-        # idempotent by construction: a frozen check re-runs its own query on the
-        # NEXT turn and either now sees enough tokens or still doesn't — there is
-        # no partial state to recover, because nothing has been written yet at
-        # the point a freeze could land.
-        # Unbind before the background summarizer is scheduled: the task
-        # copies the current context, so it must not inherit the key — the
-        # summarizer always runs on ECA, and its HTTP client is about to close.
+        # BYOK: the user's key is for this turn's graph only; nothing after this
+        # point calls their LLM. (housekeep unbinds in its own context.)
         from langgraph_agents.llm_byok import bind_request_llm as _unbind_llm
 
         _unbind_llm(None)
-        if final_state.get("final_answer"):
-            summarizer_task = asyncio.create_task(maybe_summarize(req.session_id))
-            # Strong reference — same reason _pending_summarizer_tasks already
-            # exists (nodes/summarizer.py, also used by the GDPR delete-message
-            # route below): asyncio.create_task() only holds a WEAK one, and a
-            # task the event loop garbage-collects mid-run vanishes silently.
-            _pending_summarizer_tasks.add(summarizer_task)
-            summarizer_task.add_done_callback(_pending_summarizer_tasks.discard)
 
         # Speak the answer if requested. This used to fire a background task,
         # yield speech_pending, and poll Redis every 250ms for up to 130s — SpeechLLm
@@ -863,6 +847,14 @@ async def _stream_chat(req, request_id, config, state, background_tasks, request
             "total_tokens": final_state.get("total_tokens", 0),
             "required_outputs": final_state.get("required_outputs", []),
         })
+        if housekeeping is not None:
+            try:
+                await asyncio.wait_for(housekeeping, timeout=_HOUSEKEEPING_TIMEOUT_S)
+            except asyncio.TimeoutError:
+                # Idempotent: the next turn finds the same work and retries it.
+                logger.warning("housekeeping_timeout", extra={
+                    "timeout_s": _HOUSEKEEPING_TIMEOUT_S,
+                })
     finally:
         await close_request_llm(llm_req)
 

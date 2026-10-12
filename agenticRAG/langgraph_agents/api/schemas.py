@@ -1,5 +1,22 @@
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, SecretStr
 from typing import Literal, Optional
+
+
+class LLMChoice(BaseModel):
+    """The caller's own LLM connection for this turn (BYOK).
+
+    Optional on ChatRequest; absent means "run on the ECA key as before".
+    The key lives only in this request — it is bound to a ContextVar for the
+    turn and never written to Postgres, Redis, a file, or a log.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    base_url: str = Field(min_length=1, max_length=300)
+    model: str = Field(min_length=1, max_length=200)
+    api_key: SecretStr = Field(max_length=500)
+    capabilities: list[Literal["text", "answer", "tools", "image"]]
+    omit: list[Literal["temperature", "max_tokens"]] = Field(default_factory=list)
 
 
 class ChatRequest(BaseModel):
@@ -25,6 +42,8 @@ class ChatRequest(BaseModel):
     # site gets a Vietnamese answer with an English safety warning. That
     # mismatch is accepted, and preferred over guessing.
     locale: Literal["en", "vi"] = "en"
+
+    llm: Optional[LLMChoice] = None
 
 
 class ChatResponse(BaseModel):

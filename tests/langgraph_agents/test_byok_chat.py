@@ -59,10 +59,10 @@ def _make_client(monkeypatch, fake_astream):
 
     monkeypatch.setattr(api_module, "write_session_turn", fake_write)
 
-    async def no_summarize(session_id):
+    async def no_housekeeping(user_id, session_id):
         return None
 
-    monkeypatch.setattr(api_module, "maybe_summarize", no_summarize)
+    monkeypatch.setattr(api_module, "housekeep", no_housekeeping)
 
     app = create_app()
     app.dependency_overrides[current_user_id] = override_user(

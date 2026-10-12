@@ -120,8 +120,8 @@
     "profile": "Profile",
     "providers": "Select Providers",
     "providers_desc": "Configure your LLM API providers and keys",
-    "terms": "Terms of Service",
-    "terms_desc": "Read our terms and conditions",
+    "terms": "Terms & Privacy",
+    "terms_desc": "Terms of Service and Privacy Policy",
     "title": "Settings"
   },
   "about": {
@@ -135,6 +135,13 @@
     "title": "About Us",
     "who_we_are": "Who We Are",
     "who_we_are_body": "— a team of final-year students who started this project as a graduation assignment. We are driven by a shared passion for real-time 3D rendering, AI, and human-computer interaction, aiming to push the boundaries of what virtual assistants can be."
+  },
+  "legal": {
+    "title": "Terms & Privacy",
+    "terms": "Terms of Service",
+    "privacy": "Privacy Policy",
+    "signup_agree": "By creating an account, you agree to our",
+    "and": "and"
   },
   "notifications": {
     "empty": "No updates available yet. Check back later.",

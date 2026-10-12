@@ -136,6 +136,11 @@ ENV AWS_LWA_READINESS_CHECK_PATH=/health
 ENV EMBEDDING_BACKEND=onnx
 ENV E5_ONNX_DIR=/opt/model
 
+# Load that model at start-up, in a thread beside the rest of INIT, instead of
+# on the first kb_search (median 9.3 s in prod, 0.05 s for every search after).
+# See api/main.py lifespan.
+ENV EMBEDDING_WARMUP=1
+
 # MCP discovery off. It runs in the FastAPI lifespan, i.e. inside the INIT
 # budget, and the one configured server (web_search) is stdio — so it would
 # spawn a Python subprocess that cannot work here: web_search_server wants

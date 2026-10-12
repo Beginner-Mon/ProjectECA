@@ -6,8 +6,13 @@ Decisions encoded:
         frozen on write (never re-compressed), CAS idempotent
   M.7:  Summary chunks = STATIC prefix → prompt cache works (append-only)
 
-Trigger: after write_session_turn, check cumulative tokens since last summary.
-If >= 10k → fire background task. Never blocks the chat response.
+Two triggers, both run by `housekeep`, which /chat starts with the turn and
+awaits after its `done` event — inside the invocation, because Lambda freezes
+a container once the response ends, and a task left running after it resumed
+on a closed connection (12/10: 26 failed triggers, 5 summaries since 01/09):
+  - the user has moved on: another session of theirs has ≥ 2 unsummarised
+    turns → summarise it (long-term memory, read back by memory_search);
+  - the current session passed 10k tokens since its last summary (D13).
 
 Edge A (M.5): summarize fail → retry 1× → still fail → log WARNING, leave.
 Hard cap: memory node uses existing token budget to prevent unbounded growth.
@@ -38,9 +43,9 @@ def _token_estimate(text: str) -> int:
 
 
 async def maybe_summarize(session_id: str) -> None:
-    """Check if summarization is needed and fire background task.
+    """Summarise the current session if it passed the threshold (D13).
 
-    Called after write_session_turn. Never raises — all errors logged.
+    Called from housekeep. Never raises — all errors logged.
     """
     try:
         pg = get_pg_client()
@@ -69,21 +74,67 @@ async def maybe_summarize(session_id: str) -> None:
         if total_tokens < _SUMMARY_THRESHOLD:
             return
 
-        # Fire background task, kept alive via a strong reference in
-        # _pending_summarizer_tasks (asyncio.create_task() only holds a WEAK
-        # one) — same pattern api/main.py used for its old TTS background
-        # task, before feature/tts-streaming replaced that task with a plain
-        # `async for` inside the already-open SSE generator.
-        task = asyncio.create_task(
-            _run_summarize(session_id, last_chunk or 0)
-        )
-        _pending_summarizer_tasks.add(task)
-        task.add_done_callback(_pending_summarizer_tasks.discard)
+        await _run_summarize(session_id, last_chunk or 0)
 
     except Exception as exc:
         logger.warning("summarizer_trigger_failed", extra={
             "session_id": session_id, "error": str(exc),
         })
+
+
+# A session counts as finished once the user chats in another one. Two turns is
+# enough to be worth remembering; real sessions are short (prod 12/10: median
+# ~400 tokens, largest ~2,800), so a token threshold never fired.
+_MIN_FINISHED_MESSAGES = 4
+_MAX_FINISHED_PER_TURN = 2
+
+
+async def summarize_finished_sessions(user_id: str, current_session_id: str) -> int:
+    """Summarise the user's other sessions that have unsummarised turns.
+
+    Newest first, at most _MAX_FINISHED_PER_TURN per turn; each picks up from
+    where its last summary stopped, so a session the user returns to is
+    summarised again only for what is new. Returns how many were summarised.
+    """
+    pg = get_pg_client()
+    await pg.connect()
+    rows = await pg.fetch(
+        """SELECT c.session_id, COALESCE(s.covered, 0) AS covered
+           FROM conversations c
+           LEFT JOIN LATERAL (
+               SELECT MAX(covers_up_to_seq) AS covered FROM summaries
+               WHERE session_id = c.session_id AND status = 'active'
+           ) s ON true
+           WHERE c.user_id = $1 AND c.session_id <> $2
+             AND (SELECT count(*) FROM messages m
+                  WHERE m.session_id = c.session_id
+                    AND m.seq_id > COALESCE(s.covered, 0)) >= $3
+           ORDER BY c.updated_at DESC
+           LIMIT $4""",
+        user_id, current_session_id, _MIN_FINISHED_MESSAGES, _MAX_FINISHED_PER_TURN,
+    )
+    for r in rows:
+        await _run_summarize(r["session_id"], r["covered"])
+    return len(rows)
+
+
+async def housekeep(user_id: str, session_id: str) -> None:
+    """Both summary triggers for one chat turn. Never raises.
+
+    Runs on ECA's key: a user's own key (BYOK) is for their chat turn, not for
+    summaries written on their behalf. The unbind only touches this task's
+    copy of the context, never the request's.
+    """
+    from langgraph_agents.llm_byok import bind_request_llm
+
+    bind_request_llm(None)
+    try:
+        await summarize_finished_sessions(user_id, session_id)
+    except Exception as exc:
+        logger.warning("finished_session_summary_failed", extra={
+            "session_id": session_id, "error": str(exc),
+        })
+    await maybe_summarize(session_id)
 
 
 async def _summarize_messages(rows: list, session_id: str) -> str | None:

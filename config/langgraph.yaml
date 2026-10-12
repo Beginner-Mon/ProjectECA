@@ -20,6 +20,10 @@ langgraph:
     top_k: 5
     web_search_enabled: true
     web_search_max_results: 3
+    # memory_search: below this, a past-session summary is not returned.
+    # Measured 12/10 (synthetic, e5-small, max of retriever query and the
+    # user's own words): related 0.843-0.900, off-topic chat <= 0.82.
+    memory_min_similarity: 0.84
 
   # Prompt budgets, in TOKENS (plan T11 — model nhỏ, cửa sổ ~10K).
   # Code đọc qua shared/context.py::context_budget, giữ giá trị cũ khi thiếu.

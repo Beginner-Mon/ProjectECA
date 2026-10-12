@@ -903,22 +903,12 @@ def test_sse_chat_persist_failure_does_not_block(api_client, monkeypatch):
 @pytest.mark.unit
 def test_slow_summarizer_does_not_delay_session_persisted_or_done(api_client, monkeypatch):
     """Regression for the 11-09 "send button stuck in stop for 6.5-7.9s" bug
-    (owner's vva.log — text-mode turns, no TTS involved). maybe_summarize is
-    now `asyncio.create_task`'d right after session_persisted, not awaited —
-    a slow summarizer check must not hold up session_persisted OR done.
+    (owner's vva.log — text-mode turns, no TTS involved). A slow summarizer
+    must not hold up session_persisted OR done (since 12/10 it runs as
+    `housekeep`, awaited only after `done`).
 
-    Before this fix, `await maybe_summarize(...)` sat on the critical path
-    between session_persisted and done; a summarizer this slow would have
-    made the whole response take >1s to even start returning.
-
-    Measured as a DELTA between two runs of the same request against the
-    same fixtures — one with a summarizer that returns immediately, one
-    that sleeps 1.0s — rather than an absolute elapsed<0.5 threshold. Every
-    /chat call in this suite pays a per-request STM warm-up read
-    (`stm_warmup_failed` retries) that costs ~4s on CI; that fixed cost
-    lands on both runs equally, so subtracting it out isolates the
-    summarizer's own contribution to the response time, which is what
-    "not on the critical path" actually means.
+    Before 11-09, `await maybe_summarize(...)` sat on the critical path
+    between session_persisted and done.
     """
     import asyncio
     import time
@@ -934,41 +924,31 @@ def test_slow_summarizer_does_not_delay_session_persisted_or_done(api_client, mo
 
     monkeypatch.setattr(api_module, "write_session_turn", fake_write)
 
-    async def fast_summarizer(session_id):
-        return
-
-    async def slow_summarizer(session_id):
-        # Long enough that awaiting it inline would be trivially detectable;
-        # short enough not to make the suite slow when the fix holds.
+    async def slow_summarizer(user_id, session_id):
         await asyncio.sleep(1.0)
 
-    def run_once(summarizer):
-        monkeypatch.setattr(api_module, "maybe_summarize", summarizer)
+    # 12/10: summaries run as `housekeep`, started with the turn and awaited
+    # AFTER `done` (Lambda freezes the container once the response ends).
+    # What must not move is when `done` is emitted — that releases the send
+    # button. Checked on the generator: TestClient buffers the whole body.
+    from langgraph_agents.api.schemas import ChatRequest
+
+    monkeypatch.setattr(api_module, "housekeep", slow_summarizer)
+
+    async def drive():
         t0 = time.perf_counter()
-        resp = client.post("/chat", json={"query": "Xin chào"})
-        elapsed = time.perf_counter() - t0
+        marks = {}
+        req = ChatRequest(query="Xin chào", session_id="s-1")
+        async for event in api_module._stream_chat(
+                req, "r-1", {"configurable": {}}, {}, None,
+                resolved_user_id="00000000-0000-0000-0000-000000000001"):
+            marks.setdefault(event.get("event"), time.perf_counter() - t0)
+        marks["end"] = time.perf_counter() - t0
+        return marks
 
-        assert resp.status_code == 200
-        events = _parse_sse_stream(resp.content)
-        kinds = [e["event"] for e in events]
-        assert "session_persisted" in kinds
-        assert kinds[-1] == "done"
-        return elapsed
-
-    fast_elapsed = run_once(fast_summarizer)
-    slow_elapsed = run_once(slow_summarizer)
-
-    delta = slow_elapsed - fast_elapsed
-    assert delta < 0.5, (
-        f"slow-summarizer run took {delta:.2f}s longer than the "
-        f"fast-summarizer baseline (fast={fast_elapsed:.2f}s, "
-        f"slow={slow_elapsed:.2f}s) despite the fake sleeping only 1.0s — "
-        "maybe_summarize appears to still be on the critical path"
-    )
-
-    # Let the background task actually finish before the fixture tears the
-    # app down, rather than leaving it pending mid-sleep.
-    time.sleep(1.1)
+    marks = asyncio.run(drive())
+    assert marks["done"] < 0.5, marks
+    assert marks["end"] >= 0.9, marks
 
 
 # ── Kimodo job id capture (R26) ─────────────────────────────────────

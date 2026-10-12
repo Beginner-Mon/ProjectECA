@@ -59,14 +59,14 @@ from langgraph_agents.services.exceptions import ServiceUnavailableError
 from langgraph_agents.services.vieneu_tts.client import get_vieneu_tts_client
 from langgraph_agents.services.vieneu_tts.voice import resolve_voice
 from langgraph_agents.services.vieneu_tts.text_budget import plan_spoken_text
-from langgraph_agents.nodes.summarizer import maybe_summarize, _pending_summarizer_tasks
+from langgraph_agents.nodes.summarizer import housekeep, _pending_summarizer_tasks
 from langgraph_agents.db.session_store import (
     load_session_messages, populate_stm_from_messages, write_session_turn,
 )
 from langgraph_agents.shared.logging import (
     configure_root_logger, get_logger, with_request_id,
 )
-from langgraph_agents.shared import get_pg_client
+from langgraph_agents.shared import get_embedding_service, get_pg_client
 from langgraph_agents.shared.env import env_source
 from langgraph_agents.shared.stm import get_stm
 from langgraph_agents.shared.preflight import run_preflight
@@ -170,6 +170,26 @@ def _get_graph():
     return _graph
 
 
+# Strong references, as for _pending_summarizer_tasks: create_task holds only a
+# weak one.
+_warmup_tasks: set[asyncio.Task] = set()
+
+
+async def _warm_embedding() -> None:
+    t0 = time.perf_counter()
+    try:
+        await asyncio.to_thread(get_embedding_service().warm_up)
+        logger.info("embedding_warm_done", extra={
+            "elapsed_ms": round((time.perf_counter() - t0) * 1000),
+        })
+    except Exception as exc:
+        # The first kb_search then loads the model itself, as it always did.
+        logger.warning("embedding_warm_failed", extra={
+            "error": type(exc).__name__, "detail": str(exc)[:200],
+            "elapsed_ms": round((time.perf_counter() - t0) * 1000),
+        })
+
+
 @asynccontextmanager
 async def lifespan(application: FastAPI):
     configure_root_logger(level=os.getenv("LOG_LEVEL", "INFO"))
@@ -179,6 +199,18 @@ async def lifespan(application: FastAPI):
     # fail its deploy rather than answer 401 to everyone and look like a user
     # problem. Unlike run_preflight() below, this one is not survivable.
     verify_auth_config()
+
+    # Load the embedding model in a thread while the rest of start-up runs.
+    # Lazy loading cost the user's first kb_search in every Lambda container a
+    # median 9.3 s (later searches: 0.05 s). Warmer pings only hit /health, and
+    # Lambda freezes the container between invocations, so the load has to start
+    # here, inside INIT, to finish before anyone searches. Not awaited: a chat
+    # turn that needs no search must not wait for it. EMBEDDING_WARMUP=1 is set
+    # in the agent image only, so tests and local runs skip it.
+    if os.getenv("EMBEDDING_WARMUP") == "1":
+        task = asyncio.create_task(_warm_embedding())
+        _warmup_tasks.add(task)
+        task.add_done_callback(_warmup_tasks.discard)
 
     # Before anything else: import the packages that are otherwise imported
     # lazily, so a missing one surfaces here instead of mid-incident. See
@@ -558,6 +590,11 @@ def create_app() -> FastAPI:
 # ── Chat stream helper ─────────────────────────────────────────────
 
 
+# Upper bound on waiting for the turn's summaries after `done`. Two finished
+# sessions are two LLM calls plus two embeddings, a few seconds each.
+_HOUSEKEEPING_TIMEOUT_S = 30.0
+
+
 async def _stream_chat(req, request_id, config, state, background_tasks, request=None, resolved_user_id=None, llm_req=None):
     """Core SSE stream: graph execution + post-processing.
 
@@ -573,6 +610,13 @@ async def _stream_chat(req, request_id, config, state, background_tasks, request
 
     graph = _get_graph()
     logger.info("chat_start", extra={"query": req.query[:120], "session_id": req.session_id})
+
+    # Summaries (long-term memory) start with the turn and are awaited after
+    # `done`: the user is not kept waiting, and the invocation stays open until
+    # they are written — Lambda freezes the container once the response ends,
+    # which is what broke the old fire-and-forget summarizer (12/10).
+    housekeeping = (asyncio.create_task(housekeep(resolved_user_id, req.session_id))
+                    if resolved_user_id else None)
 
     try:
         async for mode, payload in graph.astream(
@@ -738,39 +782,11 @@ async def _stream_chat(req, request_id, config, state, background_tasks, request
             except Exception as exc:
                 logger.warning("session_persist_failed", extra={"error": str(exc)})
 
-        # Background summarizer M.5 — SCHEDULED, not awaited. Diagnosed 11-09
-        # alongside write_session_turn above (see that function's docstring): the
-        # send button stayed in "stop" for 6.5-7.9s after the answer text was
-        # already fully shown, on text-mode turns with no TTS involved.
-        # maybe_summarize's OWN body — before it ever gets to the point of
-        # backgrounding _run_summarize — does two Neon round trips just to decide
-        # whether enough NEW tokens have accumulated (fetchval, then a fetch of
-        # every uncached message's content). None of that outcome is needed for
-        # THIS turn's response; it only ever matters for a FUTURE turn's context.
-        # `await`ing it here bought nothing but latency.
-        #
-        # Lambda caveat: a task the runtime freezes mid-flight when the response
-        # returns just doesn't finish this turn — no different from the exposure
-        # _run_summarize (a task-of-a-task, scheduled from inside maybe_summarize
-        # once IT decides there is enough to summarize) already had. Both are
-        # idempotent by construction: a frozen check re-runs its own query on the
-        # NEXT turn and either now sees enough tokens or still doesn't — there is
-        # no partial state to recover, because nothing has been written yet at
-        # the point a freeze could land.
-        # Unbind before the background summarizer is scheduled: the task
-        # copies the current context, so it must not inherit the key — the
-        # summarizer always runs on ECA, and its HTTP client is about to close.
+        # BYOK: the user's key is for this turn's graph only; nothing after this
+        # point calls their LLM. (housekeep unbinds in its own context.)
         from langgraph_agents.llm_byok import bind_request_llm as _unbind_llm
 
         _unbind_llm(None)
-        if final_state.get("final_answer"):
-            summarizer_task = asyncio.create_task(maybe_summarize(req.session_id))
-            # Strong reference — same reason _pending_summarizer_tasks already
-            # exists (nodes/summarizer.py, also used by the GDPR delete-message
-            # route below): asyncio.create_task() only holds a WEAK one, and a
-            # task the event loop garbage-collects mid-run vanishes silently.
-            _pending_summarizer_tasks.add(summarizer_task)
-            summarizer_task.add_done_callback(_pending_summarizer_tasks.discard)
 
         # Speak the answer if requested. This used to fire a background task,
         # yield speech_pending, and poll Redis every 250ms for up to 130s — SpeechLLm
@@ -831,6 +847,14 @@ async def _stream_chat(req, request_id, config, state, background_tasks, request
             "total_tokens": final_state.get("total_tokens", 0),
             "required_outputs": final_state.get("required_outputs", []),
         })
+        if housekeeping is not None:
+            try:
+                await asyncio.wait_for(housekeeping, timeout=_HOUSEKEEPING_TIMEOUT_S)
+            except asyncio.TimeoutError:
+                # Idempotent: the next turn finds the same work and retries it.
+                logger.warning("housekeeping_timeout", extra={
+                    "timeout_s": _HOUSEKEEPING_TIMEOUT_S,
+                })
     finally:
         await close_request_llm(llm_req)
 

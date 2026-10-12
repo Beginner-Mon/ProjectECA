@@ -120,8 +120,8 @@
     "profile": "Hồ sơ",
     "providers": "Chọn nhà cung cấp",
     "providers_desc": "Cấu hình nhà cung cấp LLM và khóa API của bạn",
-    "terms": "Điều khoản dịch vụ",
-    "terms_desc": "Đọc điều khoản và điều kiện của chúng tôi",
+    "terms": "Điều khoản & Quyền riêng tư",
+    "terms_desc": "Điều khoản sử dụng và Chính sách quyền riêng tư",
     "title": "Cài đặt"
   },
   "about": {
@@ -135,6 +135,13 @@
     "title": "Về chúng tôi",
     "who_we_are": "Chúng tôi là ai",
     "who_we_are_body": "— một nhóm sinh viên năm cuối bắt đầu dự án này như một đồ án tốt nghiệp. Chúng tôi cùng chung niềm đam mê với kết xuất 3D thời gian thực, AI và tương tác người–máy, muốn đẩy xa giới hạn của một trợ lý ảo."
+  },
+  "legal": {
+    "title": "Điều khoản & Quyền riêng tư",
+    "terms": "Điều khoản sử dụng",
+    "privacy": "Chính sách quyền riêng tư",
+    "signup_agree": "Khi tạo tài khoản, bạn đồng ý với",
+    "and": "và"
   },
   "notifications": {
     "empty": "Chưa có cập nhật nào. Bạn ghé lại sau nhé.",

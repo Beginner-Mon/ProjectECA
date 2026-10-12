@@ -251,6 +251,60 @@ describe('ping backoff', () => {
   })
 })
 
+describe('a provider that will not take the trial message from a browser', () => {
+  // Shaped like OpenCode: the model list is open to a web page, the chat
+  // address is not, so the browser's fetch to it throws.
+  function listingOnly(listing: (key: string) => Response) {
+    mockFetch((url, init) => {
+      if (!url.endsWith('/models')) throw new TypeError('Failed to fetch')
+      const auth = ((init.headers ?? {}) as Record<string, string>).Authorization ?? ''
+      return listing(auth.replace('Bearer ', ''))
+    })
+  }
+  const LIST = { data: [{ id: 'known-model' }] }
+
+  it('reports the key as accepted when the listing refuses a wrong key but took this one', async () => {
+    listingOnly((key) => (key === KEY ? jsonResponse(LIST) : new Response('no', { status: 401 })))
+    const res = await checkConnection(conn({ catalogId: 'testp' }), 'known-model', KNOWN_CATALOG)
+    expect(res.ok).toBe(false)
+    expect(res.error?.kind).toBe('network')
+    expect(res.untested).toEqual({ keyAccepted: true })
+  })
+
+  it('cannot vouch for the key when the listing is open to anyone', async () => {
+    listingOnly(() => jsonResponse(LIST))
+    const res = await checkConnection(conn({ catalogId: 'testp' }), 'known-model', KNOWN_CATALOG)
+    expect(res.untested).toEqual({ keyAccepted: false })
+  })
+
+  it('takes what the model can do from the catalog, since no trial could say', async () => {
+    listingOnly(() => jsonResponse(LIST))
+    const res = await checkConnection(conn({ catalogId: 'testp' }), 'known-model', KNOWN_CATALOG)
+    expect(res.capabilities).toEqual(['text', 'answer', 'tools', 'image'])
+    expect(res.omit).toEqual([])
+  })
+
+  it('is a plain failure, not "untested", when the listing never came back either', async () => {
+    mockFetch((url) => {
+      if (url.endsWith('/models')) return new Response('x', { status: 404 })
+      throw new TypeError('Failed to fetch')
+    })
+    const res = await checkConnection(conn(), 'custom', null)
+    expect(res.error?.kind).toBe('network')
+    expect(res.untested).toBeUndefined()
+  })
+
+  it('sends the made-up key to the listing only, never the real one twice over', async () => {
+    listingOnly((key) => (key === KEY ? jsonResponse(LIST) : new Response('no', { status: 401 })))
+    await checkConnection(conn({ catalogId: 'testp' }), 'known-model', KNOWN_CATALOG)
+    const wrongKeyCalls = calls.filter(
+      (c) => ((c.init.headers ?? {}) as Record<string, string>).Authorization !== `Bearer ${KEY}`,
+    )
+    expect(wrongKeyCalls).toHaveLength(1)
+    expect(wrongKeyCalls[0].url).toBe(`${BASE}/models`)
+  })
+})
+
 describe('key scope', () => {
   it('sends the key only to the connection baseUrl', async () => {
     mockFetch((url) => {

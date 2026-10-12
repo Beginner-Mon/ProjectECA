@@ -1,8 +1,10 @@
 import { Package } from 'lucide-react'
-import { providerIconUrl } from '@/lib/providerIcons'
+import { catalogLogoUrl, providerIconUrl } from '@/lib/providerIcons'
 
 interface ProviderIconProps {
   presetId: string
+  /** Set for a provider read from the catalog: its logo comes from there. */
+  catalogId?: string
   className?: string
 }
 
@@ -14,8 +16,8 @@ interface ProviderIconProps {
  * the theme and the card's hover colour exactly like the lucide icons beside
  * it — an <img> would stay black on the dark theme.
  */
-export default function ProviderIcon({ presetId, className }: ProviderIconProps) {
-  const url = providerIconUrl(presetId)
+export default function ProviderIcon({ presetId, catalogId, className }: ProviderIconProps) {
+  const url = providerIconUrl(presetId) ?? (catalogId ? catalogLogoUrl(catalogId) : undefined)
   if (!url) return <Package className={className} />
 
   const mask = `url("${url}") center / contain no-repeat`

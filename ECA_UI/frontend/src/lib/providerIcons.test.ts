@@ -5,7 +5,7 @@ import { providerIconIds, providerIconUrl } from './providerIcons'
 // Presets the icon set has no mark for. Listed, not inferred: a preset added
 // later without a logo file should fail here and make someone decide, rather
 // than quietly ship the neutral box.
-const NO_LOGO = new Set(['n1n', 'openpaths', 'openai-compatible'])
+const NO_LOGO = new Set(['openai-compatible'])
 
 describe('provider icons', () => {
   it('has a logo for every preset except the known few', () => {

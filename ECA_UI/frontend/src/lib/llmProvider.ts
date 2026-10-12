@@ -23,6 +23,11 @@ export interface LlmConnection {
   capabilities: LlmCapability[]
   omit: LlmOmit[]
   status: LlmStatus
+  /**
+   * Only meaningful with status 'unverified' (no trial message could be sent
+   * from the browser): the provider was seen to check keys, and took this one.
+   */
+  keyAccepted?: boolean
 }
 
 export interface LlmState {

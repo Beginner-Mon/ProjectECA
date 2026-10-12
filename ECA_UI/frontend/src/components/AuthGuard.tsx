@@ -8,6 +8,7 @@ import { AUTH_ERROR_KEY, clearExpectedEmail, cognitoLogoutUrl, emailsMatch, peek
 import LoadingOverlay from './ui/LoadingOverlay'
 import { clearSessionPointer } from '../lib/chatSession'
 import { clearTtsCache, sweepTtsCache } from '../lib/ttsCache'
+import { clearAllLlmState } from '../lib/llmProvider'
 
 function clearLocalAuthStorage() {
   const purge = (storage: Storage) => {
@@ -34,6 +35,9 @@ function clearLocalAuthStorage() {
   // harmless only because GET /sessions/{id} filters by the token's user and
   // answered 404, which is precisely the noise being removed.
   clearSessionPointer()
+  // BYOK keys are per browser AND per account (eca-llm-<sub>). Drop them all:
+  // the next account must not inherit the previous one's provider key.
+  clearAllLlmState()
 }
 
 function CognitoAuthGuard() {

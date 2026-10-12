@@ -10,6 +10,7 @@ import { ChatProvider } from '../contexts/ChatContext'
 import { GraphicsProvider } from '../contexts/GraphicsContext'
 import { AvatarBgProvider } from '../contexts/AvatarBgContext'
 import { PreferencesProvider } from '../contexts/PreferencesContext'
+import { LlmProvider } from '../contexts/LlmContext'
 
 function AudioToggle() {
   const { t } = useTranslation()
@@ -36,6 +37,7 @@ export default function MainLayout() {
     // and AvatarBgProvider the background colour. One GET /me/preferences serves
     // both plus AvatarsPanel.
     <PreferencesProvider>
+    <LlmProvider>
     <MotionProvider>
       <ChatProvider>
         <GraphicsProvider>
@@ -71,6 +73,7 @@ export default function MainLayout() {
         </GraphicsProvider>
       </ChatProvider>
     </MotionProvider>
+    </LlmProvider>
     </PreferencesProvider>
   )
 }

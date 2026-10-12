@@ -72,6 +72,17 @@ def _self_min_similarity() -> float | None:
     return _retrieval_threshold("self_min_similarity")
 
 
+def _memory_min_similarity() -> float | None:
+    """Ngưỡng cho memory_search. None = không lọc.
+
+    Không có ngưỡng thì có summary là trả về, kể cả cho "bạn là ai". Số 0.84
+    trong config đo 12/10 trên bộ tổng hợp (10 câu nhắc lại / 12 câu khác):
+    giữ 10/10, chặn câu ngoài lề (danh tính, thời tiết, nấu ăn); câu sức khoẻ
+    khác chủ đề vẫn lọt. Chỉnh lại theo `memory_search_done.top_similarity`.
+    """
+    return _retrieval_threshold("memory_min_similarity")
+
+
 def _to_uuid(value: str) -> str:
     """Coerce user-supplied string into a deterministic UUID."""
     import uuid
@@ -218,40 +229,39 @@ async def memory_search(
         if not user_session_ids:
             return {"found": False}
 
-        # Step 2: Vector search scoped to user's summaries (D19)
-        query_vec = await embed_svc.aembed_query(query)
+        # Step 2: Vector search scoped to user's summaries (D19), scored
+        # against the user's own words as well as the retriever's query. The
+        # retriever writes its queries in English; summaries are written in the
+        # conversation's language. English query vs Vietnamese summary ranked
+        # the right summary first in 1 of 7 cases; the user's own words, 7 of 7
+        # (scripts measured 12/10, docs/worklogs/12-10-2026.md).
+        user_words = (config["configurable"].get("query") or "").strip()
+        texts = [query] if user_words in ("", query) else [query, user_words]
+        vecs = await asyncio.gather(*(embed_svc.aembed_query(t) for t in texts))
+        query_vec, words_vec = vecs[0], vecs[-1]
 
-        # Build temporal filter (M.6: tách topic/temporal — 2 trục)
+        # When the conversation happened, not when it was summarised: a session
+        # is now summarised once the user starts the next one, possibly days
+        # later. Read from the last message the summary covers.
+        sql = """
+            SELECT s.summary_text, s.session_id,
+                   COALESCE(m.created_at, s.created_at) AS created_at,
+                   GREATEST(1 - (s.embedding <=> $1), 1 - (s.embedding <=> $2)) AS similarity
+            FROM summaries s
+            LEFT JOIN messages m
+              ON m.session_id = s.session_id AND m.seq_id = s.covers_up_to_seq
+            WHERE s.session_id = ANY($3)
+              AND s.session_id != $4
+              AND s.status = 'active'
+        """
+        params = [query_vec, words_vec, user_session_ids, current_session_id]
+        # Temporal filter (M.6: tách topic/temporal — 2 trục)
         if since_days is not None and since_days > 0:
-            rows = await pg.fetch(
-                """
-                SELECT s.summary_text, s.session_id, s.created_at,
-                       1 - (s.embedding <=> $1) AS similarity
-                FROM summaries s
-                WHERE s.session_id = ANY($2)
-                  AND s.session_id != $3
-                  AND s.status = 'active'
-                  AND s.created_at >= now() - ($4 || ' days')::interval
-                ORDER BY s.embedding <=> $1
-                LIMIT $5
-                """,
-                query_vec, user_session_ids, current_session_id,
-                str(since_days), top_k,
-            )
-        else:
-            rows = await pg.fetch(
-                """
-                SELECT s.summary_text, s.session_id, s.created_at,
-                       1 - (s.embedding <=> $1) AS similarity
-                FROM summaries s
-                WHERE s.session_id = ANY($2)
-                  AND s.session_id != $3
-                  AND s.status = 'active'
-                ORDER BY s.embedding <=> $1
-                LIMIT $4
-                """,
-                query_vec, user_session_ids, current_session_id, top_k,
-            )
+            params.append(str(since_days))
+            sql += f" AND COALESCE(m.created_at, s.created_at) >= now() - (${len(params)} || ' days')::interval"
+        params.append(top_k)
+        sql += f" ORDER BY similarity DESC LIMIT ${len(params)}"
+        rows = await pg.fetch(sql, *params)
 
         results = [
             {
@@ -262,6 +272,10 @@ async def memory_search(
             }
             for r in rows
         ]
+        top_similarity = results[0]["similarity"] if results else None
+        min_sim = _memory_min_similarity()
+        if min_sim is not None:
+            results = [r for r in results if r["similarity"] >= min_sim]
 
         # Ambiguity check (A1): top-2 results from different sessions with similarity gap < 0.05
         is_ambiguous = False
@@ -283,6 +297,8 @@ async def memory_search(
             "query": query[:80],
             "user_sessions": len(user_session_ids),
             "results": len(results),
+            "dropped_below_min": len(rows) - len(results),
+            "top_similarity": top_similarity,
             "since_days": since_days,
         })
         return response if results else {"found": False}

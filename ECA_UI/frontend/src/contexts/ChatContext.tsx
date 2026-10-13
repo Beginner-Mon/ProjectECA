@@ -25,7 +25,7 @@ import { stageLabelFor } from '../lib/stageLabel'
 import { resolveGreeting, type CapturedGreeting } from '../lib/greeting'
 import { useLocale } from '../hooks/useLocale'
 import { useLlm } from '../hooks/useLlm'
-import { llmChoiceToSend } from '../lib/llmProvider'
+import { llmChoiceToSend, llmTokenLimitToSend } from '../lib/llmProvider'
 import { useTranslation } from 'react-i18next'
 
 export type { SessionItem, ChatContextType } from '../hooks/useChat'
@@ -667,6 +667,7 @@ export function ChatProvider({ children }: { children: ReactNode }) {
     // before the tap still applies. On an old backend without /llm/config the
     // key is withheld entirely instead of being sent and silently ignored.
     const sentLlm = llmChoiceToSend(llmStateRef.current, llmFlagsRef.current) ?? undefined
+    const sentTokenLimit = llmTokenLimitToSend(llmStateRef.current, llmFlagsRef.current)
     const sentPresetId = sentLlm !== undefined ? llmStateRef.current.active : null
 
     const turnSessionId = ensureSessionId()
@@ -689,6 +690,7 @@ export function ChatProvider({ children }: { children: ReactNode }) {
           // reads verbatim, so a declared choice beats a detected one.
           locale,
           llm: sentLlm,
+          tokenLimit: sentTokenLimit,
         },
         (type, data) => {
           if (lifecycle(type, data)) return

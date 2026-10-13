@@ -82,3 +82,33 @@ describe('streamChat interruptions', () => {
     await expect(p).resolves.toBeUndefined()
   })
 })
+
+describe('streamChat token_limit', () => {
+  const LLM = {
+    base_url: 'https://p.example/v1',
+    model: 'm',
+    api_key: 'k',
+    capabilities: ['text' as const],
+    omit: [],
+  }
+  const sentBody = async (opts: Partial<Parameters<typeof streamChat>[0]>) => {
+    fakeResponse([block('done', {})])
+    await streamChat({ query: 'hi', sessionId: 's1', ...opts }, () => {})
+    const init = (fetch as unknown as ReturnType<typeof vi.fn>).mock.calls[0][1] as { body: string }
+    return JSON.parse(init.body) as Record<string, unknown>
+  }
+
+  it('adds token_limit at the top level, never inside llm', async () => {
+    const body = await sentBody({ llm: LLM, tokenLimit: 128000 })
+    expect(body.token_limit).toBe(128000)
+    expect(body.llm).toEqual(LLM)
+    expect(body.llm).not.toHaveProperty('token_limit')
+  })
+
+  it('omits the key when not given or not a positive integer', async () => {
+    for (const tokenLimit of [undefined, 0, -1, 1.5, NaN]) {
+      const body = await sentBody({ llm: LLM, tokenLimit })
+      expect(body).not.toHaveProperty('token_limit')
+    }
+  })
+})

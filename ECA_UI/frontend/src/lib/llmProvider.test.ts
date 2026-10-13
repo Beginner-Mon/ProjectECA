@@ -4,6 +4,7 @@ import {
   clearAllLlmState,
   defaultLlmState,
   llmChoiceToSend,
+  llmTokenLimitToSend,
   loadLlmState,
   saveLlmState,
   type LlmState,
@@ -174,5 +175,47 @@ describe('llmChoiceToSend', () => {
     ]) {
       expect(llmChoiceToSend(eca, flags)).toBeNull()
     }
+  })
+})
+
+describe('llmTokenLimitToSend', () => {
+  const withWindow: LlmState = {
+    active: 'openai',
+    connections: { openai: { ...base, status: 'configured', contextWindow: 128000 } },
+  }
+  const noWindow: LlmState = {
+    active: 'openai',
+    connections: { openai: { ...base, status: 'configured' } },
+  }
+
+  it('returns the window when a choice would be sent', () => {
+    expect(llmTokenLimitToSend(withWindow, { byokEnabled: true, configLoading: false })).toBe(128000)
+    expect(llmTokenLimitToSend(withWindow, { byokEnabled: false, configLoading: true })).toBe(128000)
+  })
+
+  it('returns undefined whenever no choice would be sent', () => {
+    expect(llmTokenLimitToSend(withWindow, { byokEnabled: false, configLoading: false })).toBeUndefined()
+    expect(llmTokenLimitToSend({ ...withWindow, active: 'eca' }, { byokEnabled: true, configLoading: false })).toBeUndefined()
+    const invalid: LlmState = {
+      active: 'openai',
+      connections: { openai: { ...base, status: 'invalid', contextWindow: 128000 } },
+    }
+    expect(llmTokenLimitToSend(invalid, { byokEnabled: true, configLoading: false })).toBeUndefined()
+  })
+
+  it('returns undefined for a connection saved without a window', () => {
+    expect(llmTokenLimitToSend(noWindow, { byokEnabled: true, configLoading: false })).toBeUndefined()
+  })
+
+  it('the llm body never carries the window', () => {
+    expect(activeLlmChoice(withWindow)).not.toHaveProperty('contextWindow')
+    expect(Object.keys(activeLlmChoice(withWindow) ?? {}).sort()).toEqual(
+      ['api_key', 'base_url', 'capabilities', 'model', 'omit'],
+    )
+  })
+
+  it('an older saved state without the field still loads', () => {
+    localStorage.setItem('eca-llm-u', JSON.stringify(noWindow))
+    expect(loadLlmState('u').connections.openai.contextWindow).toBeUndefined()
   })
 })

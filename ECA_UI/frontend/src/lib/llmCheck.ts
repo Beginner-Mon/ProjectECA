@@ -40,6 +40,8 @@ export interface CheckResult {
   suggested?: string
   capabilities: LlmCapability[]
   omit: LlmOmit[]
+  /** The model's context window per the catalog; absent when the catalog does not say. */
+  contextWindow?: number
   /**
    * Set when the models were listed but the trial message could not be sent:
    * this provider lets a web page read its model list and nothing more. Not a
@@ -409,6 +411,7 @@ export async function checkConnection(
         modelsListed: listed,
         capabilities,
         omit: meta?.temperature === false ? ['temperature'] : [],
+        ...(meta?.contextWindow !== undefined ? { contextWindow: meta.contextWindow } : {}),
         untested: { keyAccepted: await listingChecksKey(conn) },
       }
     }
@@ -435,5 +438,12 @@ export async function checkConnection(
     if (hasTools) capabilities.push('tools')
   }
 
-  return { ok: true, models, modelsListed: listed, capabilities, omit }
+  return {
+    ok: true,
+    models,
+    modelsListed: listed,
+    capabilities,
+    omit,
+    ...(meta?.contextWindow !== undefined ? { contextWindow: meta.contextWindow } : {}),
+  }
 }

@@ -300,3 +300,24 @@ describe('catalogIdForBaseUrl', () => {
     expect(catalogIdForBaseUrl(null, 'https://gateway.example/zen/v1')).toBeUndefined()
   })
 })
+
+describe('context window', () => {
+  const withLimit = (limit: unknown) => ({
+    p: {
+      models: {
+        m: { modalities: { input: ['text'], output: ['text'] }, tool_call: true, limit },
+      },
+    },
+  })
+  const windowOf = (limit: unknown) => lookupModel(withLimit(limit), 'm')?.contextWindow
+
+  it('reads limit.context', () => {
+    expect(windowOf({ context: 128000, output: 4096 })).toBe(128000)
+  })
+
+  it('leaves it out when absent, zero, negative, fractional or not a number', () => {
+    for (const limit of [undefined, {}, { output: 4096 }, { context: 0 }, { context: -5 }, { context: 1.5 }, { context: '128000' }, { context: null }, { context: Infinity }, 'x']) {
+      expect(windowOf(limit)).toBeUndefined()
+    }
+  })
+})

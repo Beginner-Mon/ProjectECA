@@ -26,6 +26,8 @@ export interface ModelMeta {
   chat: boolean
   cost?: number
   releaseDate?: string
+  /** Context window in tokens (`limit.context`); absent when the catalog gives none usable. */
+  contextWindow?: number
 }
 
 /** The adapter name the catalog uses for "plain chat completions". */
@@ -99,6 +101,9 @@ function toMeta(entry: Record<string, unknown>): ModelMeta | null {
   const cost = isRecord(entry.cost) ? (entry.cost as Record<string, unknown>) : null
   const costInput = typeof cost?.input === 'number' ? (cost.input as number) : undefined
   const releaseDate = typeof entry.release_date === 'string' ? (entry.release_date as string) : undefined
+  const limit = isRecord(entry.limit) ? (entry.limit as Record<string, unknown>) : null
+  const ctx = limit?.context
+  const contextWindow = typeof ctx === 'number' && Number.isInteger(ctx) && ctx > 0 ? ctx : undefined
   // Only a per-MODEL adapter override says anything here: it means "this one
   // model is not served the way the rest of this provider is". A provider's
   // own default adapter is irrelevant — ECA calls each provider's
@@ -113,6 +118,7 @@ function toMeta(entry: Record<string, unknown>): ModelMeta | null {
     chat: typeof override !== 'string' || override === CHAT_ADAPTER,
     ...(costInput !== undefined ? { cost: costInput } : {}),
     ...(releaseDate !== undefined ? { releaseDate } : {}),
+    ...(contextWindow !== undefined ? { contextWindow } : {}),
   }
 }
 

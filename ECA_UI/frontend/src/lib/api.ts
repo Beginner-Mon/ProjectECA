@@ -236,6 +236,8 @@ export interface StreamChatOptions {
     capabilities: Array<'text' | 'answer' | 'tools' | 'image'>
     omit: Array<'temperature' | 'max_tokens'>
   }
+  /** The BYOK model's context window, sent top-level (never inside `llm`). Only with `llm`. */
+  tokenLimit?: number
 }
 
 /**
@@ -262,6 +264,7 @@ export async function streamChat(
     webSearch = false,
     locale = 'en',
     llm,
+    tokenLimit,
   } = options
 
   const extraHeaders = await authHeader()
@@ -284,6 +287,7 @@ export async function streamChat(
       locale,
       web_search: webSearch,
       ...(llm ? { llm } : {}),
+      ...(Number.isInteger(tokenLimit) && (tokenLimit as number) > 0 ? { token_limit: tokenLimit } : {}),
     }),
     signal,
   })

@@ -18,6 +18,7 @@ interface ProviderDetailViewProps {
 interface Checked {
   capabilities: LlmCapability[]
   omit: LlmOmit[]
+  contextWindow?: number
 }
 
 function errorKey(kind: CheckError['kind']): string {
@@ -72,7 +73,9 @@ export default function ProviderDetailView({ provider, onUsed }: ProviderDetailV
   const [listAttempted, setListAttempted] = useState(false)
   const [status, setStatus] = useState<LlmStatus>(() => stored?.status ?? 'unconfigured')
   const [checked, setChecked] = useState<Checked | null>(() =>
-    stored ? { capabilities: stored.capabilities, omit: stored.omit } : null,
+    stored
+      ? { capabilities: stored.capabilities, omit: stored.omit, contextWindow: stored.contextWindow }
+      : null,
   )
   /** With status 'unverified': the provider checks keys and took this one. */
   const [keyAccepted, setKeyAccepted] = useState(() => stored?.keyAccepted === true)
@@ -137,7 +140,7 @@ export default function ProviderDetailView({ provider, onUsed }: ProviderDetailV
     lastCheckedModel.current = modelUsed
     setModels(result.models)
     setListAttempted(true)
-    setChecked({ capabilities: result.capabilities, omit: result.omit })
+    setChecked({ capabilities: result.capabilities, omit: result.omit, contextWindow: result.contextWindow })
     setError(null)
     setStatus('configured')
     setChecking(false)
@@ -155,7 +158,7 @@ export default function ProviderDetailView({ provider, onUsed }: ProviderDetailV
       // the real calls and is not subject to it. Usable, marked unverified,
       // and the first chat turn is the test of the model.
       lastCheckedModel.current = modelUsed
-      setChecked({ capabilities: result.capabilities, omit: result.omit })
+      setChecked({ capabilities: result.capabilities, omit: result.omit, contextWindow: result.contextWindow })
       setKeyAccepted(result.untested.keyAccepted)
       setError(null)
       setStatus('unverified')
@@ -291,6 +294,7 @@ export default function ProviderDetailView({ provider, onUsed }: ProviderDetailV
       model,
       capabilities: checked.capabilities,
       omit: checked.omit,
+      ...(checked.contextWindow !== undefined ? { contextWindow: checked.contextWindow } : {}),
       status: status === 'unverified' ? 'unverified' : 'configured',
       ...(status === 'unverified' && keyAccepted ? { keyAccepted: true } : {}),
     })

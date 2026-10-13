@@ -28,6 +28,11 @@ export interface LlmConnection {
    * from the browser): the provider was seen to check keys, and took this one.
    */
   keyAccepted?: boolean
+  /**
+   * The model's context window in tokens, from the catalog at the time it was
+   * checked. Absent on connections saved before it was kept.
+   */
+  contextWindow?: number
 }
 
 export interface LlmState {
@@ -139,4 +144,19 @@ export function llmChoiceToSend(
   // Đang tải cấu hình → chưa biết, giữ hành vi hiện tại.
   if (!flags.byokEnabled && !flags.configLoading) return null
   return activeLlmChoice(state)
+}
+
+/**
+ * The context window to send as the top-level `token_limit` of POST /chat:
+ * only when the turn goes out on the user's own connection (same conditions as
+ * `llmChoiceToSend`) and the window is known. Never part of the `llm` body —
+ * the backend rejects unknown fields there.
+ */
+export function llmTokenLimitToSend(
+  state: LlmState,
+  flags: { byokEnabled: boolean; configLoading: boolean },
+): number | undefined {
+  if (!llmChoiceToSend(state, flags)) return undefined
+  const window = state.connections[state.active]?.contextWindow
+  return typeof window === 'number' && Number.isInteger(window) && window > 0 ? window : undefined
 }

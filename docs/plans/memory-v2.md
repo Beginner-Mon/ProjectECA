@@ -66,7 +66,7 @@ trên Lambda invocation có thể kết thúc cùng lúc, nên việc ghi câu t
 | --- | --- | --- |
 | 1 | LTM lưu cả fact sức khoẻ của user | Tri, 13/10 |
 | 2 | Xoá hội thoại thì xoá fact rút từ nó | Tri, 13/10 |
-| 3 | Bước lọc LTM chạy **khi hội thoại kết thúc**. Chạy sau mỗi lượt là một công tắc đang tắt; chỉ bật nếu số đo cho thấy đáng | Tri, 13/10 |
+| 3 | Bước lọc LTM chạy **sau mỗi lượt**, ở cuối `housekeep`, sau khi câu trả lời đã gửi (công tắc `ltm_include_current_session`, mặc định bật). Số đo: khoảng 0,7–0,85 s mỗi lời gọi. Tắt công tắc thì chỉ đọc các hội thoại user đã rời | Tri theo đề xuất của K, 13/10 |
 | 4 | Model BYOK cửa sổ nhỏ vẫn hiển thị | Tri, 13/10 |
 | 5 | Không thêm LangGraph checkpointer | K đề xuất |
 | 6 | `summaries` chỉ còn vai STM. Tra chuyện cũ chuyển sang `turn_index` | K đề xuất |
@@ -182,22 +182,25 @@ embed mỗi lượt, không gọi LLM, chạy sau khi câu trả lời đã gử
 ## Đợt C — cần Tri xem số của A2 và chấp nhận
 
 **C1. LTM (P3)** · Opus · sau B1
-Chạy khi hội thoại kết thúc: Lambda nhận ra điều đó lúc user gửi tin ở hội thoại khác, và bước
-lọc chạy trong request đó sau khi câu trả lời đã gửi. Fact của hội thoại trước vì vậy có từ tin
-thứ hai của hội thoại mới.
+Chạy ở cuối `housekeep` của mỗi lượt, sau khi câu trả lời đã gửi. Mỗi lần đọc phần chưa đọc của
+hội thoại đang chat (câu trả lời lượt trước và câu hỏi lượt này), rồi các hội thoại khác còn phần
+chưa đọc, tổng cộng tối đa 2 hội thoại. Fact user vừa nói vì vậy có từ lượt kế tiếp. Phần chưa
+đọc mà không có tin nào của user thì không gọi LLM, chỉ dời mốc `ltm_up_to_seq`.
 - Migration `015_user_memory_ltm`: `user_memory` thêm `source` (`user` | `extracted`),
   `source_session_id` (FK `conversations`, ON DELETE CASCADE), `updated_at`; `conversations` thêm
   `ltm_up_to_seq`.
-- `nodes/summarizer.py`: `extract_user_facts` thay `summarize_finished_sessions`. Một lời gọi role
+- `nodes/fact_extractor.py`: `extract_user_facts`, được `housekeep` gọi sau cùng. Một lời gọi role
   `memory`, JSON: đọc tin chưa lọc của một session và danh sách fact hiện có, trả thao tác
-  ADD / UPDATE / DELETE / NOOP. Áp dụng và cập nhật `ltm_up_to_seq` trong một transaction. Tối đa
-  2 session mỗi lượt.
+  ADD / UPDATE / DELETE (danh sách rỗng là không có gì mới). Áp dụng và cập nhật `ltm_up_to_seq`
+  trong một transaction. Tối đa 2 session mỗi lượt. `summarize_finished_sessions` không bị thay ở
+  đây: nó tắt theo công tắc chỉ mục lượt của B1.
 - Chặn bằng code: tối đa 5 thao tác mỗi lần; fact ≤ 300 ký tự; bỏ fact chứa số giấy tờ, thẻ, điện
   thoại, email; không sửa hay xoá fact `source = 'user'`; DELETE là `valid = false`.
 - Chỉ ghi điều user tự nói về mình; gợi ý và suy đoán của agent không thành fact.
-- Cờ `memory.ltm_enabled` (mặc định tắt) và `memory.ltm_include_current_session` (mặc định tắt).
-- Test: thay `test_session_end_summary.py`; fact `source = 'user'` không bị đụng; xoá hội thoại
-  làm mất fact của nó.
+- Cờ `memory.ltm_enabled` (mặc định tắt; biến môi trường `VVA_LTM` thắng) và
+  `memory.ltm_include_current_session` (mặc định bật).
+- Test: `test_fact_extractor.py` và `test_fact_extractor_integration.py`; fact `source = 'user'`
+  không bị đụng; xoá hội thoại làm mất fact của nó. Không ghi nội dung fact hay tin nhắn vào log.
 
 **C2. Màn hình "ECA nhớ gì về bạn" và chính sách (P4)** · Sonnet · sau C1
 - View `memory` trong `ProfileSettingsModal.tsx` (4 chỗ: union, danh sách back, tiêu đề, nội

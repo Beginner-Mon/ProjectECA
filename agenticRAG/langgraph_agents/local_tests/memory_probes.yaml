@@ -1,0 +1,334 @@
+# Bộ câu thử cho run_memory_probe.py (memory-v2 A2).
+# 20 hội thoại tổng hợp viết tay — không có dữ liệu người dùng thật.
+#
+# Mỗi hội thoại:
+#   id, lang, date (ngày hội thoại, ISO), stored (fact đã lưu), messages
+#   (xen kẽ user/assistant, bắt đầu bằng user, kết thúc bằng assistant),
+#   expect:
+#     ops        — thao tác BẮT BUỘC. op ADD|UPDATE|DELETE; category (tuỳ chọn);
+#                  id (UPDATE/DELETE); groups = danh sách nhóm cụm từ, mỗi nhóm
+#                  cần ít nhất một cụm xuất hiện trong fact (so khớp không phân
+#                  biệt hoa thường và dấu).
+#     acceptable — thao tác KHÔNG bắt buộc nhưng chấp nhận được (fact đúng, vô hại).
+#     forbidden  — cụm từ không được xuất hiện trong bất kỳ fact nào (so khớp
+#                  nguyên văn, không phân biệt hoa thường, giữ dấu).
+probes:
+  # ── 1. Fact sức khoẻ nói thẳng ─────────────────────────────────────────
+  - id: c01_vi_plain_condition
+    lang: vi
+    date: "2026-10-13"
+    stored: []
+    messages:
+      - {role: user, content: "Chào bạn. Mình bị đau lưng dưới khoảng 2 năm nay, bác sĩ bảo là thoát vị đĩa đệm L4-L5."}
+      - {role: assistant, content: "Chào bạn, cảm ơn bạn đã chia sẻ. Đau lưng dưới kéo dài như vậy chắc hẳn rất khó chịu. Mình có thể gợi ý một số bài vận động nhẹ nhàng, nhưng bạn nên trao đổi thêm với bác sĩ điều trị trước khi tăng cường độ nhé."}
+      - {role: user, content: "Vậy mình nên tập gì buổi sáng cho đỡ cứng lưng?"}
+      - {role: assistant, content: "Bạn có thể thử bài xoay nhẹ hông khi nằm ngửa và bài mèo-bò trên bốn điểm chống. Mỗi bài làm chậm 8-10 lần, dừng ngay nếu thấy đau lan xuống chân. Tránh cúi gập người về phía trước khi mới ngủ dậy."}
+    expect:
+      ops:
+        - {op: ADD, category: condition, groups: [["thoát vị", "đĩa đệm", "L4"]]}
+      forbidden: []
+
+  # ── 2. Fact sức khoẻ nói thẳng (tiếng Anh, phẫu thuật) ─────────────────
+  - id: c02_en_plain_surgery
+    lang: en
+    date: "2026-10-13"
+    stored: []
+    messages:
+      - {role: user, content: "I had ACL reconstruction on my right knee in March 2025."}
+      - {role: assistant, content: "Thanks for telling me. That's a big recovery, and a year and a half out you're probably well into strengthening. How is the knee feeling day to day?"}
+      - {role: user, content: "Mostly fine. What can I do to strengthen it further?"}
+      - {role: assistant, content: "Good options are step-ups, single-leg glute bridges and slow tempo squats within a comfortable range. Aim for two or three sessions a week and stop if you feel sharp pain or the knee feels unstable. Your surgeon or physio can tell you which load level is right for you."}
+    expect:
+      ops:
+        - {op: ADD, category: condition, groups: [["ACL"], ["2025", "March", "right knee", "right"]]}
+      forbidden: []
+
+  # ── 3. Fact lẫn trong chuyện phiếm ─────────────────────────────────────
+  - id: c03_vi_buried_small_talk
+    lang: vi
+    date: "2026-10-13"
+    stored: []
+    messages:
+      - {role: user, content: "Hôm nay trời đẹp ghê, mình vừa đi chợ về xong. À mà mình bị tiểu đường type 2 nên phải kiêng đồ ngọt lắm. Bạn gợi ý giúp mình bài tập nhẹ buổi sáng được không?"}
+      - {role: assistant, content: "Nghe thích quá, đi chợ sáng sớm là một cách vận động rất tốt đó. Với buổi sáng, bạn có thể đi bộ nhanh 15-20 phút rồi giãn cơ nhẹ nhàng. Nếu bạn đang dùng thuốc hạ đường huyết, hãy ăn nhẹ trước khi tập và mang theo ít đường phòng khi cần."}
+      - {role: user, content: "Cảm ơn bạn, mình sẽ thử."}
+      - {role: assistant, content: "Chúc bạn có buổi sáng thật vui. Nếu thấy chóng mặt hay run tay khi tập thì nghỉ ngay và đo lại đường huyết nhé."}
+    expect:
+      ops:
+        - {op: ADD, category: condition, groups: [["tiểu đường", "đái tháo đường", "type 2", "diabetes"]]}
+      acceptable:
+        - {op: ADD, groups: [["đồ ngọt", "kiêng", "ngọt"]]}
+      forbidden: ["đi chợ"]
+
+  # ── 4. Fact lẫn trong chuyện phiếm (tiếng Anh) ─────────────────────────
+  - id: c04_en_buried_small_talk
+    lang: en
+    date: "2026-10-13"
+    stored: []
+    messages:
+      - {role: user, content: "Ha, my cat knocked my coffee over again this morning. Anyway, I've had a rotator cuff tear in my left shoulder for a while now so anything overhead is out. Can you suggest an upper body workout?"}
+      - {role: assistant, content: "Cats and coffee, a classic. For an upper body session that keeps your hands below shoulder height, you could do rows with a band, bicep curls and wall push-ups. Keep the range comfortable and stop if the shoulder pinches."}
+      - {role: user, content: "Nice, the band rows sound good."}
+      - {role: assistant, content: "Great. Start with two sets of twelve with a light band and slow control on the way back. Let me know if you'd like a progression for next week."}
+    expect:
+      ops:
+        - {op: ADD, category: condition, groups: [["rotator cuff"]]}
+      acceptable:
+        - {op: ADD, category: restriction, groups: [["overhead"]]}
+      forbidden: ["cat", "coffee"]
+
+  # ── 5. Assistant giả định điều user không xác nhận (tiếng Việt) ────────
+  - id: c05_vi_assistant_assumes
+    lang: vi
+    date: "2026-10-13"
+    stored: []
+    messages:
+      - {role: user, content: "Mình hay ngồi máy tính nhiều, cổ cứng lắm. Có bài nào giãn cổ không?"}
+      - {role: assistant, content: "Với tình trạng cổ cứng kéo dài, nhiều khả năng bạn đang bị thoái hóa đốt sống cổ hoặc thoát vị đĩa đệm cổ. Bạn nên đi chụp MRI để chắc chắn. Trong lúc đó, bạn có thể nghiêng đầu sang hai bên, giữ 15 giây mỗi bên, lặp lại 3 lần."}
+      - {role: user, content: "Ừ, cho mình thêm vài bài giãn cơ đơn giản nữa đi."}
+      - {role: assistant, content: "Bạn thử thêm bài xoay vai ra sau 10 lần và bài đặt tay lên đầu, kéo nhẹ đầu về một bên. Làm chậm và đều hơi thở, đừng giật mạnh."}
+    expect:
+      ops: []
+      acceptable:
+        - {op: ADD, groups: [["cổ cứng", "cứng cổ", "ngồi máy tính", "ngồi nhiều"]]}
+      forbidden: ["thoái hóa", "đốt sống cổ", "MRI"]
+
+  # ── 6. Assistant gợi ý điều user không nói (tiếng Anh) ─────────────────
+  - id: c06_en_assistant_suggests
+    lang: en
+    date: "2026-10-13"
+    stored: []
+    messages:
+      - {role: user, content: "Can you give me a 10 minute morning routine?"}
+      - {role: assistant, content: "Sure. Since you probably have tight hips from sitting and maybe some mild sciatica, I'd start with gentle hip openers, then a few cat-cows and finish with a standing forward fold. Take each move slowly and breathe."}
+      - {role: user, content: "Sounds good, thanks."}
+      - {role: assistant, content: "You're welcome. Let me know if you'd like a shorter evening version as well."}
+    expect:
+      ops: []
+      forbidden: ["sciatica", "tight hips"]
+
+  # ── 7. User phủ định fact đã lưu → DELETE (tiếng Việt) ─────────────────
+  - id: c07_vi_negate
+    lang: vi
+    date: "2026-10-13"
+    stored:
+      - {id: f1, fact: "Đau đầu gối phải khi chạy bộ", category: condition, locked: false}
+      - {id: f2, fact: "Muốn giảm 5 kg trong năm nay", category: goal, locked: false}
+    messages:
+      - {role: user, content: "Đầu gối mình khỏi hẳn rồi, không còn đau nữa."}
+      - {role: assistant, content: "Tin vui quá! Nghe vậy là phần hồi phục của bạn đang đi đúng hướng. Bạn vẫn nên tăng lại cường độ từ từ để khớp quen dần."}
+      - {role: user, content: "Vậy mình tập squat lại được chưa?"}
+      - {role: assistant, content: "Bạn có thể bắt đầu với squat chạm ghế, 2 hiệp 10 lần, rồi tăng dần sau mỗi tuần. Nếu có cảm giác nhói ở gối thì dừng lại và giảm biên độ."}
+    expect:
+      ops:
+        - {op: DELETE, id: f1}
+      forbidden: []
+
+  # ── 8. User phủ định fact đã lưu → DELETE (tiếng Anh) ──────────────────
+  - id: c08_en_negate
+    lang: en
+    date: "2026-10-13"
+    stored:
+      - {id: f1, fact: "Avoids running because of shin splints", category: restriction, locked: false}
+      - {id: f2, fact: "Works as a nurse on long shifts", category: profile, locked: false}
+    messages:
+      - {role: user, content: "Good news, my doctor cleared me to run again. The shin splints are completely gone."}
+      - {role: assistant, content: "That's great to hear! Since you've been off running for a while, build back gradually. A run-walk interval format works well for the first couple of weeks."}
+      - {role: user, content: "What would a first week look like?"}
+      - {role: assistant, content: "Try three sessions: one minute easy jog, two minutes walk, repeated eight times. Keep every session on soft ground if you can and leave a rest day between them. If the shin ache comes back, drop back a step."}
+    expect:
+      ops:
+        - {op: DELETE, id: f1}
+      forbidden: []
+
+  # ── 9. User thay đổi fact đã lưu → UPDATE (tiếng Việt) ─────────────────
+  - id: c09_vi_update
+    lang: vi
+    date: "2026-10-13"
+    stored:
+      - {id: f1, fact: "Đau gối trái khi đi bộ quá 10 phút (tháng 7/2026)", category: condition, locked: false}
+    messages:
+      - {role: user, content: "Giờ mình đi bộ cả tiếng cũng không đau gối nữa, nhưng leo cầu thang vẫn còn hơi nhói."}
+      - {role: assistant, content: "Tiến bộ rõ rệt đó! Đi bộ cả tiếng mà không đau là dấu hiệu tốt. Leo cầu thang đòi hỏi gối chịu lực nhiều hơn nên nhói nhẹ cũng là chuyện dễ hiểu ở giai đoạn này."}
+      - {role: user, content: "Mình nên tập gì để leo cầu thang đỡ nhói?"}
+      - {role: assistant, content: "Bài bước lên bậc thấp (step-up) rất hợp, bắt đầu với bậc cao 10-15 cm, 2 hiệp 8 lần mỗi chân. Giữ đầu gối thẳng hàng với ngón chân và bước xuống thật chậm."}
+    expect:
+      ops:
+        - {op: UPDATE, id: f1, category: condition, groups: [["cầu thang"]]}
+      forbidden: []
+
+  # ── 10. User thay đổi fact đã lưu → UPDATE (tiếng Anh) ─────────────────
+  - id: c10_en_update
+    lang: en
+    date: "2026-10-13"
+    stored:
+      - {id: f1, fact: "Has lower back pain when sitting for more than an hour", category: condition, locked: false}
+    messages:
+      - {role: user, content: "Quick update: I started seeing a physio and now the pain only comes when I lift heavy things. Sitting is fine."}
+      - {role: assistant, content: "That's a nice change. Pain that only shows up under load usually points to what to train rather than what to avoid. Your physio will be the best guide on how heavy to go."}
+      - {role: user, content: "Any tips for lifting groceries without it flaring up?"}
+      - {role: assistant, content: "Hinge at the hips instead of rounding your back, keep the bags close to your body and split the load between both hands. Two lighter trips are better than one heavy one while it settles."}
+    expect:
+      ops:
+        - {op: UPDATE, id: f1, category: condition, groups: [["lift", "heavy"]]}
+      forbidden: []
+
+  # ── 11. User mâu thuẫn fact bị KHOÁ → ADD, không UPDATE/DELETE ─────────
+  - id: c11_vi_locked_contradict
+    lang: vi
+    date: "2026-10-13"
+    stored:
+      - {id: f1, fact: "Không có chấn thương hay bệnh lý nào", category: profile, locked: true}
+    messages:
+      - {role: user, content: "Mình mới bị bong gân mắt cá chân trái tuần trước, giờ đi lại vẫn còn sưng."}
+      - {role: assistant, content: "Mình rất tiếc khi nghe vậy. Bong gân còn sưng thì bạn nên cho chân nghỉ, kê cao khi ngồi và chườm lạnh. Nếu sưng không giảm sau vài ngày hoặc không chịu lực được thì nên đi khám nhé."}
+      - {role: user, content: "Trong lúc này mình có thể tập phần thân trên không?"}
+      - {role: assistant, content: "Được, bạn có thể tập tay và vai khi ngồi, ví dụ nâng tạ nhẹ hoặc kéo dây kháng lực. Tránh các bài đứng một chân hoặc nhảy cho đến khi mắt cá ổn định hơn."}
+    expect:
+      ops:
+        - {op: ADD, category: condition, groups: [["bong gân", "mắt cá"]]}
+      forbidden: ["tuần trước"]
+
+  # ── 12. User mâu thuẫn fact bị KHOÁ (tiếng Anh) ────────────────────────
+  - id: c12_en_locked_contradict
+    lang: en
+    date: "2026-10-13"
+    stored:
+      - {id: f1, fact: "Prefers low-impact exercise only", category: preference, locked: true}
+    messages:
+      - {role: user, content: "I actually do HIIT three times a week and I enjoy it, so please don't just give me low-impact stuff."}
+      - {role: assistant, content: "Understood, I'll include higher-intensity options. Since you already train with intervals, I can suggest progressions rather than basics."}
+      - {role: user, content: "Great. Give me a 20 minute session for today."}
+      - {role: assistant, content: "Try four rounds: 40 seconds of squat jumps, 20 seconds rest, 40 seconds of mountain climbers, 20 seconds rest, then a 1 minute walk between rounds. Warm up for three minutes first."}
+    expect:
+      ops:
+        - {op: ADD, category: preference, groups: [["HIIT", "interval", "high-intensity", "high intensity"]]}
+      forbidden: []
+
+  # ── 13. Chỉ là trạng thái nhất thời ────────────────────────────────────
+  - id: c13_vi_passing_state
+    lang: vi
+    date: "2026-10-13"
+    stored: []
+    messages:
+      - {role: user, content: "Mệt quá hôm nay, tối qua ngủ không đủ giấc."}
+      - {role: assistant, content: "Nghe là bạn cần được nghỉ ngơi rồi. Hôm nay bạn có thể giảm nhẹ buổi tập, chỉ cần đi bộ chậm và giãn cơ vài phút. Cố gắng đi ngủ sớm hơn tối nay nhé."}
+      - {role: user, content: "Ừ, hôm nay chắc mình chỉ tập nhẹ thôi."}
+      - {role: assistant, content: "Như vậy là hợp lý. Bạn thử bài thở bụng 5 phút và vài động tác xoay cổ vai thật nhẹ, rồi nghỉ sớm."}
+    expect:
+      ops: []
+      forbidden: []
+
+  # ── 14. Chỉ chuyện phiếm (tiếng Anh) ───────────────────────────────────
+  - id: c14_en_small_talk
+    lang: en
+    date: "2026-10-13"
+    stored: []
+    messages:
+      - {role: user, content: "Hi! How's your day going?"}
+      - {role: assistant, content: "Hi there, it's going well, thanks for asking. How are you doing today?"}
+      - {role: user, content: "Pretty good. It's been raining all week where I am, so I've mostly been watching movies."}
+      - {role: assistant, content: "Rainy weeks are good for that. If you feel like moving a bit between movies, a few minutes of stretching on the sofa goes a long way."}
+      - {role: user, content: "Ha, maybe later. Thanks for the chat."}
+      - {role: assistant, content: "Any time. Come back whenever you want to plan a session."}
+    expect:
+      ops: []
+      forbidden: []
+
+  # ── 15. Mục tiêu ───────────────────────────────────────────────────────
+  - id: c15_vi_goal
+    lang: vi
+    date: "2026-10-13"
+    stored: []
+    messages:
+      - {role: user, content: "Mục tiêu của mình là chạy được 10 km vào tháng 4 năm sau."}
+      - {role: assistant, content: "Mục tiêu rất rõ ràng và còn nhiều thời gian chuẩn bị. Hiện tại bạn chạy được bao xa mỗi lần?"}
+      - {role: user, content: "Khoảng 3 km thôi, chạy xong hơi hụt hơi."}
+      - {role: assistant, content: "Vậy bạn nên tăng quãng đường khoảng 10% mỗi tuần và xen kẽ ngày chạy với ngày nghỉ hoặc đi bộ nhanh. Thêm 2 buổi tập sức mạnh chân và lõi mỗi tuần sẽ giúp bạn chạy bền hơn."}
+    expect:
+      ops:
+        - {op: ADD, category: goal, groups: [["10 km", "10km"]]}
+      acceptable:
+        - {op: ADD, groups: [["3 km", "3km"]]}
+      forbidden: []
+
+  # ── 16. Sở thích về cách viết câu trả lời ──────────────────────────────
+  - id: c16_en_preference_style
+    lang: en
+    date: "2026-10-13"
+    stored: []
+    messages:
+      - {role: user, content: "Before we start: please keep your answers short and use bullet points. I really don't read long paragraphs."}
+      - {role: assistant, content: "Got it, short answers with bullet points from now on. What would you like to work on?"}
+      - {role: user, content: "A quick desk stretch for my wrists."}
+      - {role: assistant, content: "- Extend one arm, palm up, and gently pull the fingers back for 15 seconds.\n- Switch to palm down and repeat.\n- Make slow fists and open them 10 times.\n- Do the set every hour or so."}
+    expect:
+      ops:
+        - {op: ADD, category: preference, groups: [["short", "brief", "concise"], ["bullet"]]}
+      forbidden: []
+
+  # ── 17. User đưa số điện thoại / e-mail ────────────────────────────────
+  - id: c17_vi_phone_email
+    lang: vi
+    date: "2026-10-13"
+    stored: []
+    messages:
+      - {role: user, content: "Mình bị viêm khớp gối. Bạn nhắn lịch tập qua số 0912 345 678 hoặc email tran.van.a@gmail.com nhé."}
+      - {role: assistant, content: "Cảm ơn bạn đã chia sẻ, nhưng mình không thể gửi tin nhắn hay email ra ngoài cuộc trò chuyện này, mọi thông tin mình sẽ trả lời ngay tại đây. Với viêm khớp gối, bạn nên ưu tiên các bài ít chịu lực như đạp xe tại chỗ và bơi."}
+      - {role: user, content: "Ok, vậy cho mình lịch tập 3 buổi một tuần ở đây luôn."}
+      - {role: assistant, content: "Thứ Hai: đạp xe tại chỗ 20 phút. Thứ Tư: tăng sức mạnh đùi bằng bài nâng chân thẳng khi nằm. Thứ Sáu: bơi hoặc đi bộ dưới nước 20 phút. Giữ cường độ vừa phải và nghỉ nếu khớp sưng nóng."}
+    expect:
+      ops:
+        - {op: ADD, category: condition, groups: [["viêm khớp"]]}
+      forbidden: ["0912", "345 678", "345678", "tran.van.a", "gmail"]
+
+  # ── 18. User kể bệnh của người thân (không phải của user) ──────────────
+  - id: c18_en_relative_condition
+    lang: en
+    date: "2026-10-13"
+    stored: []
+    messages:
+      - {role: user, content: "My mom has osteoporosis and I'm worried about her falling. Can you suggest some balance exercises for her?"}
+      - {role: assistant, content: "That's thoughtful of you. For someone with osteoporosis, balance work like standing with feet together near a counter, heel-to-toe walking and gentle weight shifts are good starting points. She should always have something stable to hold on to, and her doctor should approve the plan."}
+      - {role: user, content: "Thanks, I'll show her those tomorrow."}
+      - {role: assistant, content: "Lovely. Keep sessions short, about ten minutes, and make sure the floor is clear and non-slip."}
+    expect:
+      ops: []
+      forbidden: ["osteoporosis", "mom", "mother"]
+
+  # ── 19. Thời gian tương đối phải thành ngày tuyệt đối ──────────────────
+  - id: c19_vi_relative_time
+    lang: vi
+    date: "2026-10-13"
+    stored: []
+    messages:
+      - {role: user, content: "Mình mổ khớp vai phải cách đây 3 tháng rồi, giờ vẫn chưa nhấc tay lên quá đầu được."}
+      - {role: assistant, content: "Ba tháng sau mổ mà chưa nhấc tay quá đầu được là khá thường gặp, mỗi người hồi phục một nhịp. Bạn đang tập phục hồi chức năng với kỹ thuật viên hay tự tập ở nhà?"}
+      - {role: user, content: "Tự tập ở nhà thôi, bạn chỉ mình vài bài an toàn."}
+      - {role: assistant, content: "Bạn có thể làm bài con lắc (cúi người, để tay buông thõng rồi đung đưa nhẹ) và bài trượt tay trên bàn về phía trước. Chỉ làm trong tầm không đau, và hỏi bác sĩ phẫu thuật khi nào được tăng biên độ."}
+    expect:
+      ops:
+        - {op: ADD, category: condition, groups: [["vai"], ["tháng 7", "7/2026", "07/2026", "2026-07", "tháng 07"]]}
+      forbidden: ["3 tháng", "ba tháng", "cách đây"]
+
+  # ── 20. Hội thoại dài, ba fact riêng biệt ──────────────────────────────
+  - id: c20_en_three_facts
+    lang: en
+    date: "2026-10-13"
+    stored:
+      - {id: f1, fact: "Works as a software developer", category: profile, locked: false}
+    messages:
+      - {role: user, content: "Hey, I'm back. I broke my wrist skiing last month and the cast just came off."}
+      - {role: assistant, content: "Welcome back, and glad the cast is off. The wrist will be stiff and the forearm muscles weaker for a while. Did your doctor or physio give you any guidance?"}
+      - {role: user, content: "Yes, my physio told me to avoid push-ups and any weight-bearing on that hand for another six weeks."}
+      - {role: assistant, content: "That's a sensible restriction. In the meantime we can work on gentle range of motion: wrist circles, finger flexes and tendon glides, all without load."}
+      - {role: user, content: "Cool. My goal is to be back on skis by February, so I want to be strong by then."}
+      - {role: assistant, content: "February is realistic if healing goes to plan. We can build a progression: mobility now, light grip work after your physio approves, then loaded wrist and shoulder strength closer to the season."}
+      - {role: user, content: "Sounds like a plan. Show me today's mobility routine."}
+      - {role: assistant, content: "Do wrist circles ten times each direction, then ten slow finger flexes and extensions, and finish with five tendon glides. Repeat the set twice and stop if it hurts."}
+    expect:
+      ops:
+        - {op: ADD, category: condition, groups: [["wrist"], ["September", "2026-09", "09/2026", "9/2026"]]}
+        - {op: ADD, category: restriction, groups: [["push-up", "weight-bearing", "weight bearing"]]}
+        - {op: ADD, category: goal, groups: [["ski"], ["February"]]}
+      forbidden: ["last month"]

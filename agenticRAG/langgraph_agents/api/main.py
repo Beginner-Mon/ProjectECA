@@ -602,6 +602,67 @@ async def _write_question(**row) -> bool:
         return False
 
 
+# Answer writes are tasks of their own for the same reason: an answer that is
+# complete, or that the user watched arrive, must not be lost with the stream.
+_answer_write_tasks: set[asyncio.Task] = set()
+
+
+def _start_answer_write(coro) -> asyncio.Task:
+    task = asyncio.create_task(coro)
+    _answer_write_tasks.add(task)
+    task.add_done_callback(_answer_write_tasks.discard)
+    return task
+
+
+def _turn_meta(req, request_id, final_state: dict, t0: float) -> dict:
+    return {
+        "request_id": request_id,
+        "persona_id": req.persona_id,
+        "ui_locale": req.locale,
+        "output_mode": req.output_mode,
+        "web_search": req.web_search,
+        "required_outputs": final_state.get("required_outputs"),
+        "grader_result": final_state.get("grader_result"),
+        "grader_detail": final_state.get("grader_detail"),
+        "latency_ms": int((time.time() - t0) * 1000),
+    }
+
+
+def _answer_row(req, final_state: dict, text: str, meta: dict) -> dict:
+    return {
+        "session_id": req.session_id,
+        "user_query": req.query,
+        "assistant_answer": text,
+        "total_tokens": final_state.get("total_tokens", 0),
+        "motion_job_id": final_state.get("motion_job_id"),
+        "motion_prompt": final_state.get("motion_prompt"),
+        "meta": meta,
+    }
+
+
+async def _save_answer(question_write, question: dict, answer: dict) -> str | None:
+    """The question first, retried once if its own write failed; then the answer."""
+    if not await asyncio.shield(question_write):
+        await write_turn_question(**question)
+    return await write_turn_answer(**answer)
+
+
+async def _write_answer(question_write, question: dict, answer: dict) -> tuple[bool, str | None]:
+    """(saved, assistant message id). Never raises, for the reason _write_question doesn't."""
+    try:
+        return True, await _save_answer(question_write, question, answer)
+    except Exception as exc:
+        logger.warning("session_persist_failed", extra={"error": str(exc)})
+        return False, None
+
+
+async def _write_partial_answer(question_write, question: dict, answer: dict) -> None:
+    try:
+        await _save_answer(question_write, question, answer)
+    except Exception as exc:
+        logger.warning("partial_answer_persist_failed", extra={"error": str(exc)})
+
+
 async def _stream_chat(req, request_id, config, state, background_tasks, request=None, resolved_user_id=None, llm_req=None):
     """Core SSE stream: graph execution + post-processing.
 
@@ -618,6 +679,7 @@ async def _stream_chat(req, request_id, config, state, background_tasks, request
     final_state: dict = {}
     streamed_text = ""
     conversation_stage_started = False
+    answer_write: asyncio.Task | None = None
 
     graph = _get_graph()
     logger.info("chat_start", extra={"query": req.query[:120], "session_id": req.session_id})
@@ -751,8 +813,9 @@ async def _stream_chat(req, request_id, config, state, background_tasks, request
                             {"node": "synthesizer", "status": "started"},
                         )
                         conversation_stage_started = True
-                    yield encode_event("token", {"content": payload["content"]})
+                    # Counted before the yield: a cut lands on the yield.
                     streamed_text += str(payload["content"])
+                    yield encode_event("token", {"content": payload["content"]})
 
         if llm_req is not None and getattr(llm_req, "failure", None):
             yield encode_event(
@@ -774,40 +837,26 @@ async def _stream_chat(req, request_id, config, state, background_tasks, request
         # Eager session write. The question comes first, answer or no answer: it
         # has to be in the table before the answer is, and before this stream
         # ends. If the write started with the turn failed, it gets one more
-        # attempt here; with no question saved, no answer is written either.
-        # Shielded: cancelling this stream must not cancel that write.
+        # attempt; with no question saved, no answer is written either.
+        # Shielded: cancelling this stream must not cancel either write.
         try:
-            if not await asyncio.shield(question_write):
-                await write_turn_question(**question)
             if final_state.get("final_answer"):
                 # Turn context snapshot — written into the assistant
                 # row's extras.meta, never logged as-is. It exists so a 👎 vote can
                 # be traced back to request_id (→ CloudWatch) without a second
                 # table, and so ops SQL can group by persona/locale/grader result.
-                meta = {
-                    "request_id": request_id,
-                    "persona_id": req.persona_id,
-                    "ui_locale": req.locale,
-                    "output_mode": req.output_mode,
-                    "web_search": req.web_search,
-                    "required_outputs": final_state.get("required_outputs"),
-                    "grader_result": final_state.get("grader_result"),
-                    "grader_detail": final_state.get("grader_detail"),
-                    "latency_ms": int((time.time() - t0) * 1000),
-                }
-                assistant_message_id = await write_turn_answer(
-                    session_id=req.session_id,
-                    user_query=req.query,
-                    assistant_answer=final_answer,
-                    total_tokens=final_state.get("total_tokens", 0),
-                    motion_job_id=final_state.get("motion_job_id"),
-                    motion_prompt=final_state.get("motion_prompt"),
-                    meta=meta,
-                )
-                yield encode_event(
-                    "session_persisted",
-                    {"session_id": req.session_id, "assistant_message_id": assistant_message_id},
-                )
+                meta = _turn_meta(req, request_id, final_state, t0)
+                answer_write = _start_answer_write(_write_answer(
+                    question_write, question,
+                    _answer_row(req, final_state, final_answer, meta)))
+                saved, assistant_message_id = await asyncio.shield(answer_write)
+                if saved:
+                    yield encode_event(
+                        "session_persisted",
+                        {"session_id": req.session_id, "assistant_message_id": assistant_message_id},
+                    )
+            elif not await asyncio.shield(question_write):
+                await write_turn_question(**question)
         except Exception as exc:
             logger.warning("session_persist_failed", extra={"error": str(exc)})
 
@@ -884,6 +933,16 @@ async def _stream_chat(req, request_id, config, state, background_tasks, request
                 logger.warning("housekeeping_timeout", extra={
                     "timeout_s": _HOUSEKEEPING_TIMEOUT_S,
                 })
+    except (asyncio.CancelledError, GeneratorExit):
+        # The stream was cut. What the user already saw is saved as the answer,
+        # marked unfinished. This generator cannot await anything now, so a task
+        # does it. None if the answer write already started, or no text came.
+        if answer_write is None and streamed_text.strip():
+            meta = {**_turn_meta(req, request_id, final_state, t0), "interrupted": True}
+            _start_answer_write(_write_partial_answer(
+                question_write, question,
+                _answer_row(req, final_state, streamed_text, meta)))
+        raise
     except Exception:
         # The turn failed with no answer. Its question must not still be on
         # its way to the table when the response ends.

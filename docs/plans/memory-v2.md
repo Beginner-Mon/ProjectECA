@@ -50,15 +50,15 @@ trước thời điểm đó hiện không để lại gì, kể cả câu hỏi
 
 | Kiểu dừng | Hiện tại | Sau plan |
 | --- | --- | --- |
-| Bấm Stop, mở chat mới, đổi hội thoại, đóng tab | Trình duyệt ngắt kết nối. Server nhận ra thì dừng graph và không lưu gì; không nhận ra thì chạy hết và lưu. Prod 30 ngày: chưa lần nào nhận ra | Câu hỏi đã lưu từ đầu lượt. Server không tự dừng graph nữa; chạy được tới đâu lưu tới đó |
-| Rớt mạng | Như trên. Frontend hiện dòng lỗi, không tải lại | Như trên. Frontend tự tải lại câu trả lời đã lưu |
+| Bấm Stop, mở chat mới, đổi hội thoại, đóng tab | Trình duyệt ngắt kết nối. Server nhận ra thì dừng graph và không lưu gì; không nhận ra thì chạy hết và lưu. Prod 30 ngày: chưa lần nào nhận ra | Khi client ngắt, server dừng lượt ngay. Câu hỏi luôn được lưu. Câu trả lời đã hoàn chỉnh vẫn được lưu; câu trả lời bị cắt lúc đang ghi được lưu tới đoạn đã gửi và đánh dấu chưa xong; chưa có chữ nào thì chỉ có câu hỏi |
+| Rớt mạng | Như trên. Frontend hiện dòng lỗi, không tải lại | Như trên: câu hỏi luôn được lưu, câu trả lời hoàn chỉnh vẫn được lưu, phần bị cắt được lưu và đánh dấu chưa xong. Frontend tự tải lại câu trả lời đã lưu |
 | Lambda hết giờ, hết RAM, crash | Mất cả lượt, không dấu vết | Câu hỏi còn trong DB. Câu trả lời mất; user gửi lại thì chạy lại từ đầu (~9 s) |
 | LLM lỗi bên trong một node | Graph tự xử lý qua `error_handler`, lượt vẫn kết thúc và lưu | Không đổi |
 | Đứt sau khi đã lưu (đang phát giọng) | Câu trả lời đã lưu; giọng bị cắt | Không đổi; nghe lại bằng nút loa |
 
 Không có checkpoint nên trường hợp server chết thật phải chạy lại cả lượt. Checkpoint chỉ bớt
-được planner và retriever (vài giây); synthesizer vẫn viết lại từ đầu. Trên Lambda, nếu việc
-client ngắt làm invocation kết thúc thì phần đang chạy cũng dừng theo; việc A1b đo điều này.
+được planner và retriever (vài giây); synthesizer vẫn viết lại từ đầu. Khi client ngắt, server dừng lượt ngay;
+trên Lambda invocation có thể kết thúc cùng lúc, nên việc ghi câu trả lời có sống sót hay không còn phải đo (việc A1b).
 
 ## Quyết định
 

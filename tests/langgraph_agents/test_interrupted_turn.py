@@ -36,6 +36,8 @@ class _Store:
         self.question_gate: asyncio.Event | None = None   # the write waits on it
         self.question_delay = 0.0
         self.question_failures = 0                        # first N calls raise
+        self.answer_gate: asyncio.Event | None = None     # the answer write waits on it
+        self.answer_fails = False
 
     async def write_turn_question(self, **kwargs):
         self.questions.append(kwargs)
@@ -51,6 +53,10 @@ class _Store:
 
     async def write_turn_answer(self, **kwargs):
         self.answers.append(kwargs)
+        if self.answer_gate is not None:
+            await self.answer_gate.wait()
+        if self.answer_fails:
+            raise RuntimeError("DB down")
         self.log.append("answer_saved")
         return "a-1"
 
@@ -143,8 +149,8 @@ async def test_cutting_the_stream_does_not_cancel_the_question_write(monkeypatch
     assert len(api_module._question_write_tasks) == 1
 
     store.question_gate.set()
-    await asyncio.sleep(0.05)
-    assert store.log == ["question_started", "question_saved"]
+    await _drain_answer_writes()
+    assert store.log == ["question_started", "question_saved", "answer_saved"]
     assert not api_module._question_write_tasks
 
 
@@ -293,3 +299,171 @@ async def test_housekeeping_is_cancelled_when_the_graph_raises(monkeypatch, stor
     await asyncio.sleep(0.01)
 
     assert housekeeping.started and housekeeping.cancelled
+
+
+# ── A cut turn keeps what it got to (memory-v2, A5b) ─────────────────────
+
+
+async def _graph_stalling_after_tokens(*_a, **_k):
+    yield ("updates", {"memory": {}})
+    yield ("custom", {"content": "Xin "})
+    yield ("custom", {"content": "chào"})
+    await asyncio.Event().wait()         # the graph is still working
+
+
+async def _graph_stalling_before_tokens(*_a, **_k):
+    yield ("updates", {"memory": {}})
+    await asyncio.Event().wait()
+
+
+async def _drain_answer_writes():
+    """Detached tasks outlive the generator; wait for them, don't sleep."""
+    await asyncio.gather(*api_module._question_write_tasks, *api_module._answer_write_tasks)
+
+
+async def _cut_after(stream, kind, count):
+    """Read events until `count` of `kind` were seen, then close the stream the
+    way the framework does on a disconnect."""
+    seen = 0
+    async for event in stream:
+        seen += event["event"] == kind
+        if seen == count:
+            break
+    await stream.aclose()
+
+
+@pytest.mark.asyncio
+async def test_text_streamed_before_the_cut_is_saved_as_an_interrupted_answer(
+        monkeypatch, store):
+    _use_graph(monkeypatch, _graph_stalling_after_tokens)
+    store.question_gate = asyncio.Event()
+
+    await _cut_after(_stream(), "token", 2)
+
+    assert store.answers == []           # the question is not in the table yet
+    store.question_gate.set()
+    await _drain_answer_writes()
+
+    assert store.log == ["question_started", "question_saved", "answer_saved"]
+    assert len(store.answers) == 1
+    answer = store.answers[0]
+    assert answer["assistant_answer"] == "Xin chào"
+    assert answer["meta"]["interrupted"] is True
+    assert answer["meta"]["request_id"] == "r-1"
+    assert answer["session_id"] == "s-1" and answer["user_query"] == "Xin chào"
+
+
+@pytest.mark.asyncio
+async def test_cancelling_the_consumer_also_saves_the_streamed_text(monkeypatch, store):
+    _use_graph(monkeypatch, _graph_stalling_after_tokens)
+    tokens = []
+
+    async def drive():
+        async for event in _stream():
+            tokens.append(event)
+
+    consumer = asyncio.create_task(drive())
+    await asyncio.sleep(0.05)
+    consumer.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await consumer
+    await _drain_answer_writes()
+
+    assert [a["assistant_answer"] for a in store.answers] == ["Xin chào"]
+    assert store.answers[0]["meta"]["interrupted"] is True
+
+
+@pytest.mark.asyncio
+async def test_a_cut_before_any_text_writes_no_answer(monkeypatch, store):
+    _use_graph(monkeypatch, _graph_stalling_before_tokens)
+
+    stream = _stream()
+    await stream.__anext__()             # memory finished; no token yet
+    await stream.aclose()
+    await _drain_answer_writes()
+
+    assert store.answers == []
+    assert store.log == ["question_started", "question_saved"]
+
+
+@pytest.mark.asyncio
+async def test_whitespace_alone_is_not_an_answer(monkeypatch, store):
+    async def graph(*_a, **_k):
+        yield ("custom", {"content": " \n"})
+        await asyncio.Event().wait()
+
+    _use_graph(monkeypatch, graph)
+
+    await _cut_after(_stream(), "token", 1)
+    await _drain_answer_writes()
+
+    assert store.answers == []
+
+
+@pytest.mark.asyncio
+async def test_a_cut_during_the_write_of_a_complete_answer_still_saves_it_once(
+        monkeypatch, store):
+    _use_graph(monkeypatch, _answering_graph)
+    store.answer_gate = asyncio.Event()
+
+    stream = _stream()
+    async for event in stream:
+        if event["event"] == "token":
+            break
+    consumer = asyncio.create_task(_events(stream))
+    await asyncio.sleep(0.05)            # graph done; the stream waits on the write
+    assert len(store.answers) == 1
+    consumer.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await consumer
+
+    store.answer_gate.set()
+    await _drain_answer_writes()
+
+    assert store.log == ["question_started", "question_saved", "answer_saved"]
+    assert len(store.answers) == 1
+    assert store.answers[0]["assistant_answer"] == "Xin chào."
+    assert "interrupted" not in store.answers[0]["meta"]
+
+
+@pytest.mark.asyncio
+async def test_a_completed_turn_writes_one_answer_without_the_interrupted_key(
+        monkeypatch, store):
+    _use_graph(monkeypatch, _answering_graph)
+
+    kinds = await _events(_stream())
+
+    assert len(store.answers) == 1
+    assert "interrupted" not in store.answers[0]["meta"]
+    assert store.answers[0]["meta"]["request_id"] == "r-1"
+    assert kinds.count("session_persisted") == 1
+    assert not api_module._answer_write_tasks
+
+
+@pytest.mark.asyncio
+async def test_a_graph_error_after_some_tokens_leaves_only_the_question(monkeypatch, store):
+    async def failing_graph(*_a, **_k):
+        yield ("custom", {"content": "Xin "})
+        raise RuntimeError("graph exploded")
+
+    _use_graph(monkeypatch, failing_graph)
+
+    with pytest.raises(RuntimeError, match="graph exploded"):
+        await _events(_stream())
+    await _drain_answer_writes()
+
+    assert store.answers == []
+    assert store.log == ["question_started", "question_saved"]
+
+
+@pytest.mark.asyncio
+async def test_a_failing_partial_write_does_not_raise_and_is_logged(
+        monkeypatch, store, caplog):
+    _use_graph(monkeypatch, _graph_stalling_after_tokens)
+    store.answer_fails = True
+
+    with caplog.at_level(logging.WARNING, logger="langgraph.api"):
+        await _cut_after(_stream(), "token", 2)
+        await _drain_answer_writes()     # would raise if the task let it out
+
+    assert [r for r in caplog.records if r.getMessage() == "partial_answer_persist_failed"]

@@ -62,6 +62,7 @@ _DEFAULT_TEMPS = {
     "conversation": 0.7,
     "retriever": 0.0,
     "grader": 0.0,
+    "memory": 0.0,
     "health_check": 0.0,
 }
 
@@ -96,14 +97,21 @@ _MAX_RETRIES = 1
 # no reasoning — disabled, the call drops to ~0.8s and judges more accurately.
 # Planner, retriever and synthesizer keep the default thinking mode: saving
 # 1-2s there is not worth the risk of changing tool choice (Tri 04/10).
+# The memory role (summaries, fact extraction; memory-v2) is set up the same
+# way: short structured outputs that need no hidden reasoning. It runs after the
+# reply has been sent, so a 15 s cap is enough, and it has no retry because the
+# work is retried on the next turn anyway.
 _ROLE_EXTRA_BODY: dict[str, dict] = {
     "grader": {"thinking": {"type": "disabled"}},
+    "memory": {"thinking": {"type": "disabled"}},
 }
 _ROLE_TIMEOUT: dict[str, float] = {
     "grader": 5.0,
+    "memory": 15.0,
 }
 _ROLE_MAX_RETRIES: dict[str, int] = {
     "grader": 0,
+    "memory": 0,
 }
 
 # Output token ceiling per role (fix #3). _LONG_OUTPUT_ROLES needs headroom for longer
@@ -333,7 +341,7 @@ def _eca_chat_model(role: str, *, temperature: float | None = None):
 
 # ── BYOK (user-supplied key replaces the ECA key for this request) ────
 
-_ECA_ONLY_ROLES = frozenset({"grader", "health_check"})
+_ECA_ONLY_ROLES = frozenset({"grader", "memory", "health_check"})
 _ROLE_NEEDS = {"synthesizer": "answer", "planner": "tools", "retriever": "tools"}  # default "text"
 
 
@@ -343,8 +351,10 @@ def get_chat_model(role: str, *, temperature: float | None = None):
     Request without ``llm`` behaves exactly as before: ``current_request_llm``
     is ``None`` and this returns the cached ECA model. With a binding, the
     planner / retriever / synthesizer run on the user's key when the probed
-    capabilities cover the role; grader and health_check always stay on ECA
-    so every user is judged by the same clinical standard.
+    capabilities cover the role; grader, memory and health_check always stay
+    on ECA. Grader so every user is judged by the same clinical standard;
+    memory because a user's own key is for their chat turn, not for memory
+    written on their behalf.
     """
     req = current_request_llm()
     if (

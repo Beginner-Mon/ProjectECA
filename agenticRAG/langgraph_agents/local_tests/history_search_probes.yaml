@@ -1,0 +1,374 @@
+# Bộ câu thử cho run_history_search_probe.py (plan memory-v2, A3).
+# Dữ liệu TỔNG HỢP viết tay, không phải dữ liệu người dùng thật.
+#
+# corpus:   các cuộc hội thoại cũ; mỗi lượt = câu user + câu trả lời của trợ lý.
+# recall:   câu user nói ở cuộc hội thoại SAU để nhắc lại; `correct` = id lượt chấp nhận được.
+#           user_words = user gõ gì; retriever_query = câu tìm kiếm tiếng Anh mà retriever LLM sẽ viết.
+#           user_lang  = ngôn ngữ user_words (vi | en).
+# offtopic: câu không có lượt đúng nào.
+
+corpus:
+  - id: c1
+    lang: vi
+    title: Đau lưng dưới do ngồi nhiều
+    date: "2026-09-14"
+    turns:
+      - id: t01
+        user: "Dạo này mình hay đau lưng dưới sau khi ngồi làm việc cả ngày, có bài tập nào nhẹ không?"
+        assistant: "Bạn có thể thử hai bài nhẹ nhàng. Bài mèo-bò (cat-cow): quỳ bốn điểm, hít vào võng lưng, thở ra cong lưng, làm 10 nhịp chậm. Bài bird-dog: đưa tay phải và chân trái ra xa, giữ 3 giây, 8 lần mỗi bên. Làm mỗi ngày, dừng lại nếu đau tăng lên."
+      - id: t02
+        user: "Bird-dog làm sao cho đúng?"
+        assistant: "Giữ lưng phẳng như đặt một ly nước lên lưng. Siết nhẹ bụng, đưa tay và chân đối diện ra xa từ từ, không xoay hông và không ưỡn lưng. Giữ 3 giây rồi về chỗ cũ. Nếu khó giữ thăng bằng, chỉ đưa chân ra trước, khi quen rồi mới thêm tay."
+      - id: t03
+        user: "Mình nên ngồi thế nào để đỡ đau lưng?"
+        assistant: "Ngồi sát vào lưng ghế, hai bàn chân đặt phẳng trên sàn, đầu gối cao ngang hoặc thấp hơn hông một chút. Có thể kê một chiếc khăn cuộn nhỏ ở thắt lưng. Quan trọng hơn cả tư thế là đứng dậy đi lại khoảng 2 phút sau mỗi 45 phút ngồi."
+      - id: t04
+        user: "Đau lưng thì nên chườm nóng hay chườm lạnh?"
+        assistant: "Chườm lạnh 15 phút trong 48 giờ đầu sau một chấn thương mới, khi vùng đau còn sưng hoặc nóng. Với cơ lưng căng cứng kéo dài thì chườm ấm 15 đến 20 phút sẽ dễ chịu hơn. Luôn đặt một lớp vải giữa túi chườm và da."
+      - id: t05
+        user: "Khi nào mình cần đi khám vì đau lưng?"
+        assistant: "Hãy đi khám sớm nếu đau lan xuống chân kèm tê hoặc yếu, đau sau một cú ngã mạnh, sốt kèm đau lưng, đau về đêm không đỡ khi nghỉ, hoặc khó kiểm soát tiểu tiện. Những dấu hiệu này cần bác sĩ đánh giá chứ không nên chỉ tự tập tại nhà."
+
+  - id: c2
+    lang: en
+    title: Lower back strain after deadlifts
+    date: "2026-09-28"
+    turns:
+      - id: t06
+        user: "I tweaked my lower back deadlifting yesterday. Should I stop training completely?"
+        assistant: "You don't need to stop moving. Rest from heavy lifting for one to two days, keep walking, and avoid deep forward bending. Gentle movement usually helps a muscle strain recover faster than bed rest. If you feel numbness or pain shooting down a leg, get it checked before training again."
+      - id: t07
+        user: "Which stretches help with tight hips and back after lifting?"
+        assistant: "Try child's pose for 30 seconds, then the 90/90 hip stretch, 30 seconds per side, and a supine knee-to-chest hold. Breathe slowly and stay in a range that feels like a stretch, not a pinch. Do them after training or in the evening when the muscles are warm."
+      - id: t08
+        user: "When can I go back to deadlifts?"
+        assistant: "Wait until you can walk and bend without pain for a few days. Then relearn the hip hinge with a broomstick, move to an empty bar, and restart at about 50 percent of your previous load. Add weight in small steps over two to three weeks and stop if the pain comes back."
+      - id: t09
+        user: "Can I use a foam roller on my lower back?"
+        assistant: "Rolling directly over the lower back is not recommended because the lumbar spine has no rib cage to protect it and the roller can push it into extension. Roll your glutes, hips and upper back instead, slowly, about a minute per area, and skip any spot that feels sharp."
+
+  - id: c3
+    lang: vi
+    title: Đầu gối sau mổ dây chằng chéo trước
+    date: "2026-08-20"
+    turns:
+      - id: t10
+        user: "Mình mới mổ dây chằng chéo trước đầu gối được 3 tuần, tập gì được?"
+        assistant: "Ở giai đoạn này mục tiêu là lấy lại độ gập duỗi và đánh thức cơ đùi trước. Bạn có thể làm bài siết cơ đùi (quad set), nâng chân thẳng và trượt gót chân (heel slide). Làm nhẹ nhàng, không đau nhói, và theo đúng lịch của bác sĩ phẫu thuật."
+      - id: t11
+        user: "Bài nâng chân thẳng làm bao nhiêu lần?"
+        assistant: "Làm 3 hiệp, mỗi hiệp 10 lần, giữ chân trên cao 2 giây rồi hạ xuống từ từ. Trước khi nâng hãy siết cơ đùi để đầu gối thẳng hẳn. Nếu chân bị run hoặc đầu gối cong lại, giảm xuống 2 hiệp cho đến khi cơ khỏe hơn."
+      - id: t12
+        user: "Đầu gối mình hơi sưng sau khi tập, có sao không?"
+        assistant: "Sưng nhẹ sau tập là thường gặp trong vài tuần đầu sau mổ. Hãy kê cao chân và chườm lạnh 15 phút. Nếu đầu gối sưng tăng dần, nóng đỏ, hoặc bạn sốt, hãy liên hệ bác sĩ phẫu thuật sớm vì có thể là dấu hiệu nhiễm trùng."
+      - id: t13
+        user: "Bao giờ mình đi cầu thang bình thường được?"
+        assistant: "Thường sau khoảng 6 đến 8 tuần, tùy tiến độ hồi phục của bạn. Trong lúc đó hãy bám tay vịn, bước chân khỏe lên trước và chân mổ xuống trước khi đi xuống. Nếu đầu gối còn yếu hoặc muốn khuỵu thì chưa nên vội."
+      - id: t14
+        user: "Mình có thể đạp xe tập không?"
+        assistant: "Được khi bạn đã gập được đầu gối khoảng 110 độ. Dùng xe đạp tại chỗ, nâng yên cao, không lực cản, đạp 10 phút mỗi ngày. Đạp chậm, nếu đầu gối đau hoặc sưng thêm thì dừng lại và báo cho người theo dõi phục hồi chức năng của bạn."
+
+  - id: c4
+    lang: en
+    title: Right shoulder pain overhead
+    date: "2026-09-05"
+    turns:
+      - id: t15
+        user: "My right shoulder hurts when I lift my arm above my head."
+        assistant: "That pattern often points to shoulder impingement, where tendons get pinched under the bone at the top of the shoulder. For now avoid overhead pressing and reaching. Start with pendulum swings and scapular squeezes. If the pain wakes you at night or you lose strength, see a clinician."
+      - id: t16
+        user: "How do I do scapular squeezes?"
+        assistant: "Sit or stand tall with your arms relaxed. Gently pull both shoulder blades back and down as if tucking them into your back pockets, hold for five seconds, then release. Keep your neck relaxed and do not shrug. Aim for 10 repetitions, two or three times a day."
+      - id: t17
+        user: "Is it okay to sleep on the sore shoulder?"
+        assistant: "It's better to avoid lying on it. Sleep on the other side with a pillow hugged against your chest so the sore arm rests in front of you, or on your back with a small pillow under the elbow. This keeps the joint from being compressed for hours at night."
+      - id: t18
+        user: "What about resistance band external rotation?"
+        assistant: "It's a good strengthening step once the pain settles. Keep a rolled towel between your elbow and ribs, elbow bent to 90 degrees, and rotate your forearm outward against a light band. Do two sets of 12, slowly, and stop if you feel pinching at the front of the shoulder."
+
+  - id: c5
+    lang: vi
+    title: Mỏi cổ do làm việc máy tính
+    date: "2026-09-18"
+    turns:
+      - id: t19
+        user: "Cổ mình mỏi và cứng vì ngồi máy tính cả ngày."
+        assistant: "Bạn thử hai động tác nhỏ ngay tại bàn làm việc. Thứ nhất là chin tuck: thu cằm nhẹ về phía sau, giữ 5 giây, 10 lần. Thứ hai là nghiêng cổ sang mỗi bên, tai gần vai, giữ 30 giây. Làm vài lần trong ngày sẽ giảm cứng cổ rõ rệt."
+      - id: t20
+        user: "Chin tuck là gì vậy?"
+        assistant: "Chin tuck là động tác thu cằm: nhìn thẳng, kéo cằm lùi về phía cổ như tạo ra cằm đôi, không cúi đầu xuống. Bạn sẽ thấy các cơ sâu phía trước cổ làm việc và gáy được kéo dài. Giữ 5 giây rồi thả lỏng, lặp lại 10 lần."
+      - id: t21
+        user: "Mình nên đặt màn hình cao bao nhiêu?"
+        assistant: "Mép trên của màn hình nên ngang tầm mắt hoặc thấp hơn một chút, cách mắt khoảng 50 đến 70 cm. Nếu dùng laptop, hãy kê máy lên cao và dùng bàn phím rời. Như vậy cổ không phải cúi về phía trước trong nhiều giờ liền."
+      - id: t22
+        user: "Mình hay bị nhức đầu kèm đau cổ, có liên quan không?"
+        assistant: "Có thể. Căng cơ cổ và vai kéo dài thường gây đau đầu kiểu căng thẳng, đau âm ỉ như có vòng siết quanh đầu. Hãy nghỉ giải lao, uống đủ nước và giãn cổ. Nếu đau đầu dữ dội đột ngột, kèm nôn, yếu tay chân hoặc nhìn mờ thì cần đi khám ngay."
+
+  - id: c6
+    lang: en
+    title: Rolled ankle playing football
+    date: "2026-08-30"
+    turns:
+      - id: t23
+        user: "I rolled my ankle playing football on Saturday and it's swollen."
+        assistant: "For the first couple of days protect the ankle, elevate it above heart level and use ice for 15 minutes at a time. Put weight on it as soon as it's tolerable instead of staying off it completely. Gentle early movement helps the ligaments heal and limits stiffness."
+      - id: t24
+        user: "When can I start doing ankle exercises?"
+        assistant: "After 48 to 72 hours if the swelling isn't getting worse. Start by drawing the alphabet in the air with your big toe, then towel scrunches and gentle ankle pumps. Later add calf raises and single-leg balance on flat ground. Everything should feel stretchy, not sharp."
+      - id: t25
+        user: "Should I wear an ankle brace when I return to running?"
+        assistant: "A lace-up or semi-rigid brace can give extra confidence and reduce the risk of re-spraining for the first few months, especially on uneven ground or in sports with cutting. It doesn't replace strength and balance work, so keep doing those exercises."
+      - id: t26
+        user: "How do I know it's a fracture and not just a sprain?"
+        assistant: "Clinicians use the Ottawa ankle rules. You should get an x-ray if you cannot take four steps right after the injury, or if the bony tip at the back of either ankle bone or the base of the fifth metatarsal is tender to press. Severe deformity or numbness also needs urgent care."
+
+  - id: c7
+    lang: vi
+    title: Bài khởi động trước khi tập
+    date: "2026-09-10"
+    turns:
+      - id: t27
+        user: "Cho mình bài khởi động 5 phút trước khi chạy bộ."
+        assistant: "Bạn làm lần lượt, mỗi động tác 30 giây: xoay cổ chân và hông, đá chân trước sau (leg swing), bước chùng chân (lunge) đi tới, nâng cao đầu gối tại chỗ (high knees), rồi chạy chậm tại chỗ. Cuối cùng chạy bộ nhẹ 1 phút để cơ thể nóng dần lên."
+      - id: t28
+        user: "Còn bài giãn cơ sau khi chạy?"
+        assistant: "Sau chạy hãy giãn cơ khi cơ còn ấm: gập đùi trước (đứng kéo gót chạm mông), giãn bắp chân vào tường, giãn cơ gập hông ở tư thế quỳ một gối. Mỗi bài giữ 30 giây mỗi bên, thở đều và không bật nảy."
+      - id: t29
+        user: "Khởi động động và khởi động tĩnh khác nhau thế nào?"
+        assistant: "Khởi động động là các động tác chuyển động như đá chân, bước chùng, xoay khớp để tăng nhiệt độ cơ thể và biên độ khớp, hợp trước khi tập. Giãn cơ tĩnh là giữ nguyên một tư thế 20 đến 30 giây, thích hợp hơn sau buổi tập khi cơ đã ấm."
+      - id: t30
+        user: "Mình nên khởi động bao lâu trước khi tập tạ?"
+        assistant: "Khoảng 8 đến 10 phút: vài phút cardio nhẹ, vài động tác di chuyển khớp động, sau đó tập vài hiệp nhẹ của chính bài tập đầu tiên với mức tạ tăng dần. Khởi động vừa đủ để thấy người ấm lên, không cần mệt."
+
+  - id: c8
+    lang: en
+    title: Stress and trouble sleeping
+    date: "2026-10-02"
+    turns:
+      - id: t31
+        user: "I can't fall asleep because I'm stressed about work."
+        assistant: "Try the 4-7-8 breathing pattern in bed: breathe in through your nose for four counts, hold for seven, and breathe out slowly through your mouth for eight. Repeat four times. Also put screens away 30 minutes before bed and write tomorrow's to-do list on paper so your mind can let go."
+      - id: t32
+        user: "Does exercising at night make my sleep worse?"
+        assistant: "Moderate exercise in the evening is fine for most people, as long as it ends one to two hours before bed. Intense workouts late at night can keep your heart rate and body temperature up and delay sleep. Light stretching or a walk is a good wind-down option."
+      - id: t33
+        user: "Can you teach me a quick breathing exercise for anxiety?"
+        assistant: "Box breathing works well. Breathe in through your nose for four counts, hold for four, breathe out for four, hold for four. Repeat for two to three minutes, sitting with your feet on the floor. Slow breathing activates the calming part of your nervous system."
+      - id: t34
+        user: "How many hours of sleep do I need?"
+        assistant: "Most adults need seven to nine hours a night. Consistency matters as much as the total, so try to go to bed and wake up at similar times, even on weekends. If you regularly sleep enough but still feel exhausted during the day, it's worth talking to a doctor."
+
+  - id: c9
+    lang: vi
+    title: Trò chuyện vui sau kỳ thi
+    date: "2026-09-22"
+    turns:
+      - id: t35
+        user: "Chào bạn, hôm nay mình vui lắm!"
+        assistant: "Chào bạn! Nghe bạn vui mình cũng vui lây. Hôm nay có chuyện gì tốt đẹp xảy ra vậy? Bạn kể cho mình nghe nhé, mình rất muốn biết."
+      - id: t36
+        user: "Mình vừa thi xong, bạn có gợi ý nào để thưởng cho bản thân không?"
+        assistant: "Chúc mừng bạn đã hoàn thành kỳ thi! Bạn có thể đi dạo một vòng ngoài trời, nghe bản nhạc yêu thích, ăn một món ngon và ngủ một giấc thật đủ. Nếu muốn vận động nhẹ, đạp xe hoặc đi bơi cũng là cách thư giãn rất tốt."
+      - id: t37
+        user: "Cảm ơn bạn nhé, hẹn gặp lại."
+        assistant: "Không có gì đâu bạn! Chúc bạn có những ngày nghỉ thật thoải mái. Khi cần trò chuyện hay cần gợi ý vận động, cứ quay lại tìm mình nhé. Hẹn gặp lại bạn!"
+
+  - id: c10
+    lang: en
+    title: Introductions and travel tips
+    date: "2026-10-06"
+    turns:
+      - id: t38
+        user: "Hi! What can you help me with?"
+        assistant: "Hello! I'm a wellness assistant. I can suggest gentle exercises and stretches, explain how to do them safely, help with posture and recovery questions, and share tips on sleep and stress. I'm not a replacement for a doctor, so I'll tell you when something needs a professional."
+      - id: t39
+        user: "I'm going to Da Lat next month, any tips for staying active while travelling?"
+        assistant: "Da Lat is great for walking, so plan a long walk each day. In the hotel room you can do a short bodyweight circuit: squats, push-ups against the bed, and a plank. On the bus or plane, stand and stretch every hour. Pack a resistance band, it weighs almost nothing."
+      - id: t40
+        user: "Thanks, that's all for today."
+        assistant: "You're welcome! Have a wonderful trip to Da Lat and remember to enjoy it. If you need exercise ideas or want to talk through any aches while you're away, I'm here whenever you come back. Take care!"
+
+recall:
+  - id: r01
+    user_lang: vi
+    user_words: "bài hôm trước cho cái lưng"
+    retriever_query: "back exercise from a previous conversation"
+    correct: [t01, t02]
+  - id: r02
+    user_lang: vi
+    user_words: "bài bird-dog hôm trước bạn chỉ mình làm sao cho đúng ấy nhỉ"
+    retriever_query: "how to do the bird-dog exercise correctly"
+    correct: [t02]
+  - id: r03
+    user_lang: vi
+    user_words: "hôm trước bạn nói gì về chuyện nằm đè lên bên vai đang đau khi ngủ"
+    retriever_query: "sleeping on a sore shoulder"
+    correct: [t17]
+  - id: r04
+    user_lang: en
+    user_words: "what did you say about hot versus cold packs for my back?"
+    retriever_query: "heat or ice pack for back pain"
+    correct: [t04]
+  - id: r05
+    user_lang: en
+    user_words: "how many reps was that straight leg raise for my knee?"
+    retriever_query: "straight leg raise repetitions after knee surgery"
+    correct: [t10, t11]
+  - id: r06
+    user_lang: vi
+    user_words: "đầu gối bị sưng sau khi tập có sao không, bạn từng nói rồi"
+    retriever_query: "knee swelling after exercise following surgery"
+    correct: [t12]
+  - id: r07
+    user_lang: vi
+    user_words: "lúc trước bạn bảo khi nào thì mình đi cầu thang bình thường được nhỉ"
+    retriever_query: "when can I climb stairs normally after knee surgery"
+    correct: [t13]
+  - id: r08
+    user_lang: vi
+    user_words: "mình có được đạp xe tập sau mổ không"
+    retriever_query: "stationary bike after ACL surgery"
+    correct: [t14]
+  - id: r09
+    user_lang: en
+    user_words: "when did you say I could go back to deadlifting?"
+    retriever_query: "returning to deadlifts after a back strain"
+    correct: [t08]
+  - id: r10
+    user_lang: en
+    user_words: "the stretches for tight hips you gave me last time"
+    retriever_query: "hip and back stretches after lifting"
+    correct: [t07]
+  - id: r11
+    user_lang: en
+    user_words: "remind me what you said about the chin tuck"
+    retriever_query: "chin tuck exercise for neck"
+    correct: [t19, t20]
+  - id: r12
+    user_lang: vi
+    user_words: "màn hình máy tính đặt cao bao nhiêu thì tốt, bạn nói rồi mà"
+    retriever_query: "ideal computer monitor height for neck"
+    correct: [t21]
+  - id: r13
+    user_lang: vi
+    user_words: "hôm trước bạn chỉ mình cách xử lý khi bị bong gân mắt cá chân"
+    retriever_query: "how to treat an ankle sprain"
+    correct: [t23, t24]
+  - id: r14
+    user_lang: en
+    user_words: "that ankle alphabet exercise"
+    retriever_query: "ankle alphabet exercise"
+    correct: [t24]
+  - id: r15
+    user_lang: en
+    user_words: "how to tell if my ankle is broken or sprained"
+    retriever_query: "ankle fracture versus sprain Ottawa rules"
+    correct: [t26]
+  - id: r16
+    user_lang: vi
+    user_words: "bài khởi động 5 phút trước khi chạy bộ bạn đưa lúc trước"
+    retriever_query: "5 minute warm-up routine before running"
+    correct: [t27]
+  - id: r17
+    user_lang: vi
+    user_words: "bài giãn cơ sau chạy"
+    retriever_query: "post-run stretching routine"
+    correct: [t28]
+  - id: r18
+    user_lang: en
+    user_words: "the breathing exercise for stress that you taught me"
+    retriever_query: "breathing exercise for stress and anxiety"
+    correct: [t31, t33]
+  - id: r19
+    user_lang: en
+    user_words: "what did you say about exercising late at night?"
+    retriever_query: "evening exercise effect on sleep"
+    correct: [t32]
+  - id: r20
+    user_lang: vi
+    user_words: "hôm trước bạn chỉ mình cách thở 4-7-8 để dễ ngủ"
+    retriever_query: "4-7-8 breathing technique for falling asleep"
+    correct: [t31]
+  - id: r21
+    user_lang: vi
+    user_words: "lần trước mình bị đau vai, bạn dặn gì nhỉ?"
+    retriever_query: "advice for shoulder pain"
+    correct: [t15, t16]
+  - id: r22
+    user_lang: en
+    user_words: "when should I see a doctor about my back pain?"
+    retriever_query: "red flags for back pain requiring a doctor"
+    correct: [t05]
+  - id: r23
+    user_lang: vi
+    user_words: "lăn foam roller lên lưng dưới được không"
+    retriever_query: "foam roller on lower back"
+    correct: [t09]
+  - id: r24
+    user_lang: en
+    user_words: "tips for staying active on my trip to Da Lat"
+    retriever_query: "staying active while travelling"
+    correct: [t39]
+  - id: r25
+    user_lang: vi
+    user_words: "mình bị nhức đầu do đau cổ, bạn từng giải thích rồi"
+    retriever_query: "headache related to neck pain"
+    correct: [t22]
+
+offtopic:
+  - id: o01
+    user_lang: vi
+    user_words: "bạn là ai vậy"
+    retriever_query: "who are you"
+  - id: o02
+    user_lang: vi
+    user_words: "hôm nay thời tiết Hà Nội thế nào"
+    retriever_query: "weather in Hanoi today"
+  - id: o03
+    user_lang: vi
+    user_words: "chỉ mình cách nấu phở bò với"
+    retriever_query: "how to cook beef pho"
+  - id: o04
+    user_lang: vi
+    user_words: "mình bị tiểu đường thì nên ăn gì"
+    retriever_query: "what to eat with type 2 diabetes"
+  - id: o05
+    user_lang: vi
+    user_words: "xin chào"
+    retriever_query: "greeting"
+  - id: o06
+    user_lang: vi
+    user_words: "cho mình bài tập cho cổ tay bị đau vì gõ phím nhiều"
+    retriever_query: "wrist exercises for pain from typing"
+  - id: o07
+    user_lang: en
+    user_words: "how are you today?"
+    retriever_query: "how are you"
+  - id: o08
+    user_lang: vi
+    user_words: "giá vàng hôm nay bao nhiêu"
+    retriever_query: "gold price today"
+  - id: o09
+    user_lang: vi
+    user_words: "dịch giúp mình câu này sang tiếng Anh"
+    retriever_query: "translate a sentence into English"
+  - id: o10
+    user_lang: en
+    user_words: "exercises for hip bursitis on the outer hip"
+    retriever_query: "hip bursitis exercises"
+  - id: o11
+    user_lang: vi
+    user_words: "gợi ý cho mình một bộ phim hay đi"
+    retriever_query: "recommend a good movie"
+  - id: o12
+    user_lang: en
+    user_words: "how many calories are in a banana?"
+    retriever_query: "calories in a banana"
+  - id: o13
+    user_lang: vi
+    user_words: "mình muốn giảm cân nhanh trong hai tuần"
+    retriever_query: "lose weight fast in two weeks"
+  - id: o14
+    user_lang: en
+    user_words: "what is the capital of Australia?"
+    retriever_query: "capital of Australia"

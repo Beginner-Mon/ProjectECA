@@ -254,7 +254,7 @@ class _Housekeeping:
         self.started = False
         self.cancelled = False
 
-    async def __call__(self, user_id, session_id):
+    async def __call__(self, user_id, session_id, **_budgets):
         self.started = True
         try:
             await asyncio.sleep(30)

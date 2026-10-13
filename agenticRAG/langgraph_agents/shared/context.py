@@ -50,7 +50,32 @@ _CONTEXT_BUDGET_DEFAULTS = {
 }
 
 
+# The numbers above were chosen for a model with about this context window.
+_BASELINE_WINDOW_TOKENS = 10_000
+# Clamp so a tiny window still gets a usable prompt and a huge one does not
+# turn every turn into a 100k-token request (cost and latency).
+_MIN_BUDGET_SCALE = 0.3
+_MAX_BUDGET_SCALE = 4.0
+# The blocks that grow with the conversation. The rest (persona, facts, ...) is
+# fixed-size text whose value does not depend on how big the window is.
+_WINDOW_SCALED_KEYS = frozenset(
+    {"history", "evidence", "session_summary", "history_compact_at"}
+)
+
+# Parsed once per process: context_budget runs several times per turn.
+_budgets_cache: dict | None = None
+
+
+def clear_context_budget_cache() -> None:
+    """Forget the parsed YAML, so the next read parses it again (tests)."""
+    global _budgets_cache
+    _budgets_cache = None
+
+
 def _load_context_budgets() -> dict:
+    global _budgets_cache
+    if _budgets_cache is not None:
+        return _budgets_cache
     try:
         import yaml
         from pathlib import Path
@@ -59,21 +84,46 @@ def _load_context_budgets() -> dict:
             Path(__file__).resolve().parents[3] / "config" / "langgraph.yaml"
         )
         if not config_path.exists():
-            return {}
-        with open(config_path, "r", encoding="utf-8") as f:
-            cfg = yaml.safe_load(f) or {}
-        return (cfg.get("langgraph", {}) or {}).get("context_budgets", {}) or {}
+            budgets: dict = {}
+        else:
+            with open(config_path, "r", encoding="utf-8") as f:
+                cfg = yaml.safe_load(f) or {}
+            budgets = (cfg.get("langgraph", {}) or {}).get("context_budgets", {}) or {}
     except Exception:
-        return {}
+        return {}                 # not cached: a transient failure may clear
+    _budgets_cache = budgets
+    return budgets
+
+
+def _window_scale() -> float:
+    """Factor for the window-scaled budgets: 1.0 unless the user's model has a known window."""
+    # Imported here: llm_byok is imported by modules that import this one.
+    from langgraph_agents.llm_byok import current_request_llm
+
+    req = current_request_llm()
+    window = getattr(req, "context_window", None)
+    if req is None or req.failure is not None or not window:
+        return 1.0                # after a failure ECA answers on its own model
+    return max(_MIN_BUDGET_SCALE,
+               min(_MAX_BUDGET_SCALE, window / _BASELINE_WINDOW_TOKENS))
 
 
 def context_budget(key: str) -> int:
-    """Token budget cho một khối prompt: config, thiếu thì giá trị cũ."""
+    """Token budget cho một khối prompt: config, thiếu thì giá trị cũ.
+
+    Với model của user có cửa sổ đã biết, bốn khối trong _WINDOW_SCALED_KEYS
+    co giãn theo cửa sổ đó.
+    """
     try:
         value = _load_context_budgets().get(key)
-        return int(value) if value is not None else _CONTEXT_BUDGET_DEFAULTS[key]
+        base = int(value) if value is not None else _CONTEXT_BUDGET_DEFAULTS[key]
     except (KeyError, TypeError, ValueError):
-        return _CONTEXT_BUDGET_DEFAULTS[key]
+        base = _CONTEXT_BUDGET_DEFAULTS[key]
+    if key in _WINDOW_SCALED_KEYS:
+        scale = _window_scale()
+        if scale != 1.0:
+            return int(round(base * scale))
+    return base
 
 
 def budget_chars(key: str) -> int:

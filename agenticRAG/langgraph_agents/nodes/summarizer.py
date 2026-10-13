@@ -42,7 +42,8 @@ def _token_estimate(text: str) -> int:
     return len(text) // 4
 
 
-def _compaction_cut(rows: list) -> int | None:
+def _compaction_cut(rows: list, history_budget: int | None = None,
+                    compact_at: int | None = None) -> int | None:
     """seq_id to summarise up to, or None while the raw part still fits.
 
     rows = the session's unsummarised messages, oldest first. Size is the
@@ -52,12 +53,19 @@ def _compaction_cut(rows: list) -> int | None:
     the `history` budget, and the latest turn stays raw whatever its size.
     Everything older becomes one chunk, so the raw part always starts with a
     user message.
+
+    The two budgets default to the current ones; housekeep passes the numbers
+    read inside the request, where a user's model window may scale them.
     """
+    if history_budget is None:
+        history_budget = context_budget("history")
+    if compact_at is None:
+        compact_at = context_budget("history_compact_at")
     sizes = [_token_estimate(r["content"] or "") for r in rows]
-    if sum(sizes) <= context_budget("history_compact_at"):
+    if sum(sizes) <= compact_at:
         return None
 
-    budget = context_budget("history")
+    budget = history_budget
     raw_from = len(rows)          # index of the first message left raw
     raw_tokens = 0
     while raw_from > 0:
@@ -75,7 +83,8 @@ def _compaction_cut(rows: list) -> int | None:
     return rows[raw_from - 1]["seq_id"]
 
 
-async def maybe_summarize(session_id: str) -> None:
+async def maybe_summarize(session_id: str, history_budget: int | None = None,
+                          compact_at: int | None = None) -> None:
     """Compact the current session once its raw part outgrows the budget.
 
     Called from housekeep. Never raises — all errors logged.
@@ -99,7 +108,7 @@ async def maybe_summarize(session_id: str) -> None:
             session_id, last_chunk or 0,
         )
 
-        up_to_seq = _compaction_cut(rows)
+        up_to_seq = _compaction_cut(rows, history_budget, compact_at)
         if up_to_seq is None:
             return
 
@@ -149,12 +158,15 @@ async def summarize_finished_sessions(user_id: str, current_session_id: str) -> 
     return len(rows)
 
 
-async def housekeep(user_id: str, session_id: str) -> None:
+async def housekeep(user_id: str, session_id: str,
+                    history_budget: int | None = None,
+                    compact_at: int | None = None) -> None:
     """Both summary triggers for one chat turn. Never raises.
 
     Runs on ECA's key: a user's own key (BYOK) is for their chat turn, not for
     summaries written on their behalf. The unbind only touches this task's
-    copy of the context, never the request's.
+    copy of the context, never the request's. The two budgets come from the
+    request (see _compaction_cut); None reads them here.
     """
     from langgraph_agents.llm_byok import bind_request_llm
 
@@ -165,7 +177,7 @@ async def housekeep(user_id: str, session_id: str) -> None:
         logger.warning("finished_session_summary_failed", extra={
             "session_id": session_id, "error": str(exc),
         })
-    await maybe_summarize(session_id)
+    await maybe_summarize(session_id, history_budget, compact_at)
 
 
 async def _summarize_messages(rows: list, session_id: str) -> str | None:

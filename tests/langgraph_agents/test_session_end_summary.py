@@ -99,7 +99,7 @@ async def test_housekeep_never_raises(caplog):
                       new=AsyncMock(side_effect=RuntimeError("db down"))), \
          patch.object(summ, "maybe_summarize", new=AsyncMock()) as current:
         await summ.housekeep("user-1", "s-current")
-    current.assert_awaited_once_with("s-current")
+    current.assert_awaited_once_with("s-current", None, None)
 
 
 @pytest.mark.asyncio
@@ -121,7 +121,7 @@ async def test_chat_sends_done_before_housekeeping_finishes_and_still_waits_for_
 
     log = []
 
-    async def slow_housekeep(user_id, session_id):
+    async def slow_housekeep(user_id, session_id, **_budgets):
         log.append(("started", user_id, session_id))
         await asyncio.sleep(0.3)
         log.append("finished")

@@ -61,6 +61,9 @@ class RequestLLM:
     omit: frozenset[str] = field(default_factory=frozenset)
     failure: dict | None = None
     http_client: Any = None
+    # The model's context window in tokens, when the client knows it. Sizes the
+    # prompt budgets (shared/context.py); None keeps ECA's own.
+    context_window: int | None = None
 
 
 _request_llm: ContextVar[Optional[RequestLLM]] = ContextVar(

@@ -68,6 +68,7 @@ from langgraph_agents.shared import get_embedding_service, get_pg_client
 from langgraph_agents.shared.env import env_source
 from langgraph_agents.shared.stm import get_stm
 from langgraph_agents.shared.preflight import run_preflight
+from langgraph_agents.shared.context import context_budget
 from langgraph_agents.api.health import run_all_checks, redis_in_use
 
 logger = get_logger("langgraph.api")
@@ -366,6 +367,7 @@ def create_app() -> FastAPI:
                 api_key=req.llm.api_key,
                 capabilities=frozenset(req.llm.capabilities),
                 omit=frozenset(req.llm.omit),
+                context_window=_clamp_context_window(req.token_limit),
             )
         bind_request_llm(llm_req)
         config = {"configurable": {
@@ -567,6 +569,18 @@ def create_app() -> FastAPI:
 # ── Chat stream helper ─────────────────────────────────────────────
 
 
+# Context windows outside this range are a client mistake (or hostile): clamp.
+_MIN_CONTEXT_WINDOW = 1_000
+_MAX_CONTEXT_WINDOW = 2_000_000
+
+
+def _clamp_context_window(value) -> int | None:
+    """token_limit as a usable context window, or None when it is not one."""
+    if isinstance(value, bool) or not isinstance(value, int) or value <= 0:
+        return None
+    return max(_MIN_CONTEXT_WINDOW, min(_MAX_CONTEXT_WINDOW, value))
+
+
 # Upper bound on waiting for the turn's summaries after `done`. Two finished
 # sessions are two LLM calls plus two embeddings, a few seconds each.
 _HOUSEKEEPING_TIMEOUT_S = 30.0
@@ -612,7 +626,12 @@ async def _stream_chat(req, request_id, config, state, background_tasks, request
     # `done`: the user is not kept waiting, and the invocation stays open until
     # they are written — Lambda freezes the container once the response ends,
     # which is what broke the old fire-and-forget summarizer (12/10).
-    housekeeping = (asyncio.create_task(housekeep(resolved_user_id, req.session_id))
+    # The budgets are read here, inside the request, because housekeep unbinds
+    # the user's LLM and would otherwise compact against unscaled numbers.
+    housekeeping = (asyncio.create_task(housekeep(
+                        resolved_user_id, req.session_id,
+                        history_budget=context_budget("history"),
+                        compact_at=context_budget("history_compact_at")))
                     if resolved_user_id else None)
 
     # The question is written now, beside the graph, and the answer once there

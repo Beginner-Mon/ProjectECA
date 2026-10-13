@@ -989,7 +989,7 @@ def test_slow_summarizer_does_not_delay_session_persisted_or_done(api_client, mo
 
     _fake_session_writes(monkeypatch, fake_write)
 
-    async def slow_summarizer(user_id, session_id):
+    async def slow_summarizer(user_id, session_id, **_budgets):
         await asyncio.sleep(1.0)
 
     # 12/10: summaries run as `housekeep`, started with the turn and awaited

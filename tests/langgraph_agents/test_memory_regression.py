@@ -87,6 +87,10 @@ async def test_synthesizer_includes_conversation_history():
     Regresses: synthesizer built msgs = [System, Human(query)] only, ignoring the
     history memory_node loaded into state['messages'] → no follow-up recall.
     Also asserts tool noise (ToolMessage / tool-call AIMessage) is NOT forwarded.
+
+    The same drop is why the user's facts reached nobody while memory_node
+    packed them into a SystemMessage. They come in state['user_facts'] now and
+    must land in the system prompt.
     """
     from langchain_core.messages import (
         SystemMessage, HumanMessage, AIMessage, ToolMessage,
@@ -111,8 +115,9 @@ async def test_synthesizer_includes_conversation_history():
     ])
 
     state = {
+        "user_facts": ["Works night shifts"],                 # memory node → system prompt
         "messages": [
-            SystemMessage(content="[USER FACTS]\n- none"),   # memory system → excluded
+            SystemMessage(content="stray system note"),       # not a turn → excluded
             HumanMessage(content="My name is Nguyen"),        # prior turn → included
             AIMessage(content="Nice to meet you, Nguyen"),    # prior turn → included
             tool_call_ai,                                     # tool-call AI → excluded
@@ -148,3 +153,7 @@ async def test_synthesizer_includes_conversation_history():
     assert "Who is speaking" in msgs[-1].content
     # Tool noise must NOT be forwarded as conversation
     assert "[]" not in contents, "ToolMessage content must not be forwarded as history"
+    assert "stray system note" not in contents, "a SystemMessage in state is not a turn"
+    # What the user told ECA about themselves reaches the model that answers
+    assert isinstance(msgs[0], SystemMessage)
+    assert "- Works night shifts" in msgs[0].content

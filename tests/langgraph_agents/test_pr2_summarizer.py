@@ -8,20 +8,38 @@ import pytest
 from unittest.mock import AsyncMock, patch, MagicMock
 
 
+def _turns(*chars, first_seq=1):
+    """Message rows for turns of (question_chars, answer_chars), oldest first."""
+    rows, seq = [], first_seq
+    for q_chars, a_chars in chars:
+        rows.append({"seq_id": seq, "role": "user", "content": "q" * q_chars})
+        rows.append({"seq_id": seq + 1, "role": "assistant", "content": "a" * a_chars})
+        seq += 2
+    return rows
+
+
+@pytest.fixture
+def compact_at_2000(monkeypatch):
+    from langgraph_agents.shared import context as ctx_mod
+    monkeypatch.setattr(ctx_mod, "_load_context_budgets",
+                        lambda: {"history": 1000, "history_compact_at": 2000})
+
+
 @pytest.mark.unit
 class TestSummarizerThreshold:
-    """Verify trigger logic (D13: 10k token threshold)."""
+    """Verify trigger logic: unsummarised content above `history_compact_at`.
+
+    Size is len(content) // 4. `messages.token_count` holds the whole turn's
+    LLM usage and is not read (see test_memory_v2_stm.py for where the cut lands).
+    """
 
     @pytest.mark.asyncio
-    async def test_below_threshold_no_summarize(self):
-        """9.9k tokens → summarizer does NOT fire."""
+    async def test_below_threshold_no_summarize(self, compact_at_2000):
+        """1.9k tokens of content → summarizer does NOT fire."""
         from langgraph_agents.nodes.summarizer import maybe_summarize
         mock_pg = AsyncMock()
         mock_pg.fetchval.return_value = 0  # no prior summary
-        # Build rows totaling ~5000 tokens (under threshold)
-        mock_pg.fetch.return_value = [
-            {"token_count": 5000, "content": "x" * 20000},
-        ]
+        mock_pg.fetch.return_value = _turns((400, 3400), (400, 3400))
 
         with patch("langgraph_agents.nodes.summarizer.get_pg_client", return_value=mock_pg):
             with patch("langgraph_agents.nodes.summarizer._run_summarize",
@@ -30,57 +48,51 @@ class TestSummarizerThreshold:
                 mock_run.assert_not_awaited()
 
     @pytest.mark.asyncio
-    async def test_above_threshold_fires_task(self):
-        """10.1k tokens → summarizer runs (inline, inside the invocation)."""
+    async def test_above_threshold_fires_task(self, compact_at_2000):
+        """2.1k tokens of content → summarizer runs (inline, inside the invocation)."""
         from langgraph_agents.nodes.summarizer import maybe_summarize
         mock_pg = AsyncMock()
         mock_pg.fetchval.return_value = 0
-        # Build rows totaling ~11000 tokens (over threshold)
-        mock_pg.fetch.return_value = [
-            {"token_count": 11000, "content": "x" * 44000},
-        ]
+        mock_pg.fetch.return_value = _turns((400, 3800), (400, 3800))
 
         with patch("langgraph_agents.nodes.summarizer.get_pg_client", return_value=mock_pg):
             with patch("langgraph_agents.nodes.summarizer._run_summarize",
                        new=AsyncMock()) as mock_run:
                 await maybe_summarize("test-session")
-                mock_run.assert_awaited_once()
+                # The older turn (seq 1-2) is folded; the latest stays raw.
+                mock_run.assert_awaited_once_with("test-session", 0, 2)
 
     @pytest.mark.asyncio
-    async def test_partial_summary_tokens_added_to_prior(self):
-        """New tokens after last summary + prior = check threshold."""
+    async def test_only_messages_after_the_last_summary_are_measured(self, compact_at_2000):
+        """The chunk starts where the last one stopped."""
         from langgraph_agents.nodes.summarizer import maybe_summarize
         mock_pg = AsyncMock()
         mock_pg.fetchval.return_value = 50  # last summary covers up to seq 50
-        # After seq 50: two messages totaling 11000 tokens
-        mock_pg.fetch.return_value = [
-            {"token_count": 5000, "content": "x" * 20000},
-            {"token_count": 6000, "content": "y" * 24000},
-        ]
+        mock_pg.fetch.return_value = _turns((400, 3800), (400, 3800), first_seq=51)
 
         with patch("langgraph_agents.nodes.summarizer.get_pg_client", return_value=mock_pg):
             with patch("langgraph_agents.nodes.summarizer._run_summarize",
                        new=AsyncMock()) as mock_run:
                 await maybe_summarize("test-session")
-                mock_run.assert_awaited_once()
+                assert mock_pg.fetch.await_args.args[1:] == ("test-session", 50)
+                mock_run.assert_awaited_once_with("test-session", 50, 52)
 
     @pytest.mark.asyncio
-    async def test_uses_estimate_when_token_count_null(self):
-        """When token_count IS NULL, fall back to len//4 estimate."""
+    async def test_token_count_is_not_what_is_measured(self, compact_at_2000):
+        """A turn's LLM usage says nothing about how long its messages are."""
         from langgraph_agents.nodes.summarizer import maybe_summarize
         mock_pg = AsyncMock()
         mock_pg.fetchval.return_value = 0
-        # 50000 chars × 2 messages = 100000 chars → 25000 tokens (over 10k)
-        mock_pg.fetch.return_value = [
-            {"token_count": None, "content": "x" * 50000},
-            {"token_count": None, "content": "y" * 50000},
-        ]
+        rows = _turns((40, 200), (40, 200), (40, 200))
+        for r in rows:
+            r["token_count"] = 9000
+        mock_pg.fetch.return_value = rows
 
         with patch("langgraph_agents.nodes.summarizer.get_pg_client", return_value=mock_pg):
             with patch("langgraph_agents.nodes.summarizer._run_summarize",
                        new=AsyncMock()) as mock_run:
                 await maybe_summarize("test-session")
-                mock_run.assert_awaited_once()
+                mock_run.assert_not_awaited()
 
 
 @pytest.mark.unit

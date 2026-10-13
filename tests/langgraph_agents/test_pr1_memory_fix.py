@@ -1,7 +1,7 @@
 """Memory layer tenant-isolation tests — PR 1 acceptance criteria.
 
 Requires Docker PostgreSQL (port 5433) with M.4 schema migrated.
-Tests: tenant scope, STM round-trip, LLM tool schema, e2e memory_search.
+Tests: tenant scope, LLM tool schema, e2e memory_search.
 """
 
 import json
@@ -139,44 +139,6 @@ def test_resume_last_session_schema_hides_user_id():
     assert "user_id" not in fields, "user_id must NOT be in LLM schema"
     assert "current_session_id" not in fields, "current_session_id must NOT be in LLM schema"
     assert "config" not in fields, "config must NOT be in LLM schema (RunnableConfig is hidden)"
-
-
-# ═══════════════════════════════════════════════════════════════════════════
-# STM round-trip (Redis key/format)
-# ═══════════════════════════════════════════════════════════════════════════
-
-@pytest.mark.unit
-def test_stm_normalize_writer_format():
-    """_normalize_redis_format converts [{q, a, ts}] → [{role, content}]."""
-    from langgraph_agents.nodes.memory import _normalize_redis_format
-    writer_format = [
-        {"q": "xin chào", "a": "Chào bạn!", "ts": "2026-01-01T00:00:00Z"},
-        {"q": "bài tập squat", "a": "3 hiệp × 10 lần...", "ts": "2026-01-01T00:01:00Z"},
-    ]
-    result = _normalize_redis_format(writer_format)
-    assert len(result) == 4  # 2 pairs → 4 messages
-    assert result[0] == {"role": "user", "content": "xin chào"}
-    assert result[1] == {"role": "assistant", "content": "Chào bạn!"}
-    assert result[3] == {"role": "assistant", "content": "3 hiệp × 10 lần..."}
-
-
-@pytest.mark.unit
-def test_stm_normalize_passthrough():
-    """_normalize_redis_format passes through [{role, content}] format."""
-    from langgraph_agents.nodes.memory import _normalize_redis_format
-    reader_format = [
-        {"role": "user", "content": "hello"},
-        {"role": "assistant", "content": "hi"},
-    ]
-    result = _normalize_redis_format(reader_format)
-    assert result == reader_format  # pass through unchanged
-
-
-@pytest.mark.unit
-def test_stm_normalize_empty():
-    """_normalize_redis_format returns empty for empty input."""
-    from langgraph_agents.nodes.memory import _normalize_redis_format
-    assert _normalize_redis_format([]) == []
 
 
 # ═══════════════════════════════════════════════════════════════════════════

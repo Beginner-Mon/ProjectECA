@@ -20,6 +20,7 @@ from typing import Optional
 
 from pydantic import BaseModel, Field
 
+from langchain_core.messages import AIMessage, HumanMessage
 from langchain_core.runnables import RunnableConfig
 
 from langgraph_agents.state import AgentState, ErrorSeverity
@@ -27,6 +28,7 @@ from langgraph_agents.llm import (
     get_chat_model, get_fallback_chat_model, get_gemini_cached_chat_model,
     extract_cache_tokens,
 )
+from langgraph_agents.shared.context import render_user_facts
 from langgraph_agents.shared.logging import get_logger
 
 logger = get_logger("langgraph.planner")
@@ -263,15 +265,23 @@ async def planner_node(state: AgentState, config: RunnableConfig) -> dict:
     messages = state.get("messages", [])
     context_hint = ""
     if len(messages) > 1:
-        # Last few messages for context (exclude system messages)
-        recent = [m for m in messages[-6:] if hasattr(m, "content") and m.content]
+        # Last few messages for context: user and assistant turns only
+        recent = [m for m in messages[-6:]
+                  if isinstance(m, (HumanMessage, AIMessage)) and m.content]
         if recent:
             context_hint = "\n\nRecent context:\n" + "\n".join(
                 f"[{getattr(m, 'type', 'unknown')}]: {str(m.content)[:200]}"
                 for m in recent[-4:]
             )
 
-    user_msg = query + context_hint
+    # What the user has told ECA about themselves (memory node). Absent when
+    # there is none, so a user with no facts gets the same input as before.
+    facts = render_user_facts(state.get("user_facts") or [])
+    facts_hint = (
+        f"\n\nKnown about the user (their own account):\n{facts}" if facts else ""
+    )
+
+    user_msg = query + context_hint + facts_hint
 
     prompt_msgs = [
         ("system", _PLANNER_SYSTEM_PROMPT),

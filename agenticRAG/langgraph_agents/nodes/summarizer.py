@@ -1,8 +1,7 @@
 """Background summarizer — M.5 (chunk-based, frozen, CAS idempotent).
 
 Decisions encoded:
-  D13:  Single threshold = 10k tokens; recent-raw window = chunk_size
-  M.5:  Summary chunk-based, trigger by TOKEN cumulative, runs BACKGROUND,
+  M.5:  Summary chunk-based, trigger by message size, runs BACKGROUND,
         frozen on write (never re-compressed), CAS idempotent
   M.7:  Summary chunks = STATIC prefix → prompt cache works (append-only)
 
@@ -12,10 +11,11 @@ a container once the response ends, and a task left running after it resumed
 on a closed connection (12/10: 26 failed triggers, 5 summaries since 01/09):
   - the user has moved on: another session of theirs has ≥ 2 unsummarised
     turns → summarise it (long-term memory, read back by memory_search);
-  - the current session passed 10k tokens since its last summary (D13).
+  - the current session's unsummarised part passed `history_compact_at` →
+    summarise its oldest part, leaving the newest `history` tokens raw.
 
 Edge A (M.5): summarize fail → retry 1× → still fail → log WARNING, leave.
-Hard cap: memory node uses existing token budget to prevent unbounded growth.
+Hard cap: memory node drops the oldest raw history past its ceiling.
 """
 
 from __future__ import annotations
@@ -25,6 +25,7 @@ import time
 from datetime import datetime, timezone
 
 from langgraph_agents.shared import get_pg_client, get_embedding_service
+from langgraph_agents.shared.context import context_budget
 from langgraph_agents.shared.logging import get_logger
 from langgraph_agents.llm import get_chat_model
 
@@ -33,7 +34,6 @@ logger = get_logger("langgraph.summarizer")
 # Strong references to fire-and-forget summarizer tasks (same pattern as TTS)
 _pending_summarizer_tasks: set = set()
 
-_SUMMARY_THRESHOLD = 10_000   # D13: single threshold
 _MAX_RETRY = 1                # Edge A: retry once
 
 
@@ -42,8 +42,41 @@ def _token_estimate(text: str) -> int:
     return len(text) // 4
 
 
+def _compaction_cut(rows: list) -> int | None:
+    """seq_id to summarise up to, or None while the raw part still fits.
+
+    rows = the session's unsummarised messages, oldest first. Size is the
+    message's own length: `token_count` holds the whole turn's LLM usage.
+
+    Walking back from the newest message, whole turns stay raw while they fit
+    the `history` budget, and the latest turn stays raw whatever its size.
+    Everything older becomes one chunk, so the raw part always starts with a
+    user message.
+    """
+    sizes = [_token_estimate(r["content"] or "") for r in rows]
+    if sum(sizes) <= context_budget("history_compact_at"):
+        return None
+
+    budget = context_budget("history")
+    raw_from = len(rows)          # index of the first message left raw
+    raw_tokens = 0
+    while raw_from > 0:
+        turn_from = raw_from - 1
+        while turn_from > 0 and rows[turn_from]["role"] != "user":
+            turn_from -= 1
+        turn_tokens = sum(sizes[turn_from:raw_from])
+        if raw_from < len(rows) and raw_tokens + turn_tokens > budget:
+            break
+        raw_from = turn_from
+        raw_tokens += turn_tokens
+
+    if raw_from == 0:
+        return None               # one turn, however long: nothing older to fold
+    return rows[raw_from - 1]["seq_id"]
+
+
 async def maybe_summarize(session_id: str) -> None:
-    """Summarise the current session if it passed the threshold (D13).
+    """Compact the current session once its raw part outgrows the budget.
 
     Called from housekeep. Never raises — all errors logged.
     """
@@ -59,22 +92,18 @@ async def maybe_summarize(session_id: str) -> None:
             session_id,
         )
 
-        # Count uncached token budget since last summary
         rows = await pg.fetch(
-            """SELECT token_count, content FROM messages
+            """SELECT seq_id, role, content FROM messages
                WHERE session_id = $1 AND seq_id > $2
                ORDER BY seq_id""",
             session_id, last_chunk or 0,
         )
 
-        total_tokens = 0
-        for r in rows:
-            total_tokens += r["token_count"] or _token_estimate(r["content"] or "")
-
-        if total_tokens < _SUMMARY_THRESHOLD:
+        up_to_seq = _compaction_cut(rows)
+        if up_to_seq is None:
             return
 
-        await _run_summarize(session_id, last_chunk or 0)
+        await _run_summarize(session_id, last_chunk or 0, up_to_seq)
 
     except Exception as exc:
         logger.warning("summarizer_trigger_failed", extra={
@@ -140,7 +169,7 @@ async def housekeep(user_id: str, session_id: str) -> None:
 async def _summarize_messages(rows: list, session_id: str) -> str | None:
     """LLM-summarize a list of message rows → summary_text or None if fail.
 
-    rows = records with {role, content, token_count}.
+    rows = records with {role, content}.
     Uses the same prompt + retry logic as _run_summarize.
     Extracted so rebuild_dirty_chunk can reuse it (M.8 #5).
     """
@@ -151,16 +180,23 @@ async def _summarize_messages(rows: list, session_id: str) -> str | None:
 
     conversation = "\n".join(lines)
 
-    llm = get_chat_model("planner")
+    llm = get_chat_model("memory")
+    # The summary stands in for these messages on later turns of the same
+    # conversation, so it keeps what the assistant needs to carry on — not a
+    # description of the chat.
+    #
     # "The same language as the conversation", not a named language. This used to
     # force Vietnamese, so an English session was summarised into Vietnamese and
     # then fed back to the model as context on the next turn — pushing it toward
     # a language the user had not written in.
     prompt = (
-        "Summarise the following conversation in 2-4 sentences, written in the "
-        "SAME language as the conversation itself. Keep what matters clinically: "
-        "symptoms, exercises recommended, contraindications, and the user's "
-        "progress.\n\n"
+        "Summarise the conversation below so that the assistant can continue it "
+        "without the original messages. Keep: what the user reported (symptoms, "
+        "conditions, limits); which exercises or advice were already given "
+        "(their names, and sets and reps if stated); what the user agreed to or "
+        "declined; cautions already given; and anything still open. Use at most "
+        "about 120 words, written in the SAME language as the conversation "
+        "itself.\n\n"
         f"{conversation}"
     )
 
@@ -193,8 +229,13 @@ async def _summarize_messages(rows: list, session_id: str) -> str | None:
     return summary_text
 
 
-async def _run_summarize(session_id: str, from_seq: int) -> None:
-    """Summarize messages in (from_seq, new_covers_up_to_seq]."""
+async def _run_summarize(
+    session_id: str, from_seq: int, up_to_seq: int | None = None,
+) -> None:
+    """Summarize messages in (from_seq, up_to_seq] into one chunk.
+
+    up_to_seq=None takes everything after from_seq (a finished session).
+    """
     t0 = time.perf_counter()
 
     try:
@@ -203,19 +244,18 @@ async def _run_summarize(session_id: str, from_seq: int) -> None:
 
         # Load messages not yet covered
         rows = await pg.fetch(
-            """SELECT seq_id, role, content, token_count
+            """SELECT seq_id, role, content
                FROM messages
                WHERE session_id = $1 AND seq_id > $2
+                 AND ($3::bigint IS NULL OR seq_id <= $3)
                ORDER BY seq_id""",
-            session_id, from_seq,
+            session_id, from_seq, up_to_seq,
         )
 
         if not rows:
             return
 
-        total_tokens = 0
-        for r in rows:
-            total_tokens += r["token_count"] or _token_estimate(r["content"] or "")
+        total_tokens = sum(_token_estimate(r["content"] or "") for r in rows)
 
         covers_up_to_seq = rows[-1]["seq_id"]
 

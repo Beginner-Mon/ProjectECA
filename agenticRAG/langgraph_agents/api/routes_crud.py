@@ -76,9 +76,9 @@ async def delete_session(session_id: str, uid: str = Depends(current_user_id)):
     Redis STM is deliberately NOT cleared here. This route has to behave the
     same whether it is served by the agent (Redis on localhost) or by the Lambda
     (no Redis at all), and reaching for an unreachable Redis would cost a socket
-    timeout on every delete. The orphaned stm:{session_id} key is handled at the
-    only place it can do damage instead: the STM warm-up in /chat checks that the
-    conversation row still exists before trusting the cache.
+    timeout on every delete. The orphaned stm:{session_id} key does no damage:
+    the memory node reads PostgreSQL only, so nothing on the chat path trusts
+    that cache, and the key expires on its own.
     """
     pg = get_pg_client()
     await pg.connect()

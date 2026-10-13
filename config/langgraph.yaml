@@ -35,6 +35,13 @@ langgraph:
     evidence: 1200
     history: 1000
     voice_card: 280
+    # Memory v2: what the user has told ECA about themselves, and the summaries
+    # of the older part of the current conversation.
+    user_facts: 300
+    session_summary: 500
+    # Unsummarised history above this is summarised down to `history`; the
+    # memory node stops loading raw history at history_compact_at + history.
+    history_compact_at: 2000
 
   services:
     vieneu_tts:

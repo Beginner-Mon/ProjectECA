@@ -340,26 +340,6 @@ async def load_session_messages(
     }
 
 
-async def populate_stm_from_messages(session_id: str, messages: list[dict]) -> None:
-    """Pick last 3 Q&A pairs from full message log → write to Redis STM."""
-    pairs = []
-    pending_user = None
-    for m in messages:
-        if m["role"] == "user":
-            pending_user = m["content"]
-        elif m["role"] == "assistant" and pending_user:
-            pairs.append({
-                "q": pending_user,
-                "a": m["content"],
-                "ts": m.get("timestamp", ""),
-            })
-            pending_user = None
-
-    stm = pairs[-_STM_MAX:]
-
-    await get_stm().set(session_id, stm)
-
-
 async def write_session_turn(
     user_id: str,
     session_id: str,

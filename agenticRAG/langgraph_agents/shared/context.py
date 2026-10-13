@@ -41,6 +41,12 @@ _CONTEXT_BUDGET_DEFAULTS = {
     "evidence": 1000,       # _EVIDENCE_CHAR_BUDGET cũ (4000 chars)
     "history": 1500,        # _STM_TOKEN_BUDGET cũ
     "voice_card": 280,
+    # Memory v2. These three had no earlier behaviour to fall back to, so the
+    # default is the same number the config carries.
+    "user_facts": 300,
+    "session_summary": 500,
+    # Unsummarised history above this is compacted down to `history`.
+    "history_compact_at": 2000,
 }
 
 
@@ -73,6 +79,27 @@ def context_budget(key: str) -> int:
 def budget_chars(key: str) -> int:
     """Budget ra chars theo tỉ lệ ước lượng (~4 chars/token)."""
     return context_budget(key) * 4
+
+
+def render_user_facts(facts: list[str]) -> str:
+    """The user's facts as a "- fact" list, within the `user_facts` budget.
+
+    The list arrives in priority order (memory node: restrictions, then
+    conditions, then the rest), so what does not fit is dropped from the end.
+    A fact is kept whole or not at all: half a restriction reads as a
+    different restriction. "" when there are none or none fits.
+    """
+    limit = budget_chars("user_facts")
+    lines: list[str] = []
+    used = 0
+    for fact in facts:
+        line = f"- {fact}"
+        cost = len(line) + (1 if lines else 0)
+        if used + cost > limit:
+            break
+        lines.append(line)
+        used += cost
+    return "\n".join(lines)
 
 
 def estimate_context_tokens(

@@ -195,6 +195,35 @@ def test_sse_chat_emits_done_event_last(api_client, monkeypatch):
     assert events[-1]["data"]["total_tokens"] == 42
 
 
+@pytest.mark.unit
+def test_chat_reads_nothing_before_the_graph(api_client, monkeypatch):
+    """The memory node loads the session itself. /chat neither reads it first
+    nor touches the short-term cache on the way in: each was a database
+    round-trip in front of the first token."""
+    import langgraph_agents.api.main as api_module
+
+    client, _, _ = api_client
+    touched = []
+
+    async def fake_load(*args, **kwargs):
+        touched.append("load_session_messages")
+        return None
+
+    def fake_get_stm():
+        touched.append("get_stm")
+        return MagicMock(get=AsyncMock(return_value=None), set=AsyncMock(),
+                         delete=AsyncMock())
+
+    monkeypatch.setattr(api_module, "load_session_messages", fake_load, raising=False)
+    monkeypatch.setattr(api_module, "get_stm", fake_get_stm)
+    monkeypatch.setattr(api_module, "write_session_turn", AsyncMock(return_value="id-1"))
+    monkeypatch.setattr(api_module, "housekeep", AsyncMock())
+
+    resp = client.post("/chat", json={"query": "Xin chao"})
+    assert resp.status_code == 200
+    assert touched == []
+
+
 # ── Token streaming ────────────────────────────────────────────────
 
 

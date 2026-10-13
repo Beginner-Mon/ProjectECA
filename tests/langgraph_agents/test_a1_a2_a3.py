@@ -49,9 +49,12 @@ def _make_config(user_id="test-user-a", session_id=None):
 @pytest.mark.skipif(not HAS_PG, reason="PostgreSQL not available on port 5433")
 @pytest.mark.asyncio
 async def test_a2_dirty_window_excludes_from_load_and_search():
-    """Dirty chunk excluded from _load_summary_chunks and memory_search (M.8 #4)."""
+    """Dirty chunk excluded from _load_summary_chunks and memory_search (M.8 #4).
+
+    While dirty it is not coverage either: its messages come back as raw history.
+    """
     from langgraph_agents.shared import get_pg_client, get_embedding_service
-    from langgraph_agents.nodes.memory import _load_summary_chunks
+    from langgraph_agents.nodes.memory import _load_raw_history, _load_summary_chunks
     from langgraph_agents.tools.pgvector_tool import memory_search
 
     pg = get_pg_client()
@@ -91,6 +94,8 @@ async def test_a2_dirty_window_excludes_from_load_and_search():
         # Verify chunk is visible before mark-dirty
         chunks_before = await _load_summary_chunks(session_id)
         assert len(chunks_before) == 1, "Chunk should be active before deletion"
+        # ... and that its ten messages are covered, so none is loaded raw
+        assert await _load_raw_history(session_id) == []
 
         # Mark chunk dirty (simulate delete_message side-effect)
         await pg.execute(
@@ -101,6 +106,9 @@ async def test_a2_dirty_window_excludes_from_load_and_search():
         # Dirty chunk must NOT appear in _load_summary_chunks
         chunks_after = await _load_summary_chunks(session_id)
         assert chunks_after == [], "_load_summary_chunks must exclude dirty chunks"
+        # ... and must not hide its messages: they are raw history again
+        raw_after = await _load_raw_history(session_id)
+        assert [m["content"] for m in raw_after] == [f"message {seq}" for seq in range(1, 11)]
 
         # Dirty chunk must NOT appear in memory_search results
         search_session = str(uuid.uuid4())
@@ -676,10 +684,15 @@ def test_a1_derive_mode_not_clarify_when_no_ambiguous():
 @pytest.mark.integration
 @pytest.mark.skipif(not HAS_PG, reason="PostgreSQL not available on port 5433")
 @pytest.mark.asyncio
-async def test_a3_user_memory_fact_injected_into_system_message():
-    """POST user_memory fact → memory node injects [USER FACTS] into SystemMessage."""
+async def test_a3_user_memory_fact_reaches_the_synthesizer_prompt():
+    """POST user_memory fact → memory node loads it → synthesizer's facts block.
+
+    Restrictions come first whatever their age: prompt budgets drop facts from
+    the end of the list.
+    """
     from langgraph_agents.shared import get_pg_client
-    from langgraph_agents.nodes.memory import _load_user_facts, _assemble_system_message
+    from langgraph_agents.nodes.memory import _load_user_facts
+    from langgraph_agents.nodes.synthesizer import _build_user_facts
 
     pg = get_pg_client()
     await pg.connect()
@@ -688,26 +701,30 @@ async def test_a3_user_memory_fact_injected_into_system_message():
     await pg.execute("INSERT INTO users (id) VALUES ($1) ON CONFLICT DO NOTHING", user_id)
 
     try:
-        # Insert a fact directly (simulating POST /users/{id}/memory)
-        await pg.execute(
-            "INSERT INTO user_memory (user_id, fact_text) VALUES ($1::uuid, $2)",
-            user_id, "Tôi bị đau lưng mãn tính",
-        )
+        # Insert facts directly (simulating POST /me/memory), oldest first
+        for minutes_ago, fact_text, category in (
+            (30, "Không được nâng tay quá đầu", "restriction"),
+            (20, "Tôi bị đau lưng mãn tính", "condition"),
+            (10, "Thích tập buổi sáng", "preference"),
+        ):
+            await pg.execute(
+                """INSERT INTO user_memory (user_id, fact_text, category, created_at)
+                   VALUES ($1::uuid, $2, $3, now() - make_interval(mins => $4))""",
+                user_id, fact_text, category, minutes_ago,
+            )
 
-        # _load_user_facts must return the fact
+        # _load_user_facts must return them, safety first
         facts = await _load_user_facts(user_id)
-        assert len(facts) >= 1
-        assert any("đau lưng" in f for f in facts), (
-            f"Expected fact about đau lưng in facts, got: {facts}"
-        )
+        assert facts == [
+            "Không được nâng tay quá đầu",
+            "Tôi bị đau lưng mãn tính",
+            "Thích tập buổi sáng",
+        ]
 
-        # _assemble_system_message must include [USER FACTS] block
-        sys_msg = _assemble_system_message(facts, [])
-        assert sys_msg is not None, "SystemMessage must not be None when user_facts exist"
-        assert "[USER FACTS]" in sys_msg.content, (
-            f"SystemMessage must contain [USER FACTS] block, got: {sys_msg.content[:200]}"
-        )
-        assert "đau lưng" in sys_msg.content
+        # The synthesizer's block must carry them
+        block = _build_user_facts(facts)
+        assert "## What this user has told you about themselves" in block
+        assert "- Tôi bị đau lưng mãn tính" in block
 
     finally:
         await pg.execute("DELETE FROM user_memory WHERE user_id = $1::uuid", user_id)

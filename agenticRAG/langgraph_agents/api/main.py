@@ -60,9 +60,7 @@ from langgraph_agents.services.vieneu_tts.client import get_vieneu_tts_client
 from langgraph_agents.services.vieneu_tts.voice import resolve_voice
 from langgraph_agents.services.vieneu_tts.text_budget import plan_spoken_text
 from langgraph_agents.nodes.summarizer import housekeep, _pending_summarizer_tasks
-from langgraph_agents.db.session_store import (
-    load_session_messages, populate_stm_from_messages, write_session_turn,
-)
+from langgraph_agents.db.session_store import write_session_turn
 from langgraph_agents.shared.logging import (
     configure_root_logger, get_logger, with_request_id,
 )
@@ -340,31 +338,6 @@ def create_app() -> FastAPI:
         if graph is None:
             raise HTTPException(503, "Graph not loaded yet")
         request_id = str(uuid.uuid4())
-
-        # Lazy STM warm-up: if Redis STM is empty (new session or resumed from
-        # history), backfill it from PostgreSQL before the graph runs. This is a
-        # prerequisite of /chat — not a side effect of session resume — so it
-        # lives here rather than in GET /sessions/{id}.
-        #
-        # The PostgreSQL read comes FIRST and is also the existence check.
-        # DELETE /sessions/{id} runs on the CRUD Lambda, which has no Redis, so
-        # it cannot clear stm:{session_id} — a deleted session can leave its
-        # short-term memory behind. Trusting a cache whose row is gone would let
-        # a deleted conversation keep talking, so a session with no rows gets its
-        # STM key dropped rather than reused.
-        try:
-            recent = await load_session_messages(
-                user_id=uid, session_id=req.session_id, limit=6,
-            )
-            if recent and recent["messages"]:
-                if not await get_stm().get(req.session_id):
-                    await populate_stm_from_messages(req.session_id, recent["messages"])
-            else:
-                # No rows: either a brand-new session (nothing to drop) or one
-                # that was deleted while its STM survived.
-                await get_stm().delete(req.session_id)
-        except Exception as exc:
-            logger.warning("stm_warmup_failed", extra={"error": str(exc)})
 
         state = {"messages": [], "errors": [], "retry_count": 0, "total_tokens": 0}
         # Whose sheet this turn may read (plan T8b). Bound here — next to the

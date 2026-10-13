@@ -53,12 +53,18 @@ async def test_current_session_long_summary_runs_inline_not_as_a_task():
     pg = MagicMock()
     pg.connect = AsyncMock()
     pg.fetchval = AsyncMock(return_value=0)
-    pg.fetch = AsyncMock(return_value=[{"token_count": 11000, "content": "x"}])
+    # Two long turns: well past any compaction threshold, whatever it is tuned to.
+    pg.fetch = AsyncMock(return_value=[
+        {"seq_id": 1, "role": "user", "content": "q" * 400},
+        {"seq_id": 2, "role": "assistant", "content": "a" * 40_000},
+        {"seq_id": 3, "role": "user", "content": "q" * 400},
+        {"seq_id": 4, "role": "assistant", "content": "a" * 40_000},
+    ])
     with patch.object(summ, "get_pg_client", return_value=pg), \
          patch.object(summ, "_run_summarize", new=AsyncMock()) as run, \
          patch("asyncio.create_task") as create_task:
         await summ.maybe_summarize("s-current")
-    run.assert_awaited_once_with("s-current", 0)
+    run.assert_awaited_once_with("s-current", 0, 2)
     create_task.assert_not_called()
 
 

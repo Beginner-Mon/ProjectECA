@@ -31,8 +31,17 @@ class AgentState(TypedDict):
 
     # ── LangGraph message passing (retriever_agent + ToolNode) ─────────
     # Carries: system prompt, user queries, assistant replies, tool calls,
-    # tool results (ToolMessage). Memory node prepends context here.
+    # tool results (ToolMessage). Memory node puts the session's raw history
+    # here, as user/assistant messages only.
     messages: Annotated[list, add_messages]
+
+    # ── Memory node output (read by planner + synthesizer) ─────────────
+    # What the user has told ECA about themselves (rows of user_memory), in
+    # priority order: restrictions, then conditions, then the rest.
+    user_facts: list[str]
+    # Frozen summaries of the older part of THIS conversation, oldest first.
+    # Together with the raw history in `messages` they cover the whole session.
+    session_summary: list[str]
 
     # ── Planner output (3-axis — M.1) ──────────────────────────────────
     # TRỤC 1: required_outputs — DELIVERABLE checklist (tag ∈ TAG_RULES)

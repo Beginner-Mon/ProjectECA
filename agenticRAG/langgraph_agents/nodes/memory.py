@@ -1,20 +1,25 @@
 """Memory node — M.5 (in-session) + M.6 Tier 1 (user_memory facts).
 
 Runs FIRST before planner (D9: coreference resolve needs memory context).
-Assembles context window per M.7 layout:
+Loads what the model is shown about this user and this conversation:
 
-    [user_memory facts (Tier 1)] [summary chunks (frozen)]   ← STATIC (prefix cache)
-    ─────────────────────────────────────────────────────────
-    [recent raw (Redis/DB)] [current query]                  ← DYNAMIC
+    user_facts        user_memory facts (Tier 1), safety-relevant first
+    session_summary   summary chunks of this session (frozen), oldest first
+    messages          raw history no chunk covers yet (user/assistant only)
 
-Output: prepends SystemMessage + recent chat history into messages.
-Does NOT write to a separate "memory_context" field (removed — D20).
+Facts and summaries are state fields of their own, which reverses D20 ("context
+flows through messages"): the message route is exactly where they were being
+dropped.
 
 M.5 rules:
-  - PostgreSQL = source of truth; Redis = write-through cache of recent raw only
+  - PostgreSQL = source of truth, and the only store read here
   - Summary: chunk-based, frozen on write, CAS idempotent
-  - Token threshold: 10k (D13) — single threshold, recent-raw window = chunk_size
-  - Edge A: summarize fail → retry + hard cap 2× threshold → fallback
+  - Raw history = every message after the last active chunk, so chunks + raw
+    always cover the whole session
+  - The summarizer compacts once the raw part passes `history_compact_at`,
+    leaving `history` raw
+  - Edge A: summarize fail → raw part keeps growing → capped at
+    `history_compact_at + history`, oldest dropped and logged
 """
 
 from __future__ import annotations
@@ -23,15 +28,14 @@ import asyncio
 import json
 import time
 from pathlib import Path
-from typing import Optional
 
-from langchain_core.messages import SystemMessage, HumanMessage, AIMessage
+from langchain_core.messages import HumanMessage, AIMessage
 from langchain_core.runnables import RunnableConfig
 
 from langgraph_agents.state import AgentState, ErrorSeverity
 from langgraph_agents.shared import get_pg_client
+from langgraph_agents.shared.context import context_budget
 from langgraph_agents.shared.logging import get_logger
-from langgraph_agents.shared.stm import get_stm
 
 logger = get_logger("langgraph.memory")
 
@@ -55,27 +59,49 @@ _MEM_CFG = _load_memory_config()
 # config/langgraph.yaml) is no longer consulted: a URL in a committed YAML file
 # cannot differ per environment, which is the whole requirement once this runs
 # on Lambda. The store reads REDIS_URL from the environment instead.
-_RECENT_RAW_MAX = 20          # max recent messages to load from cache/DB
 _SUMMARY_TOKEN_THRESHOLD = 10_000   # D13: single threshold for summarize trigger
 _STM_TOKEN_BUDGET = 1500      # legacy default; use history_budget() instead (T11)
 
 
 def history_budget() -> int:
     """Token budget for recent raw (plan T11: config `history`, thiếu = cũ)."""
-    from langgraph_agents.shared.context import context_budget
-
     return context_budget("history")
+
+
+def history_ceiling() -> int:
+    """Most raw history this node hands on, in tokens.
+
+    The summarizer compacts above `history_compact_at` and leaves `history`
+    raw, but it runs alongside the turn, so one more turn can land on a session
+    that is due. Past that much, compaction is lagging or failing.
+    """
+    return context_budget("history_compact_at") + history_budget()
 
 
 # ── Tier 1: user_memory facts (always-on, cheap, no vector search) ────────
 
 async def _load_user_facts(user_id: str) -> list[str]:
-    """Load Tier 1 facts from user_memory table. Always injected into system prompt."""
+    """Load Tier 1 facts from user_memory, the ones that bear on safety first.
+
+    The prompt budgets downstream drop facts from the END of this list, so a
+    movement restriction or a health condition must not queue behind a
+    preference. Newest first within each group.
+    """
     try:
         pg = get_pg_client()
         await pg.connect()
         rows = await pg.fetch(
-            "SELECT fact_text FROM user_memory WHERE user_id = $1 AND valid = true",
+            """
+            SELECT fact_text FROM user_memory
+            WHERE user_id = $1 AND valid = true
+            ORDER BY CASE category
+                         WHEN 'restriction' THEN 0
+                         WHEN 'condition' THEN 1
+                         ELSE 2
+                     END,
+                     created_at DESC
+            LIMIT 50
+            """,
             user_id,
         )
         return [r["fact_text"] for r in rows]
@@ -105,53 +131,19 @@ async def _load_summary_chunks(session_id: str) -> list[str]:
         return []
 
 
-# ── Recent raw (Redis cache or DB fallback) ───────────────────────────────
+# ── Raw history (every message no summary chunk covers yet) ───────────────
 
 def _token_estimate(text: str) -> int:
     """Rough token count: ~4 chars per token for Vietnamese/English."""
     return len(text) // 4
 
 
-async def _load_recent_raw_cache(session_id: str) -> Optional[list[dict]]:
-    """Load recent raw messages from the STM cache. None means "no cache entry".
+async def _load_raw_history(session_id: str) -> list[dict]:
+    """Messages after the last active summary chunk, oldest first.
 
-    Adapts writer format [{q, a, ts}] to [{role, content}] for downstream.
-
-    Named `_load_recent_raw_redis` until 21-08, when the backend stopped being
-    Redis-specific — see shared/stm.py. Returning None for both "empty" and
-    "backend unreachable" is intentional and predates this change: the caller
-    falls back to PostgreSQL either way, and the store logs the outage once
-    rather than leaving this function to decide what an outage means.
+    One statement, so it runs alongside the other two loads. A dirty chunk
+    (a message in its range was deleted) is not coverage until it is rebuilt.
     """
-    data = await get_stm().get(session_id)
-    if not data:
-        return None
-    return _normalize_redis_format(data)
-
-
-def _normalize_redis_format(data: list[dict]) -> list[dict]:
-    """Convert Redis STM format to [{role, content}].
-
-    Writer (session_store) writes [{q, a, ts}] pairs.
-    Reader expects [{role, content}]. Accept both for forward-compat.
-    """
-    if not data:
-        return []
-    # Already in reader format [{role, content}] — pass through
-    if "role" in data[0]:
-        return data
-    # Writer format [{q, a, ts}] — convert
-    result = []
-    for pair in data:
-        if "q" in pair:
-            result.append({"role": "user", "content": pair["q"]})
-        if "a" in pair:
-            result.append({"role": "assistant", "content": pair["a"]})
-    return result
-
-
-async def _load_recent_raw_db(session_id: str, limit: int = _RECENT_RAW_MAX) -> list[dict]:
-    """Fallback: load recent messages from PostgreSQL."""
     try:
         pg = get_pg_client()
         await pg.connect()
@@ -159,68 +151,44 @@ async def _load_recent_raw_db(session_id: str, limit: int = _RECENT_RAW_MAX) -> 
             """
             SELECT role, content FROM messages
             WHERE session_id = $1
-            ORDER BY seq_id DESC
-            LIMIT $2
+              AND seq_id > COALESCE((
+                  SELECT MAX(covers_up_to_seq) FROM summaries
+                  WHERE session_id = $1 AND status = 'active'
+              ), 0)
+            ORDER BY seq_id
             """,
             session_id,
-            limit,
         )
-        # Reverse to chronological order (oldest first)
-        return [{"role": r["role"], "content": r["content"]} for r in reversed(rows)]
+        return [{"role": r["role"], "content": r["content"]} for r in rows]
     except Exception as exc:
-        logger.warning("recent_raw_db_failed", extra={"error": str(exc)})
+        logger.warning("raw_history_load_failed", extra={"error": str(exc)})
         return []
 
 
-def _select_recent_raw(pairs: list[dict], budget: int | None = None) -> list[dict]:
-    """Select recent messages from newest to oldest until token budget reached."""
-    if budget is None:
-        budget = history_budget()
-    selected = []
-    used = 0
-    for msg in reversed(pairs):
-        cost = _token_estimate(msg.get("content", ""))
-        if used + cost > budget:
-            break
-        selected.insert(0, msg)
-        used += cost
-    return selected
+def _drop_history_overflow(history: list[dict], session_id: str) -> list[dict]:
+    """Drop the oldest messages while the raw history is over the ceiling.
 
-
-async def _load_recent_raw(session_id: str) -> list[dict]:
-    """Load recent raw messages: cache first, DB fallback. Token-budgeted."""
-    cached = await _load_recent_raw_cache(session_id)
-    if cached:
-        return _select_recent_raw(cached)
-    db_data = await _load_recent_raw_db(session_id)
-    return _select_recent_raw(db_data)
-
-
-# ── Context assembly ──────────────────────────────────────────────────────
-
-def _assemble_system_message(
-    user_facts: list[str],
-    summary_chunks: list[str],
-) -> Optional[SystemMessage]:
-    """Build static-context SystemMessage per M.7 layout.
-
-    Static part (prefix-cacheable): user_facts + summary chunks.
-    Returns None if both are empty (no context to inject).
+    Loud on purpose: what goes here is in no summary either, so the model has
+    a hole in this conversation until the summarizer catches up.
     """
-    parts = []
-
-    if user_facts:
-        facts_block = "[USER FACTS]\n" + "\n".join(f"- {f}" for f in user_facts)
-        parts.append(facts_block)
-
-    if summary_chunks:
-        summaries_block = "[SESSION HISTORY]\n" + "\n---\n".join(summary_chunks)
-        parts.append(summaries_block)
-
-    if not parts:
-        return None
-
-    return SystemMessage(content="\n\n".join(parts))
+    ceiling = history_ceiling()
+    sizes = [_token_estimate(m.get("content") or "") for m in history]
+    kept_tokens = sum(sizes)
+    dropped = 0
+    while kept_tokens > ceiling:
+        kept_tokens -= sizes[dropped]
+        dropped += 1
+    if not dropped:
+        return history
+    logger.warning("history_overflow_dropped", extra={
+        "session_id": session_id,
+        "dropped_messages": dropped,
+        "kept_messages": len(history) - dropped,
+        "dropped_tokens": sum(sizes[:dropped]),
+        "kept_tokens": kept_tokens,
+        "ceiling_tokens": ceiling,
+    })
+    return history[dropped:]
 
 
 def _recent_raw_to_messages(recent: list[dict]) -> list:
@@ -241,10 +209,9 @@ def _recent_raw_to_messages(recent: list[dict]) -> list:
 async def memory_node(state: AgentState, config: RunnableConfig) -> dict:
     """Memory node — runs FIRST (before planner, D9).
 
-    Loads user_facts + summary chunks + recent raw.
-    Prepends context as SystemMessage + recent chat history into messages.
-
-    No separate "memory_context" dict — context flows through messages (D20).
+    Loads user facts + summary chunks + raw history. Facts and summaries go
+    out as `user_facts` / `session_summary`; `messages` gets the raw history
+    as user/assistant messages and nothing else.
     """
     t0 = time.perf_counter()
     request_id = config["configurable"].get("request_id", "-")
@@ -256,21 +223,12 @@ async def memory_node(state: AgentState, config: RunnableConfig) -> dict:
     })
 
     # All three loads are independent — run concurrently
-    user_facts, summary_chunks, recent_raw = await asyncio.gather(
+    user_facts, summary_chunks, raw_history = await asyncio.gather(
         _load_user_facts(user_id),
         _load_summary_chunks(session_id),
-        _load_recent_raw(session_id),
+        _load_raw_history(session_id),
     )
-
-    # Build output messages
-    out_messages = []
-
-    sys_msg = _assemble_system_message(user_facts, summary_chunks)
-    if sys_msg:
-        out_messages.append(sys_msg)
-
-    if recent_raw:
-        out_messages.extend(_recent_raw_to_messages(recent_raw))
+    raw_history = _drop_history_overflow(raw_history, session_id)
 
     elapsed_ms = round((time.perf_counter() - t0) * 1000)
     logger.info("node_complete", extra={
@@ -278,9 +236,11 @@ async def memory_node(state: AgentState, config: RunnableConfig) -> dict:
         "elapsed_ms": elapsed_ms,
         "user_facts_count": len(user_facts),
         "summary_chunks_count": len(summary_chunks),
-        "recent_raw_count": len(recent_raw),
+        "recent_raw_count": len(raw_history),
     })
 
-    if out_messages:
-        return {"messages": out_messages}
-    return {}
+    return {
+        "messages": _recent_raw_to_messages(raw_history),
+        "user_facts": user_facts,
+        "session_summary": summary_chunks,
+    }

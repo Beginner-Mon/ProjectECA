@@ -15,6 +15,7 @@ import {
 import { CLIP_ABORTED, SpeechClip, speechPlayer, unlockSpeechAudio } from '../lib/speechPlayer'
 import { routeSpeechEvent } from '../lib/speechSource'
 import { createTurnLifecycle } from '../lib/turnLifecycle'
+import { RECOVERY_DELAYS_MS, createTurnRecovery, pickSavedReply, type TurnRecovery } from '../lib/turnRecovery'
 import { pollMotionJob } from '../lib/motionJob'
 import { clearSessionPointer, forgetMissingSession, readSessionPointer, stampSessionPointer } from '../lib/chatSession'
 import { useMotion } from '../hooks/useMotion'
@@ -163,6 +164,20 @@ export function ChatProvider({ children }: { children: ReactNode }) {
   }, [])
   const abortControllerRef = useRef<AbortController | null>(null)
   const thinkingRef = useRef(false)
+  /** Latest messages, for recovery to compare server ids against what is on screen. */
+  const messagesRef = useRef<Message[]>([])
+  messagesRef.current = messages
+  /** Broken turns still looking for their saved reply (lib/turnRecovery.ts). */
+  const recoveriesRef = useRef(new Set<TurnRecovery>())
+  useEffect(() => {
+    const recoveries = recoveriesRef.current
+    const retryNow = () => recoveries.forEach((r) => r.tryNow())
+    window.addEventListener('online', retryNow)
+    return () => {
+      window.removeEventListener('online', retryNow)
+      recoveries.forEach((r) => r.cancel())
+    }
+  }, [])
 
   // Greeting is ephemeral — only for empty sessions ([greeting]).
   // Before this, only the first hydration (fallback -> anne) could adopt;
@@ -654,11 +669,13 @@ export function ChatProvider({ children }: { children: ReactNode }) {
     const sentLlm = llmChoiceToSend(llmStateRef.current, llmFlagsRef.current) ?? undefined
     const sentPresetId = sentLlm !== undefined ? llmStateRef.current.active : null
 
+    const turnSessionId = ensureSessionId()
+
     try {
       await streamChat(
         {
           query: text,
-          sessionId: ensureSessionId(),
+          sessionId: turnSessionId,
           webSearch,
           outputMode: voiceReply ? 'both' : 'text',
           // The selected character IS the persona: characters.slug is what the
@@ -819,6 +836,29 @@ export function ChatProvider({ children }: { children: ReactNode }) {
               : msg
           )
         )
+        // The server often finished and saved the turn anyway: look for it.
+        const recovery: TurnRecovery = createTurnRecovery({
+          delays: RECOVERY_DELAYS_MS,
+          fetch: async () => {
+            const data = await getSession(turnSessionId)
+            const onScreen = new Set<string>()
+            messagesRef.current.forEach((m) => { if (m.serverId) onScreen.add(m.serverId) })
+            return pickSavedReply((data?.messages ?? []) as SessionMessage[], text, onScreen)
+          },
+          isRelevant: () => sessionIdRef.current === turnSessionId,
+          onRecovered: (saved) => {
+            setMessages((prev) =>
+              prev.map((msg) =>
+                msg.id === assistantMsgId
+                  ? { ...msg, content: saved.content, serverId: saved.id, feedback: saved.feedback ?? null }
+                  : msg
+              )
+            )
+            setSessionsDirty(true)
+          },
+          onSettled: () => recoveriesRef.current.delete(recovery),
+        })
+        recoveriesRef.current.add(recovery)
       }
     } finally {
       // A clip still unfinished when the stream is over never will be: it was

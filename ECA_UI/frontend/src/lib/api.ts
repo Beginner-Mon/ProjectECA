@@ -292,7 +292,27 @@ export async function streamChat(
     throw new Error(`HTTP ${resp.status}: ${await resp.text()}`)
   }
 
-  await consumeSSE(resp, onEvent)
+  let sawDone = false
+  await consumeSSE(resp, (type, data) => {
+    if (type === 'done') sawDone = true
+    onEvent(type, data)
+  })
+  // The server emits `done` on every turn it completes. A stream that ends
+  // without one was cut — a half-written reply must not pass for a finished one.
+  // (An abort that ends the stream cleanly is the user's doing, not a cut.)
+  if (!sawDone && !signal?.aborted) throw new StreamInterruptedError()
+}
+
+/**
+ * The stream broke after part of the reply had been delivered, or ended without
+ * `done`. The server may still have finished and saved the turn — callers look
+ * it up rather than treating the text on screen as complete.
+ */
+export class StreamInterruptedError extends Error {
+  constructor(message = 'Chat stream interrupted', options?: { cause?: unknown }) {
+    super(message, options)
+    this.name = 'StreamInterruptedError'
+  }
 }
 
 /**
@@ -342,6 +362,9 @@ async function consumeSSE(resp: Response, onEvent: SSEEventCallback): Promise<vo
       console.warn('[SSE] reader returned 0 events — falling back to text()')
     } catch (e) {
       if ((e as Error).name === 'AbortError') throw e
+      // Part of the reply already went to the caller: replaying the clone would
+      // emit it twice. Report the cut instead.
+      if (emittedAny) throw new StreamInterruptedError(undefined, { cause: e })
       console.warn('[SSE] reader failed, falling back to text():', e)
     }
   }

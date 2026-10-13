@@ -19,6 +19,14 @@ langgraph:
     # that instead of conversation summaries. Off until the migration 014 table
     # is live; VVA_HISTORY_INDEX=1|0 overrides this.
     history_index_enabled: false
+    # Memory v2: after a turn, read what the user said and add, change or
+    # retire facts in user_memory. Off until migration 015 is live;
+    # VVA_LTM=1|0 overrides this.
+    ltm_enabled: false
+    # Also read the conversation the user is in, every turn, so a fact said now
+    # is stored before their next message. Off: a conversation is read once the
+    # user chats in another one.
+    ltm_include_current_session: true
 
   retrieval:
     top_k: 5

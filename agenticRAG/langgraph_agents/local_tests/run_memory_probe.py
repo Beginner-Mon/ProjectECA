@@ -41,99 +41,18 @@ if str(_AGENTIC_ROOT) not in sys.path:
     sys.path.insert(0, str(_AGENTIC_ROOT))
 
 import yaml  # noqa: E402
-from pydantic import BaseModel  # noqa: E402
 
-# ── Hằng số hợp đồng ─────────────────────────────────────────────────────
+# Prompt, cách dựng user message, lời gọi JSON và các bước kiểm tra là của code
+# thật: probe đo đúng thứ đang chạy, không giữ bản sao riêng.
+from langgraph_agents.nodes.fact_extractor import (  # noqa: E402
+    MEMORY_PROMPT,
+    enforce,
+    extraction_llm,
+    render_user_message,
+    request_operations,
+)
 
-MAX_OPS = 5
-MAX_FACT_CHARS = 300
-CATEGORIES = ("condition", "restriction", "goal", "preference", "profile")
 OUTPUT_CAP_TOKENS = 512  # trần của role memory trong llm.py (_MAX_TOKENS_FAST)
-
-MEMORY_PROMPT = """\
-You maintain the long-term memory of a wellness and physical-therapy chat assistant. \
-You read part of a conversation and decide which durable facts about the USER must be \
-written down, changed or removed. Your answer is read by a program, not by a person, \
-so reply with a single JSON object and nothing else.
-
-You are given:
-- the date of the conversation;
-- the facts already stored for this user. Each has an "id", the fact text, a \
-"category" and a "locked" flag. Locked means the user typed that fact in themselves;
-- the messages to read, each labelled [user] or [assistant]. The input says whether \
-they are a whole conversation or a single turn (one user message and the assistant's \
-reply to it). In the single-turn case the stored facts already include what earlier \
-turns produced.
-
-OUTPUT FORMAT
-{"operations": [ ... ]}
-Each operation is exactly one of:
-{"op": "ADD", "fact": "<text>", "category": "<category>"}
-{"op": "UPDATE", "id": "<id of a stored fact>", "fact": "<new full text>", "category": "<category>"}
-{"op": "DELETE", "id": "<id of a stored fact>"}
-An empty list, {"operations": []}, means "nothing new". It is the normal answer for \
-most conversations. Never write an operation just to have one.
-
-WHAT MAY BE WRITTEN DOWN
-- Only what the USER said about themselves. Never something the assistant suggested, \
-assumed or guessed, even if the user did not object. Never your own inference. Never \
-something about another person: a relative's or friend's condition is not a fact about \
-the user.
-- Durable facts only: still true and useful a month from now, in a conversation about \
-something else. Not passing states (tired today, a bad night), not the details of a \
-one-off request (the routine they asked for today, an event tomorrow), not small talk.
-- Health facts are wanted: injuries, surgeries, diagnoses the user reports, ongoing \
-pain, movements a clinician told them to avoid. Also goals, lasting preferences about \
-how they want to be helped or how answers should be written, and basic profile facts \
-(job, routine, equipment) that matter for exercise advice.
-- Never store identifiers: ID or card numbers, phone numbers, e-mail addresses, \
-street addresses. If the user gives one, leave it out entirely.
-- Resolve relative times with the conversation date. "Three months ago", "last month", \
-"since last winter", "recently" must become an absolute month and year (for example \
-"July 2026"), because a relative time is wrong a month later. If it cannot be made \
-absolute, leave the time out rather than keep a relative one.
-
-CATEGORIES (closed list, use exactly these words)
-- condition: injuries, surgeries, diagnoses, ongoing pain or symptoms
-- restriction: movements, loads or activities the user must or wants to avoid
-- goal: something the user is working towards
-- preference: lasting likes, dislikes, and how they want answers written
-- profile: other stable facts about the user (job, routine, equipment, schedule)
-
-HOW TO COMPARE WITH STORED FACTS
-- The same fact is already stored: do nothing.
-- The user's new statement changes or extends a stored fact: UPDATE it, using the \
-stored id. Write the complete new text. When the old state matters, keep it briefly, \
-for example "now pain-free when walking (in July 2026: pain after 10 minutes)".
-- The user says a stored fact is no longer true: DELETE it, using the stored id.
-- A locked fact must never be updated or deleted. If the user contradicts a locked \
-fact, ADD the user's new statement as a new fact instead.
-- Only use ids that appear in the stored facts. Never invent an id.
-- Do not repeat in an ADD a fact that is already stored.
-
-STYLE OF EACH FACT
-- At most 5 operations in total, and each fact at most 300 characters.
-- One fact per operation. Several facts mean several operations.
-- Write each fact in the language the user wrote it in, as a short neutral statement \
-about the user, understandable without the conversation (no "she said", no "as above").
-- Only what was said. Do not add details, causes, severity or advice.
-
-EXAMPLES (structure only; write facts in the user's own language)
-User says they had a meniscus operation in May 2025 and nothing is stored:
-{"operations": [{"op": "ADD", "fact": "Had meniscus surgery in May 2025", "category": "condition"}]}
-User says "my back is fine now" and stored fact f2 says "Has lower back pain":
-{"operations": [{"op": "DELETE", "id": "f2"}]}
-User only chats, asks for a one-off routine, or the assistant guesses a diagnosis \
-the user never confirmed:
-{"operations": []}
-"""
-
-
-class _Ops(BaseModel):
-    """Phong bì JSON thô; kiểm tra từng thao tác làm bằng code bên dưới."""
-
-    operations: list[dict]
-
 
 # ── Chuẩn hoá chuỗi để so khớp ───────────────────────────────────────────
 
@@ -145,69 +64,6 @@ def _fold(s: str) -> str:
 
 def _lower_nfc(s: str) -> str:
     return unicodedata.normalize("NFC", (s or "").lower())
-
-
-# ── Kiểm tra bằng code sau khi model trả lời ─────────────────────────────
-
-_EMAIL_RE = re.compile(r"[\w.+-]+@[\w-]+(?:\.[\w-]+)+")
-_DATE_LIKE_RE = re.compile(r"\b\d{4}-\d{2}(?:-\d{2})?\b|\b\d{1,2}[/.]\d{1,2}[/.]\d{2,4}\b")
-# 7+ chữ số, cho phép một ký tự ngăn cách (cách, chấm, gạch, ngoặc) giữa hai chữ số.
-_LONG_DIGITS_RE = re.compile(r"\d(?:[\s.\-()]?\d){6,}")
-
-
-def _looks_like_identifier(text: str) -> bool:
-    if _EMAIL_RE.search(text):
-        return True
-    return bool(_LONG_DIGITS_RE.search(_DATE_LIKE_RE.sub(" ", text)))
-
-
-def _enforce(raw_ops: list[Any], stored: list[dict]
-             ) -> tuple[list[dict], list[dict]]:
-    """Trả (kept, dropped). dropped = [{"reason", "op"}]."""
-    by_id = {f["id"]: f for f in stored}
-    kept: list[dict] = []
-    dropped: list[dict] = []
-
-    def drop(reason: str, op: Any) -> None:
-        dropped.append({"reason": reason, "op": op})
-
-    for i, op in enumerate(raw_ops):
-        if i >= MAX_OPS:
-            drop("over_limit", op)
-            continue
-        if not isinstance(op, dict) or op.get("op") not in ("ADD", "UPDATE", "DELETE"):
-            drop("bad_op", op)
-            continue
-        kind = op["op"]
-        clean: dict[str, Any] = {"op": kind}
-        if kind in ("ADD", "UPDATE"):
-            fact = op.get("fact")
-            if not isinstance(fact, str) or not fact.strip():
-                drop("empty_fact", op)
-                continue
-            fact = fact.strip()
-            if len(fact) > MAX_FACT_CHARS:
-                drop("too_long", op)
-                continue
-            if op.get("category") not in CATEGORIES:
-                drop("bad_category", op)
-                continue
-            if _looks_like_identifier(fact):
-                drop("identifier", op)
-                continue
-            clean["fact"] = fact
-            clean["category"] = op["category"]
-        if kind in ("UPDATE", "DELETE"):
-            fid = op.get("id")
-            if not isinstance(fid, str) or fid not in by_id:
-                drop("unknown_id", op)
-                continue
-            if by_id[fid].get("locked"):
-                drop("locked_id", op)
-                continue
-            clean["id"] = fid
-        kept.append(clean)
-    return kept, dropped
 
 
 def _apply_ops(stored: list[dict], kept: list[dict], counter: list[int]) -> list[dict]:
@@ -228,19 +84,6 @@ def _apply_ops(stored: list[dict], kept: list[dict], counter: list[int]) -> list
 
 
 # ── Gọi LLM ──────────────────────────────────────────────────────────────
-
-def _render_user_message(date: str, stored: list[dict], msgs: list[dict],
-                         scope: str) -> str:
-    facts = json.dumps(
-        [{"id": f["id"], "fact": f["fact"], "category": f["category"],
-          "locked": bool(f.get("locked", False))} for f in stored],
-        ensure_ascii=False, indent=1) if stored else "(none)"
-    lines = "\n".join(f"[{m['role']}] {m['content']}" for m in msgs)
-    return (f"Conversation date: {date}\n\n"
-            f"Stored facts:\n{facts}\n\n"
-            f"Messages to read ({scope}):\n{lines}\n\n"
-            "Reply with the JSON object only.")
-
 
 _SECRET_RE = re.compile(r"(sk-[A-Za-z0-9_\-]{8,}|Bearer\s+\S+|api[_-]?key\S*)", re.IGNORECASE)
 
@@ -268,8 +111,7 @@ async def _call(structured_llm: Any, user_msg: str, stored: list[dict]
     }
     t0 = time.perf_counter()
     try:
-        result = await structured_llm.ainvoke(
-            [("system", MEMORY_PROMPT), ("user", user_msg)])
+        result = await request_operations(structured_llm, user_msg)
     except Exception as exc:  # noqa: BLE001 — timeout/401/... ghi lại rồi đi tiếp
         rec["elapsed_s"] = round(time.perf_counter() - t0, 2)
         rec["error"] = f"{type(exc).__name__}: {_scrub(str(exc))}"
@@ -293,7 +135,7 @@ async def _call(structured_llm: Any, user_msg: str, stored: list[dict]
         or (rec["output_tokens"] is not None
             and rec["output_tokens"] >= OUTPUT_CAP_TOKENS)
         or (not rec["parse_ok"] and not content.rstrip().endswith("}")))
-    kept, dropped = _enforce(rec["returned_ops"], stored)
+    kept, dropped = enforce(rec["returned_ops"], stored)
     rec["kept_ops"], rec["dropped"] = kept, dropped
     return rec
 
@@ -392,8 +234,8 @@ async def _run_conv(structured_llm: Any, conv: dict, modes: list[str]
                            "expect": conv["expect"], "modes": {}}
 
     if "session" in modes:
-        msg = _render_user_message(conv["date"], stored, conv["messages"],
-                                   "a whole conversation")
+        msg = render_user_message(conv["date"], stored, conv["messages"],
+                                  "a whole conversation")
         call = await _call(structured_llm, msg, stored)
         sc = _score(conv["expect"], call["kept_ops"], call["dropped"])
         out["modes"]["session"] = {"calls": [call], "score": sc,
@@ -406,7 +248,7 @@ async def _run_conv(structured_llm: Any, conv: dict, modes: list[str]
         all_ops: list[dict] = []
         all_dropped: list[dict] = []
         for n, pair in enumerate(_pairs(conv["messages"]), start=1):
-            msg = _render_user_message(
+            msg = render_user_message(
                 conv["date"], facts, pair,
                 f"one turn, number {n}: a user message and the assistant's reply")
             call = await _call(structured_llm, msg, facts)
@@ -675,16 +517,12 @@ async def amain(args: argparse.Namespace) -> int:
         return 1
     modes = ["session", "turn"] if args.mode == "both" else [args.mode]
 
-    from langgraph_agents.llm import get_chat_model
-
     try:
-        llm = get_chat_model("memory")
+        structured_llm = extraction_llm()
     except Exception as exc:  # noqa: BLE001
         print(f"Không dựng được model role 'memory': {type(exc).__name__}: "
               f"{_scrub(str(exc))}")
         return 2
-    structured_llm = llm.with_structured_output(
-        _Ops, method="json_mode", include_raw=True)
 
     results: list[dict] = []
     for conv in selected:

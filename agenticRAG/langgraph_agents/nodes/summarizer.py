@@ -173,9 +173,15 @@ async def housekeep(user_id: str, session_id: str,
     so the summaries' only reader is gone and each would cost an LLM call. The
     indexing needs no LLM, so it runs first. In-conversation compaction is
     unchanged either way.
+
+    With fact extraction on (nodes/fact_extractor.py), it runs last. /chat
+    writes the turn's question in a task started at the same moment as this
+    one, and by the end of the other steps that write has landed, so the
+    extractor reads what the user has just said.
     """
     from langgraph_agents.db import turn_index
     from langgraph_agents.llm_byok import bind_request_llm
+    from langgraph_agents.nodes import fact_extractor
 
     bind_request_llm(None)
     if turn_index.enabled():
@@ -193,6 +199,15 @@ async def housekeep(user_id: str, session_id: str,
                 "session_id": session_id, "error": str(exc),
             })
     await maybe_summarize(session_id, history_budget, compact_at)
+    if fact_extractor.enabled():
+        try:
+            await fact_extractor.extract_user_facts(user_id, session_id)
+        except Exception as exc:
+            # The type and not the message: a database error quotes the row it
+            # rejected, and that row is a fact about the user's health.
+            logger.warning("fact_extraction_failed", extra={
+                "session_id": session_id, "error": type(exc).__name__,
+            })
 
 
 async def _summarize_messages(rows: list, session_id: str) -> str | None:

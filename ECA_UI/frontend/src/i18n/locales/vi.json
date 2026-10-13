@@ -115,6 +115,8 @@
     "graphics_desc": "Điều chỉnh chất lượng hình ảnh và hiệu năng",
     "language": "Ngôn ngữ",
     "language_hint": "Ngôn ngữ của trang web. Trợ lý vẫn trả lời theo đúng ngôn ngữ bạn viết.",
+    "memory": "Ghi nhớ",
+    "memory_desc": "ECA nhớ gì về bạn",
     "notifications": "Thông báo",
     "official": "Chính thức",
     "profile": "Hồ sơ",
@@ -286,5 +288,18 @@
     },
     "submit": "Gửi",
     "submitting": "Đang gửi..."
+  },
+  "memory": {
+    "add_placeholder": "Thêm điều bạn muốn ECA nhớ",
+    "cascade_note": "Xoá một cuộc trò chuyện cũng xoá những điều ECA ghi lại từ cuộc trò chuyện đó.",
+    "delete_confirm": "Xoá điều này?",
+    "delete_failed": "Không xoá được. Thử lại.",
+    "empty": "ECA chưa ghi nhớ gì về bạn.",
+    "intro": "ECA giữ lại một vài điều bạn đã kể, gồm cả thông tin sức khoẻ, để trả lời phù hợp với bạn. Bạn có thể xoá bất cứ điều nào, bất cứ lúc nào.",
+    "load_failed": "Không tải được. Thử lại.",
+    "save_failed": "Không lưu được. Thử lại.",
+    "source_extracted": "ECA ghi lại từ một cuộc trò chuyện",
+    "source_user": "Bạn đã thêm",
+    "title": "ECA nhớ gì về bạn"
   }
 }

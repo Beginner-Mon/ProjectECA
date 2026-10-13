@@ -102,7 +102,10 @@ class UserMemoryItem(BaseModel):
     fact_text: str
     category: Optional[str] = None
     valid: bool = True
+    # 'user' = typed by the user, 'extracted' = noted from a conversation.
+    source: str = "user"
     created_at: str
+    updated_at: Optional[str] = None
 
 
 class UserMemoryListResponse(BaseModel):

@@ -258,7 +258,7 @@ async def test_create_user_memory_runs_both_inserts_in_one_transaction():
     })
 
     with patch("langgraph_agents.api.routes_crud.get_pg_client", return_value=client):
-        await create_user_memory(
+        item = await create_user_memory(
             UserMemoryCreate(fact_text="x"),
             uid="44444444-4444-4444-4444-444444444444",
         )
@@ -267,6 +267,42 @@ async def test_create_user_memory_runs_both_inserts_in_one_transaction():
         f"the two inserts used {pool.acquire.call_count} connections"
     )
     assert conn.transaction_entered
+    # A fact made through this route is the user's own.
+    assert item.source == "user"
+
+
+@pytest.mark.unit
+@pytest.mark.asyncio
+async def test_list_user_memory_returns_where_each_fact_came_from():
+    """The settings screen tells typed facts from noted ones by these two fields."""
+    import datetime
+    from unittest.mock import patch
+
+    from langgraph_agents.api.routes_crud import list_user_memory
+
+    made = datetime.datetime(2026, 10, 1, 9, 0)
+    edited = datetime.datetime(2026, 10, 5, 9, 0)
+    pg = MagicMock()
+    pg.connect = AsyncMock()
+    pg.fetch = AsyncMock(return_value=[{
+        "id": "33333333-3333-3333-3333-333333333333",
+        "fact_text": "prefers short answers",
+        "category": None,
+        "valid": True,
+        "source": "extracted",
+        "created_at": made,
+        "updated_at": edited,
+    }])
+
+    with patch("langgraph_agents.api.routes_crud.get_pg_client", return_value=pg):
+        out = await list_user_memory(uid="44444444-4444-4444-4444-444444444444")
+
+    sql = pg.fetch.call_args.args[0]
+    assert "source" in sql and "updated_at" in sql
+    fact = out.facts[0]
+    assert fact.source == "extracted"
+    assert fact.updated_at == edited.isoformat()
+    assert fact.created_at == made.isoformat()
 
 
 # ── The real thing ────────────────────────────────────────────────────────────

@@ -8,6 +8,7 @@ Project ECA ("ECA", "we") is a student project by Ordinary Studio. This policy e
 
 - **Account details.** Your email address and display name. If you sign in with Google, we also receive the name, email address and profile picture on your Google account.
 - **Your conversations.** The messages you send, ECA's replies, and short summaries ECA writes of each finished conversation so that it can remember them later. These can include health information you choose to share, such as pain, injuries, symptoms or exercises.
+- **Notes about you.** Short notes on what you tell ECA about yourself, which can include health details, such as an injury or a preference. ECA writes some of them from your conversations and you can add your own. They are used only to make ECA's answers fit you, and are kept until you delete them or your account.
 - **Feedback** you give on a reply: a thumbs up or down, the reasons you pick, and any comment you type.
 - **Settings**, such as language, character and graphics options.
 - **Technical logs.** When you chat, our servers record events for troubleshooting: timings, errors, and the first part of your message (up to 120 characters).
@@ -52,6 +53,7 @@ Your data is stored in the United States, and is processed in China when DeepSee
 ## 6. Your choices and rights
 
 - **Delete a conversation** from your chat history in the app. Its messages and summaries are deleted with it.
+- **See, add and delete your notes** under Settings → Memory. Deleting a conversation also deletes the notes ECA took from it.
 - **Access, correct or delete** your data, **delete your account**, or **withdraw consent** by emailing {CONTACT_EMAIL} from the address on your account. We reply within 30 days.
 
 ## 7. Security

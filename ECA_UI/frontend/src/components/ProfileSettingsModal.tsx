@@ -10,6 +10,7 @@ const GraphicSettingsContent = lazy(() => import('./GraphicSettingsContent'))
 const AboutUsContent = lazy(() => import('./AboutUsContent'))
 const BillingContent = lazy(() => import('./BillingContent'))
 const LegalContent = lazy(() => import('./LegalContent'))
+const MemoryContent = lazy(() => import('./MemoryContent'))
 
 interface ProfileSettingsModalProps {
   type: 'profile' | 'settings' | 'notifications' | 'graphics' | 'about' | 'billing'
@@ -21,7 +22,7 @@ const ROOT_VIEW = 'main' as const
 
 export default function ProfileSettingsModal({ type, onClose, onBack }: ProfileSettingsModalProps) {
   const { t } = useTranslation()
-  const [settingsView, setSettingsView] = useState<'main' | 'providers' | 'provider-detail' | 'graphics' | 'about' | 'language' | 'legal'>(ROOT_VIEW)
+  const [settingsView, setSettingsView] = useState<'main' | 'providers' | 'provider-detail' | 'graphics' | 'about' | 'language' | 'legal' | 'memory'>(ROOT_VIEW)
   const [selectedProvider, setSelectedProvider] = useState<LlmPreset | undefined>()
 
   useEffect(() => {
@@ -52,7 +53,7 @@ export default function ProfileSettingsModal({ type, onClose, onBack }: ProfileS
       setSelectedProvider(undefined)
     } else if (type === 'settings' && settingsView === 'providers') {
       setSettingsView(ROOT_VIEW)
-    } else if (settingsView === 'graphics' || settingsView === 'about' || settingsView === 'language' || settingsView === 'legal') {
+    } else if (settingsView === 'graphics' || settingsView === 'about' || settingsView === 'language' || settingsView === 'legal' || settingsView === 'memory') {
       setSettingsView(ROOT_VIEW)
     } else {
       // `onBack ?? onClose()` read onBack and discarded it: when a parent
@@ -83,6 +84,8 @@ export default function ProfileSettingsModal({ type, onClose, onBack }: ProfileS
               ? t('modal.language')
               : settingsView === 'legal'
                 ? t('legal.title')
+              : settingsView === 'memory'
+                ? t('memory.title')
               : settingsView === 'graphics'
                 ? t('modal.graphics')
                 : settingsView === 'about'
@@ -152,6 +155,8 @@ export default function ProfileSettingsModal({ type, onClose, onBack }: ProfileS
             <SettingsContent view="language" />
           ) : settingsView === 'legal' ? (
             <LegalContent />
+          ) : settingsView === 'memory' ? (
+            <MemoryContent />
           ) : (
             <SettingsContent
               onNavigateToProviders={() => setSettingsView('providers')}
@@ -159,6 +164,7 @@ export default function ProfileSettingsModal({ type, onClose, onBack }: ProfileS
               onNavigateToAbout={() => setSettingsView('about')}
               onNavigateToLanguage={() => setSettingsView('language')}
               onNavigateToLegal={() => setSettingsView('legal')}
+              onNavigateToMemory={() => setSettingsView('memory')}
             />
           )}
         </Suspense>

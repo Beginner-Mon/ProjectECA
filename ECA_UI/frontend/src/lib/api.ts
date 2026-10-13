@@ -534,12 +534,36 @@ export async function fetchLlmConfig(): Promise<LlmConfig> {
 
 // ── User memory CRUD ───────────────────────────────────────────────────────────
 
-export async function listUserMemory() {
+/** One thing ECA remembers about the user. */
+export interface UserMemoryItem {
+  id: string
+  fact_text: string
+  category: string | null
+  /** 'user' = typed by the user, 'extracted' = noted by ECA from a conversation. */
+  source: 'user' | 'extracted'
+  created_at: string
+  updated_at: string
+}
+
+/**
+ * What the server sends, before lib/userMemory.ts fills the gaps: an older
+ * backend sends neither `source` nor `updated_at`.
+ */
+export interface UserMemoryWire {
+  id: string
+  fact_text: string
+  category?: string | null
+  source?: string
+  created_at: string
+  updated_at?: string | null
+}
+
+export async function listUserMemory(): Promise<{ facts: UserMemoryWire[] }> {
   const { data } = await http.get('/me/memory')
   return data
 }
 
-export async function createUserMemory(factText: string, category?: string) {
+export async function createUserMemory(factText: string, category?: string): Promise<UserMemoryWire> {
   const { data } = await http.post('/me/memory', {
     fact_text: factText,
     category,
@@ -547,7 +571,7 @@ export async function createUserMemory(factText: string, category?: string) {
   return data
 }
 
-export async function deleteUserMemory(factId: string) {
+export async function deleteUserMemory(factId: string): Promise<{ deleted: string }> {
   const { data } = await http.delete(`/me/memory/${encodeURIComponent(factId)}`)
   return data
 }

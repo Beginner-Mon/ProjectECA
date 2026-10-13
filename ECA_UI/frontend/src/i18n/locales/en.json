@@ -115,6 +115,8 @@
     "graphics_desc": "Adjust visual quality and performance options",
     "language": "Language",
     "language_hint": "The language of this site. The assistant still replies in whichever language you write in.",
+    "memory": "Memory",
+    "memory_desc": "What ECA remembers about you",
     "notifications": "Notifications",
     "official": "Official",
     "profile": "Profile",
@@ -286,5 +288,18 @@
     },
     "submit": "Submit",
     "submitting": "Submitting..."
+  },
+  "memory": {
+    "add_placeholder": "Add something you want ECA to remember",
+    "cascade_note": "Deleting a conversation also deletes what ECA noted from it.",
+    "delete_confirm": "Delete this?",
+    "delete_failed": "Could not delete. Try again.",
+    "empty": "ECA has not noted anything about you yet.",
+    "intro": "ECA keeps a few things you have told it, including health details, so its answers fit you. You can delete any of them at any time.",
+    "load_failed": "Could not load. Try again.",
+    "save_failed": "Could not save. Try again.",
+    "source_extracted": "Noted by ECA from a conversation",
+    "source_user": "You added this",
+    "title": "What ECA remembers about you"
   }
 }

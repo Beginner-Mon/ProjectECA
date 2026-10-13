@@ -8,6 +8,7 @@ Project ECA ("ECA", "chúng tôi") là dự án sinh viên của Ordinary Studio
 
 - **Thông tin tài khoản.** Email và tên hiển thị. Nếu bạn đăng nhập bằng Google, chúng tôi nhận thêm tên, email và ảnh đại diện của tài khoản Google đó.
 - **Hội thoại của bạn.** Tin nhắn bạn gửi, câu trả lời của ECA, và bản tóm tắt ngắn ECA viết cho mỗi hội thoại đã xong để nhớ lại về sau. Nội dung có thể gồm thông tin sức khoẻ bạn chọn chia sẻ, như cơn đau, chấn thương, triệu chứng hay bài tập.
+- **Ghi chú về bạn.** Những ghi chú ngắn về điều bạn kể với ECA về bản thân, có thể gồm thông tin sức khoẻ như một chấn thương hay một sở thích. ECA tự ghi một số ghi chú từ các cuộc trò chuyện của bạn, và bạn cũng có thể tự thêm. Chúng chỉ được dùng để câu trả lời của ECA phù hợp với bạn, và được giữ cho đến khi bạn xoá chúng hoặc xoá tài khoản.
 - **Phản hồi** bạn gửi cho một câu trả lời: thích hoặc không thích, lý do bạn chọn và nhận xét bạn viết.
 - **Cài đặt**, như ngôn ngữ, nhân vật và đồ hoạ.
 - **Nhật ký kỹ thuật (log).** Khi bạn chat, máy chủ ghi lại sự kiện để xử lý lỗi: thời gian xử lý, lỗi, và phần đầu tin nhắn của bạn (tối đa 120 ký tự).
@@ -52,6 +53,7 @@ Dữ liệu của bạn được lưu tại Hoa Kỳ, và được xử lý tạ
 ## 6. Lựa chọn và quyền của bạn
 
 - **Xoá một hội thoại** trong lịch sử chat của ứng dụng. Tin nhắn và bản tóm tắt của hội thoại đó bị xoá theo.
+- **Xem, thêm và xoá ghi chú** của bạn tại Cài đặt → Ghi nhớ. Xoá một hội thoại cũng xoá những ghi chú ECA đã lấy từ hội thoại đó.
 - **Xem, sửa hoặc xoá** dữ liệu, **xoá tài khoản**, hoặc **rút lại sự đồng ý**: gửi email tới {CONTACT_EMAIL} từ địa chỉ email của tài khoản. Chúng tôi trả lời trong vòng 30 ngày.
 
 ## 7. Bảo mật

@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react'
-import { KeyRound, MonitorCog, Info, ScrollText, Languages, Check } from 'lucide-react'
+import { KeyRound, MonitorCog, Info, ScrollText, Languages, Check, Brain } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
 import EcaLogo from './EcaLogo'
 import ProviderDetailView from './ProviderDetailView'
@@ -18,6 +18,7 @@ interface SettingsContentProps {
   onNavigateToAbout?: () => void
   onNavigateToLanguage?: () => void
   onNavigateToLegal?: () => void
+  onNavigateToMemory?: () => void
   onSelectProvider?: (provider: LlmPreset) => void
   selectedProvider?: LlmPreset
   /** The user chose to use a provider's key — the modal closes on it. */
@@ -247,7 +248,7 @@ function ProvidersView({ onSelectProvider }: { onSelectProvider?: SettingsConten
   )
 }
 
-export default function SettingsContent({ view = 'main', onNavigateToProviders, onNavigateToGraphics, onNavigateToLanguage, onNavigateToLegal, onSelectProvider, selectedProvider, onProviderUsed }: SettingsContentProps) {
+export default function SettingsContent({ view = 'main', onNavigateToProviders, onNavigateToGraphics, onNavigateToLanguage, onNavigateToLegal, onNavigateToMemory, onSelectProvider, selectedProvider, onProviderUsed }: SettingsContentProps) {
   const { t } = useTranslation()
 
   if (view === 'provider-detail') {
@@ -278,6 +279,7 @@ export default function SettingsContent({ view = 'main', onNavigateToProviders, 
     { id: 'providers', icon: KeyRound, label: t('settings.providers'), description: t('settings.providers_desc'), onClick: onNavigateToProviders },
     { id: 'graphics', icon: MonitorCog, label: t('settings.graphics'), description: t('settings.graphics_desc'), onClick: onNavigateToGraphics },
     { id: 'about', icon: Info, label: t('settings.about'), description: t('settings.about_desc') },
+    { id: 'memory', icon: Brain, label: t('settings.memory'), description: t('settings.memory_desc'), onClick: onNavigateToMemory },
     { id: 'terms', icon: ScrollText, label: t('settings.terms'), description: t('settings.terms_desc'), onClick: onNavigateToLegal },
   ]
 

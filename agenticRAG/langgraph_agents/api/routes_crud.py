@@ -125,6 +125,7 @@ async def create_user_memory(body: UserMemoryCreate, uid: str = Depends(current_
         fact_text=body.fact_text,
         category=body.category,
         valid=True,
+        source="user",
         created_at=row["created_at"].isoformat(),
     )
 
@@ -136,7 +137,7 @@ async def list_user_memory(uid: str = Depends(current_user_id)):
     await pg.connect()
 
     rows = await pg.fetch(
-        """SELECT id, fact_text, category, valid, created_at
+        """SELECT id, fact_text, category, valid, source, created_at, updated_at
            FROM user_memory
            WHERE user_id = $1::uuid AND valid = true
            ORDER BY created_at DESC
@@ -149,7 +150,9 @@ async def list_user_memory(uid: str = Depends(current_user_id)):
             fact_text=r["fact_text"],
             category=r["category"],
             valid=r["valid"],
+            source=r["source"],
             created_at=r["created_at"].isoformat(),
+            updated_at=r["updated_at"].isoformat(),
         )
         for r in rows
     ])

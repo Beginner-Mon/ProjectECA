@@ -34,10 +34,13 @@ async def test_finished_sessions_are_summarised_from_where_their_summary_stops()
     assert n == 2
     assert [c.args for c in run.await_args_list] == [("s-new", 0), ("s-old", 41)]
     sql, *args = pg.fetch.await_args.args
-    assert args == ["user-1", "s-current", summ._MIN_FINISHED_MESSAGES,
+    assert args == ["user-1", "s-current", summ._MIN_FINISHED_TURNS,
                     summ._MAX_FINISHED_PER_TURN]
-    assert summ._MIN_FINISHED_MESSAGES == 4      # two turns
+    assert summ._MIN_FINISHED_TURNS == 2
     assert "session_id <> $2" in sql
+    # Counted in answers: a turn that died left a question and nothing to
+    # summarise it with.
+    assert "m.role = 'assistant'" in sql
 
 
 @pytest.mark.asyncio
@@ -113,7 +116,8 @@ async def test_chat_sends_done_before_housekeeping_finishes_and_still_waits_for_
     graph = MagicMock()
     graph.astream = fake_astream
     monkeypatch.setattr(api_module, "_graph", graph)
-    monkeypatch.setattr(api_module, "write_session_turn", AsyncMock(return_value=None))
+    monkeypatch.setattr(api_module, "write_turn_question", AsyncMock())
+    monkeypatch.setattr(api_module, "write_turn_answer", AsyncMock(return_value=None))
 
     log = []
 
@@ -146,7 +150,8 @@ async def test_no_housekeeping_without_a_signed_in_user(monkeypatch):
     graph = MagicMock()
     graph.astream = fake_astream
     monkeypatch.setattr(api_module, "_graph", graph)
-    monkeypatch.setattr(api_module, "write_session_turn", AsyncMock(return_value=None))
+    monkeypatch.setattr(api_module, "write_turn_question", AsyncMock())
+    monkeypatch.setattr(api_module, "write_turn_answer", AsyncMock(return_value=None))
     hk = AsyncMock()
     monkeypatch.setattr(api_module, "housekeep", hk)
     req = ChatRequest(query="Xin chào", session_id="s-1")

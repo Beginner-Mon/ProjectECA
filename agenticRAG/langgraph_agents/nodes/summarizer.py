@@ -113,8 +113,9 @@ async def maybe_summarize(session_id: str) -> None:
 
 # A session counts as finished once the user chats in another one. Two turns is
 # enough to be worth remembering; real sessions are short (prod 12/10: median
-# ~400 tokens, largest ~2,800), so a token threshold never fired.
-_MIN_FINISHED_MESSAGES = 4
+# ~400 tokens, largest ~2,800), so a token threshold never fired. Counted in
+# answers: a turn that died left a question and nothing to summarise it with.
+_MIN_FINISHED_TURNS = 2
 _MAX_FINISHED_PER_TURN = 2
 
 
@@ -137,10 +138,11 @@ async def summarize_finished_sessions(user_id: str, current_session_id: str) -> 
            WHERE c.user_id = $1 AND c.session_id <> $2
              AND (SELECT count(*) FROM messages m
                   WHERE m.session_id = c.session_id
+                    AND m.role = 'assistant'
                     AND m.seq_id > COALESCE(s.covered, 0)) >= $3
            ORDER BY c.updated_at DESC
            LIMIT $4""",
-        user_id, current_session_id, _MIN_FINISHED_MESSAGES, _MAX_FINISHED_PER_TURN,
+        user_id, current_session_id, _MIN_FINISHED_TURNS, _MAX_FINISHED_PER_TURN,
     )
     for r in rows:
         await _run_summarize(r["session_id"], r["covered"])
@@ -234,7 +236,8 @@ async def _run_summarize(
 ) -> None:
     """Summarize messages in (from_seq, up_to_seq] into one chunk.
 
-    up_to_seq=None takes everything after from_seq (a finished session).
+    up_to_seq=None takes everything after from_seq (a finished session), up to
+    its last answer.
     """
     t0 = time.perf_counter()
 
@@ -251,6 +254,13 @@ async def _run_summarize(
                ORDER BY seq_id""",
             session_id, from_seq, up_to_seq,
         )
+
+        # A session the user has left can still have a turn running: its
+        # question is here, its answer is not yet. A chunk that ended on the
+        # question would leave that answer as raw history with nothing asked.
+        if up_to_seq is None:
+            while rows and rows[-1]["role"] == "user":
+                rows = rows[:-1]
 
         if not rows:
             return

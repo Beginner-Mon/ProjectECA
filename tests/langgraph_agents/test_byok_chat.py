@@ -57,7 +57,8 @@ def _make_client(monkeypatch, fake_astream):
     async def fake_write(*args, **kwargs):
         return "11111111-2222-3333-4444-555555555555"
 
-    monkeypatch.setattr(api_module, "write_session_turn", fake_write)
+    monkeypatch.setattr(api_module, "write_turn_question", fake_write)
+    monkeypatch.setattr(api_module, "write_turn_answer", fake_write)
 
     async def no_housekeeping(user_id, session_id):
         return None
@@ -229,7 +230,9 @@ def test_http_client_closed_and_key_not_persisted(monkeypatch):
             written["args"] = args
             return "id-1"
 
-        monkeypatch.setattr(mod, "write_session_turn", capture_write)
+        # Both halves of the turn: neither may carry the key.
+        monkeypatch.setattr(mod, "write_turn_question", capture_write)
+        monkeypatch.setattr(mod, "write_turn_answer", capture_write)
         resp = client.post("/chat", json={"query": "hi", "llm": _llm_body()})
         assert resp.status_code == 200
         assert captured["req"].http_client is None

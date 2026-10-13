@@ -97,6 +97,14 @@ def _set_health_redis(mock_redis):
     return mock_redis
 
 
+def _fake_session_writes(monkeypatch, write_answer):
+    """Replace a turn's two writes: the question's with a no-op, the answer's
+    with `write_answer`."""
+    import langgraph_agents.api.main as api_module
+    monkeypatch.setattr(api_module, "write_turn_question", AsyncMock())
+    monkeypatch.setattr(api_module, "write_turn_answer", write_answer)
+
+
 @pytest.fixture
 def api_client():
     """Fixture: mock graph + redis + a fixed authenticated user.
@@ -216,7 +224,7 @@ def test_chat_reads_nothing_before_the_graph(api_client, monkeypatch):
 
     monkeypatch.setattr(api_module, "load_session_messages", fake_load, raising=False)
     monkeypatch.setattr(api_module, "get_stm", fake_get_stm)
-    monkeypatch.setattr(api_module, "write_session_turn", AsyncMock(return_value="id-1"))
+    _fake_session_writes(monkeypatch, AsyncMock(return_value="id-1"))
     monkeypatch.setattr(api_module, "housekeep", AsyncMock())
 
     resp = client.post("/chat", json={"query": "Xin chao"})
@@ -649,7 +657,7 @@ def test_config_speaks_aloud_when_voice_on(api_client, monkeypatch):
     async def fake_write(*args, **kwargs):
         return None
 
-    monkeypatch.setattr(api_module, "write_session_turn", fake_write)
+    _fake_session_writes(monkeypatch, fake_write)
 
     async def _no_speech(*args, **kwargs):
         if False:
@@ -676,7 +684,7 @@ def test_config_not_speaking_when_tts_off(api_client, monkeypatch):
     async def fake_write(*args, **kwargs):
         return None
 
-    monkeypatch.setattr(api_module, "write_session_turn", fake_write)
+    _fake_session_writes(monkeypatch, fake_write)
 
     resp = client.post("/chat", json={"query": "hello", "output_mode": "both"})
     assert resp.status_code == 200
@@ -697,11 +705,48 @@ def test_config_not_speaking_in_text_mode(api_client, monkeypatch):
     async def fake_write(*args, **kwargs):
         return None
 
-    monkeypatch.setattr(api_module, "write_session_turn", fake_write)
+    _fake_session_writes(monkeypatch, fake_write)
 
     resp = client.post("/chat", json={"query": "hello", "output_mode": "text"})
     assert resp.status_code == 200
     assert captured["config"]["configurable"]["speaks_aloud"] is False
+
+
+@pytest.mark.unit
+def test_chat_gives_the_question_one_row_id_for_the_write_and_the_graph(
+        api_client, monkeypatch):
+    """The memory node leaves the running turn's question out of the history
+    by this id, so it must be the id the row was written with — and a new one
+    every turn."""
+    import uuid
+
+    client, _, mock_graph = api_client
+    captured: dict = {}
+    mock_graph.astream = _make_fake_astream_capture_config(captured)
+    _set_graph(mock_graph)
+
+    import langgraph_agents.api.main as api_module
+    questions = []
+
+    async def fake_question(**kwargs):
+        questions.append(kwargs)
+
+    monkeypatch.setattr(api_module, "write_turn_question", fake_question)
+    monkeypatch.setattr(api_module, "write_turn_answer", AsyncMock(return_value="id-1"))
+    monkeypatch.setattr(api_module, "housekeep", AsyncMock())
+
+    in_config = []
+    for _ in range(2):
+        resp = client.post("/chat", json={"query": "hello", "session_id": "s-1"})
+        assert resp.status_code == 200
+        in_config.append(captured["config"]["configurable"]["user_message_id"])
+
+    assert [q["message_id"] for q in questions] == in_config
+    assert in_config[0] != in_config[1]
+    assert str(uuid.UUID(in_config[0])) == in_config[0]
+    assert questions[0]["user_query"] == "hello"
+    assert questions[0]["session_id"] == "s-1"
+    assert questions[0]["user_id"] == "00000000-0000-0000-0000-000000000001"
 
 
 def _make_fake_astream_stage_then_token():
@@ -727,12 +772,10 @@ def test_stage_started_sent_before_tools_finish(api_client, monkeypatch):
     mock_graph.astream = _make_fake_astream_stage_then_token()
     _set_graph(mock_graph)
 
-    import langgraph_agents.api.main as api_module
-
     async def fake_write(*args, **kwargs):
         return None
 
-    monkeypatch.setattr(api_module, "write_session_turn", fake_write)
+    _fake_session_writes(monkeypatch, fake_write)
 
     resp = client.post("/chat", json={"query": "hello"})
     assert resp.status_code == 200
@@ -769,12 +812,10 @@ def test_stage_started_only_once(api_client, monkeypatch):
     mock_graph.astream = fake_stream
     _set_graph(mock_graph)
 
-    import langgraph_agents.api.main as api_module
-
     async def fake_write(*args, **kwargs):
         return None
 
-    monkeypatch.setattr(api_module, "write_session_turn", fake_write)
+    _fake_session_writes(monkeypatch, fake_write)
 
     resp = client.post("/chat", json={"query": "hello"})
     assert resp.status_code == 200
@@ -830,11 +871,10 @@ def test_sse_chat_session_persisted_before_done(api_client, monkeypatch):
     mock_graph.astream = _make_fake_astream_stage_only()
     _set_graph(mock_graph)
 
-    import langgraph_agents.api.main as api_module
     async def fake_write(*args, **kwargs):
         pass
 
-    monkeypatch.setattr(api_module, "write_session_turn", fake_write)
+    _fake_session_writes(monkeypatch, fake_write)
 
     resp = client.post("/chat", json={"query": "Xin chào"})
     events = _parse_sse_stream(resp.content)
@@ -849,20 +889,19 @@ def test_sse_chat_session_persisted_includes_assistant_message_id(api_client, mo
     """`session_persisted` must carry the assistant row's real id (task T2,
     message-feedback plan §2.3) — the frontend attaches a 👍/👎 vote to it.
     Also verifies the turn-context `meta` (plan §4.A) reaching
-    write_session_turn: request_id (so a vote traces back to CloudWatch logs)
+    write_turn_answer: request_id (so a vote traces back to CloudWatch logs)
     and latency_ms, plus persona/locale passed straight from the request."""
     client, _, mock_graph = api_client
     mock_graph.astream = _make_fake_astream_stage_only()
     _set_graph(mock_graph)
 
-    import langgraph_agents.api.main as api_module
     captured = {}
 
     async def fake_write(*args, **kwargs):
         captured.update(kwargs)
         return "11111111-2222-3333-4444-555555555555"
 
-    monkeypatch.setattr(api_module, "write_session_turn", fake_write)
+    _fake_session_writes(monkeypatch, fake_write)
 
     resp = client.post(
         "/chat",
@@ -875,7 +914,7 @@ def test_sse_chat_session_persisted_includes_assistant_message_id(api_client, mo
     )
 
     meta = captured.get("meta")
-    assert meta is not None, "write_session_turn must be called with meta="
+    assert meta is not None, "write_turn_answer must be called with meta="
     assert isinstance(meta.get("request_id"), str) and meta["request_id"]
     assert isinstance(meta.get("latency_ms"), int)
     assert meta.get("persona_id") == "anne"
@@ -886,7 +925,7 @@ def test_sse_chat_session_persisted_includes_assistant_message_id(api_client, mo
 def test_sse_chat_session_persisted_assistant_message_id_none_when_write_returns_none(
     api_client, monkeypatch,
 ):
-    """Backend-compat case: a write_session_turn that still returns None (e.g.
+    """Backend-compat case: a write_turn_answer that returns None (e.g.
     the old signature, or a caller that never got the RETURNING change) must
     not crash the stream — assistant_message_id is simply null on the wire,
     and the frontend already treats a missing id as "hide the thumb"."""
@@ -894,12 +933,10 @@ def test_sse_chat_session_persisted_assistant_message_id_none_when_write_returns
     mock_graph.astream = _make_fake_astream_stage_only()
     _set_graph(mock_graph)
 
-    import langgraph_agents.api.main as api_module
-
     async def fake_write(*args, **kwargs):
         return None
 
-    monkeypatch.setattr(api_module, "write_session_turn", fake_write)
+    _fake_session_writes(monkeypatch, fake_write)
 
     resp = client.post("/chat", json={"query": "Xin chào"})
     assert resp.status_code == 200
@@ -918,11 +955,10 @@ def test_sse_chat_persist_failure_does_not_block(api_client, monkeypatch):
     mock_graph.astream = _make_fake_astream_stage_only()
     _set_graph(mock_graph)
 
-    import langgraph_agents.api.main as api_module
     async def fake_write_fail(*args, **kwargs):
         raise RuntimeError("DB down")
 
-    monkeypatch.setattr(api_module, "write_session_turn", fake_write_fail)
+    _fake_session_writes(monkeypatch, fake_write_fail)
 
     resp = client.post("/chat", json={"query": "Xin chào"})
     events = _parse_sse_stream(resp.content)
@@ -951,7 +987,7 @@ def test_slow_summarizer_does_not_delay_session_persisted_or_done(api_client, mo
     async def fake_write(*args, **kwargs):
         pass
 
-    monkeypatch.setattr(api_module, "write_session_turn", fake_write)
+    _fake_session_writes(monkeypatch, fake_write)
 
     async def slow_summarizer(user_id, session_id):
         await asyncio.sleep(1.0)
@@ -984,7 +1020,7 @@ def test_slow_summarizer_does_not_delay_session_persisted_or_done(api_client, mo
 #
 # kimodo runs as its own graph step before synthesizer and is deliberately
 # NOT in _STAGE_NODES, so it must never produce a "stage" SSE event — but its
-# job_id (for queued/cache_hit) must still reach write_session_turn. These
+# job_id (for queued/cache_hit) must still reach write_turn_answer. These
 # tests exercise main.py's dedicated capture branch that makes that true
 # without touching the wire contract.
 
@@ -1013,7 +1049,7 @@ def _make_fake_astream_with_kimodo(kimodo_payload: dict):
 
 @pytest.mark.unit
 @pytest.mark.parametrize("state", ["queued", "cache_hit"])
-def test_kimodo_job_id_reaches_write_session_turn(api_client, monkeypatch, state):
+def test_kimodo_job_id_reaches_write_turn_answer(api_client, monkeypatch, state):
     """queued/cache_hit job ids must be captured and passed through to persistence."""
     client, _, mock_graph = api_client
     mock_graph.astream = _make_fake_astream_with_kimodo(
@@ -1021,13 +1057,12 @@ def test_kimodo_job_id_reaches_write_session_turn(api_client, monkeypatch, state
     )
     _set_graph(mock_graph)
 
-    import langgraph_agents.api.main as api_module
     captured = {}
 
     async def fake_write(*args, **kwargs):
         captured.update(kwargs)
 
-    monkeypatch.setattr(api_module, "write_session_turn", fake_write)
+    _fake_session_writes(monkeypatch, fake_write)
 
     resp = client.post("/chat", json={"query": "show me a stretch"})
     assert resp.status_code == 200
@@ -1048,13 +1083,12 @@ def test_kimodo_no_job_id_for_busy_or_unavailable(api_client, monkeypatch, state
     mock_graph.astream = _make_fake_astream_with_kimodo(payload)
     _set_graph(mock_graph)
 
-    import langgraph_agents.api.main as api_module
     captured = {}
 
     async def fake_write(*args, **kwargs):
         captured.update(kwargs)
 
-    monkeypatch.setattr(api_module, "write_session_turn", fake_write)
+    _fake_session_writes(monkeypatch, fake_write)
 
     resp = client.post("/chat", json={"query": "show me a stretch"})
     assert resp.status_code == 200
@@ -1244,8 +1278,6 @@ def _make_fake_astream_tokens_then_grader(tokens, final_answer,
 def test_stream_matches_stored_answer(api_client, monkeypatch, caplog):
     import logging
 
-    import langgraph_agents.api.main as api_module
-
     client, _, mock_graph = api_client
     mock_graph.astream = _make_fake_astream_tokens_then_grader(
         ["A", "B"], "AB", {"exercise_steps": "ok"})
@@ -1256,7 +1288,7 @@ def test_stream_matches_stored_answer(api_client, monkeypatch, caplog):
         captured.update(kwargs)
         return "id-1"
 
-    monkeypatch.setattr(api_module, "write_session_turn", fake_write)
+    _fake_session_writes(monkeypatch, fake_write)
     with caplog.at_level(logging.WARNING, logger="langgraph.api"):
         resp = client.post("/chat", json={"query": "hi"})
     assert resp.status_code == 200
@@ -1273,8 +1305,6 @@ def test_stream_matches_stored_answer(api_client, monkeypatch, caplog):
 def test_stream_mismatch_is_logged(api_client, monkeypatch, caplog):
     import logging
 
-    import langgraph_agents.api.main as api_module
-
     client, _, mock_graph = api_client
     mock_graph.astream = _make_fake_astream_tokens_then_grader(["A"], "AB")
     _set_graph(mock_graph)
@@ -1282,7 +1312,7 @@ def test_stream_mismatch_is_logged(api_client, monkeypatch, caplog):
     async def fake_write(*args, **kwargs):
         return "id-1"
 
-    monkeypatch.setattr(api_module, "write_session_turn", fake_write)
+    _fake_session_writes(monkeypatch, fake_write)
     with caplog.at_level(logging.WARNING, logger="langgraph.api"):
         resp = client.post("/chat", json={"query": "hi"})
     assert resp.status_code == 200
@@ -1295,8 +1325,6 @@ def test_stream_mismatch_is_logged(api_client, monkeypatch, caplog):
 def test_no_mismatch_log_without_tokens(api_client, monkeypatch, caplog):
     import logging
 
-    import langgraph_agents.api.main as api_module
-
     client, _, mock_graph = api_client
     mock_graph.astream = _make_fake_astream_tokens_then_grader([], "x")
     _set_graph(mock_graph)
@@ -1304,7 +1332,7 @@ def test_no_mismatch_log_without_tokens(api_client, monkeypatch, caplog):
     async def fake_write(*args, **kwargs):
         return "id-1"
 
-    monkeypatch.setattr(api_module, "write_session_turn", fake_write)
+    _fake_session_writes(monkeypatch, fake_write)
     with caplog.at_level(logging.WARNING, logger="langgraph.api"):
         resp = client.post("/chat", json={"query": "hi"})
     assert resp.status_code == 200

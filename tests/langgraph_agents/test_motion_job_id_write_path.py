@@ -2,7 +2,7 @@
 
 Task 10 wired the read side: GET /sessions/{id} now returns motion_job_id on
 each message so a page refresh can resume polling an in-flight Kimodo job.
-R25 rules that write_session_turn() must actually persist that id, or the
+R25 rules that write_turn_answer() must actually persist that id, or the
 column always reads back NULL and the read-side fix is inert.
 
 Two tests:
@@ -39,8 +39,10 @@ except Exception:
 @pytest.mark.integration
 @pytest.mark.skipif(not HAS_PG, reason="PostgreSQL not available on port 5433")
 @pytest.mark.asyncio
-async def test_write_session_turn_persists_motion_job_id_on_assistant_row_only():
-    from langgraph_agents.db.session_store import write_session_turn, _to_uuid
+async def test_turn_writes_persist_motion_job_id_on_assistant_row_only():
+    from langgraph_agents.db.session_store import (
+        write_turn_answer, write_turn_question, _to_uuid,
+    )
     from langgraph_agents.shared import get_pg_client
 
     user_id = "regr-motion-" + str(uuid.uuid4())
@@ -49,8 +51,13 @@ async def test_write_session_turn_persists_motion_job_id_on_assistant_row_only()
     await pg.connect()
 
     try:
-        await write_session_turn(
+        await write_turn_question(
             user_id=user_id,
+            session_id=session_id,
+            message_id=str(uuid.uuid4()),
+            user_query="show me a shoulder stretch",
+        )
+        await write_turn_answer(
             session_id=session_id,
             user_query="show me a shoulder stretch",
             assistant_answer="here's a shoulder stretch",
@@ -75,7 +82,7 @@ async def test_write_session_turn_persists_motion_job_id_on_assistant_row_only()
 
 
 @pytest.mark.unit
-def test_write_session_turn_accepts_optional_motion_job_id_kwarg():
+def test_write_turn_answer_accepts_optional_motion_job_id_kwarg():
     """DB-free contract check: trailing optional kwarg, defaults to None.
 
     This does not verify persistence (that needs the skipped test above
@@ -83,9 +90,9 @@ def test_write_session_turn_accepts_optional_motion_job_id_kwarg():
     caller depends on didn't change in a breaking way.
     """
     import inspect
-    from langgraph_agents.db.session_store import write_session_turn
+    from langgraph_agents.db.session_store import write_turn_answer
 
-    sig = inspect.signature(write_session_turn)
+    sig = inspect.signature(write_turn_answer)
     assert "motion_job_id" in sig.parameters
     param = sig.parameters["motion_job_id"]
     assert param.default is None

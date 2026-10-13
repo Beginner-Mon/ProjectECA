@@ -62,7 +62,7 @@ def _shape_message(row, created_at: Optional[datetime]) -> dict:
     some callers — see test_motion_expiry_deadline.py — hand in rows without
     it). `feedback` appears only when a `message_feedback` row was joined in
     (rating not NULL) — same "only when present" rule as motion. `extras.meta`
-    (turn context: persona, grader result, latency — see write_session_turn)
+    (turn context: persona, grader result, latency — see write_turn_answer)
     is intentionally NEVER copied onto the wire; it is for ops queries only.
     """
     out = {
@@ -295,12 +295,16 @@ async def load_session_messages(
     if not header:
         return None
 
-    # `seq_id DESC` is the tie-breaker, and it is not optional: a turn's user
-    # message and its assistant reply are written in one batch and share an
-    # identical `created_at` (verified: both 08:49:10.089752). Ordering on the
-    # timestamp alone leaves the pair's order to the planner, and it really does
-    # come back answer-before-question — which is exactly how the restored
-    # transcript would read.
+    # `seq_id DESC` is the tie-breaker, and it is not optional: the table holds
+    # turns whose user message and assistant reply were written in one batch
+    # and share an identical `created_at` (verified: both 08:49:10.089752).
+    # Ordering on the timestamp alone leaves such a pair's order to the
+    # planner, and it really does come back answer-before-question — which is
+    # exactly how the restored transcript would read.
+    #
+    # The last message can be a user message with no reply: its turn is still
+    # running, or it died.
+    #
     # LEFT JOIN message_feedback so a restored history reports the same
     # thumb state the user left it in — one join on the primary key, no
     # extra round trip. Every column is qualified with `m.` because the
@@ -340,65 +344,40 @@ async def load_session_messages(
     }
 
 
-async def write_session_turn(
+async def write_turn_question(
     user_id: str,
     session_id: str,
+    message_id: str,
     user_query: str,
-    assistant_answer: str,
-    total_tokens: int = 0,
-    grader_result: str = "pass",
-    motion_job_id: str | None = None,
-    motion_prompt: str | None = None,
-    meta: dict | None = None,
-) -> str | None:
-    """`motion_job_id` is stored inside the `extras` JSONB column, namespaced
-    under "motion" — not as a column of its own. Motion is an occasional extra
-    on a chat turn, and it is not the last one: TTS wants to record the language
-    and voice that answered, and the next feature will want its own field. A
-    column each would grow `messages` a tail of nullable columns belonging to
-    unrelated subsystems, one migration at a time. See migration 008.
+) -> None:
+    """Record the user's question as its turn STARTS.
 
-    The parameter stays flat because that is what the caller has.
+    A turn is written in two parts: the question here, the answer in
+    write_turn_answer once there is one. /chat runs this one beside the graph,
+    so the question is in the table whatever becomes of the turn — the user
+    presses Stop, the connection drops, the Lambda times out or is killed, the
+    graph raises. The next turn's model then still knows what was asked.
 
-    `motion_job_id` (R25): the Kimodo job id for this turn, if any. Only
-    the `queued`/`cache_hit` states carry one — `busy`/`unavailable` pass
-    None, same as a turn with no motion at all. Written on the assistant row
-    only; the user row's motion_job_id is always NULL.
+    `message_id` is supplied by the caller (a UUID made in Python), not left to
+    the column default: the memory node reads the session while this turn is
+    running and has to leave this one row out, because the synthesizer adds the
+    current question to the prompt itself. ON CONFLICT (id) DO NOTHING makes a
+    second attempt with the same id harmless — the caller retries once, and a
+    first attempt may have committed without its reply ever arriving.
 
-    `motion_prompt`: the prompt Kimodo actually rendered from — the
-    planner's `resolved_query`, not the raw user message. A restored motion
-    (GET /sessions/{id} after a refresh) should be labelled by what the GPU
-    was asked to draw, and that is often not what the user typed. Optional
-    because `motion_job_id` predates it and old rows have none.
-
-    `meta`: a snapshot of this turn's context (persona, locale, grader
-    result, latency, request_id — see api/main.py's caller), written next to
-    "motion" under the assistant row's `extras`. It is never sent to the
-    frontend (`_shape_message` does not copy it) — it exists so a 👎 vote
-    can be traced back to the request that produced it, and so ops SQL can
-    group feedback by persona without a second table. Optional and additive:
-    old rows simply have no "meta" key.
-
-    Returns the assistant row's `id` (as `str`), or `None` if the insert
-    somehow returned no assistant row. SSE's `session_persisted` event hands
-    this to the frontend so a 👍/👎 vote can name the exact message it is
-    about, instead of guessing from position in the transcript.
-
-    ONE HELD CONNECTION, TWO ROUND TRIPS — not three separate pg.execute()
-    calls. Diagnosed 11-09 (owner's vva.log: the send button stayed in "stop"
-    for 6.5-7.9s after the answer text was already fully shown, on TEXT-mode
-    turns with no TTS involved). Every `PostgresClient.execute()` call opens
-    its OWN transaction — a BEGIN, a `SELECT set_config('app.user_id', ...)`
-    for row-level security (postgres.py::user_scope), the query itself, and a
-    COMMIT: 4 round trips per call. Three separate execute() calls therefore
-    cost up to 12 sequential round trips for one turn's persistence, each one
-    paying full Vietnam-to-us-east-1 latency (~1s), all before the button
-    could release.
+    ONE HELD CONNECTION, TWO STATEMENTS — not one pg.execute() per statement.
+    Diagnosed 11-09 (owner's vva.log: the send button stayed in "stop" for
+    6.5-7.9s after the answer text was already fully shown, on TEXT-mode turns
+    with no TTS involved). Every `PostgresClient.execute()` call opens its OWN
+    transaction — a BEGIN, a `SELECT set_config('app.user_id', ...)` for
+    row-level security (postgres.py::user_scope), the query itself, and a
+    COMMIT: 4 round trips per call, each one paying full Vietnam-to-us-east-1
+    latency (~1s). Three such calls cost a turn up to 12 sequential round
+    trips.
 
     Held under one `pg.transaction()` instead: 1 BEGIN + 1 set_config + 2
-    queries + 1 COMMIT = 5 round trips total — the BEGIN/set_config/COMMIT
-    overhead is paid once instead of three times, and the query count itself
-    drops from 3 to 2.
+    queries + 1 COMMIT = 5 round trips, and none of them in front of the first
+    token, since the caller does not wait for this before starting the graph.
 
     NOT combined into a single WITH-CTE statement, even though users +
     conversations + messages could syntactically be written as one — because
@@ -431,29 +410,16 @@ async def write_session_turn(
     snapshot specifically so "insert parent then child in one statement"
     already works, and always has.
 
-    Preserves every semantic write_session_turn had before: ON CONFLICT
-    behaviour on both users and conversations; the user row is inserted
-    before the assistant row in the messages VALUES list, so it still gets
-    the lower `seq_id` (BIGSERIAL assigns nextval() in VALUES-list order,
-    same guarantee executemany()'s row order gave); motion_job_id still lands
-    only on the assistant row's `extras` JSONB; `created_at` is still left to
-    the column DEFAULT rather than passed as a parameter — an ISO string
-    bound to a `timestamptz` parameter fails under asyncpg's binary protocol,
-    which is exactly why it was never passed here.
+    Order within a turn is by `seq_id` (BIGSERIAL, assigned at insert): this
+    row is inserted before the caller writes the answer, so it gets the lower
+    one. `created_at` is left to the column DEFAULT rather than passed as a
+    parameter — an ISO string bound to a `timestamptz` parameter fails under
+    asyncpg's binary protocol. The row carries no `token_count` and no
+    `extras`: both describe the answer.
     """
     user_id = _to_uuid(user_id)
     pg = get_pg_client()
     await pg.connect()
-    ts = datetime.now(timezone.utc).isoformat()
-    assistant_extras: dict = {}
-    if motion_job_id:
-        motion_extra = {"job_id": motion_job_id}
-        if motion_prompt:
-            motion_extra["prompt"] = motion_prompt
-        assistant_extras["motion"] = motion_extra
-    if meta:
-        assistant_extras["meta"] = meta
-    extras_json = json.dumps(assistant_extras) if assistant_extras else None
 
     t0 = time.perf_counter() if STATS_ENABLED else 0.0
     async with pg.transaction() as conn:
@@ -467,29 +433,108 @@ async def write_session_turn(
                ON CONFLICT (session_id) DO UPDATE SET updated_at = now()""",
             user_id, session_id,
         )
-        # created_at omitted → DB DEFAULT now() fills it. Ordering within a turn
-        # is by seq_id (BIGSERIAL, VALUES-list order), not created_at. Passing
-        # an ISO string for a timestamptz param fails under binary binding.
-        # RETURNING id, role — .fetch() instead of .execute() — is still ONE
-        # round trip; this is what lets the caller hand the assistant row's
-        # real id back to the frontend (see the docstring's `meta`/return-value
-        # paragraph above).
-        rows = await conn.fetch(
-            """INSERT INTO messages (session_id, role, content, token_count, extras)
-               VALUES
-                   ($1::uuid, 'user',      $2, NULL, NULL),
-                   ($1::uuid, 'assistant', $3, $4,   $5::jsonb)
-               RETURNING id, role""",
-            session_id, user_query, assistant_answer, total_tokens, extras_json,
+        await conn.execute(
+            """INSERT INTO messages (id, session_id, role, content)
+               VALUES ($1::uuid, $2::uuid, 'user', $3)
+               ON CONFLICT (id) DO NOTHING""",
+            message_id, session_id, user_query,
         )
     if STATS_ENABLED:
-        STATS.record("write_session_turn", time.perf_counter() - t0)
+        STATS.record("write_turn_question", time.perf_counter() - t0)
+
+
+async def write_turn_answer(
+    session_id: str,
+    user_query: str,
+    assistant_answer: str,
+    total_tokens: int = 0,
+    motion_job_id: str | None = None,
+    motion_prompt: str | None = None,
+    meta: dict | None = None,
+) -> str | None:
+    """Record the assistant's answer as its turn ENDS.
+
+    The second half of a turn; write_turn_question wrote the first, and with
+    it the conversation row this one updates. The caller waits for that write
+    before calling here, which is what gives the question the lower `seq_id`.
+
+    `motion_job_id` is stored inside the `extras` JSONB column, namespaced
+    under "motion" — not as a column of its own. Motion is an occasional extra
+    on a chat turn, and it is not the last one: TTS wants to record the language
+    and voice that answered, and the next feature will want its own field. A
+    column each would grow `messages` a tail of nullable columns belonging to
+    unrelated subsystems, one migration at a time. See migration 008.
+
+    The parameter stays flat because that is what the caller has.
+
+    `motion_job_id` (R25): the Kimodo job id for this turn, if any. Only
+    the `queued`/`cache_hit` states carry one — `busy`/`unavailable` pass
+    None, same as a turn with no motion at all.
+
+    `motion_prompt`: the prompt Kimodo actually rendered from — the
+    planner's `resolved_query`, not the raw user message. A restored motion
+    (GET /sessions/{id} after a refresh) should be labelled by what the GPU
+    was asked to draw, and that is often not what the user typed. Optional
+    because `motion_job_id` predates it and old rows have none.
+
+    `meta`: a snapshot of this turn's context (persona, locale, grader
+    result, latency, request_id — see api/main.py's caller), written next to
+    "motion" under the row's `extras`. It is never sent to the frontend
+    (`_shape_message` does not copy it) — it exists so a 👍/👎 vote can be
+    traced back to the request that produced it, and so ops SQL can group
+    feedback by persona without a second table. Optional and additive: old
+    rows simply have no "meta" key.
+
+    `user_query` is not written again here; it goes to the short-term cache,
+    which holds question/answer pairs.
+
+    Returns the assistant row's `id` (as `str`), or `None` if the insert
+    somehow returned no row. SSE's `session_persisted` event hands this to the
+    frontend so a 👍/👎 vote can name the exact message it is about, instead
+    of guessing from position in the transcript.
+
+    ONE STATEMENT, because this write sits between the last token and `done`
+    — it is what the send button waits on (see write_turn_question for what
+    each round trip costs). 1 BEGIN + 1 set_config + 1 query + 1 COMMIT = 4
+    round trips. Bumping `conversations.updated_at` rides in the same
+    statement as a CTE, and here that is safe where it is not for the
+    question: the messages policy only needs the conversation row to EXIST,
+    and it has existed since the question was written. The snapshot the two
+    sub-statements share shows that row as it stood before the UPDATE, which
+    is all the policy asks.
+
+    `created_at` is left to the column DEFAULT, as for the question.
+    """
+    pg = get_pg_client()
+    await pg.connect()
+    ts = datetime.now(timezone.utc).isoformat()
+    extras: dict = {}
+    if motion_job_id:
+        motion_extra = {"job_id": motion_job_id}
+        if motion_prompt:
+            motion_extra["prompt"] = motion_prompt
+        extras["motion"] = motion_extra
+    if meta:
+        extras["meta"] = meta
+    extras_json = json.dumps(extras) if extras else None
+
+    t0 = time.perf_counter() if STATS_ENABLED else 0.0
+    async with pg.transaction() as conn:
+        assistant_id = await conn.fetchval(
+            """WITH bump AS (
+                   UPDATE conversations SET updated_at = now()
+                   WHERE session_id = $1::uuid
+               )
+               INSERT INTO messages (session_id, role, content, token_count, extras)
+               VALUES ($1::uuid, 'assistant', $2, $3, $4::jsonb)
+               RETURNING id""",
+            session_id, assistant_answer, total_tokens, extras_json,
+        )
+    if STATS_ENABLED:
+        STATS.record("write_turn_answer", time.perf_counter() - t0)
 
     await _append_stm(session_id, user_query, assistant_answer, ts)
 
-    assistant_id = next(
-        (row["id"] for row in rows if row["role"] == "assistant"), None
-    )
     return str(assistant_id) if assistant_id is not None else None
 
 

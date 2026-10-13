@@ -32,19 +32,22 @@ except Exception:
 
 
 # ═══════════════════════════════════════════════════════════════════════════
-# Bug #1 + #2 — write_session_turn must persist user + assistant rows
+# Bug #1 + #2 — a turn's two writes must persist user + assistant rows
 # ═══════════════════════════════════════════════════════════════════════════
 
 @pytest.mark.integration
 @pytest.mark.skipif(not HAS_PG, reason="PostgreSQL not available on port 5433")
 @pytest.mark.asyncio
-async def test_write_session_turn_persists_two_messages():
-    """write_session_turn must INSERT one user + one assistant row.
+async def test_turn_writes_persist_two_messages():
+    """write_turn_question + write_turn_answer must INSERT one user row and
+    one assistant row, in that order.
 
     Regresses: PostgresClient.executemany missing (#1) and the str-timestamp
     type error under executemany (#2) — both made persistence silently fail.
     """
-    from langgraph_agents.db.session_store import write_session_turn, _to_uuid
+    from langgraph_agents.db.session_store import (
+        write_turn_answer, write_turn_question, _to_uuid,
+    )
     from langgraph_agents.shared import get_pg_client
 
     user_id = "regr-" + str(uuid.uuid4())
@@ -53,8 +56,13 @@ async def test_write_session_turn_persists_two_messages():
     await pg.connect()
 
     try:
-        await write_session_turn(
+        await write_turn_question(
             user_id=user_id,
+            session_id=session_id,
+            message_id=str(uuid.uuid4()),
+            user_query="hello",
+        )
+        await write_turn_answer(
             session_id=session_id,
             user_query="hello",
             assistant_answer="hi there",

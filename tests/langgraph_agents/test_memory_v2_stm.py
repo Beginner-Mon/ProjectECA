@@ -40,11 +40,18 @@ def budgets(monkeypatch):
     return values
 
 
-def _config(session_id="s-1"):
-    return RunnableConfig(configurable={
+_QUESTION_ID = "33333333-3333-3333-3333-333333333333"
+
+
+def _config(session_id="s-1", user_message_id=None):
+    configurable = {
         "user_id": "u-1", "session_id": session_id, "query": "hello",
         "persona_id": "anne", "request_id": "r-1",
-    })
+    }
+    if user_message_id is not None:
+        # /chat names the running turn's question so the node can leave it out.
+        configurable["user_message_id"] = user_message_id
+    return RunnableConfig(configurable=configurable)
 
 
 # ── A stand-in for the three tables the memory path reads and writes ─────
@@ -63,16 +70,18 @@ class FakeDB:
         self.statements: list[str] = []
         self._seq = 100
 
-    def add_message(self, role: str, content: str, token_count=None) -> int:
+    def add_message(self, role: str, content: str, token_count=None,
+                    message_id=None) -> int:
         # seq_id is one sequence for every session, so a session's ids have gaps.
         self._seq += 3
-        self.messages.append({"seq_id": self._seq, "role": role,
+        self.messages.append({"id": message_id or f"m-{self._seq}",
+                              "seq_id": self._seq, "role": role,
                               "content": content, "token_count": token_count})
         return self._seq
 
     def add_turn(self, question: str, answer: str) -> None:
         self.add_message("user", question)
-        # What write_session_turn stores: the whole turn's LLM usage.
+        # What the answer row stores: the whole turn's LLM usage.
         self.add_message("assistant", answer, token_count=6000)
 
     def add_summary(self, covers_from: int, covers_up_to: int, text: str,
@@ -102,14 +111,22 @@ class FakeDB:
         self.statements.append(sql)
         if "FROM user_memory" in sql:
             return [{"fact_text": f["fact_text"]} for f in self.facts]
-        if "FROM messages" in sql:
+        if "FROM messages" in sql and "ORDER BY seq_id DESC" in sql:
+            # The memory node's reads: newest first, bounded, and without the
+            # running turn's own question.
+            _session, exclude_id, limit = args
+            assert "id <> $2" in sql and "LIMIT $3" in sql
+            low = 0
             if "FROM summaries" in sql:
                 # Coverage resolved inside the statement itself.
                 assert "status = 'active'" in sql
-                low, high = self.covered(), None
-            else:
-                low = args[1]
-                high = args[2] if len(args) > 2 else None
+                low = self.covered()
+            rows = [m for m in self.messages
+                    if m["seq_id"] > low and m["id"] != exclude_id]
+            return rows[::-1][:limit]
+        if "FROM messages" in sql:
+            low = args[1]
+            high = args[2] if len(args) > 2 else None
             return [m for m in self.messages
                     if m["seq_id"] > low and (high is None or m["seq_id"] <= high)]
         if "FROM summaries" in sql:
@@ -436,12 +453,24 @@ async def test_raw_history_is_one_statement_that_resolves_coverage_itself(budget
     db.add_turn("q", "a")
     with patch.object(mem, "get_pg_client", return_value=db):
         rows = await mem._load_raw_history("s-1")
+    # Asked for newest first (that is what the row limit keeps), handed on oldest first.
     assert [r["content"] for r in rows] == ["q", "a"]
     assert len(db.statements) == 1
     sql = db.statements[0]
     assert "MAX(covers_up_to_seq)" in sql and "status = 'active'" in sql
-    assert "ORDER BY seq_id" in sql
-    assert "LIMIT" not in sql and "token_count" not in sql
+    assert sql.endswith("ORDER BY seq_id DESC LIMIT $3")
+    assert "token_count" not in sql
+
+
+@pytest.mark.asyncio
+async def test_raw_history_read_is_bounded_to_the_newest_rows(budgets):
+    db = FakeDB()
+    for i in range(1, 251):
+        db.add_message("user" if i % 2 else "assistant", f"m{i}")
+    with patch.object(mem, "get_pg_client", return_value=db):
+        rows = await mem._load_raw_history("s-1")
+    assert mem._RAW_HISTORY_MAX_ROWS == 200
+    assert [r["content"] for r in rows] == [f"m{i}" for i in range(51, 251)]
 
 
 @pytest.mark.asyncio
@@ -450,6 +479,175 @@ async def test_raw_history_load_failure_degrades_to_empty(budgets):
     pg.fetch.side_effect = RuntimeError("DB down")
     with patch.object(mem, "get_pg_client", return_value=pg):
         assert await mem._load_raw_history("s-1") == []
+
+
+# ── The running turn's own question (written by /chat as the turn starts) ──
+
+@pytest.mark.asyncio
+async def test_memory_node_leaves_out_the_question_of_the_running_turn(budgets):
+    """The synthesizer adds the current question itself; from the history too,
+    the model would read it twice."""
+    db = FakeDB()
+    db.add_turn("first question", "first answer")
+    db.add_message("user", "hello", message_id=_QUESTION_ID)
+
+    with patch.object(mem, "get_pg_client", return_value=db):
+        out = await mem.memory_node({"messages": []}, _config(user_message_id=_QUESTION_ID))
+
+    assert [m.content for m in out["messages"]] == ["first question", "first answer"]
+
+
+@pytest.mark.asyncio
+async def test_memory_node_excludes_nothing_when_no_question_id_is_given(budgets):
+    db = FakeDB()
+    db.add_turn("first question", "first answer")
+    db.add_message("user", "hello", message_id=_QUESTION_ID)
+
+    with patch.object(mem, "get_pg_client", return_value=db):
+        out = await mem.memory_node({"messages": []}, _config())
+
+    assert [m.content for m in out["messages"]] == [
+        "first question", "first answer", "hello"]
+
+
+@pytest.mark.asyncio
+async def test_an_earlier_unanswered_question_stays_in_the_history(budgets):
+    """A turn that died left its question and no answer. The next turn's model
+    is shown that the user asked."""
+    db = FakeDB()
+    db.add_turn("first question", "first answer")
+    db.add_message("user", "the turn that died")
+    db.add_message("user", "hello", message_id=_QUESTION_ID)
+
+    with patch.object(mem, "get_pg_client", return_value=db):
+        out = await mem.memory_node({"messages": []}, _config(user_message_id=_QUESTION_ID))
+
+    assert [(type(m), m.content) for m in out["messages"]] == [
+        (HumanMessage, "first question"), (AIMessage, "first answer"),
+        (HumanMessage, "the turn that died"),
+    ]
+
+
+# ── Back in a conversation that a summary covers from end to end ─────────
+
+def _summarise_everything(db: FakeDB, text: str = "The whole conversation.") -> None:
+    db.add_summary(db.messages[0]["seq_id"], db.messages[-1]["seq_id"], text)
+
+
+@pytest.mark.asyncio
+async def test_a_fully_summarised_conversation_still_gets_its_last_turns_verbatim(budgets):
+    """Another turn's housekeeping summarised this conversation after the user
+    left it. Back in it, 120 words of summary are not the last exchange."""
+    db = FakeDB()
+    for i in range(1, 5):
+        db.add_turn(f"q{i} ".ljust(400, "x"), f"a{i} ".ljust(1200, "y"))   # 100 + 300
+    _summarise_everything(db)
+    db.add_message("user", "I'm back", message_id=_QUESTION_ID)
+
+    with patch.object(mem, "get_pg_client", return_value=db):
+        out = await mem.memory_node({"messages": []}, _config(user_message_id=_QUESTION_ID))
+
+    assert out["session_summary"] == ["The whole conversation."]
+    # `history` is 1000 tokens: two turns fit, a third would make 1200.
+    assert [(type(m), m.content[:2]) for m in out["messages"]] == [
+        (HumanMessage, "q3"), (AIMessage, "a3"), (HumanMessage, "q4"), (AIMessage, "a4"),
+    ]
+    assert len(db.statements) == 4          # the three loads, then this one read
+    assert db.statements[-1].endswith("ORDER BY seq_id DESC LIMIT $3")
+    assert "FROM summaries" not in db.statements[-1]
+
+
+@pytest.mark.asyncio
+async def test_the_last_turn_comes_back_whole_even_over_the_history_budget(budgets):
+    db = FakeDB()
+    db.add_turn("q1", "a1")
+    db.add_turn("q2 ".ljust(400, "x"), "a2 ".ljust(6000, "y"))             # 100 + 1500
+    _summarise_everything(db)
+
+    with patch.object(mem, "get_pg_client", return_value=db):
+        out = await mem.memory_node({"messages": []}, _config())
+
+    assert [m.content[:2] for m in out["messages"]] == ["q2", "a2"]
+
+
+@pytest.mark.asyncio
+async def test_summaries_and_raw_history_do_not_overlap_while_anything_is_uncovered(budgets):
+    """One unanswered question after the summary is enough: no second read."""
+    db = FakeDB()
+    db.add_turn("old question", "old answer")
+    _summarise_everything(db)
+    db.add_message("user", "the turn that died")
+    db.add_message("user", "hello", message_id=_QUESTION_ID)
+
+    with patch.object(mem, "get_pg_client", return_value=db):
+        out = await mem.memory_node({"messages": []}, _config(user_message_id=_QUESTION_ID))
+
+    assert [m.content for m in out["messages"]] == ["the turn that died"]
+    assert len(db.statements) == 3
+
+
+@pytest.mark.asyncio
+async def test_a_new_session_makes_no_second_read(budgets):
+    db = FakeDB()
+    db.add_message("user", "hello", message_id=_QUESTION_ID)
+
+    with patch.object(mem, "get_pg_client", return_value=db):
+        out = await mem.memory_node({"messages": []}, _config(user_message_id=_QUESTION_ID))
+
+    assert out == {"messages": [], "user_facts": [], "session_summary": []}
+    assert len(db.statements) == 3
+
+
+@pytest.mark.asyncio
+async def test_latest_turns_load_failure_degrades_to_empty(budgets):
+    pg = AsyncMock()
+    pg.fetch.side_effect = RuntimeError("DB down")
+    with patch.object(mem, "get_pg_client", return_value=pg):
+        assert await mem._load_latest_turns("s-1") == []
+
+
+# ── Whole turns from the newest end ──────────────────────────────────────
+
+def _history(*messages):
+    """messages = (role, tokens); content names the position: u0, a1, u2..."""
+    return [{"role": role, "content": f"{role[0]}{i} ".ljust(tokens * 4, "x")}
+            for i, (role, tokens) in enumerate(messages)]
+
+
+def _names(history):
+    return [m["content"].split()[0] for m in history]
+
+
+def test_latest_turns_keeps_the_newest_whole_turns_that_fit():
+    history = _history(("user", 100), ("assistant", 400),
+                       ("user", 100), ("assistant", 400),
+                       ("user", 100), ("assistant", 400))
+    assert _names(mem._latest_turns(history, 1000)) == ["u2", "a3", "u4", "a5"]
+    assert _names(mem._latest_turns(history, 1500)) == ["u0", "a1", "u2", "a3", "u4", "a5"]
+
+
+def test_latest_turns_keeps_the_latest_turn_whatever_its_size():
+    history = _history(("user", 100), ("assistant", 400),
+                       ("user", 100), ("assistant", 5000))
+    assert _names(mem._latest_turns(history, 1000)) == ["u2", "a3"]
+
+
+def test_latest_turns_counts_an_unanswered_question_as_a_turn():
+    history = _history(("user", 100), ("assistant", 400),
+                       ("user", 300),                      # the turn that died
+                       ("user", 100), ("assistant", 400))
+    assert _names(mem._latest_turns(history, 800)) == ["u2", "u3", "a4"]
+    assert _names(mem._latest_turns(history, 700)) == ["u3", "a4"]
+
+
+def test_latest_turns_leaves_out_a_leading_piece_with_no_question():
+    """The row limit can cut the oldest turn in two. Half a turn is not a turn."""
+    history = _history(("assistant", 100), ("user", 100), ("assistant", 100))
+    assert _names(mem._latest_turns(history, 1000)) == ["u1", "a2"]
+
+
+def test_latest_turns_of_nothing_is_nothing():
+    assert mem._latest_turns([], 1000) == []
 
 
 def _thousand_token_turn(db: FakeDB, i: int) -> None:
@@ -494,6 +692,57 @@ async def test_history_at_the_ceiling_is_left_alone(budgets, caplog):
 
 
 @pytest.mark.asyncio
+async def test_history_over_the_ceiling_is_cut_at_the_start_of_a_turn(budgets, caplog):
+    """Dropping the long first question alone would fit the ceiling, and leave
+    a history that opens with an answer to nothing."""
+    db = FakeDB()
+    db.add_turn("q1 ".ljust(4800, "x"), "a1 ".ljust(1600, "y"))            # 1200 + 400
+    db.add_turn("q2 ".ljust(400, "x"), "a2 ".ljust(3600, "y"))             # 100 + 900
+    db.add_turn("q3 ".ljust(400, "x"), "a3 ".ljust(3600, "y"))             # 100 + 900
+    db.add_turn("q4 ".ljust(400, "x"), "a4 ".ljust(2000, "y"))             # 100 + 500
+
+    with patch.object(mem, "get_pg_client", return_value=db), \
+         caplog.at_level(logging.WARNING, logger="langgraph.memory"):
+        out = await mem.memory_node({"messages": []}, _config())
+
+    assert isinstance(out["messages"][0], HumanMessage)
+    assert [m.content[:2] for m in out["messages"]] == ["q2", "a2", "q3", "a3", "q4", "a4"]
+    records = [r for r in caplog.records if r.getMessage() == "history_overflow_dropped"]
+    assert len(records) == 1
+    assert records[0].dropped_messages == 2
+    assert records[0].dropped_tokens == 1600
+    assert records[0].kept_tokens == 2600
+
+
+@pytest.mark.asyncio
+async def test_history_overflow_never_drops_the_latest_turn(budgets, caplog):
+    db = FakeDB()
+    db.add_turn("q1 ".ljust(400, "x"), "a1 ".ljust(3600, "y"))             # 100 + 900
+    db.add_turn("q2 ".ljust(400, "x"), "a2 ".ljust(14000, "y"))            # 100 + 3500
+
+    with patch.object(mem, "get_pg_client", return_value=db), \
+         caplog.at_level(logging.WARNING, logger="langgraph.memory"):
+        out = await mem.memory_node({"messages": []}, _config())
+
+    assert [m.content[:2] for m in out["messages"]] == ["q2", "a2"]
+    records = [r for r in caplog.records if r.getMessage() == "history_overflow_dropped"]
+    assert len(records) == 1 and records[0].kept_tokens == 3600
+
+
+@pytest.mark.asyncio
+async def test_one_turn_over_the_ceiling_is_handed_on_whole(budgets, caplog):
+    db = FakeDB()
+    db.add_turn("q1 ".ljust(400, "x"), "a1 ".ljust(14000, "y"))            # 100 + 3500
+
+    with patch.object(mem, "get_pg_client", return_value=db), \
+         caplog.at_level(logging.WARNING, logger="langgraph.memory"):
+        out = await mem.memory_node({"messages": []}, _config())
+
+    assert [m.content[:2] for m in out["messages"]] == ["q1", "a1"]
+    assert "history_overflow_dropped" not in caplog.text
+
+
+@pytest.mark.asyncio
 async def test_user_facts_are_asked_for_in_safety_first_order(budgets):
     pg = AsyncMock()
     pg.fetch.return_value = [{"fact_text": "No overhead lifting"},
@@ -521,15 +770,19 @@ _TURNS = [(60, 900), (120, 1800), (45, 2400), (200, 2100), (80, 1500), (30, 300)
           (150, 2600), (90, 1900), (60, 2200), (110, 1700), (40, 800), (170, 2500)]
 
 
-async def _assert_no_hole(db: FakeDB) -> dict:
-    out = await mem.memory_node({"messages": []}, _config())
+async def _assert_no_hole(db: FakeDB, running: str | None = None) -> dict:
+    """running = id of the question of the turn in progress, if it is written."""
+    out = await mem.memory_node({"messages": []}, _config(user_message_id=running))
     raw = {m.content for m in out["messages"]}
     active = db._active()
     for m in db.messages:
         in_raw = m["content"] in raw
         in_summary = sum(s["covers_from_seq"] <= m["seq_id"] <= s["covers_up_to_seq"]
                          for s in active)
-        assert in_raw + in_summary == 1, (
+        # The running turn's question is the synthesizer's to add, and no
+        # summary may take it while its answer is still to come.
+        expected = 0 if m["id"] == running else 1
+        assert in_raw + in_summary == expected, (
             f"seq {m['seq_id']}: raw={in_raw}, summaries={in_summary}")
     if out["messages"]:
         assert isinstance(out["messages"][0], HumanMessage)
@@ -538,10 +791,12 @@ async def _assert_no_hole(db: FakeDB) -> dict:
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("summarise_first", [True, False])
-async def test_twelve_turn_session_has_no_hole(budgets, caplog, summarise_first):
-    """housekeep starts with the turn, so compaction may land before or after
-    the turn's own rows are written. Either way nothing falls between."""
+@pytest.mark.parametrize("summarise", [
+    "before_the_question", "after_the_question", "after_the_answer"])
+async def test_twelve_turn_session_has_no_hole(budgets, caplog, summarise):
+    """housekeep starts with the turn, beside the write of its question, so
+    compaction may land before that row, between the turn's two rows, or after
+    both. Whichever it is, nothing falls between."""
     db = FakeDB()
     embed = MagicMock()
     embed.aembed_passage = AsyncMock(return_value=[0.1] * 384)
@@ -556,13 +811,18 @@ async def test_twelve_turn_session_has_no_hole(budgets, caplog, summarise_first)
          patch.object(summ, "_summarize_messages", side_effect=fake_summary), \
          caplog.at_level(logging.WARNING):
         for turn, (q_chars, a_chars) in enumerate(_TURNS, start=1):
-            seen = await _assert_no_hole(db)        # what this turn's model is shown
-            assert sum(len(m.content) // 4 for m in seen["messages"]) <= ceiling
-            if summarise_first:
+            question_id = f"question-{turn}"
+            if summarise == "before_the_question":
                 await summ.maybe_summarize("s-1")
                 await _assert_no_hole(db)
-            db.add_turn(f"q{turn}: " + "x" * q_chars, f"a{turn}: " + "y" * a_chars)
-            if not summarise_first:
+            db.add_message("user", f"q{turn}: " + "x" * q_chars, message_id=question_id)
+            seen = await _assert_no_hole(db, question_id)   # what this turn's model is shown
+            assert sum(len(m.content) // 4 for m in seen["messages"]) <= ceiling
+            if summarise == "after_the_question":
+                await summ.maybe_summarize("s-1")
+                await _assert_no_hole(db, question_id)
+            db.add_message("assistant", f"a{turn}: " + "y" * a_chars, token_count=6000)
+            if summarise == "after_the_answer":
                 await summ.maybe_summarize("s-1")
             await _assert_no_hole(db)
 
@@ -700,6 +960,49 @@ async def test_run_summarize_without_a_bound_takes_the_whole_remainder(budgets):
         await summ._run_summarize("s-1", 200)
 
     assert pg.fetch.await_args.args[1:] == ("s-1", 200, None)
+    assert pg.execute.await_args.args[1:5] == ("s-1", "S", 201, rows[-1]["seq_id"])
+
+
+async def _run_summarize(rows, *bounds):
+    pg = AsyncMock()
+    pg.fetch.return_value = rows
+    embed = MagicMock()
+    embed.aembed_passage = AsyncMock(return_value=[0.1] * 384)
+    with patch.object(summ, "get_pg_client", return_value=pg), \
+         patch.object(summ, "get_embedding_service", return_value=embed), \
+         patch.object(summ, "_summarize_messages",
+                      new=AsyncMock(return_value="S")) as summarise:
+        await summ._run_summarize("s-1", *bounds)
+    return pg, summarise
+
+
+@pytest.mark.asyncio
+async def test_a_finished_session_is_summarised_up_to_its_last_answer(budgets):
+    """Its last question may belong to a turn that outlived its client: the
+    answer lands after this read, and would be left with no question."""
+    rows = _rows((10, 10), (10, 10), (10, None))
+    pg, summarise = await _run_summarize(rows, 200)
+
+    assert summarise.await_args.args[0] == rows[:4]
+    assert pg.execute.await_args.args[1:5] == ("s-1", "S", 201, rows[3]["seq_id"])
+    assert rows[3]["role"] == "assistant" and rows[4]["role"] == "user"
+
+
+@pytest.mark.asyncio
+async def test_a_finished_session_of_unanswered_questions_is_left_alone(budgets):
+    pg, summarise = await _run_summarize(_rows((10, None), (10, None)), 200)
+
+    summarise.assert_not_awaited()
+    pg.execute.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_compaction_keeps_the_range_it_was_given(budgets):
+    """_compaction_cut chose the cut; a question whose turn died may end it."""
+    rows = _rows((10, 10), (10, None))
+    pg, summarise = await _run_summarize(rows, 200, rows[-1]["seq_id"])
+
+    assert summarise.await_args.args[0] == rows
     assert pg.execute.await_args.args[1:5] == ("s-1", "S", 201, rows[-1]["seq_id"])
 
 

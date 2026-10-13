@@ -60,7 +60,7 @@ from langgraph_agents.services.vieneu_tts.client import get_vieneu_tts_client
 from langgraph_agents.services.vieneu_tts.voice import resolve_voice
 from langgraph_agents.services.vieneu_tts.text_budget import plan_spoken_text
 from langgraph_agents.nodes.summarizer import housekeep, _pending_summarizer_tasks
-from langgraph_agents.db.session_store import write_session_turn
+from langgraph_agents.db.session_store import write_turn_answer, write_turn_question
 from langgraph_agents.shared.logging import (
     configure_root_logger, get_logger, with_request_id,
 )
@@ -372,6 +372,10 @@ def create_app() -> FastAPI:
             "user_id": uid,
             "session_id": req.session_id,
             "query": req.query,
+            # The row id of this turn's question. Made here because two readers
+            # must agree on it: _stream_chat writes the row as the turn starts,
+            # and the memory node leaves it out of the history it loads.
+            "user_message_id": str(uuid.uuid4()),
             "persona_id": req.persona_id,
             "previous_persona_id": req.previous_persona_id,
             "output_mode": req.output_mode,
@@ -567,12 +571,32 @@ def create_app() -> FastAPI:
 # sessions are two LLM calls plus two embeddings, a few seconds each.
 _HOUSEKEEPING_TIMEOUT_S = 30.0
 
+# Strong references, as for _warmup_tasks. Module-level because the write has
+# to outlive the stream that started it: a turn cut short takes its generator's
+# locals with it, and must still leave its question behind.
+_question_write_tasks: set[asyncio.Task] = set()
+
+
+async def _write_question(**row) -> bool:
+    """Whether the turn's question reached the table. Never raises: it runs as
+    a task, and a stream that was cut short is not there to collect an error."""
+    try:
+        await write_turn_question(**row)
+        return True
+    except Exception as exc:
+        logger.warning("question_persist_failed", extra={"error": str(exc)})
+        return False
+
 
 async def _stream_chat(req, request_id, config, state, background_tasks, request=None, resolved_user_id=None, llm_req=None):
     """Core SSE stream: graph execution + post-processing.
 
     Wrapped in with_request_id by the caller so every log line from this
     coroutine carries the correct request_id.
+
+    `request` is not consulted: a client that has gone away does not end the
+    turn. The turn runs on and is saved, unless the framework cancels this
+    generator.
     """
     from langgraph_agents.llm import close_request_llm
 
@@ -591,14 +615,23 @@ async def _stream_chat(req, request_id, config, state, background_tasks, request
     housekeeping = (asyncio.create_task(housekeep(resolved_user_id, req.session_id))
                     if resolved_user_id else None)
 
+    # The question is written now, beside the graph, and the answer once there
+    # is one: whatever stops this turn first, the next one still knows what was
+    # asked. A task, not an await — it must not hold up the first token.
+    question = {
+        "user_id": resolved_user_id,
+        "session_id": req.session_id,
+        "message_id": config["configurable"].get("user_message_id") or str(uuid.uuid4()),
+        "user_query": req.query,
+    }
+    question_write = asyncio.create_task(_write_question(**question))
+    _question_write_tasks.add(question_write)
+    question_write.add_done_callback(_question_write_tasks.discard)
+
     try:
         async for mode, payload in graph.astream(
             state, config, stream_mode=["updates", "custom"]
         ):
-            if request is not None and await request.is_disconnected():
-                logger.info("client_disconnected", extra={"request_id": request_id})
-                return
-
             if mode == "updates":
                 if not isinstance(payload, dict):
                     continue
@@ -719,9 +752,15 @@ async def _stream_chat(req, request_id, config, state, background_tasks, request
             req.persona_id or "anne", "error_unavailable", req.locale
         )
 
-        # Eager session write
-        if final_state.get("final_answer"):
-            try:
+        # Eager session write. The question comes first, answer or no answer: it
+        # has to be in the table before the answer is, and before this stream
+        # ends. If the write started with the turn failed, it gets one more
+        # attempt here; with no question saved, no answer is written either.
+        # Shielded: cancelling this stream must not cancel that write.
+        try:
+            if not await asyncio.shield(question_write):
+                await write_turn_question(**question)
+            if final_state.get("final_answer"):
                 # Turn context snapshot — written into the assistant
                 # row's extras.meta, never logged as-is. It exists so a 👎 vote can
                 # be traced back to request_id (→ CloudWatch) without a second
@@ -737,13 +776,11 @@ async def _stream_chat(req, request_id, config, state, background_tasks, request
                     "grader_detail": final_state.get("grader_detail"),
                     "latency_ms": int((time.time() - t0) * 1000),
                 }
-                assistant_message_id = await write_session_turn(
-                    user_id=resolved_user_id,
+                assistant_message_id = await write_turn_answer(
                     session_id=req.session_id,
                     user_query=req.query,
                     assistant_answer=final_answer,
                     total_tokens=final_state.get("total_tokens", 0),
-                    grader_result=final_state.get("grader_result", "pass"),
                     motion_job_id=final_state.get("motion_job_id"),
                     motion_prompt=final_state.get("motion_prompt"),
                     meta=meta,
@@ -752,8 +789,8 @@ async def _stream_chat(req, request_id, config, state, background_tasks, request
                     "session_persisted",
                     {"session_id": req.session_id, "assistant_message_id": assistant_message_id},
                 )
-            except Exception as exc:
-                logger.warning("session_persist_failed", extra={"error": str(exc)})
+        except Exception as exc:
+            logger.warning("session_persist_failed", extra={"error": str(exc)})
 
         # BYOK: the user's key is for this turn's graph only; nothing after this
         # point calls their LLM. (housekeep unbinds in its own context.)
@@ -828,7 +865,17 @@ async def _stream_chat(req, request_id, config, state, background_tasks, request
                 logger.warning("housekeeping_timeout", extra={
                     "timeout_s": _HOUSEKEEPING_TIMEOUT_S,
                 })
+    except Exception:
+        # The turn failed with no answer. Its question must not still be on
+        # its way to the table when the response ends.
+        await asyncio.shield(question_write)
+        raise
     finally:
+        # Reached with housekeeping unfinished only when the stream was cut
+        # short. Nothing will wait for it now, and on Lambda a task left
+        # running is frozen mid-flight once the response ends.
+        if housekeeping is not None and not housekeeping.done():
+            housekeeping.cancel()
         await close_request_llm(llm_req)
 
 

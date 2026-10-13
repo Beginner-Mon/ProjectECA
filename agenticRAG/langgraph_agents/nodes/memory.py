@@ -16,10 +16,15 @@ M.5 rules:
   - Summary: chunk-based, frozen on write, CAS idempotent
   - Raw history = every message after the last active chunk, so chunks + raw
     always cover the whole session
+  - ... except the running turn's own question: /chat writes it as the turn
+    starts, and the synthesizer adds it to the prompt itself. A question left
+    by an earlier turn that never got its answer stays in
+  - A session a chunk covers to its last message still hands on its latest
+    turns, the one case where raw history and summaries overlap
   - The summarizer compacts once the raw part passes `history_compact_at`,
     leaving `history` raw
   - Edge A: summarize fail → raw part keeps growing → capped at
-    `history_compact_at + history`, oldest dropped and logged
+    `history_compact_at + history`, oldest turns dropped and logged
 """
 
 from __future__ import annotations
@@ -59,8 +64,15 @@ _MEM_CFG = _load_memory_config()
 # config/langgraph.yaml) is no longer consulted: a URL in a committed YAML file
 # cannot differ per environment, which is the whole requirement once this runs
 # on Lambda. The store reads REDIS_URL from the environment instead.
-_SUMMARY_TOKEN_THRESHOLD = 10_000   # D13: single threshold for summarize trigger
 _STM_TOKEN_BUDGET = 1500      # legacy default; use history_budget() instead (T11)
+
+# Most rows one history read brings back. The ceiling below is reached long
+# before this in any real conversation; it bounds a session whose compaction
+# has stalled.
+_RAW_HISTORY_MAX_ROWS = 200
+# Rows read to find the latest turns of a session that is summarised to its
+# end. Ten turns is more than the `history` budget holds of ordinary answers.
+_LATEST_TURNS_MAX_ROWS = 20
 
 
 def history_budget() -> int:
@@ -138,11 +150,17 @@ def _token_estimate(text: str) -> int:
     return len(text) // 4
 
 
-async def _load_raw_history(session_id: str) -> list[dict]:
+async def _load_raw_history(
+    session_id: str, exclude_message_id: str | None = None,
+) -> list[dict]:
     """Messages after the last active summary chunk, oldest first.
 
     One statement, so it runs alongside the other two loads. A dirty chunk
     (a message in its range was deleted) is not coverage until it is rebuilt.
+
+    `exclude_message_id` is the running turn's own question, which may or may
+    not have reached the table yet. Read newest first so that the row limit
+    keeps the recent end.
     """
     try:
         pg = get_pg_client()
@@ -155,40 +173,98 @@ async def _load_raw_history(session_id: str) -> list[dict]:
                   SELECT MAX(covers_up_to_seq) FROM summaries
                   WHERE session_id = $1 AND status = 'active'
               ), 0)
-            ORDER BY seq_id
+              AND ($2::uuid IS NULL OR id <> $2)
+            ORDER BY seq_id DESC
+            LIMIT $3
             """,
-            session_id,
+            session_id, exclude_message_id, _RAW_HISTORY_MAX_ROWS,
         )
-        return [{"role": r["role"], "content": r["content"]} for r in rows]
+        return [{"role": r["role"], "content": r["content"]} for r in reversed(rows)]
     except Exception as exc:
         logger.warning("raw_history_load_failed", extra={"error": str(exc)})
         return []
 
 
-def _drop_history_overflow(history: list[dict], session_id: str) -> list[dict]:
-    """Drop the oldest messages while the raw history is over the ceiling.
+async def _load_latest_turns(
+    session_id: str, exclude_message_id: str | None = None,
+) -> list[dict]:
+    """The session's latest turns that fit the `history` budget, summarised or not.
 
-    Loud on purpose: what goes here is in no summary either, so the model has
-    a hole in this conversation until the summarizer catches up.
+    For a session whose every message is under a summary: the user left it,
+    another turn's housekeeping summarised it to the end, and now they are
+    back. The summary alone would leave the model without the last exchange
+    in the user's and its own words.
+    """
+    try:
+        pg = get_pg_client()
+        await pg.connect()
+        rows = await pg.fetch(
+            """
+            SELECT role, content FROM messages
+            WHERE session_id = $1
+              AND ($2::uuid IS NULL OR id <> $2)
+            ORDER BY seq_id DESC
+            LIMIT $3
+            """,
+            session_id, exclude_message_id, _LATEST_TURNS_MAX_ROWS,
+        )
+        history = [{"role": r["role"], "content": r["content"]} for r in reversed(rows)]
+        return _latest_turns(history, history_budget())
+    except Exception as exc:
+        logger.warning("latest_turns_load_failed", extra={"error": str(exc)})
+        return []
+
+
+def _latest_turns(history: list[dict], budget: int) -> list[dict]:
+    """The newest whole turns of `history` that fit `budget` tokens.
+
+    A turn starts at a user message; a question that never got its answer is a
+    turn of its own. The latest turn is kept whatever its size. Before it only
+    whole turns are kept, so the result begins with a user message whenever
+    the latest turn does.
+    """
+    sizes = [_token_estimate(m.get("content") or "") for m in history]
+    kept_from = len(history)      # index of the first message kept
+    kept_tokens = 0
+    while kept_from > 0:
+        turn_from = kept_from - 1
+        while turn_from > 0 and history[turn_from]["role"] != "user":
+            turn_from -= 1
+        turn_tokens = sum(sizes[turn_from:kept_from])
+        if kept_from < len(history) and (
+            history[turn_from]["role"] != "user"
+            or kept_tokens + turn_tokens > budget
+        ):
+            break
+        kept_from = turn_from
+        kept_tokens += turn_tokens
+    return history[kept_from:]
+
+
+def _drop_history_overflow(history: list[dict], session_id: str) -> list[dict]:
+    """Drop the oldest turns while the raw history is over the ceiling.
+
+    Whole turns, and never the latest one. Loud on purpose: what goes here is
+    in no summary either, so the model has a hole in this conversation until
+    the summarizer catches up.
     """
     ceiling = history_ceiling()
     sizes = [_token_estimate(m.get("content") or "") for m in history]
-    kept_tokens = sum(sizes)
-    dropped = 0
-    while kept_tokens > ceiling:
-        kept_tokens -= sizes[dropped]
-        dropped += 1
-    if not dropped:
+    if sum(sizes) <= ceiling:
         return history
+    kept = _latest_turns(history, ceiling)
+    dropped = len(history) - len(kept)
+    if not dropped:
+        return history            # one turn, however long
     logger.warning("history_overflow_dropped", extra={
         "session_id": session_id,
         "dropped_messages": dropped,
-        "kept_messages": len(history) - dropped,
+        "kept_messages": len(kept),
         "dropped_tokens": sum(sizes[:dropped]),
-        "kept_tokens": kept_tokens,
+        "kept_tokens": sum(sizes[dropped:]),
         "ceiling_tokens": ceiling,
     })
-    return history[dropped:]
+    return kept
 
 
 def _recent_raw_to_messages(recent: list[dict]) -> list:
@@ -217,6 +293,8 @@ async def memory_node(state: AgentState, config: RunnableConfig) -> dict:
     request_id = config["configurable"].get("request_id", "-")
     user_id = config["configurable"]["user_id"]
     session_id = config["configurable"]["session_id"]
+    # Absent outside /chat (the local probes): nothing is left out then.
+    user_message_id = config["configurable"].get("user_message_id")
 
     logger.info("node_start", extra={
         "node": "memory", "request_id": request_id, "session_id": session_id,
@@ -226,9 +304,14 @@ async def memory_node(state: AgentState, config: RunnableConfig) -> dict:
     user_facts, summary_chunks, raw_history = await asyncio.gather(
         _load_user_facts(user_id),
         _load_summary_chunks(session_id),
-        _load_raw_history(session_id),
+        _load_raw_history(session_id, user_message_id),
     )
-    raw_history = _drop_history_overflow(raw_history, session_id)
+    if raw_history:
+        raw_history = _drop_history_overflow(raw_history, session_id)
+    elif summary_chunks:
+        # Nothing after the last summary: one more read, on this turn only —
+        # its own answer will be raw history for the next.
+        raw_history = await _load_latest_turns(session_id, user_message_id)
 
     elapsed_ms = round((time.perf_counter() - t0) * 1000)
     logger.info("node_complete", extra={

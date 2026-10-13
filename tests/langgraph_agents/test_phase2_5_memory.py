@@ -109,17 +109,18 @@ class TestMemoryLoaderMocks:
             assert chunks == []
 
     @pytest.mark.asyncio
-    async def test_load_raw_history_keeps_database_order(self):
+    async def test_load_raw_history_hands_on_oldest_first(self):
         from langgraph_agents.nodes.memory import _load_raw_history
         mock_pg = AsyncMock()
+        # The statement asks for the newest rows first: its row limit must
+        # keep the recent end of a long session.
         mock_pg.fetch.return_value = [
-            {"role": "user", "content": "xin chào"},
             {"role": "assistant", "content": "Chào bạn!"},
+            {"role": "user", "content": "xin chào"},
         ]
 
         with patch("langgraph_agents.nodes.memory.get_pg_client", return_value=mock_pg):
             result = await _load_raw_history("test-session")
-            # The statement orders by seq_id: already chronological.
             assert result == [
                 {"role": "user", "content": "xin chào"},
                 {"role": "assistant", "content": "Chào bạn!"},

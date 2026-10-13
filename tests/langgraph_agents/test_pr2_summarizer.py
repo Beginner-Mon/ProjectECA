@@ -167,8 +167,10 @@ class TestSummarizerLLM:
         """LLM returns empty content → summarizer returns without INSERT."""
         from langgraph_agents.nodes.summarizer import _run_summarize
         mock_pg = AsyncMock()
+        # A whole turn: a finished session is summarised up to its last answer.
         mock_pg.fetch.return_value = [
             {"seq_id": 1, "role": "user", "content": "hello", "token_count": 5},
+            {"seq_id": 2, "role": "assistant", "content": "hi there", "token_count": 5},
         ]
         mock_pg.execute = AsyncMock()
 
@@ -180,6 +182,7 @@ class TestSummarizerLLM:
         with patch("langgraph_agents.nodes.summarizer.get_pg_client", return_value=mock_pg):
             with patch("langgraph_agents.nodes.summarizer.get_chat_model", return_value=mock_llm):
                 await _run_summarize("test-session", 0)
+                mock_llm.ainvoke.assert_awaited()
                 # INSERT should NOT be called (empty response)
                 # execute is only called for INSERT — verify not called
                 insert_calls = [c for c in mock_pg.execute.call_args_list
@@ -193,6 +196,7 @@ class TestSummarizerLLM:
         mock_pg = AsyncMock()
         mock_pg.fetch.return_value = [
             {"seq_id": 1, "role": "user", "content": "hello", "token_count": 5000},
+            {"seq_id": 2, "role": "assistant", "content": "hi there", "token_count": 5000},
         ]
         mock_pg.execute = AsyncMock()
 

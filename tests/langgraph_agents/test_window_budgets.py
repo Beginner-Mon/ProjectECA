@@ -12,7 +12,7 @@ from langgraph_agents.nodes import summarizer as summ
 from langgraph_agents.shared import context as ctx_mod
 from langgraph_agents.shared.context import budget_chars, context_budget
 
-from tests.langgraph_agents.test_byok_chat import _llm_body, _make_client
+from test_byok_chat import _llm_body, _make_client
 
 pytestmark = pytest.mark.unit
 

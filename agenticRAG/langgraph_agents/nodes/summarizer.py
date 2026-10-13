@@ -167,16 +167,31 @@ async def housekeep(user_id: str, session_id: str,
     summaries written on their behalf. The unbind only touches this task's
     copy of the context, never the request's. The two budgets come from the
     request (see _compaction_cut); None reads them here.
+
+    With the turn index on (db/turn_index.py), each turn is indexed instead of
+    summarising finished sessions: memory_search then reads the original turns,
+    so the summaries' only reader is gone and each would cost an LLM call. The
+    indexing needs no LLM, so it runs first. In-conversation compaction is
+    unchanged either way.
     """
+    from langgraph_agents.db import turn_index
     from langgraph_agents.llm_byok import bind_request_llm
 
     bind_request_llm(None)
-    try:
-        await summarize_finished_sessions(user_id, session_id)
-    except Exception as exc:
-        logger.warning("finished_session_summary_failed", extra={
-            "session_id": session_id, "error": str(exc),
-        })
+    if turn_index.enabled():
+        try:
+            await turn_index.index_new_turns(user_id)
+        except Exception as exc:
+            logger.warning("turn_index_failed", extra={
+                "session_id": session_id, "error": str(exc),
+            })
+    else:
+        try:
+            await summarize_finished_sessions(user_id, session_id)
+        except Exception as exc:
+            logger.warning("finished_session_summary_failed", extra={
+                "session_id": session_id, "error": str(exc),
+            })
     await maybe_summarize(session_id, history_budget, compact_at)
 
 

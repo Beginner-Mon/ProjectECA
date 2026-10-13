@@ -44,18 +44,40 @@ def evidence_messages(messages: list) -> list:
     return out
 
 
+def _turn_items(data, header: str) -> list[EvidenceItem]:
+    """memory_search results from the turn index: one readable item per past turn.
+
+    Only the new shape (results with a `snippet`) is rendered here; the older
+    summary shape returns [] and keeps being dumped as JSON.
+    """
+    results = data.get("results") if isinstance(data, dict) else None
+    if not isinstance(results, list) or not results:
+        return []
+    if not all(isinstance(r, dict) and "snippet" in r for r in results):
+        return []
+    items = []
+    for r in results:
+        title = r.get("session_title")
+        when = f"{r.get('date', '')} — {title}" if title else str(r.get("date", ""))
+        items.append(EvidenceItem(header=header, text=f"{when}\n{r['snippet']}",
+                                  cite_key=None, title=""))
+    return items
+
+
 def _message_items(m: ToolMessage) -> list[EvidenceItem]:
     name = m.name or ""
     src = source_for_tool(name)
     header = "[From another source]" if src is None else f"[From {src.label}]"
     cite_key = src.id if src is not None and src.id in _CITABLE_SOURCE_IDS else None
     whole = [EvidenceItem(header=header, text=str(m.content), cite_key=cite_key, title="")]
-    if name != "kb_search":
+    if name not in ("kb_search", "memory_search"):
         return whole
     try:
         data = json.loads(str(m.content))
     except (json.JSONDecodeError, TypeError):
         return whole
+    if name == "memory_search":
+        return _turn_items(data, header) or whole
     if not isinstance(data, list) or not data:
         return whole
     items = []

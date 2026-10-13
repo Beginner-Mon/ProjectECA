@@ -15,6 +15,10 @@ langgraph:
     redis_url: "redis://localhost:6379"
     stm_session_ttl: 7200                 # 2h
     ltm_top_k: 5
+    # Memory v2: index each turn (question + answer) and let memory_search read
+    # that instead of conversation summaries. Off until the migration 014 table
+    # is live; VVA_HISTORY_INDEX=1|0 overrides this.
+    history_index_enabled: false
 
   retrieval:
     top_k: 5
@@ -24,6 +28,11 @@ langgraph:
     # Measured 12/10 (synthetic, e5-small, max of retriever query and the
     # user's own words): related 0.843-0.900, off-topic chat <= 0.82.
     memory_min_similarity: 0.84
+    # memory_search over the turn index: below this a past turn is not returned.
+    # Measured 13/10 (synthetic, e5-small, docs/tracking/history-search-probe-V0.md):
+    # 0.84 was measured on summaries and let 9/14 off-topic queries through;
+    # 0.87 keeps 21/25 recalls and lets 3/14 through. Re-measure on real turns.
+    history_min_similarity: 0.87
 
   # Prompt budgets, in TOKENS (plan T11 — model nhỏ, cửa sổ ~10K).
   # Code đọc qua shared/context.py::context_budget, giữ giá trị cũ khi thiếu.

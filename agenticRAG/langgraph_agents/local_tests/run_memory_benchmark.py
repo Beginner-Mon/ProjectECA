@@ -484,7 +484,8 @@ def probes_label(label: str, spec: dict, only: set[str], collector: Collector,
     set_ltm("0")
     by_id = {r["scenario"]: r for r in recs}
     quota_stops: list[str] = []
-    with TestClient(create_app()) as client:
+    app = create_app()
+    with TestClient(app) as client:
         # Lifespan re-creates the root handlers, so attach only after it ran.
         logging.getLogger().addHandler(collector)
         try:
@@ -554,7 +555,8 @@ def retry_label(label: str, spec: dict, only: set[str], collector: Collector,
     configure_root_logger()
     set_ltm("0")
     quota_stops: list[str] = []
-    with TestClient(create_app()) as client:
+    app = create_app()
+    with TestClient(app) as client:
         logging.getLogger().addHandler(collector)
         try:
             for sc in spec["scenarios"]:
@@ -565,7 +567,7 @@ def retry_label(label: str, spec: dict, only: set[str], collector: Collector,
                 if rec is None:
                     continue
                 uid = rec["user_id"]
-                client.app.dependency_overrides[current_user_id] = override_user(uid)
+                app.dependency_overrides[current_user_id] = override_user(uid)
                 for prec in rec["probes"]:
                     if not prec.get("invalid") or prec.get("attempt", 1) >= 2:
                         continue

@@ -1,11 +1,12 @@
-"""Memory benchmark (memory-v2 step 1) — end-to-end recall over real /chat turns.
+"""Memory benchmark (memory-v2 step 1, Gemini free-tier edition).
 
-Runs the real FastAPI app in-process (`TestClient(app)` in a `with` block so
-the lifespan builds the graph), posts one turn per message, and scores each
-probe's answer: lowercased, Vietnamese diacritics stripped (NFD); pass = some
-`expect_any` phrase present (an empty list is vacuously true — group f only
-asserts "no leak") and no `forbid` phrase present. The verbatim answer is kept
-in the report.
+Seeded histories, live probes. Past conversations are NOT chatted: user
+messages + prewritten assistant answers go straight into `messages` via
+`db/session_store.py`, then `housekeep(user_id, session_id)` runs once per
+conversation (A: turn indexing + fact extraction; k: compaction only). Each
+probe in groups a–f is one real /chat turn with `VVA_LTM=0`, so a probe never
+triggers its own extraction. Group k compacts one long conversation in
+3 batches and checks the summary for keywords — no chat turn at all.
 
 Identity: `app.dependency_overrides[current_user_id] = override_user(uid)`
 per scenario (the override binds the RLS user, like api/auth.py). Each
@@ -17,19 +18,23 @@ Safety: exits(3) unless `VVA_PG_DSN` and `ECA_TEST_PG_DSN` share a host, i.e.
 unless this runs through `local_tests/on_dev_branch.py`. The project's own
 `.env` points `VVA_PG_DSN` at prod.
 
-Timing per turn: `t_send` → `done` event → response end. The stream ends only
-after `housekeep` finishes, so the next turn already sees this turn's facts.
+Quota: any 429/ResourceExhausted/QuotaExceeded aborts the run (exit 4) after
+saving the partial report — the free tier resets at midnight Pacific.
 
-Logs: one `logging.Handler` collects `node_complete` (memory/planner/
-synthesizer), `memory_search_done`, `tier2` fields on `node_complete`,
-`fact_extraction_done` and `summarizer_done`/`stm_compacted`.
+Invalid turns (never scored, retried exactly once via --retry-invalid):
+node_failed, llm_fallback_used, errors in state, or 429/503/504 after the
+SDK's own retries. A persisted answer is only scored for a valid turn, with
+its request_id recorded.
 
-Report: `docs/tracking/memory-benchmark-<label>.md` + `.json` — pass rate per
-group; p50/p95 of the memory node; top retrieval similarity of groups b/e
-vs f; background LLM calls and tokens per turn; tokens per 1,000 turns.
+LLM-call counting: node_complete(planner|retriever_agent|synthesizer) +
+fact_extraction_done[llm_called] + summarizer_done/stm_compacted. One node run
+is one call; invisible SDK retries are a documented blind spot.
 
-Usage:
-    on_dev_branch.py script .../run_memory_benchmark.py --label A
+Report: `docs/tracking/memory-benchmark-<label>.md` + `.json`.
+
+Usage (one LLM key per invocation, see on_dev_branch.py):
+    on_dev_branch.py --llm gemini --gemini-key 2 script .../run_memory_benchmark.py --label A --phase seed
+    on_dev_branch.py --llm gemini --gemini-key 3 script .../run_memory_benchmark.py --label A --phase probes --append
 """
 
 from __future__ import annotations
@@ -39,11 +44,12 @@ import asyncio
 import json
 import logging
 import os
-import statistics
+import re
 import sys
 import time
 import unicodedata
 import uuid
+from datetime import datetime
 from pathlib import Path
 from urllib.parse import urlsplit
 
@@ -63,6 +69,9 @@ import yaml  # noqa: E402
 
 TIMEOUT_S = 300
 NS = uuid.NAMESPACE_URL
+MODEL = "gemini-2.5-flash"
+QUOTA_RE = re.compile(r"429|ResourceExhausted|QuotaExceeded", re.IGNORECASE)
+HTTP_STATUS_RE = re.compile(r"HTTP/1\.1 (\d{3})")
 
 
 def fold(s: str) -> str:
@@ -96,7 +105,8 @@ def check_not_prod() -> None:
 class Collector(logging.Handler):
     """Keep the benchmark's log records with their extras, nothing else."""
 
-    WANTED = {"node_complete", "memory_search_done", "fact_extraction_done",
+    WANTED = {"node_complete", "node_failed", "llm_fallback_used",
+              "memory_search_done", "fact_extraction_done",
               "summarizer_done", "stm_compacted", "chat_complete"}
 
     STANDARD = set(vars(logging.LogRecord("", 0, "", 0, "", (), None))) | {"message"}
@@ -107,11 +117,14 @@ class Collector(logging.Handler):
 
     def emit(self, record: logging.LogRecord) -> None:
         try:
-            if record.getMessage() not in self.WANTED:
-                return
-            extras = {k: v for k, v in vars(record).items() if k not in self.STANDARD}
-            self.records.append({"message": record.getMessage(),
-                                 "created": record.created, **extras})
+            msg = record.getMessage()
+            if msg in self.WANTED:
+                extras = {k: v for k, v in vars(record).items() if k not in self.STANDARD}
+                self.records.append({"message": msg, "created": record.created, **extras})
+            elif msg.startswith("HTTP Request"):
+                m = HTTP_STATUS_RE.search(msg)
+                if m and int(m.group(1)) >= 400:
+                    self.records.append({"message": msg, "created": record.created})
         except Exception:
             pass
 
@@ -189,6 +202,44 @@ def score_probe(answer: str, expect_any: list[str], forbid: list[str]) -> dict:
     return {"passed": passed, "hit": hit, "leak": leak}
 
 
+def find_invalid(turn: dict, logs: list[dict]) -> list[str]:
+    """Why a turn must not be scored (empty = valid)."""
+    reasons: list[str] = []
+    if turn.get("error"):
+        reasons.append(f"turn_error: {turn['error'][:120]}")
+    if turn.get("status") is not None and turn["status"] != 200:
+        reasons.append(f"http_{turn['status']}")
+    if turn.get("done") is None and not (turn.get("answer") or "").strip():
+        reasons.append("no_done_no_answer")
+    for r in logs:
+        msg = r.get("message", "")
+        if msg == "node_failed":
+            reasons.append(f"node_failed:{r.get('node', '?')}")
+        if msg == "llm_fallback_used" or r.get("llm_fallback_used") is True:
+            reasons.append("llm_fallback_used")
+        blob = msg + " " + " ".join(
+            str(r.get(k) or "") for k in ("error", "error_type", "reason"))
+        m = re.search(r"429|503|504|ResourceExhausted|QuotaExceeded|"
+                      r"DeadlineExceeded", blob, re.IGNORECASE)
+        if m:
+            reasons.append(f"provider_{m.group(0)}")
+        for err in r.get("errors") or []:
+            reasons.append(f"state_error: {str(err)[:120]}")
+    seen, unique = set(), []
+    for reason in reasons:
+        if reason not in seen:
+            seen.add(reason)
+            unique.append(reason)
+    return unique
+
+
+def is_quota(reasons: list[str]) -> bool:
+    return any(QUOTA_RE.search(r) for r in reasons)
+
+
+# ── Seeding (no agent, no TestClient) ───────────────────────────────────
+
+
 async def delete_user(owner_dsn: str, user_id: str) -> None:
     import asyncpg
 
@@ -199,13 +250,24 @@ async def delete_user(owner_dsn: str, user_id: str) -> None:
         await conn.close()
 
 
-async def read_last_answer(owner_dsn: str, session_id: str) -> str:
-    """Newest persisted assistant message of a session (answer-write source).
+async def seed_session(uid: str, session_id: str, turns: list[dict]) -> None:
+    from langgraph_agents.db import session_store as store
 
-    Some turns (grader/refuse paths) emit no `token` events, so the stream
-    carries no text even though the model produced an answer. Scoring falls
-    back to this row; `answer_source` records which one was scored.
-    """
+    for turn in turns:
+        mid = str(uuid.uuid4())
+        await store.write_turn_question(uid, session_id, mid, turn["user"])
+        await store.write_turn_answer(session_id, turn["user"], turn["assistant"])
+
+
+async def run_housekeep(uid: str, session_id: str, collector: Collector) -> list[dict]:
+    from langgraph_agents.nodes.summarizer import housekeep
+
+    mark = len(collector.records)
+    await housekeep(uid, session_id)
+    return collector.records[mark:]
+
+
+async def read_last_answer(owner_dsn: str, session_id: str) -> str:
     import asyncpg
 
     conn = await asyncpg.connect(owner_dsn)
@@ -217,8 +279,8 @@ async def read_last_answer(owner_dsn: str, session_id: str) -> str:
         await conn.close()
 
 
-async def read_summary(owner_dsn: str, session_id: str) -> dict:
-    """stm_summary when migration 016 is live, else the legacy chunk count."""
+async def read_summary_text(owner_dsn: str, session_id: str) -> dict:
+    """Summary text for the k check: stm_summary on B, joined chunks on A."""
     import asyncpg
 
     conn = await asyncpg.connect(owner_dsn)
@@ -228,16 +290,30 @@ async def read_summary(owner_dsn: str, session_id: str) -> dict:
                 "SELECT stm_summary, stm_up_to_seq FROM conversations "
                 "WHERE session_id = $1::uuid", session_id)
             if row is None:
-                return {"kind": "stm", "summary": None, "up_to_seq": None}
-            return {"kind": "stm", "summary": row["stm_summary"],
+                return {"kind": "stm", "text": "", "up_to_seq": None}
+            return {"kind": "stm", "text": row["stm_summary"] or "",
                     "up_to_seq": row["stm_up_to_seq"]}
         except Exception:
-            n = await conn.fetchval(
-                "SELECT COUNT(*) FROM summaries WHERE session_id = $1::uuid "
-                "AND status = 'active'", session_id)
-            return {"kind": "legacy", "summary": None, "chunk_count": n}
+            rows = await conn.fetch(
+                "SELECT summary_text FROM summaries WHERE session_id = $1::uuid "
+                "AND status = 'active' ORDER BY covers_from_seq", session_id)
+            return {"kind": "legacy",
+                    "text": "\n\n".join(r["summary_text"] for r in rows),
+                    "chunk_count": len(rows)}
     finally:
         await conn.close()
+
+
+def conv_session(label: str, sid: str, ci: int) -> str:
+    return str(uuid.uuid5(NS, f"memory-benchmark-{label}-{sid}-c{ci}"))
+
+
+def probe_session(label: str, sid: str, pi: int, attempt: int) -> str:
+    tag = f"p{pi}" if attempt <= 1 else f"p{pi}r{attempt}"
+    return str(uuid.uuid5(NS, f"memory-benchmark-{label}-{sid}-{tag}"))
+
+
+# ── Measurement helpers ─────────────────────────────────────────────────
 
 
 def node_ms(logs: list[dict], node: str) -> list[float]:
@@ -269,7 +345,132 @@ def background_cost(logs: list[dict]) -> dict:
     return {"llm_calls": llm_calls, "tokens": tokens, "elapsed_ms": elapsed}
 
 
-def run_label(label: str, spec: dict, only: set[str] = frozenset()) -> dict:
+def count_llm_calls(logs: list[dict]) -> int:
+    """Lower bound on real model calls (SDK retries are invisible)."""
+    n = sum(1 for r in logs
+            if r.get("message") == "node_complete"
+            and r.get("node") in ("planner", "retriever_agent", "synthesizer"))
+    n += sum(1 for r in logs
+             if r.get("message") == "fact_extraction_done" and r.get("llm_called"))
+    n += sum(1 for r in logs
+             if r.get("message") in ("summarizer_done", "stm_compacted"))
+    return n
+
+
+# ── Phases ──────────────────────────────────────────────────────────────
+
+
+def set_ltm(value: str) -> None:
+    os.environ["VVA_LTM"] = value
+    print(f"memory-benchmark: VVA_LTM={value}", flush=True)
+
+
+def seed_label(label: str, spec: dict, only: set[str], collector: Collector,
+               owner_dsn: str) -> tuple[list[dict], list[str]]:
+    """Seed conversations + k batches. Returns (scenario recs, quota stops)."""
+    from langgraph_agents.db.postgres import bind_request_user
+
+    recs, quota_stops = [], []
+    for sc in spec["scenarios"]:
+        if only and sc["id"] not in only:
+            continue
+        sid = sc["id"]
+        uid = str(uuid.uuid5(NS, f"memory-benchmark-{label}-{sid}"))
+        asyncio.run(delete_user(owner_dsn, uid))
+
+        async def _seed() -> tuple[list[str], list[dict]]:
+            from langgraph_agents.db.postgres import bind_request_user as _bind
+
+            _bind(uid)
+            sessions: list[str] = []
+            hlogs: list[dict] = []
+            if sc.get("conversations"):
+                if sc.get("seed_ltm", True):
+                    set_ltm("1")
+                for ci, conv in enumerate(sc["conversations"]):
+                    sess = conv_session(label, sid, ci)
+                    sessions.append(sess)
+                    await seed_session(uid, sess, conv["turns"])
+                    hlogs += await run_housekeep(uid, sess, collector)
+            if sc.get("batches"):
+                set_ltm("0")
+                sess = conv_session(label, sid, 0)
+                sessions.append(sess)
+                for batch in sc["batches"]:
+                    await seed_session(uid, sess, batch["turns"])
+                    hlogs += await run_housekeep(uid, sess, collector)
+            return sessions, hlogs
+
+        bind_request_user(uid)
+        sessions, hlogs = asyncio.run(_seed())
+        rec: dict = {"scenario": sid, "user_id": uid, "sessions": sessions,
+                     "seed_turns": sum(len(c["turns"]) for c in sc.get("conversations", []))
+                     + sum(len(b["turns"]) for b in sc.get("batches", [])),
+                     "turns": [], "probes": []}
+        rec["seed_llm_calls"] = count_llm_calls(hlogs)
+        if any(is_quota(find_invalid({"done": {}}, [r])) for r in hlogs):
+            quota_stops.append(sid)
+        check = sc.get("check_summary")
+        if check:
+            summary = asyncio.run(read_summary_text(owner_dsn, sessions[0]))
+            compactions = sum(
+                1 for r in hlogs
+                if r.get("message") in ("summarizer_done", "stm_compacted")
+                and str(r.get("session_id")) == sessions[0])
+            kept = [k for k in check["keywords"] if fold(k) in fold(summary["text"])]
+            rec["summary_check"] = {
+                "kind": summary.get("kind"), "compactions": compactions,
+                "keywords_kept": kept, "keywords_wanted": check["keywords"],
+                "passed": (compactions >= check["min_compactions"]
+                           and len(kept) == len(check["keywords"])),
+                "summary_chars": len(summary["text"]),
+                "summary_excerpt": summary["text"][:800],
+            }
+        recs.append(rec)
+        print(f"[seed {sid}] llm_calls={rec['seed_llm_calls']}"
+              + (f" summary={'PASS' if rec['summary_check']['passed'] else 'FAIL'}"
+                 f" compactions={rec['summary_check']['compactions']}" if check else ""),
+              flush=True)
+    return recs, quota_stops
+
+
+def run_probe(client, owner_dsn: str, uid: str, sess: str, probe: dict,
+              collector: Collector, attempt: int) -> dict:
+    turn = chat_turn(client, sess, probe["ask"], probe.get("locale", "vi"), collector)
+    invalid = find_invalid(turn, turn["logs"])
+    answer, source = turn["answer"], "stream"
+    request_id = (turn["done"] or {}).get("request_id")
+    if not (answer or "").strip() and not turn.get("error") and not invalid:
+        answer = asyncio.run(read_last_answer(owner_dsn, sess))
+        source = "persisted"
+    verdict = {"passed": False, "hit": [], "leak": []}
+    if not invalid:
+        verdict = score_probe(answer, probe.get("expect_any") or [],
+                              probe.get("forbid") or [])
+    top_sim, top_src = retrieval_top(turn["logs"])
+    return {
+        "group": probe["group"], "ask": probe["ask"],
+        "where": probe.get("where", "new"), "session_id": sess,
+        "expect_any": probe.get("expect_any") or [],
+        "forbid": probe.get("forbid") or [],
+        "answer": answer, "answer_source": source, "request_id": request_id,
+        "error": turn["error"], "attempt": attempt,
+        "invalid": invalid, "passed": (not invalid) and verdict["passed"]
+        and turn["error"] is None,
+        "hit": verdict["hit"], "leak": verdict["leak"],
+        "retrieval_top_sim": top_sim, "retrieval_src": top_src,
+        "memory_ms": (node_ms(turn["logs"], "memory") or [None])[0],
+        "t_to_done_s": turn["t_to_done_s"],
+        "t_housekeep_s": turn["t_housekeep_s"],
+        "total_tokens": (turn["done"] or {}).get("total_tokens"),
+        "background": background_cost(turn["logs"]),
+        "turn": turn,
+    }
+
+
+def probes_label(label: str, spec: dict, only: set[str], collector: Collector,
+                 owner_dsn: str, recs: list[dict]) -> list[str]:
+    """Live /chat probes (VVA_LTM=0). Returns quota stops."""
     from fastapi.testclient import TestClient
 
     from langgraph_agents.api.auth import current_user_id, override_user
@@ -277,116 +478,154 @@ def run_label(label: str, spec: dict, only: set[str] = frozenset()) -> dict:
     from langgraph_agents.shared.logging import configure_root_logger
 
     configure_root_logger()
-    collector = Collector()
-    try:
-        owner_dsn = os.environ["ECA_TEST_PG_DSN_OWNER"]
-        app = create_app()
-        results: list[dict] = []
-        with TestClient(app) as client:
-            # Lifespan re-creates the root handlers, so attach only after it ran.
-            logging.getLogger().addHandler(collector)
+    set_ltm("0")
+    by_id = {r["scenario"]: r for r in recs}
+    quota_stops: list[str] = []
+    with TestClient(create_app()) as client:
+        # Lifespan re-creates the root handlers, so attach only after it ran.
+        logging.getLogger().addHandler(collector)
+        try:
+            for sc in spec["scenarios"]:
+                if only and sc["id"] not in only:
+                    continue
+                if not sc.get("probes"):
+                    continue
+                sid = sc["id"]
+                rec = by_id.get(sid)
+                if rec is None:
+                    rec = {"scenario": sid,
+                           "user_id": str(uuid.uuid5(NS, f"memory-benchmark-{label}-{sid}")),
+                           "sessions": [], "seed_turns": 0, "turns": [], "probes": []}
+                    recs.append(rec)
+                    by_id[sid] = rec
+                uid = rec["user_id"]
+                app.dependency_overrides[current_user_id] = override_user(uid)
+                for pi, probe in enumerate(sc["probes"]):
+                    if probe.get("where") == "last":
+                        sess = rec["sessions"][-1] if rec["sessions"] else None
+                        if sess is None:
+                            prec = {"group": probe["group"], "ask": probe["ask"],
+                                    "where": "last", "session_id": None,
+                                    "expect_any": probe.get("expect_any") or [],
+                                    "forbid": probe.get("forbid") or [],
+                                    "answer": "", "answer_source": "none",
+                                    "request_id": None, "error": None, "attempt": 1,
+                                    "invalid": ["no_session_for_last"], "passed": False,
+                                    "hit": [], "leak": [], "retrieval_top_sim": None,
+                                    "retrieval_src": "none", "memory_ms": None,
+                                    "t_to_done_s": None, "t_housekeep_s": None,
+                                    "total_tokens": None,
+                                    "background": {"llm_calls": 0, "tokens": 0,
+                                                   "elapsed_ms": 0}}
+                            rec["probes"].append(prec)
+                            continue
+                    else:
+                        sess = probe_session(label, sid, pi, 1)
+                        rec["sessions"].append(sess)
+                    prec = run_probe(client, owner_dsn, uid, sess, probe,
+                                     collector, attempt=1)
+                    turn_data = prec.pop("turn")
+                    rec["turns"].append(turn_data)
+                    rec["probes"].append(prec)
+                    print(f"[{sid}] {probe['group']}:"
+                          f"{'INVALID' if prec['invalid'] else ('PASS' if prec['passed'] else 'FAIL')}"
+                          + (f" ({prec['invalid']})" if prec["invalid"] else ""),
+                          flush=True)
+                    if is_quota(prec["invalid"]):
+                        quota_stops.append(sid)
+                        return quota_stops
+        finally:
+            logging.getLogger().removeHandler(collector)
+    return quota_stops
+
+
+def retry_label(label: str, spec: dict, only: set[str], collector: Collector,
+                owner_dsn: str, recs: list[dict]) -> list[str]:
+    """Rerun invalid probes exactly once (no reseeding, users persist)."""
+    from fastapi.testclient import TestClient
+
+    from langgraph_agents.api.auth import current_user_id, override_user
+    from langgraph_agents.api.main import create_app
+    from langgraph_agents.shared.logging import configure_root_logger
+
+    configure_root_logger()
+    set_ltm("0")
+    quota_stops: list[str] = []
+    with TestClient(create_app()) as client:
+        logging.getLogger().addHandler(collector)
+        try:
             for sc in spec["scenarios"]:
                 if only and sc["id"] not in only:
                     continue
                 sid = sc["id"]
-                uid = str(uuid.uuid5(NS, f"memory-benchmark-{label}-{sid}"))
-                asyncio.run(delete_user(owner_dsn, uid))
-                app.dependency_overrides[current_user_id] = override_user(uid)
-                sessions: list[str] = []
-                rec: dict = {"scenario": sid, "user_id": uid,
-                             "turns": [], "probes": []}
-                convs = sc.get("conversations") or []
-                for ci, conv in enumerate(convs):
-                    if isinstance(conv, dict):
-                        locale, messages = conv.get("locale", "vi"), conv["messages"]
+                rec = next((r for r in recs if r["scenario"] == sid), None)
+                if rec is None:
+                    continue
+                uid = rec["user_id"]
+                client.app.dependency_overrides[current_user_id] = override_user(uid)
+                for prec in rec["probes"]:
+                    if not prec.get("invalid") or prec.get("attempt", 1) >= 2:
+                        continue
+                    probe = next((p for p in sc["probes"]
+                                  if p["group"] == prec["group"]
+                                  and p.get("where") == prec.get("where")), None)
+                    if probe is None:
+                        continue
+                    if prec.get("where") == "last":
+                        sess = prec["session_id"]
                     else:
-                        locale, messages = sc.get("locale", "vi"), conv
-                    sess = str(uuid.uuid5(NS, f"memory-benchmark-{label}-{sid}-c{ci}"))
-                    sessions.append(sess)
-                    for msg in messages:
-                        rec["turns"].append(chat_turn(client, sess, msg, locale, collector))
-                for pi, probe in enumerate(sc.get("probes") or []):
-                    where = probe.get("where", "new")
-                    if where == "last":
-                        sess = sessions[-1]
-                    else:
-                        sess = str(uuid.uuid5(
-                            NS, f"memory-benchmark-{label}-{sid}-p{pi}"))
-                        sessions.append(sess)
-                    turn = chat_turn(client, sess, probe["ask"],
-                                     probe.get("locale", "vi"), collector)
-                    answer = turn["answer"]
-                    source = "stream" if answer.strip() else "persisted"
-                    if not answer.strip():
-                        answer = asyncio.run(read_last_answer(owner_dsn, sess))
-                    verdict = score_probe(answer, probe.get("expect_any") or [],
-                                          probe.get("forbid") or [])
-                    top_sim, top_src = retrieval_top(turn["logs"])
-                    rec["probes"].append({
-                        "group": probe["group"], "ask": probe["ask"], "where": where,
-                        "expect_any": probe.get("expect_any") or [],
-                        "forbid": probe.get("forbid") or [],
-                        "answer": answer, "answer_source": source,
-                        "error": turn["error"],
-                        "passed": verdict["passed"] and turn["error"] is None,
-                        "hit": verdict["hit"], "leak": verdict["leak"],
-                        "retrieval_top_sim": top_sim, "retrieval_src": top_src,
-                        "memory_ms": (node_ms(turn["logs"], "memory") or [None])[0],
-                        "t_to_done_s": turn["t_to_done_s"],
-                        "t_housekeep_s": turn["t_housekeep_s"],
-                        "total_tokens": (turn["done"] or {}).get("total_tokens"),
-                        "background": background_cost(turn["logs"]),
-                    })
-                    rec["turns"].append(turn)
-                check = sc.get("check_summary")
-                if check:
-                    summary = asyncio.run(read_summary(owner_dsn, sessions[0]))
-                    compactions = sum(
-                        1 for t in rec["turns"] for r in t["logs"]
-                        if r.get("message") in ("summarizer_done", "stm_compacted")
-                        and str(r.get("session_id")) == sessions[0])
-                    text = summary.get("summary") or ""
-                    kept = [k for k in check["keywords"] if fold(k) in fold(text)]
-                    rec["summary_check"] = {
-                        "kind": summary.get("kind"), "compactions": compactions,
-                        "keywords_kept": kept,
-                        "keywords_wanted": check["keywords"],
-                        "passed": (compactions >= check["min_compactions"]
-                                   and len(kept) == len(check["keywords"])),
-                        "summary_chars": len(text),
-                    }
-                results.append(rec)
-                print(f"[{sid}] probes: "
-                      + ", ".join(f"{p['group']}:{'PASS' if p['passed'] else 'FAIL'}"
-                                  for p in rec["probes"]), flush=True)
-        return {"label": label, "scenarios": results}
-    finally:
-        logging.getLogger().removeHandler(collector)
+                        sess = probe_session(
+                            label, sid, sc["probes"].index(probe), 2)
+                        rec["sessions"].append(sess)
+                    new = run_probe(client, owner_dsn, uid, sess, probe,
+                                    collector, attempt=prec.get("attempt", 1) + 1)
+                    new["retry_of"] = {"error": prec.get("error"),
+                                       "invalid": prec.get("invalid")}
+                    turn_data = new.pop("turn")
+                    rec["turns"].append(turn_data)
+                    prec.update(new)
+                    print(f"[retry {sid}] {probe['group']}:"
+                          f"{'INVALID' if new['invalid'] else ('PASS' if new['passed'] else 'FAIL')}",
+                          flush=True)
+                    if is_quota(new["invalid"]):
+                        quota_stops.append(sid)
+                        return quota_stops
+        finally:
+            logging.getLogger().removeHandler(collector)
+    return quota_stops
+
+
+# ── Report ──────────────────────────────────────────────────────────────
 
 
 def summarize(report: dict) -> dict:
-    probes = [p for sc in report["scenarios"] for p in sc["probes"]]
-    turns = [t for sc in report["scenarios"] for t in sc["turns"]]
+    probes = [p for sc in report["scenarios"] for p in sc.get("probes", [])]
+    scored = [p for p in probes if not p.get("invalid")]
+    invalid = [p for p in probes if p.get("invalid")]
     by_group: dict[str, dict] = {}
     for p in probes:
-        g = by_group.setdefault(p["group"], {"total": 0, "passed": 0})
+        g = by_group.setdefault(p["group"], {"total": 0, "passed": 0,
+                                             "invalid": 0})
         g["total"] += 1
         g["passed"] += p["passed"]
-    mem_ms = [m for sc in report["scenarios"] for p in sc["probes"]
-              for m in [p["memory_ms"]] if m is not None]
-    sim_be = [p["retrieval_top_sim"] for p in probes
+        g["invalid"] += 1 if p.get("invalid") else 0
+    mem_ms = [p["memory_ms"] for p in scored if p.get("memory_ms") is not None]
+    sim_be = [p["retrieval_top_sim"] for p in scored
               if p["group"] in ("b", "e") and p["retrieval_top_sim"] is not None]
-    sim_f = [p["retrieval_top_sim"] for p in probes
+    sim_f = [p["retrieval_top_sim"] for p in scored
              if p["group"] == "f" and p["retrieval_top_sim"] is not None]
-    bg = [background_cost(t["logs"]) for t in turns]
+    turns = [t for sc in report["scenarios"] for t in sc.get("turns", [])]
+    bg = [background_cost(t.get("logs", [])) for t in turns]
     n_turns = len(turns) or 1
     turn_tokens = [t["done"].get("total_tokens") for t in turns
-                   if isinstance(t["done"].get("total_tokens"), int)]
+                   if isinstance(t.get("done", {}).get("total_tokens"), int)]
     return {
         "groups": {g: {"passed": v["passed"], "total": v["total"],
+                       "invalid": v["invalid"],
                        "rate": round(v["passed"] / v["total"], 3) if v["total"] else None}
                    for g, v in sorted(by_group.items())},
-        "overall": {"passed": sum(p["passed"] for p in probes), "total": len(probes)},
+        "overall": {"passed": sum(p["passed"] for p in scored),
+                    "scored": len(scored), "invalid": len(invalid)},
         "memory_node_ms": {"n": len(mem_ms),
                            "p50": pct(mem_ms, 0.5), "p95": pct(mem_ms, 0.95)},
         "retrieval_top_sim": {
@@ -406,15 +645,24 @@ def summarize(report: dict) -> dict:
 
 def render_md(label: str, report: dict, stats: dict) -> str:
     L: list[str] = [f"# memory-benchmark-{label}", ""]
-    L.append(f"{len(report['scenarios'])} scenarios, "
-             f"{stats['overall']['passed']}/{stats['overall']['total']} probes passed.")
+    L.append(f"Model: {MODEL}. A và B cùng chạy trên {MODEL} nên so sánh hai thiết "
+             "kế memory là công bằng, nhưng chất lượng, độ trễ và token KHÔNG đại "
+             "diện cho prod (prod dùng DeepSeek).")
+    L.append("")
+    for run in report.get("runs", []):
+        L.append(f"- run {run['started_at']} phase={run['phase']} only={run['only']} "
+                 f"key={run['key_label']} llm_calls={run['llm_calls']} "
+                 f"turns={run['turns']} probes={run['probes']}")
+    L.append("")
+    L.append(f"{stats['overall']['passed']}/{stats['overall']['scored']} probes passed "
+             f"({stats['overall']['invalid']} invalid, không chấm).")
     L.append("")
     L.append("## Pass rate by group")
     L.append("")
-    L.append("| group | passed/total | rate |")
-    L.append("|---|---|---|")
+    L.append("| group | passed/total | invalid | rate |")
+    L.append("|---|---|---|---|")
     for g, v in stats["groups"].items():
-        L.append(f"| {g} | {v['passed']}/{v['total']} | {v['rate']} |")
+        L.append(f"| {g} | {v['passed']}/{v['total']} | {v['invalid']} | {v['rate']} |")
     L.append("")
     L.append("## Memory node (ms)")
     L.append("")
@@ -437,13 +685,16 @@ def render_md(label: str, report: dict, stats: dict) -> str:
     for sc in report["scenarios"]:
         L.append(f"## {sc['scenario']}")
         L.append("")
-        for p in sc["probes"]:
-            L.append(f"### [{p['group']}] {'PASS' if p['passed'] else 'FAIL'} — {p['ask']}")
+        for p in sc.get("probes", []):
+            verdict = "INVALID" if p.get("invalid") else ("PASS" if p["passed"] else "FAIL")
+            L.append(f"### [{p['group']}] {verdict} — {p['ask']}")
             L.append("")
-            L.append(f"- where: {p['where']}, expect: {p['expect_any']}, "
+            L.append(f"- where: {p.get('where')}, session: {p.get('session_id')}, "
+                     f"attempt: {p.get('attempt', 1)}, expect: {p['expect_any']}, "
                      f"forbid: {p['forbid']}")
             L.append(f"- hit: {p['hit']}, leak: {p['leak']}, error: {p['error']}, "
-                     f"answer_source: {p.get('answer_source', 'stream')}")
+                     f"invalid: {p.get('invalid')}, answer_source: {p.get('answer_source')}, "
+                     f"request_id: {p.get('request_id')}")
             L.append(f"- retrieval: {p['retrieval_src']}={p['retrieval_top_sim']}, "
                      f"memory_ms={p['memory_ms']}, to_done={p['t_to_done_s']}s, "
                      f"housekeep={p['t_housekeep_s']}s, "
@@ -457,43 +708,127 @@ def render_md(label: str, report: dict, stats: dict) -> str:
                      f"compactions={s['compactions']}, "
                      f"kept={s['keywords_kept']}/{s['keywords_wanted']}, "
                      f"chars={s['summary_chars']}")
+            L.append(f"- excerpt: {s.get('summary_excerpt', '')[:800]}")
             L.append("")
     return "\n".join(L) + "\n"
 
 
+def validate_spec(spec: dict) -> list[str]:
+    """Offline checks for --dry-run (no DB, no LLM). Returns error strings."""
+    errors: list[str] = []
+    seen: set[str] = set()
+    groups: dict[str, int] = {}
+    for sc in spec.get("scenarios", []):
+        sid = sc.get("id", "?")
+        if sid in seen:
+            errors.append(f"duplicate scenario id {sid}")
+        seen.add(sid)
+        if not sc.get("conversations") and not sc.get("batches"):
+            errors.append(f"{sid}: needs conversations or batches")
+        for probe in sc.get("probes", []):
+            groups[probe.get("group", "?")] = groups.get(probe.get("group", "?"), 0) + 1
+            if probe.get("where") == "last" and not sc.get("conversations") \
+                    and not sc.get("batches"):
+                errors.append(f"{sid}: where=last without a session")
+            if not probe.get("ask"):
+                errors.append(f"{sid}: probe without ask")
+    for g in ("a", "b", "c", "d", "e", "f"):
+        if groups.get(g, 0) != 1:
+            errors.append(f"group {g}: want exactly 1 probe, have {groups.get(g, 0)}")
+    return errors
+
+
+def estimate_calls(spec: dict, only: set[str]) -> dict:
+    seeds = sum(1 for sc in spec["scenarios"]
+                if (not only or sc["id"] in only) for _ in (sc.get("conversations", [])
+                                                            + sc.get("batches", [])))
+    probes = sum(1 for sc in spec["scenarios"]
+                 if (not only or sc["id"] in only) for _ in sc.get("probes", []))
+    return {"housekeeps": seeds, "probes": probes,
+            "estimate": seeds * 2 + probes * 3}
+
+
 def main(argv: list[str]) -> int:
-    ap = argparse.ArgumentParser(description="Memory end-to-end benchmark.")
+    ap = argparse.ArgumentParser(description="Memory seeded-history benchmark.")
     ap.add_argument("--label", required=True)
     ap.add_argument("--yaml", default=str(THIS_FILE.parent / "memory_benchmark.yaml"))
     ap.add_argument("--only", default="",
-                    help="Comma-separated scenario ids (foreground chunks: the "
-                         "harness kills processes that outlive one call, so a "
-                         "full label runs as several chunks + --append).")
+                    help="Comma-separated scenario ids (one key per invocation).")
     ap.add_argument("--append", action="store_true",
-                    help="Merge this chunk into the existing label report instead "
-                         "of overwriting it.")
+                    help="Start from the existing label report instead of empty.")
+    ap.add_argument("--phase", default="all", choices=["seed", "probes", "all"])
+    ap.add_argument("--retry-invalid", action="store_true",
+                    help="Rerun invalid probes once (no reseeding).")
+    ap.add_argument("--dry-run", action="store_true",
+                    help="Validate the YAML and print the call estimate.")
     args = ap.parse_args(argv)
-    check_not_prod()
     with open(args.yaml, encoding="utf-8") as f:
         spec = yaml.safe_load(f)
+    errors = validate_spec(spec)
+    if errors:
+        print("memory-benchmark: invalid spec:")
+        for error in errors:
+            print(f"  - {error}")
+        return 2
     only = {s.strip() for s in args.only.split(",") if s.strip()}
-    report = run_label(args.label, spec, only)
+    if args.dry_run:
+        print(json.dumps({"errors": [], "estimate": estimate_calls(spec, only),
+                          "only": sorted(only) or "all"}, ensure_ascii=False, indent=1))
+        return 0
+    check_not_prod()
+    from langgraph_agents.shared.logging import configure_root_logger
+
+    configure_root_logger()
+    collector = Collector()
+    owner_dsn = os.environ["ECA_TEST_PG_DSN_OWNER"]
+    started_at = datetime.now().astimezone().isoformat(timespec="seconds")
+    key_label = os.environ.get("VVA_LLM_KEY_LABEL", "llm=?")
+    mark = len(collector.records)
     TRACKING_DIR.mkdir(parents=True, exist_ok=True)
     json_path = TRACKING_DIR / f"memory-benchmark-{args.label}.json"
-    if args.append and json_path.exists():
+    report: dict = {"label": args.label, "model": MODEL, "scenarios": [], "runs": []}
+    if (args.append or args.retry_invalid) and json_path.exists():
         prev = json.loads(json_path.read_text(encoding="utf-8"))
-        have = {sc["scenario"] for sc in report["scenarios"]}
-        merged = [sc for sc in prev["scenarios"] if sc["scenario"] not in have]
-        merged.extend(report["scenarios"])
-        report = {"label": args.label, "scenarios": merged}
+        report = {"label": args.label, "model": MODEL,
+                  "scenarios": prev["scenarios"], "runs": prev.get("runs", [])}
+    quota_stops: list[str] = []
+    if args.retry_invalid:
+        if not json_path.exists():
+            print("memory-benchmark: nothing to retry.", file=sys.stderr)
+            return 2
+        quota_stops = retry_label(args.label, spec, only, collector,
+                                  owner_dsn, report["scenarios"])
+    else:
+        if args.phase in ("seed", "all"):
+            recs, quota_stops = seed_label(args.label, spec, only, collector,
+                                           owner_dsn)
+            by_id = {r["scenario"]: r for r in report["scenarios"]}
+            for rec in recs:
+                by_id[rec["scenario"]] = rec
+            order = [sc["id"] for sc in spec["scenarios"]]
+            report["scenarios"] = [by_id[sid] for sid in order if sid in by_id]
+        if not quota_stops and args.phase in ("probes", "all"):
+            quota_stops = probes_label(args.label, spec, only, collector,
+                                       owner_dsn, report["scenarios"])
+    chunk_calls = count_llm_calls(collector.records[mark:])
+    chunk_turns = sum(len(sc.get("turns", [])) for sc in report["scenarios"])
+    chunk_probes = sum(len(sc.get("probes", [])) for sc in report["scenarios"])
+    report["runs"].append({"started_at": started_at, "phase": args.phase,
+                           "only": sorted(only) or "all",
+                           "retry_invalid": args.retry_invalid,
+                           "key_label": key_label, "llm_calls": chunk_calls,
+                           "turns": chunk_turns, "probes": chunk_probes,
+                           "quota_stops": quota_stops})
     stats = summarize(report)
-    payload = {"label": args.label, "stats": stats, "scenarios": report["scenarios"]}
     md_path = TRACKING_DIR / f"memory-benchmark-{args.label}.md"
     md_path.write_text(render_md(args.label, report, stats), encoding="utf-8")
-    json_path.write_text(json.dumps(payload, ensure_ascii=False, indent=1),
-                         encoding="utf-8")
-    print(f"Wrote {md_path} and {json_path}")
-    return 0
+    json_path.write_text(json.dumps({"label": args.label, "stats": stats,
+                                     "scenarios": report["scenarios"],
+                                     "runs": report["runs"]},
+                                    ensure_ascii=False, indent=1), encoding="utf-8")
+    print(f"Wrote {md_path} and {json_path} "
+          f"(chunk llm_calls={chunk_calls}, quota_stops={quota_stops})")
+    return 4 if quota_stops else 0
 
 
 if __name__ == "__main__":

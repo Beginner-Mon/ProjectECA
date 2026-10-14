@@ -142,6 +142,8 @@ def main(argv: list[str]) -> int:
     for name in llm_deletions:
         os.environ.pop(name, None)
     os.environ.update(llm_updates)
+    # So the benchmark report can record which key a chunk ran on.
+    os.environ["VVA_LLM_KEY_LABEL"] = llm_label
     print(
         "on_dev_branch: host app=%s owner=%s %s"
         % (_host(overrides["VVA_PG_DSN"]), _host(overrides["VVA_PG_DSN_OWNER"]),

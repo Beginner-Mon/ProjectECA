@@ -1,52 +1,62 @@
-# Memory benchmark — scenarios and probes (memory-v2 step 1).
+# Memory benchmark — thu nhỏ cho hạn mức Gemini miễn phí (Tri 14/10/2026).
 #
-# Shape per scenario:
-#   conversations: prior conversations, each a list of user messages sent in
-#     one session; the agent answers for real.
-#   probes: each probe is one turn asking about the past.
-#     group: a|b|c|d|e|f|k  (g|h|i|j are added in step 6, B only)
-#     where: last = continue the scenario's last session,
-#            new  = a fresh session
-#     expect_any: phrases that must appear (at least one) in the answer
-#     forbid: phrases that must not appear
-#     locale: site language for the turn (default vi)
-# Scoring (run_memory_benchmark.py): the answer is lowercased with Vietnamese
-# diacritics stripped (NFD); pass = some expect_any phrase present (an empty
-# list is vacuously true — used by group f, whose only assertion is "no leak")
-# and no forbid phrase present. The verbatim answer is kept in the report.
+# Hội thoại dựng sẵn KHÔNG chạy qua agent: tin user + câu trả lời viết sẵn được
+# ghi thẳng vào `messages` bằng hàm ghi của `db/session_store.py`, rồi gọi
+# `housekeep(user_id, session_id)` một lần mỗi hội thoại (A: đánh chỉ mục +
+# trích fact; k: chỉ nén). Câu trả lời viết sẵn giúp nhóm c chấm chắc chắn.
+#
+# Probes: mỗi nhóm a–f đúng 1 probe, chạy `/chat` thật với `VVA_LTM=0` (lượt
+# probe không gọi thêm bước trích). Nhóm k không chạy lượt chat nào.
+#
+# Scoring: chuẩn hoá (chữ thường, bỏ dấu NFD); đạt khi có ≥1 cụm expect_any
+# (danh sách rỗng được coi là đúng — nhóm f chỉ kiểm "không rò") và không cụm
+# forbid nào. Lượt invalid (node_failed, llm_fallback_used, errors, 429/503/504)
+# thì không chấm, chạy lại đúng một lần bằng --retry-invalid.
 
 scenarios:
 
-- id: back_vi
+- id: back_a
   conversations:
-    - - "Tôi bị đau lưng dưới mỗi khi ngồi lâu."
-      - "Bác sĩ dặn tôi tránh squat sâu."
+    - turns:
+        - user: "Tôi bị đau lưng dưới mỗi khi ngồi lâu."
+          assistant: "Đã nhớ: bạn đau lưng dưới khi ngồi lâu. Tôi sẽ tránh gợi ý động tác gây áp lực lên lưng."
   probes:
     - group: a
-      ask: "Nhắc lại xem tôi bị đau lưng khi nào?"
-      where: last
-      expect_any: ["ngoi", "lau"]
-      forbid: []
-    - group: b
-      ask: "Tôi ngồi làm việc cả ngày, buổi tối nên tập gì nhẹ nhàng?"
+      ask: "Nhắc lại xem tôi bị đau ở đâu?"
       where: new
       expect_any: ["lung"]
       forbid: []
-    - group: f
-      ask: "Hôm nay trời đẹp, cuối tuần tôi nên đi đâu chơi?"
-      where: new
-      expect_any: []
-      forbid: ["lung", "ngoi", "squat"]
 
-- id: knee_recall
+- id: latex_b
   conversations:
-    - - "Tôi mổ sụn chêm đầu gối trái hồi tháng 5/2025."
+    - turns:
+        - user: "Tôi bị dị ứng latex nên không dùng được dây kháng lực làm từ latex."
+          assistant: "Đã nhớ: bạn dị ứng latex. Tôi sẽ chỉ gợi ý dây kháng lực không chứa latex."
   probes:
-    - group: a
-      ask: "Tôi mổ đầu gối khi nào?"
-      where: last
-      expect_any: ["thang 5", "2025"]
+    - group: b
+      ask: "Gợi ý vài bài tập với dây kháng lực cho tôi?"
+      where: new
+      expect_any: ["latex"]
       forbid: []
+
+- id: ice_c
+  conversations:
+    - turns:
+        - user: "Đầu gối tôi hơi sưng sau khi đi bộ lâu, có nên chườm đá không?"
+          assistant: "Bạn nên chườm đá 15 phút mỗi tối, kê cao chân khi nghỉ. Nếu sưng tăng hoặc đau nhiều, hãy đi khám."
+  probes:
+    - group: c
+      ask: "Hôm trước bạn dặn tôi gì về vụ chườm đá?"
+      where: new
+      expect_any: ["chuom", "da"]
+      forbid: []
+
+- id: knee_d
+  conversations:
+    - turns:
+        - user: "Tôi mổ sụn chêm đầu gối trái hồi tháng 5/2025."
+          assistant: "Đã nhớ: bạn mổ sụn chêm đầu gối trái tháng 5/2025."
+  probes:
     - group: d
       locale: en
       ask: "When did I have my left knee surgery?"
@@ -54,21 +64,14 @@ scenarios:
       expect_any: ["may", "2025"]
       forbid: []
 
-- id: knee_correct
+- id: job_e
   conversations:
-    - - "Tôi mổ sụn chêm đầu gối trái hồi tháng 5/2025."
-    - - "Bác sĩ xác nhận ca mổ của tôi là tháng 6/2025, tôi nhớ nhầm tháng 5."
-  probes:
-    - group: e
-      ask: "Rốt cuộc tôi mổ đầu gối tháng nào?"
-      where: last
-      expect_any: ["thang 6"]
-      forbid: ["thang 5"]
-
-- id: job_change
-  conversations:
-    - - "Tôi làm y tá ca đêm."
-    - - "Tôi đã chuyển sang làm giáo viên, không còn làm y tá nữa."
+    - turns:
+        - user: "Tôi làm y tá ca đêm."
+          assistant: "Đã nhớ: nghề của bạn là y tá ca đêm."
+    - turns:
+        - user: "Tôi đã chuyển sang làm giáo viên, không còn làm y tá nữa."
+          assistant: "Đã cập nhật: giờ bạn là giáo viên."
   probes:
     - group: e
       ask: "Hiện giờ tôi làm nghề gì?"
@@ -76,111 +79,61 @@ scenarios:
       expect_any: ["giao vien"]
       forbid: ["y ta"]
 
-- id: morning_habit
+- id: goal_f
   conversations:
-    - - "Tôi thích bơi lội vào mỗi buổi sáng."
-    - - "Dạo này tôi chuyển sang chạy bộ buổi sáng thay vì bơi lội."
+    - turns:
+        - user: "Mục tiêu của tôi là chạy được 5km vào mùa xuân."
+          assistant: "Đã nhớ mục tiêu chạy 5km mùa xuân của bạn."
   probes:
-    - group: e
-      ask: "Buổi sáng tôi hay vận động thế nào?"
-      where: last
-      expect_any: ["chay bo"]
-      forbid: ["boi"]
-
-- id: run_goal
-  conversations:
-    - - "Mục tiêu của tôi là chạy được 5km vào mùa xuân."
-  probes:
-    - group: a
-      ask: "Nhắc lại mục tiêu chạy bộ của tôi?"
-      where: last
-      expect_any: ["5km", "5 km"]
-      forbid: []
-    - group: b
-      ask: "Lên giúp tôi một lịch tập cho tuần này?"
-      where: new
-      expect_any: ["chay", "5km", "5 km", "xuan"]
-      forbid: []
     - group: f
       ask: "Thủ đô của Pháp là thành phố nào?"
       where: new
       expect_any: []
       forbid: ["chay", "5km", "xuan"]
 
-- id: latex_band
-  conversations:
-    - - "Tôi bị dị ứng latex nên không dùng được dây kháng lực làm từ latex."
-  probes:
-    - group: b
-      ask: "Gợi ý cho tôi vài bài tập với dây kháng lực?"
-      where: new
-      expect_any: ["latex"]
-      forbid: []
-    - group: f
-      ask: "Gợi ý cho tôi món ăn sáng nhanh gọn?"
-      where: new
-      expect_any: []
-      forbid: ["latex", "day", "di ung"]
-
-- id: lang_pref
-  conversations:
-    - locale: en
-      messages:
-        - "I prefer short answers. I have knee osteoarthritis."
-  probes:
-    - group: d
-      ask: "Tôi thích câu trả lời thế nào?"
-      where: new
-      expect_any: ["ngan"]
-      forbid: []
-    - group: d
-      ask: "Đầu gối của tôi bị gì?"
-      where: new
-      expect_any: ["khop"]
-      forbid: []
-
-- id: ice_advice
-  conversations:
-    - - "Đầu gối tôi hơi sưng sau khi đi bộ lâu, có nên chườm đá không?"
-      - "Cảm ơn bạn, tối nay tôi sẽ thử chườm đá."
-  probes:
-    - group: c
-      ask: "Bạn vừa khuyên gì về đầu gối của tôi?"
-      where: last
-      expect_any: ["goi", "da"]
-      forbid: []
-    - group: c
-      ask: "Tóm tắt lại những gì bạn vừa nói với tôi?"
-      where: last
-      expect_any: ["goi", "da", "chuom"]
-      forbid: []
-    - group: c
-      ask: "Hôm trước bạn đã dặn tôi những gì?"
-      where: new
-      expect_any: ["goi"]
-      forbid: []
-
-- id: long_knee
+# Nhóm k: một hội thoại dài dựng theo 3 đợt, housekeep sau mỗi đợt (3 lần nén).
+# Kiểm bằng từ khoá trong bản tóm tắt. Mỗi đợt ~10.000 ký tự (> history_compact_at
+# 2000 token) để lần nén nào cũng có việc làm. Không chạy lượt chat nào.
+- id: long_k
+  seed_ltm: false
+  batches:
+    - turns:
+        - user: "Từ giờ hãy trả lời tôi ngắn gọn thôi. À, vai phải của tôi hay bị đau mỗi khi giơ tay cao."
+          assistant: "Rõ rồi, tôi sẽ trả lời ngắn gọn. Vai phải của bạn đau khi giơ cao — tôi sẽ tránh gợi ý động tác giơ tay quá đầu."
+        - user: "Bài heel-slide tập đúng cách thế nào?"
+          assistant: "Nằm ngửa, gót chân trượt trên mặt giường về phía mông rồi duỗi ra, giữ lưng dưới chạm mặt giường suốt động tác. Thở đều, không nín thở. Mỗi lần tập khoảng 10 lần, ngày 2 lần, dừng khi đau tăng. Bài này giúp gối gập duỗi nhẹ nhàng sau chấn thương hoặc mổ, vì gót trượt nên khớp chịu ít lực hơn đứng lên ngồi xuống. Nếu gối sưng to sau tập, chườm đá 15 phút và giảm số lần hôm sau. Đừng cố kéo gót quá gần mông khi còn đau nhói. Kết hợp nâng chân thẳng để giữ cơ đùi khỏe, vì cơ đùi yếu làm gối chịu tải nhiều hơn khi đi lại. Ghi lại số lần tập mỗi ngày để tái khám bác sĩ có con số cụ thể. Khi gập gối được khoảng 90 độ mà không đau tăng, bạn có thể hỏi bác sĩ về bài đạp xe tại chỗ không tải, yên cao để gối không gập quá sâu."
+        - user: "Bài nâng chân thẳng tập mấy hiệp thì đủ?"
+          assistant: "Nằm ngửa, một gối gập bàn chân chạm giường, chân còn lại duỗi thẳng rồi nâng lên khoảng 30 cm, giữ 3 giây rồi hạ xuống chậm. Mỗi đợt 10 lần, ngày 2 đến 3 đợt cho mỗi chân, nghỉ 1 phút giữa các đợt. Siết cơ đùi trước khi nâng để đầu gối thẳng hoàn toàn, mũi chân hướng lên trần. Dừng khi thắt lưng võng lên hoặc đau lan xuống bắp chân. Bài này giữ sức cơ tứ đầu đùi mà không bắt gối gập, hợp với người đau gối khi ngồi xổm hoặc leo cầu thang. Tuần đầu chỉ tập không tải, khi nâng 15 lần liên tục mà vẫn nhẹ, bạn có thể đeo tạ cổ chân 0,5 kg rồi tăng dần. Đừng tập ngay sau khi chườm nóng vùng gối đang sưng. Nếu hai chân chênh nhau quá 5 lần mỗi đợt, chân yếu cần được ưu tiên thêm một đợt riêng. Uống đủ nước và khởi động xoay khớp cổ chân vài vòng trước khi tập."
+        - user: "Đi bộ mỗi ngày bao lâu thì tốt cho khớp gối?"
+          assistant: "Người mới bắt đầu nên đi 15 đến 20 phút mỗi ngày trên mặt phẳng, giày đế êm, tốc độ vừa phải còn nói chuyện được. Mỗi tuần tăng thêm 5 phút nếu hôm sau gối không sưng và không đau tăng quá 2 điểm trên thang 10. Mặt đường nhựa phẳng tốt hơn dốc hoặc bậc thang, vì dốc lên xuống tăng áp lực lên bánh chè gấp nhiều lần. Khởi động 3 phút xoay khớp cổ chân và gối nhẹ trước khi đi, thả lỏng 3 phút đi chậm cuối buổi. Nếu đi xong gối kêu lục cục nhưng không đau thì thường không đáng ngại, còn sưng nóng thì nghỉ 1 đến 2 ngày và chườm đá. Đừng đi bộ ngay sau bữa ăn no, cũng đừng để bụng đói lả. Người thừa cân nên chia thành 2 buổi ngắn thay vì một buổi dài để khớp nghỉ giữa chừng. Ghi lại quãng đường và cảm giác gối mỗi tối, sau 2 tuần bạn sẽ thấy pattern nào hợp với mình."
+        - user: "Bong gân cổ chân nên xử lý ra sao trong 2 ngày đầu?"
+          assistant: "Trong 48 giờ đầu hãy nhớ nghỉ, chườm đá, băng ép nhẹ và kê cao chân trên tim. Chườm đá mỗi lần 15 phút, cách nhau ít nhất 1 tiếng, lót khăn mỏng để không bỏng lạnh. Băng thun quấn từ bàn chân lên bắp chân, vừa đủ chặt nhưng ngón chân vẫn hồng và ấm. Kê chân cao hơn tim khi nằm để bớt sưng, tránh đứng lâu hoặc xoa bóp mạnh vào chỗ sưng. Uống thuốc giảm đau theo đơn bác sĩ, đừng tự ý chích hay nắn khớp. Sau 2 ngày nếu sưng giảm và đi lại được thì tập xoay cổ chân nhẹ trong phạm vi không đau, mỗi lần vài phút, ngày vài lần. Đi khám ngay khi không đặt chân xuống đất được, chân tê lạnh, sưng lan nhanh, hoặc nghe tiếng rắc lúc chấn thương. Giày cao cổ tạm thời giúp cố định khi phải di chuyển, nhưng đừng phụ thuộc quá 1 tuần. Khi hết đau hoàn toàn mới tập chạy nhẹ trở lại, bắt đầu bằng đi bộ nhanh xen kẽ."
+        - user: "Bài giãn cơ cổ nào dễ làm ở văn phòng?"
+          assistant: "Ngồi thẳng lưng, nghiêng đầu sang phải đến khi má trái căng nhẹ, giữ 20 giây rồi đổi bên, mỗi bên 3 lần. Sau đó cúi cằm về phía ngực giữ 20 giây để giãn gáy, rồi ngửa nhẹ ra sau giữ 10 giây, lặp lại 3 vòng. Vai thả lỏng, đừng nhún vai lên tai khi giãn. Xoay vai 10 vòng ra trước và 10 vòng ra sau để mở khớp vai hay gù khi gõ máy. Mỗi giờ đứng dậy đi lại 2 phút, vươn tay lên cao hít sâu vài lần. Màn hình nên ngang tầm mắt để cổ không cúi quá 20 độ, ghế có tựa lưng dưới. Tránh bẻ cổ kêu rắc mạnh hoặc nhờ người khác ấn cổ. Nếu tê lan xuống tay, đau tăng về đêm, hoặc chóng mặt khi ngửa cổ thì dừng tập và đi khám. Uống nước đều vì ngồi điều hòa lâu dễ cứng cơ. Dán giấy nhớ trên màn hình để nhắc giãn cơ mỗi giờ trong tuần đầu tạo thói quen."
+    - turns:
+        - user: "Bài nâng bắp chân đứng tập thế nào cho đúng?"
+          assistant: "Đứng hai chân rộng bằng hông, vịn ghế chắc phía trước, kiễng gót lên cao nhất có thể rồi hạ xuống chậm trong 3 giây. Mỗi đợt 12 lần, ngày 3 đợt, nghỉ 1 phút giữa đợt. Dồn lực đều hai chân, đừng nghiêng người ra trước hay nín thở. Khi làm 15 lần liên tục thấy nhẹ, chuyển sang tập từng chân một, mỗi chân 10 lần. Bài này khỏe cơ bắp chân giúp cổ chân vững khi đi bộ và leo cầu thang, giảm nguy cơ bong gân tái phát. Đừng tập trên nền trơn hoặc đi chân trần trên sàn ướt. Nếu đau gân gót buổi sáng thì khởi động xoay cổ chân 1 phút trước khi tập và giảm một nửa số lần trong 3 ngày. Giày gót thấp êm tốt hơn dép lê mỏng. Sau 1 tháng đều đặn, bạn có thể thử kiễng trên bậc thang để gót hạ sâu hơn, nhưng luôn có tay vịn bên cạnh. Ghi lại số lần mỗi tối để thấy tiến bộ từng tuần."
+        - user: "Đau gân kheo sau khi chạy nên nghỉ bao lâu?"
+          assistant: "Đau nhẹ ê ẩm sau chạy thì nghỉ chạy 2 đến 3 ngày, vẫn đi bộ nhẹ và giãn cơ đùi sau mỗi tối 5 phút. Đau nhói khi sải chân hoặc bầm tím sau đùi thì nghỉ ít nhất 1 tuần và đi khám nếu sau 5 ngày không đỡ. Trong lúc nghỉ, chườm đá 15 phút trong 2 ngày đầu rồi chuyển sang chườm ấm trước khi giãn. Giãn bằng cách nằm ngửa dùng khăn vòng qua bàn chân kéo nhẹ đến khi căng vừa, giữ 30 giây, mỗi bên 3 lần. Đừng cố chạy nhanh trở lại ngay khi vừa hết đau, hãy đi bộ nhanh 1 tuần rồi chạy chậm xen kẽ đi bộ. Nguyên nhân thường là tăng quãng đường quá 10 phần trăm mỗi tuần hoặc khởi động sơ sài. Khởi động 5 phút đi bộ nhanh cộng vài động tác nâng cao đùi tại chỗ trước mỗi buổi chạy. Giày mòn đế cũng làm gân kheo chịu tải lệch, kiểm tra giày mỗi 500 km. Ngủ đủ 7 tiếng giúp cơ hồi phục nhanh hơn đáng kể."
+        - user: "Tư thế ngồi làm việc nào đỡ mỏi lưng?"
+          assistant: "Ngồi sâu vào ghế sao cho lưng dưới chạm tựa, hai bàn chân đặt phẳng trên sàn, đầu gối ngang hoặc thấp hơn hông một chút. Màn hình cách mắt 50 đến 70 cm, mép trên màn hình ngang tầm mắt để cổ thẳng. Khuỷu tay gập khoảng 90 độ, cổ tay thẳng khi gõ phím, chuột đặt sát bàn phím để vai không với. Lưng dưới kê gối nhỏ nếu ghế lõm sâu, tránh ngồi trượt mông ra mép ghế. Mỗi 45 phút đứng dậy 2 phút, ưỡn lưng nhẹ và đi lấy nước. Đừng ngồi vắt chân quá 15 phút vì lệch hông gây mỏi một bên lưng. Ghế xoay có tựa tay điều chỉnh được là đáng tiền nhất cho dân văn phòng. Chiều cao bàn chuẩn là khi vai thả lỏng mà tay vẫn đặt thoải mái. Nếu đau lan xuống chân hoặc tê bì thì đừng cố chịu, hãy đi khám sớm."
+        - user: "Bài plank cho người mới bắt đầu tập sao?"
+          assistant: "Bắt đầu bằng plank gối chạm sàn: chống khuỷu tay dưới vai, gối chạm sàn, lưng thẳng từ đầu đến gối, siết bụng nhẹ. Giữ 20 giây, nghỉ 30 giây, lặp 3 lần, tập cách ngày. Khi giữ 30 giây dễ dàng sau 2 tuần, chuyển sang plank thẳng chân giữ 20 giây rồi tăng dần 5 giây mỗi tuần, tối đa 60 giây mỗi đợt. Thở đều suốt động tác, đừng nín thở vì huyết áp tăng vọt. Lỗi phổ biến là võng lưng dưới và nhô mông lên cao, nhờ người quay video ngang để tự kiểm tra. Dừng ngay khi đau lưng nhói hoặc không giữ được form. Plank khỏe cơ bụng sâu giúp cột sống vững khi bưng bê và ngồi lâu, nhưng nó không thay được bài giãn lưng. Kết hợp thêm bài chim chó mỗi bên 8 lần để lưng dưới linh hoạt. Đừng tập plank ngay sau ăn no, chờ ít nhất 1 tiếng."
+        - user: "Khởi động trước khi đá bóng gồm những gì?"
+          assistant: "Chạy nhẹ quanh sân 5 phút cho người ấm lên rồi xoay các khớp cổ chân, gối, hông, vai mỗi khớp 10 vòng. Tiếp theo là giãn động: nâng cao đùi tại chỗ 20 lần, đá gót chạm mông 20 lần, bước dài luân phiên 10 bước mỗi chân. Sút bóng nhẹ tăng dần lực 10 quả trước khi sút mạnh, thủ môn thì thêm bài bắt bóng bổng nhẹ. Toàn bộ khởi động khoảng 12 đến 15 phút, đừng rút ngắn khi trời lạnh vì cơ lạnh dễ rách hơn. Mang giày đinh vừa chân, buộc dây chắc để cổ chân ổn định khi xoay người. Uống vài ngụm nước trước trận, đừng để khát mới uống. Sau trận đi bộ thả lỏng 5 phút rồi giãn tĩnh mỗi nhóm cơ 30 giây để hôm sau đỡ ê ẩm. Nếu cơ nào đau nhói khi khởi động thì đừng cố đá, nghỉ buổi đó. Đá sân cứng nên dùng giày đế bằng êm hơn giày đinh dài."
+        - user: "Uống nước thế nào khi tập luyện mùa nóng?"
+          assistant: "Uống 400 đến 500 ml nước trước buổi tập 2 tiếng, rồi thêm 150 ml ngay trước khi bắt đầu. Trong lúc tập, cứ 15 đến 20 phút uống 100 đến 150 ml, đừng đợi khát khô cổ mới uống vì lúc đó cơ thể đã thiếu nước. Buổi tập trên 1 tiếng hoặc mồ hôi ra nhiều thì dùng nước có điện giải thay vì nước lọc hoàn toàn. Sau tập, uống bù khoảng 1,2 lần lượng cân nặng đã mất, chia nhỏ trong 2 tiếng. Nước mát vừa phải tốt hơn nước đá lạnh dễ gây đau bụng khi đang nóng. Tránh bia rượu sau tập vì càng làm mất nước và chậm hồi phục cơ. Dấu hiệu thiếu nước là nước tiểu vàng đậm, chóng mặt, chuột rút. Người hay ra mồ hôi muối trắng áo nên ăn mặn hơn một chút vào bữa sau tập. Mang bình nước 1 lít theo người là cách đơn giản nhất để nhớ uống đủ."
+    - turns:
+        - user: "Giãn cơ đùi sau bằng khăn tập ra sao?"
+          assistant: "Nằm ngửa trên thảm, một chân duỗi thẳng trên sàn, chân còn lại vòng khăn qua lòng bàn chân rồi duỗi thẳng lên trần. Kéo khăn nhẹ đến khi mặt sau đùi căng vừa phải, giữ 30 giây, thả lỏng 10 giây, lặp 3 lần mỗi chân. Lưng dưới luôn chạm sàn, đừng để võng lên khi kéo. Thở ra khi kéo vào, hít vào khi thả lỏng. Tập sau khi cơ đã ấm như đi bộ 5 phút, đừng giãn khi cơ còn lạnh cứng buổi sáng sớm. Nếu không với tới bàn chân thì vòng khăn quanh cổ chân thay vì lòng bàn chân, hiệu quả tương đương. Mỗi tối 5 phút cho cả hai chân giúp người ngồi nhiều đỡ cứng lưng dưới rõ rệt sau 2 tuần. Đừng giật mạnh khăn hay nhờ người khác kéo hộ quá sức. Đau nhói sau gối khi kéo là dấu hiệu kéo quá đà, nới lỏng ngay. Kết hợp thêm tư thế em bé 1 phút để thả lỏng toàn bộ lưng."
+        - user: "Tập tạ tay nhẹ ở nhà cần lưu ý gì?"
+          assistant: "Chọn tạ vừa sức sao cho nâng được 10 đến 12 lần liên tục mà 2 lần cuối hơi gắng sức, thường bắt đầu từ 1 đến 2 kg với người mới. Khởi động xoay vai khuỷu cổ tay 2 phút trước khi cầm tạ. Mỗi bài 2 đến 3 đợt, nghỉ 1 phút giữa đợt, tập cách ngày để cơ hồi phục. Giữ lưng thẳng, siết bụng nhẹ khi nâng qua đầu, đừng ưỡn lưng để lấy đà. Thở ra khi dùng sức nâng lên, hít vào khi hạ xuống chậm gấp đôi thời gian nâng. Đừng tập tạ ngay sau chấn thương vai tay khi chưa được bác sĩ cho phép. Gương soi bên cạnh giúp kiểm tra form vai có bị nhún lên tai không. Tăng tạ khi làm đủ 12 lần dễ dàng trong 2 buổi liên tiếp, mỗi lần tăng không quá 0,5 kg. Lau tạ và thảm sau tập vì mồ hôi làm gỉ và trơn trượt. Ghi lại mức tạ và số lần mỗi buổi để thấy tiến bộ."
+        - user: "Leo cầu thang có tốt cho khớp gối không?"
+          assistant: "Leo cầu thang vừa phải tốt cho cơ đùi và tim mạch, nhưng người đau bánh chè nên hạn chế vì mỗi bước lên dốc gối chịu tải gấp 3 lần cân nặng. Bắt đầu bằng 2 đến 3 tầng mỗi ngày, bước chậm, đặt cả bàn chân lên bậc thay vì chỉ mũi chân. Tay vịn luôn trong tầm tay để đỡ một phần trọng lượng khi mỏi. Xuống cầu thang còn hại gối hơn lên, nên đi chậm bước ngắn, hơi chùng gối để cơ đùi hấp thụ lực. Giày đế êm bám tốt, tránh dép lê trơn khi leo. Nếu lên xong gối sưng hoặc đau tăng quá 3 điểm thì giảm một nửa số tầng hôm sau. Xen kẽ ngày leo với ngày đi bộ phẳng để khớp nghỉ. Người mới mổ gối chỉ leo thang khi bác sĩ cho phép, thường sau 6 tuần. Thang máy vẫn là lựa chọn đúng đắn vào ngày gối khó chịu, đừng cố chứng tỏ sức bền."
+        - user: "Đau mỏi vai gáy khi ngủ dậy phải làm sao?"
+          assistant: "Đau mỏi vai gáy buổi sáng thường do gối quá cao hoặc nằm sấp quay cổ một bên cả đêm. Đổi sang gối cao bằng khoảng cách tai đến vai khi nằm nghiêng, khoảng 10 đến 12 cm với người lớn. Nằm ngửa thì gối thấp hơn, đỡ cong gáy quá mức. Sáng dậy xoay cổ chậm mỗi hướng 5 vòng, nghiêng tai về vai giữ 15 giây mỗi bên. Chườm ấm khăn 10 phút lên vùng gáy cứng giúp máu lưu thông trước khi giãn. Đừng bẻ cổ kêu rắc mạnh ngay khi vừa ngủ dậy vì đĩa đệm đang căng nước. Nệm lún sâu quá 5 năm nên thay vì cột sống võng cả đêm. Nếu đau kèm tê tay, chóng mặt, hoặc kéo dài quá 1 tuần không đỡ thì đi khám. Hạn chế cúi điện thoại trên giường trước khi ngủ vì cổ gập lâu. Uống một cốc nước ấm buổi sáng cũng giúp cơ mềm ra nhanh hơn."
+        - user: "Bài squat nhẹ cho người đau gối tập thế nào?"
+          assistant: "Đứng hai chân rộng bằng vai, mũi chân hơi chếch ra ngoài, từ từ hạ mông xuống như ngồi ghế tưởng tượng, chỉ xuống khoảng 30 độ gập gối rồi đứng lên. Đầu gối không vượt quá mũi chân, trọng lượng dồn vào gót chân. Mỗi đợt 8 lần, ngày 2 đợt, nghỉ 1 phút giữa đợt. Tay vịn ghế phía trước để giữ thăng bằng và giảm tải cho gối. Dừng khi đau nhói mặt trước gối hoặc nghe tiếng lục cục kèm đau. Bài này giữ cơ đùi khỏe mà không bắt gối gập sâu, hợp với người thoái hóa nhẹ hoặc sau chấn thương đang hồi phục. Đừng xuống quá sâu kiểu squat đủ sâu khi gối còn đau, sâu thêm chỉ khi 2 tuần liền không tăng đau. Thở ra khi đứng lên, hít vào khi hạ xuống. Kết hợp nâng chân thẳng xen kẽ ngày để cơ đùi phát triển đều. Ghi lại độ sâu và cảm giác đau mỗi buổi để tái khám có số liệu."
   check_summary:
     keywords: ["vai", "ngan"]
     min_compactions: 3
-  conversations:
-    - - "Từ giờ hãy trả lời tôi ngắn gọn thôi. À, vai phải của tôi hay bị đau mỗi khi giơ tay cao."
-      - "Bài heel-slide tập đúng cách thế nào?"
-      - "Bài nâng chân thẳng tập mấy hiệp thì đủ?"
-      - "Đi bộ mỗi ngày bao lâu thì tốt cho khớp gối?"
-      - "Bong gân cổ chân nên xử lý ra sao trong 2 ngày đầu?"
-      - "Bài giãn cơ cổ nào dễ làm ở văn phòng?"
-      - "Bài nâng bắp chân đứng tập thế nào cho đúng?"
-      - "Đau gân kheo sau khi chạy nên nghỉ bao lâu?"
-      - "Tư thế ngồi làm việc nào đỡ mỏi lưng?"
-      - "Bài plank cho người mới bắt đầu tập sao?"
-      - "Khởi động trước khi đá bóng gồm những gì?"
-      - "Uống nước thế nào khi tập luyện mùa nóng?"
-      - "Giãn cơ đùi sau bằng khăn tập ra sao?"
-  probes:
-    - group: k
-      ask: "Nhắc lại giúp tôi: vai tôi bị sao, và từ đầu buổi tôi đã dặn cách trả lời thế nào?"
-      where: last
-      expect_any: ["vai", "ngan"]
-      forbid: []

@@ -576,6 +576,14 @@ export async function deleteUserMemory(factId: string): Promise<{ deleted: strin
   return data
 }
 
+export async function updateUserMemory(fact: UserMemoryItem, factText: string): Promise<UserMemoryWire> {
+  const { data } = await http.post(`/me/memory/${encodeURIComponent(fact.id)}`, {
+    fact_text: factText,
+    expected_updated_at: fact.updated_at,
+  })
+  return data
+}
+
 // ── Message feedback CRUD ────────────────────────────────────────────────────
 
 /**

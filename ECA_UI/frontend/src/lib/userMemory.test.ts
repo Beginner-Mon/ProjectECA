@@ -40,6 +40,10 @@ describe('normaliseFacts', () => {
 })
 
 describe('validateNewFact', () => {
+  it('counts Unicode characters like the backend, rather than UTF-16 units', () => {
+    expect(validateNewFact('😀'.repeat(MAX_FACT_LENGTH))).not.toBeNull()
+    expect(validateNewFact('😀'.repeat(MAX_FACT_LENGTH + 1))).toBeNull()
+  })
   it('trims', () => {
     expect(validateNewFact('  knee pain  ')).toBe('knee pain')
   })

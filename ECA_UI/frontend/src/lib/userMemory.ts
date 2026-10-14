@@ -36,7 +36,7 @@ export function normaliseFact(f: UserMemoryWire): UserMemoryItem {
 /** The text to send for a new fact, or null if it must not be sent. */
 export function validateNewFact(input: string): string | null {
   const text = input.trim()
-  if (text.length < 1 || text.length > MAX_FACT_LENGTH) return null
+  if (text.length < 1 || Array.from(text).length > MAX_FACT_LENGTH) return null
   return text
 }
 

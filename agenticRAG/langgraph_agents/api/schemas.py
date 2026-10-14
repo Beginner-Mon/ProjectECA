@@ -1,4 +1,5 @@
-from pydantic import BaseModel, ConfigDict, Field, SecretStr
+from pydantic import BaseModel, ConfigDict, Field, SecretStr, field_validator
+from datetime import datetime
 from typing import Literal, Optional
 
 
@@ -110,6 +111,17 @@ class UserMemoryItem(BaseModel):
 
 class UserMemoryListResponse(BaseModel):
     facts: list[UserMemoryItem]
+
+
+class UserMemoryUpdate(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    fact_text: str = Field(min_length=1, max_length=500)
+    expected_updated_at: datetime
+
+    @field_validator("fact_text", mode="before")
+    @classmethod
+    def trim_fact(cls, value):
+        return value.strip() if isinstance(value, str) else value
 
 
 # ── User preferences — cross-device synced UI prefs (no PHI) ───────────────

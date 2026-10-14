@@ -22,12 +22,14 @@ api/auth.py. There is deliberately no user_id path or query parameter to trust.
 
 from __future__ import annotations
 
+from uuid import UUID
+
 from fastapi import APIRouter, Depends, HTTPException
 
 from langgraph_agents.api.auth import current_user_id
 from langgraph_agents.api.schemas import (
     SessionListItem, SessionListResponse, SessionResumeResponse,
-    UserMemoryCreate, UserMemoryItem, UserMemoryListResponse,
+    UserMemoryCreate, UserMemoryItem, UserMemoryListResponse, UserMemoryUpdate,
 )
 from langgraph_agents.db.session_store import (
     list_user_sessions, load_session_messages,
@@ -116,7 +118,7 @@ async def create_user_memory(body: UserMemoryCreate, uid: str = Depends(current_
         row = await conn.fetchrow(
             """INSERT INTO user_memory (user_id, fact_text, category)
                VALUES ($1::uuid, $2, $3)
-               RETURNING id, created_at""",
+               RETURNING id, created_at, updated_at""",
             uid, body.fact_text, body.category,
         )
 
@@ -127,6 +129,7 @@ async def create_user_memory(body: UserMemoryCreate, uid: str = Depends(current_
         valid=True,
         source="user",
         created_at=row["created_at"].isoformat(),
+        updated_at=row["updated_at"].isoformat(),
     )
 
 
@@ -140,8 +143,7 @@ async def list_user_memory(uid: str = Depends(current_user_id)):
         """SELECT id, fact_text, category, valid, source, created_at, updated_at
            FROM user_memory
            WHERE user_id = $1::uuid AND valid = true
-           ORDER BY created_at DESC
-           LIMIT 50""",
+           ORDER BY created_at DESC, id""",
         uid,
     )
     return UserMemoryListResponse(facts=[
@@ -156,6 +158,40 @@ async def list_user_memory(uid: str = Depends(current_user_id)):
         )
         for r in rows
     ])
+
+
+@router.post("/me/memory/{fact_id}", response_model=UserMemoryItem)
+async def update_user_memory(
+    fact_id: UUID, body: UserMemoryUpdate, uid: str = Depends(current_user_id),
+):
+    """Edit one fact, retaining its identity, category and conversation source.
+
+    POST fits the gateway's existing CORS methods. The row lock and timestamp
+    check prevent overwriting a concurrent edit, extraction or deletion.
+    """
+    pg = get_pg_client()
+    async with pg.transaction() as conn:
+        previous = await conn.fetchrow(
+            """SELECT updated_at FROM user_memory
+               WHERE id = $1::uuid AND user_id = $2::uuid AND valid = true
+               FOR UPDATE""",
+            fact_id, uid,
+        )
+        if previous is None:
+            raise HTTPException(404, "Fact not found")
+        if previous["updated_at"] != body.expected_updated_at:
+            raise HTTPException(409, "Memory changed. Reload before saving.")
+        row = await conn.fetchrow(
+            """UPDATE user_memory SET fact_text = $3, updated_at = now()
+               WHERE id = $1::uuid AND user_id = $2::uuid AND valid = true
+               RETURNING id, fact_text, category, valid, source, created_at, updated_at""",
+            fact_id, uid, body.fact_text,
+        )
+    return UserMemoryItem(
+        id=str(row["id"]), fact_text=row["fact_text"], category=row["category"],
+        valid=row["valid"], source=row["source"],
+        created_at=row["created_at"].isoformat(), updated_at=row["updated_at"].isoformat(),
+    )
 
 
 @router.delete("/me/memory/{fact_id}")

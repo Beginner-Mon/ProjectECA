@@ -95,9 +95,9 @@ scenarios:
       expect_any: []
       forbid: ["chay", "5km", "xuan"]
 
-# Nhóm k: một hội thoại dài dựng theo 4 đợt, housekeep sau mỗi đợt. Đo ngày 14/10:
-# mỗi lần nén ăn khoảng 1,5 đợt nên 3 đợt chỉ cho 2 lần nén (đợt ~2000 token, còn
-# lại ~950 < ngưỡng 2000); đợt 4 đảm bảo lần nén thứ 3. Kiểm bằng từ khoá trong
+# Nhóm k: một hội thoại dài dựng theo 5 đợt, housekeep sau mỗi đợt. Đo ngày 14/10:
+# mỗi lần nén ăn khoảng 1,5 đợt nên 3 đợt chỉ cho 2 lần nén, 4 đợt vẫn thiếu ~175
+# token so với ngưỡng 2000; đợt 5 đảm bảo lần nén thứ 3. Kiểm bằng từ khoá trong
 # bản tóm tắt. Không chạy lượt chat nào.
 - id: long_k
   seed_ltm: false
@@ -160,6 +160,13 @@ scenarios:
           assistant: "Ngồi ghế tựa vững, lưng thẳng chạm tựa, hai tay bám mép ghế rồi duỗi thẳng một chân ngang tầm hông giữ 5 giây rồi hạ xuống chậm. Mỗi chân 10 lần, ngày 2 đợt, nghỉ 30 giây giữa đợt. Bài này khỏe cơ tứ đầu đùi mà người yếu, người lớn tuổi hoặc người sợ ngã vẫn tập được an toàn. Thở ra khi nâng lên, hít vào khi hạ xuống, đừng nín thở. Siết cơ đùi trước khi nâng để đầu gối duỗi thẳng hoàn toàn. Dừng khi đau nhói gối hoặc lưng phải gồng lên để nâng. Khi nâng 12 lần dễ dàng sau 2 tuần, buộc thêm túi cát 0,5 kg vào cổ chân để tăng tải từ từ. Ghế phải chắc chắn không bánh xe trượt, tốt nhất kê sát tường. Đừng đung đưa người lấy đà vì lưng dưới chịu hết lực. Kết hợp thêm bài đứng lên ngồi xuống ghế thấp 8 lần để tập cả chuỗi động tác đứng ngồi hàng ngày. Ghi lại số lần mỗi buổi để thấy tiến bộ và báo bác sĩ khi tái khám."
         - user: "Ghi nhật ký đau khớp thế nào cho đúng?"
           assistant: "Mỗi tối ghi 4 dòng là mức đau từ 0 đến 10, lúc nào đau nhất trong ngày, đã làm gì trước lúc đau, và uống thuốc gì. Thêm một dòng về tập luyện gồm bài nào bao nhiêu lần để đối chiếu với cơn đau hôm sau. Ghi bằng sổ giấy để đầu giường hoặc ghi chú điện thoại, quan trọng là cùng một mẫu mỗi ngày. Sau 2 tuần, đọc lại sẽ thấy pattern như đau tăng vào ngày leo cầu thang hoặc đỡ vào ngày chườm ấm. Mang sổ này đi tái khám thay vì kể miệng vì bác sĩ cần con số cụ thể để điều chỉnh phác đồ. Đừng ghi quá chi tiết dài dòng vì nản sau 3 ngày, ngắn gọn đúng mẫu mới duy trì được. Nếu đau đột ngột trên 7 điểm thì ghi thêm giờ giấc và gọi điện hỏi ý kiến bác sĩ thay vì chờ tái khám. Người nhà có thể nhắc ghi mỗi tối trước khi ngủ để tạo thói quen. Nhật ký trung thực cả ngày tốt lẫn ngày xấu, đừng chỉ ghi ngày đau vì bác sĩ cần thấy toàn cảnh."
+    - turns:
+        - user: "Người lớn tuổi tập với ghế tựa thế nào cho an toàn?"
+          assistant: "Người lớn tuổi nên chọn ghế tựa chắc chắn không bánh xe, kê sát tường để không trượt khi vịn. Bài ngồi đứng lên ghế thấp giúp chân khỏe mà an toàn: ngồi sâu, hai tay vịn thành ghế, nghiêng người ra trước rồi đứng lên chậm, mỗi đợt 6 lần ngày 2 đợt. Khi đứng lên được dễ dàng sau 2 tuần, thử đứng không vịn tay 4 lần mỗi đợt. Luôn mang giày đế bám, đừng đi chân trần hoặc dép lê trơn trong nhà. Dọn lối đi thông thoáng, cất dây điện và thảm trơn để không vấp ngã. Tập gần người nhà trong tháng đầu để có người đỡ khi choáng. Đừng tập khi vừa uống thuốc hạ huyết áp vì dễ chóng mặt khi đứng lên. Uống đủ nước vì người lớn tuổi hay quên uống, thiếu nước gây mệt và chuột rút. Ghi lại số lần đứng lên mỗi ngày để tái khám bác sĩ thấy tiến bộ. Nếu ngã dù chỉ một lần thì dừng tập một mình và báo người nhà ngay."
+        - user: "Xoa bóp có giúp giảm đau gối không?"
+          assistant: "Xoa bóp nhẹ quanh gối giúp máu lưu thông và giảm cứng cơ tạm thời, nhưng không chữa được nguyên nhân bên trong khớp. Xoa theo vòng tròn quanh bánh chè 5 phút mỗi tối với lực vừa phải, kết hợp dầu nóng nhẹ nếu da không dị ứng. Đừng ấn mạnh trực tiếp lên chỗ sưng nóng hoặc bầm tím vì càng tổn thương thêm. Sau xoa bóp nên giãn nhẹ đùi bắp chân để duy trì hiệu quả thả lỏng. Xoa bóp không thay được bài tập khỏe cơ, chỉ là biện pháp hỗ trợ giảm đau trước khi tập. Đừng tin các lời quảng cáo xoa bóp nắn khớp khỏi thoái hóa hoàn toàn vì không có cơ sở. Người đang uống thuốc loãng máu cần xoa thật nhẹ vì dễ bầm tím lan rộng. Nếu xoa xong đau tăng hoặc sưng to hơn hôm sau thì dừng và đi khám. Chọn cơ sở uy tín có người được đào tạo, đừng để người không chuyên bẻ nắn khớp gối. Ghi lại mức đau trước và sau xoa 1 tuần để biết có thật sự hiệu quả với mình không."
+        - user: "Đi khám vật lý trị liệu cần chuẩn bị gì?"
+          assistant: "Mang theo phim chụp cũ, đơn thuốc đang uống và sổ ghi số lần tập cùng mức đau mỗi ngày để buổi khám hiệu quả. Mặc quần áo rộng thoải mái để bác sĩ kiểm tra khớp dễ dàng, đừng mặc quần bó sát. Liệt kê sẵn 3 việc khó khăn nhất hiện tại như leo cầu thang, ngồi xổm hay đứng lâu để ưu tiên điều trị. Kể rõ tiền sử chấn thương và ca mổ cũ vì ảnh hưởng đến phác đồ tập. Đừng ngại hỏi khi không hiểu bài tập, nhờ kỹ thuật viên làm mẫu chậm một lần rồi tự làm lại trước mặt họ. Ghi lại tên bài tập, số lần và lưu ý riêng vào điện thoại ngay tại buổi khám vì về nhà hay quên. Hỏi rõ lịch tái khám và dấu hiệu nào cần quay lại sớm hơn hẹn. Đi đủ số buổi được chỉ định vì bỏ dở giữa chừng là nguyên nhân tái phát phổ biến nhất. Đừng tập thêm bài ngoài phác đồ khi chưa hỏi vì có bài xung đột nhau. Giữ liên lạc với phòng tập để báo ngay khi đau tăng bất thường giữa liệu trình."
   check_summary:
     keywords: ["vai", "ngan"]
     min_compactions: 3

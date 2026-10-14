@@ -803,8 +803,14 @@ def main(argv: list[str]) -> int:
                                   owner_dsn, report["scenarios"])
     else:
         if args.phase in ("seed", "all"):
-            recs, quota_stops = seed_label(args.label, spec, only, collector,
-                                           owner_dsn)
+            # Seed logs are collected here: probes attach their own handler
+            # later (lifespan clears root handlers on TestClient entry).
+            logging.getLogger().addHandler(collector)
+            try:
+                recs, quota_stops = seed_label(args.label, spec, only, collector,
+                                               owner_dsn)
+            finally:
+                logging.getLogger().removeHandler(collector)
             by_id = {r["scenario"]: r for r in report["scenarios"]}
             for rec in recs:
                 by_id[rec["scenario"]] = rec

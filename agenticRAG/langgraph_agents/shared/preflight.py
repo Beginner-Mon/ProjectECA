@@ -146,6 +146,9 @@ LAZY_DEPENDENCIES: tuple[LazyDependency, ...] = (
         critical=False,
     ),
     LazyDependency("youtube_transcript_api", "the YouTube transcript tool", critical=False),
+    LazyDependency("pytest", "local dev-branch test runs (on_dev_branch.py)", critical=False),
+    LazyDependency("alembic", "local dev-branch migrations (on_dev_branch.py)", critical=False),
+    LazyDependency("fastapi", "the memory benchmark's in-process TestClient", critical=False),
 )
 
 

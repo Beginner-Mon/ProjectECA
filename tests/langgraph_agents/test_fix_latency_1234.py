@@ -244,16 +244,17 @@ class TestFix2GetFallbackChatModel:
         assert model is not None
         assert model.model.endswith("gemini-2.5-flash")
 
-    def test_heavy_role_fallback_path_still_uses_pro_model(self, monkeypatch):
-        """Regression guard for the revert path: _HEAVY_ROLES is currently empty, but if a
-        role is ever added back to it, its fallback must still resolve to the pro model."""
+    def test_heavy_role_fallback_path_now_resolves_flash(self, monkeypatch):
+        """gemini-2.5-pro 404s on every free-tier key (memory-v2 plan, Tri 14/10):
+        even the revert path must resolve flash, never pro."""
         monkeypatch.setenv("GEMINI_API_KEYS", "key-one")
         from langgraph_agents import llm as llm_mod
         llm_mod.get_fallback_chat_model.cache_clear()
         monkeypatch.setattr(llm_mod, "_HEAVY_ROLES", {"synthesizer"})
         model = llm_mod.get_fallback_chat_model("synthesizer")
         assert model is not None
-        assert model.model.endswith("gemini-2.5-pro")
+        assert model.model.endswith("gemini-2.5-flash")
+        assert "gemini-2.5-pro" not in model.model
 
 
 @pytest.mark.unit

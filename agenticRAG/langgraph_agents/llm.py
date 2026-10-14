@@ -128,7 +128,9 @@ _MAX_TOKENS_FAST = 512
 # exactly when the fallback is needed most. gemini-2.5-flash tested clean (plain string,
 # ~6s, correct Vietnamese output) — used instead. Revisit 3.1-flash-lite if the
 # langchain_google_genai dependency is upgraded and re-verified.
-_FALLBACK_MODEL_HEAVY = "gemini-2.5-pro"
+# HEAVY is flash too since 14/10/2026: gemini-2.5-pro answers 404 on every free-tier
+# key (memory-v2 plan), so resolving it means resolving nothing.
+_FALLBACK_MODEL_HEAVY = "gemini-2.5-flash"
 _FALLBACK_MODEL_FAST = "gemini-2.5-flash"
 
 
@@ -322,7 +324,7 @@ def _eca_chat_model(role: str, *, temperature: float | None = None):
         logger.warning("deepseek_key_missing", extra={
             "role": role, "action": "using_gemini_fallback",
         })
-        return get_fallback_chat_model(role)
+        return get_fallback_chat_model(role, primary=True)
     base_url = os.getenv("DEEPSEEK_BASE_URL", _DEFAULT_BASE_URL)
     extra_kwargs = {"extra_body": _ROLE_EXTRA_BODY[role]} if role in _ROLE_EXTRA_BODY else {}
     model = ChatOpenAI(
@@ -534,7 +536,7 @@ def _guard_byok(model, req, role: str, temperature: float | None = None):
 
 
 @lru_cache(maxsize=8)
-def get_fallback_chat_model(role: str):
+def get_fallback_chat_model(role: str, *, primary: bool = False):
     """Return a one-shot Gemini fallback ChatModel for the given role, or None.
 
     Used by planner/synthesizer when the primary DeepSeek call fails/times out
@@ -542,6 +544,17 @@ def get_fallback_chat_model(role: str):
     None (not an exception) when no key is configured — fallback is simply
     unavailable, not a startup error. No circuit breaker wrapping: this is
     already a last-resort, one-shot call.
+
+    `primary=True` when Gemini IS the model (no DeepSeek key): retries twice,
+    to survive the free tier's 503 (overloaded) / 504 (deadline) without
+    tripping the caller's error path on the first blip. As a mere fallback
+    (`primary=False`) retries stay 0: without this, google-genai's SDK default
+    retries 429/5xx with exponential backoff internally (observed live:
+    5 retries, ~36s of backoff before giving up) — defeating the point of a
+    fast "one-shot" fallback. The caller (planner/synthesizer) already falls
+    through to the existing safe error path on failure; a slow-to-fail
+    fallback only makes the worst case worse (primary timeout + this retry
+    storm, stacked).
     """
     api_key = _resolve_first_gemini_key()
     if not api_key:
@@ -551,20 +564,15 @@ def get_fallback_chat_model(role: str):
 
     model_name = _fallback_model_for_role(role)
     temp = _DEFAULT_TEMPS.get(role, 0.7)
-    logger.info("llm_fallback_init", extra={"role": role, "model": model_name})
+    logger.info("llm_fallback_init", extra={"role": role, "model": model_name,
+                                            "primary": primary})
     return ChatGoogleGenerativeAI(
         model=model_name,
         temperature=temp,
         google_api_key=api_key,
         timeout=_timeout_for_role(role),
         max_output_tokens=_max_tokens_for_role(role),
-        # max_retries=0: without this, google-genai's SDK default retries 429/5xx
-        # with exponential backoff internally (observed live: 5 retries, ~36s of
-        # backoff before giving up) — defeating the point of a fast "one-shot"
-        # fallback. The caller (planner/synthesizer) already falls through to the
-        # existing safe error path on failure; a slow-to-fail fallback only makes
-        # the worst case worse (primary timeout + this retry storm, stacked).
-        max_retries=0,
+        max_retries=2 if primary else 0,
     )
 
 

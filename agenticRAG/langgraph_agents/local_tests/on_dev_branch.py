@@ -10,6 +10,15 @@ Usage (from the repo root, PowerShell 5.1)::
     python agenticRAG/langgraph_agents/local_tests/on_dev_branch.py alembic current
     python agenticRAG/langgraph_agents/local_tests/on_dev_branch.py script <path> <args...>
 
+    python .../on_dev_branch.py --llm gemini --gemini-key 2 script <path> ...
+
+LLM selection (memory-v2 plan, Gemini free tier: 20 calls/day/key):
+`--llm gemini --gemini-key N` keeps exactly the Nth key of GEMINI_API_KEYS
+(1-based) and strips every DeepSeek credential, so llm.py resolves Gemini as
+the primary model. Without the flags nothing about the LLM changes. One key
+per run — never rotate inside a process. The key ordinal (never the key) is
+printed.
+
 There is deliberately NO free-form SQL mode: schema changes go through
 alembic revisions, data cleanup through committed scripts.
 """
@@ -67,7 +76,56 @@ def resolve_dev_env() -> tuple[dict[str, str], int]:
     return {"VVA_PG_DSN": dev_app, "VVA_PG_DSN_OWNER": dev_owner}, 0
 
 
+def select_llm_env(env: dict, llm: str, key_num: int | None
+                   ) -> tuple[dict, list, str]:
+    """Pure LLM selection: (updates, deletions, label) or ValueError.
+
+    `env` is a snapshot (os.environ-like); nothing is mutated. `updates` are
+    set into the process env, `deletions` removed. `label` names the key
+    ordinal only — it must never carry key material.
+    """
+    if llm == "deepseek":
+        if key_num is not None:
+            raise ValueError("--gemini-key needs --llm gemini.")
+        return {}, [], "llm=deepseek"
+    if llm != "gemini":
+        raise ValueError(f"unknown --llm {llm!r}; want deepseek|gemini.")
+    if key_num is None:
+        raise ValueError("--llm gemini needs --gemini-key N.")
+    if isinstance(key_num, bool) or not isinstance(key_num, int):
+        raise ValueError(f"--gemini-key must be a number, got {key_num!r}.")
+    keys = [k.strip() for k in env.get("GEMINI_API_KEYS", "").split(",") if k.strip()]
+    if not keys:
+        raise ValueError("GEMINI_API_KEYS is empty.")
+    if not 1 <= key_num <= len(keys):
+        raise ValueError(f"--gemini-key {key_num} out of range (have {len(keys)} keys).")
+    return ({"GEMINI_API_KEYS": keys[key_num - 1]},
+            ["DEEPSEEK_API_KEY", "DEEPSEEK_API_KEY_PARAM"],
+            f"llm=gemini key={key_num}/{len(keys)}")
+
+
+def _take_llm_flags(argv: list[str]) -> tuple[str, int | None, list[str]]:
+    """Split leading --llm/--gemini-key options off; return (llm, key, rest)."""
+    llm, key, rest = "deepseek", None, []
+    i = 0
+    while i < len(argv):
+        arg = argv[i]
+        if arg == "--llm" and i + 1 < len(argv):
+            llm, i = argv[i + 1], i + 2
+        elif arg == "--gemini-key" and i + 1 < len(argv):
+            try:
+                key = int(argv[i + 1])
+            except ValueError:
+                key = argv[i + 1]  # select_llm_env reports it properly
+            i += 2
+        else:
+            rest.append(arg)
+            i += 1
+    return llm, key, rest
+
+
 def main(argv: list[str]) -> int:
+    llm, key_num, argv = _take_llm_flags(list(argv))
     overrides, code = resolve_dev_env()
     if code != 0:
         return code
@@ -76,10 +134,18 @@ def main(argv: list[str]) -> int:
     # db/postgres.py also honours POSTGRES_DSN as an alias; point it at dev
     # too so a stale export cannot split brain the app away from alembic.
     os.environ["POSTGRES_DSN"] = overrides["VVA_PG_DSN"]
+    try:
+        llm_updates, llm_deletions, llm_label = select_llm_env(
+            dict(os.environ), llm, key_num)
+    except ValueError as exc:
+        return _refuse(str(exc))
+    for name in llm_deletions:
+        os.environ.pop(name, None)
+    os.environ.update(llm_updates)
     print(
-        "on_dev_branch: host app=%s owner=%s"
-        % (_host(overrides["VVA_PG_DSN"]), _host(overrides["VVA_PG_DSN_OWNER"]))
-    )
+        "on_dev_branch: host app=%s owner=%s %s"
+        % (_host(overrides["VVA_PG_DSN"]), _host(overrides["VVA_PG_DSN_OWNER"]),
+           llm_label))
     if not argv or argv[0] in ("-h", "--help"):
         print(__doc__)
         return 0

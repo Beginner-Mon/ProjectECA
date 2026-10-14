@@ -7,7 +7,10 @@ nhiêu. KHÔNG đụng DB, KHÔNG dựng graph — chỉ role `memory` của llm
 Mỗi hội thoại trong `memory_probes.yaml` chạy hai kiểu đầu vào:
   session — cả hội thoại trong một lần gọi;
   turn    — mỗi cặp (tin user + trả lời assistant) một lần gọi, mang fact do
-            các lượt trước tạo ra sang lượt sau.
+            các lượt trước tạo ra sang lượt sau;
+  live    — đúng hình dạng production gửi: lát đầu là tin user đầu tiên (đọc từ
+            đầu hội thoại), mỗi lát sau là câu trả lời trước của assistant + tin
+            user kế tiếp (đọc tiếp), mang fact sang lát sau như turn.
 
 Code kiểm tra lại đầu ra của model (tối đa 5 thao tác, fact <= 300 ký tự, category
 trong danh sách đóng, không UPDATE/DELETE id khoá hoặc id lạ, bỏ fact trông giống
@@ -45,6 +48,8 @@ import yaml  # noqa: E402
 # Prompt, cách dựng user message, lời gọi JSON và các bước kiểm tra là của code
 # thật: probe đo đúng thứ đang chạy, không giữ bản sao riêng.
 from langgraph_agents.nodes.fact_extractor import (  # noqa: E402
+    _SCOPE_CONTINUED,
+    _SCOPE_FROM_START,
     MEMORY_PROMPT,
     enforce,
     extraction_llm,
@@ -225,6 +230,21 @@ def _pairs(messages: list[dict]) -> list[list[dict]]:
     return [messages[i:i + 2] for i in range(0, len(messages), 2)]
 
 
+def _live_slices(messages: list[dict]) -> list[tuple[list[dict], str]]:
+    """Các lát production sẽ đọc, kèm dòng scope. Lát đầu: tin user đầu tiên, đọc từ
+    đầu hội thoại. Lát sau: trả lời trước của assistant + tin user kế tiếp. Câu trả
+    lời cuối không có tin user sau nó thì không thành lát (production bỏ qua)."""
+    slices: list[tuple[list[dict], str]] = []
+    for i, m in enumerate(messages):
+        if m["role"] != "user":
+            continue
+        if i == 0:
+            slices.append(([m], _SCOPE_FROM_START))
+        else:
+            slices.append((messages[i - 1:i + 1], _SCOPE_CONTINUED))
+    return slices
+
+
 async def _run_conv(structured_llm: Any, conv: dict, modes: list[str]
                     ) -> dict[str, Any]:
     stored = [dict(f) for f in conv.get("stored") or []]
@@ -259,6 +279,25 @@ async def _run_conv(structured_llm: Any, conv: dict, modes: list[str]
             facts = _apply_ops(facts, call["kept_ops"], counter)
         sc = _score(conv["expect"], all_ops, all_dropped)
         out["modes"]["turn"] = {
+            "calls": calls, "score": sc,
+            "total_s": round(sum(c["elapsed_s"] or 0 for c in calls), 2)}
+
+    if "live" in modes:
+        facts = [dict(f) for f in stored]
+        counter = [0]
+        calls = []
+        all_ops = []
+        all_dropped = []
+        for n, (sl, scope) in enumerate(_live_slices(conv["messages"]), start=1):
+            msg = render_user_message(conv["date"], facts, sl, scope)
+            call = await _call(structured_llm, msg, facts)
+            call["turn"] = n
+            calls.append(call)
+            all_ops += [dict(o, turn=n) for o in call["kept_ops"]]
+            all_dropped += call["dropped"]
+            facts = _apply_ops(facts, call["kept_ops"], counter)
+        sc = _score(conv["expect"], all_ops, all_dropped)
+        out["modes"]["live"] = {
             "calls": calls, "score": sc,
             "total_s": round(sum(c["elapsed_s"] or 0 for c in calls), 2)}
     return out
@@ -367,7 +406,7 @@ def _render_report(label: str, results: list[dict], modes: list[str]) -> str:
     row("thời gian / lần gọi p50 (s)", lambda s: _fmt(s["p50"]))
     row("thời gian / lần gọi p95 (s)", lambda s: _fmt(s["p95"]))
     row("thời gian / lần gọi max (s)", lambda s: _fmt(s["max"]))
-    if "turn" in modes:
+    if "turn" in modes or "live" in modes:
         L.append("| tổng thời gian / hội thoại p50 / p95 / max (s) | "
                  + " | ".join(
                      (f"{_fmt(stats[m]['conv_total_p50'])} / "
@@ -483,7 +522,7 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
     p.add_argument("--label", default="V0")
     p.add_argument("--probes", default=str(_THIS_FILE.parent / "memory_probes.yaml"))
     p.add_argument("--only", default="", help="Chỉ chạy các id này, cách nhau bằng dấu phẩy.")
-    p.add_argument("--mode", default="both", choices=["both", "session", "turn"])
+    p.add_argument("--mode", default="both", choices=["both", "all", "session", "turn", "live"])
     p.add_argument("--out", default="",
                    help="Đường dẫn .md (mặc định docs/tracking/memory-probe-<label>.md).")
     return p.parse_args(argv)
@@ -515,7 +554,8 @@ async def amain(args: argparse.Namespace) -> int:
     if not selected:
         print("Không có hội thoại nào khớp bộ lọc.")
         return 1
-    modes = ["session", "turn"] if args.mode == "both" else [args.mode]
+    modes = (["session", "turn", "live"] if args.mode in ("both", "all")
+             else [args.mode])
 
     try:
         structured_llm = extraction_llm()

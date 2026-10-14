@@ -114,9 +114,11 @@ the user.
 something else. Not passing states (tired today, a bad night), not the details of a \
 one-off request (the routine they asked for today, an event tomorrow), not small talk.
 - Health facts are wanted: injuries, surgeries, diagnoses the user reports, ongoing \
-pain, movements a clinician told them to avoid. Also goals, lasting preferences about \
-how they want to be helped or how answers should be written, and basic profile facts \
-(job, routine, equipment) that matter for exercise advice.
+pain, movements a clinician told them to avoid. Also goals; lasting personal likes, \
+dislikes and habits, the things a friend would remember about them (a favourite food \
+or drink, a sport or hobby, how they like to be spoken to, how answers should be \
+written); and basic profile facts (job, routine, equipment). A lasting like or habit \
+counts even when it is mentioned in passing; what happened today does not.
 - Never store identifiers: ID or card numbers, phone numbers, e-mail addresses, \
 street addresses. If the user gives one, leave it out entirely.
 - Resolve relative times with the conversation date. "Three months ago", "last month", \

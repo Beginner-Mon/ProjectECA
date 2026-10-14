@@ -332,3 +332,91 @@ probes:
         - {op: ADD, category: restriction, groups: [["push-up", "weight-bearing", "weight bearing"]]}
         - {op: ADD, category: goal, groups: [["ski"], ["February"]]}
       forbidden: ["last month"]
+
+  # ── 21–26. Sở thích, thói quen: nhắc thoáng qua trong chuyện phiếm ─────
+  # Ba hội thoại phải lưu một fact về điều người dùng thích / ghét / hay làm;
+  # ba hội thoại phải không lưu gì (chuyện hôm nay, sở thích của người khác,
+  # điều assistant đoán mà người dùng không xác nhận).
+  - id: c21_en_favourite_food_in_passing
+    lang: en
+    date: "2026-10-14"
+    stored:
+      - {id: f1, fact: "Prefers to be called Mon", category: preference, locked: false}
+      - {id: f2, fact: "Has back pain", category: condition, locked: false}
+      - {id: f3, fact: "Does not want exercises involving the back recommended, for fear of harming himself", category: restriction, locked: false}
+    messages:
+      - {role: user, content: "hey, nothing to train today, just want to chat for a bit"}
+      - {role: assistant, content: "Sure, happy to just chat. We could talk about food, music, what you watched lately, or anything else on your mind. Where do you want to start?"}
+      - {role: user, content: "then lets talk about food, what is your favorite food or drinks, mine is noodles, but the nutrients are kinds ass so I try my best not to eat too much of it"}
+      - {role: assistant, content: "Ha, I do love a good bowl of soup with something warm in it. Noodles are fine in moderation, and adding an egg or some vegetables makes them a lot more balanced. What kind of noodles do you like most?"}
+    expect:
+      ops:
+        - {op: ADD, category: preference, groups: [["noodle"]]}
+      forbidden: ["back"]
+
+  - id: c22_vi_daily_coffee_in_passing
+    lang: vi
+    date: "2026-10-14"
+    stored: []
+    messages:
+      - {role: user, content: "chào bạn, hôm nay mình rảnh nên ghé nói chuyện chơi"}
+      - {role: assistant, content: "Chào bạn, mình rất vui được trò chuyện. Hôm nay của bạn thế nào rồi?"}
+      - {role: user, content: "cũng ổn, sáng nào mình cũng phải uống một ly cà phê sữa đá mới tỉnh được, thiếu là cả ngày uể oải"}
+      - {role: assistant, content: "Nghe quen ghê, nhiều người cũng cần ly cà phê buổi sáng để vào nhịp. Bạn nhớ uống thêm nước lọc trong ngày nhé, cà phê dễ làm mình quên uống nước."}
+    expect:
+      ops:
+        - {op: ADD, category: preference, groups: [["cà phê", "coffee"]]}
+      forbidden: []
+
+  - id: c23_vi_music_taste_in_passing
+    lang: vi
+    date: "2026-10-14"
+    stored: []
+    messages:
+      - {role: user, content: "tối nay mình định tập nhẹ ở nhà, bạn có gợi ý gì cho vui không"}
+      - {role: assistant, content: "Bạn có thể thử một chuỗi giãn cơ và đi bộ tại chỗ khoảng 20 phút, bật nhạc cho đỡ chán. Bạn hay nghe nhạc gì khi tập?"}
+      - {role: user, content: "mình mê nhạc trữ tình, nghe lúc tập là phê nhất, còn nhạc điện tử thì mình không chịu nổi"}
+      - {role: assistant, content: "Nhạc trữ tình nhịp chậm rất hợp cho buổi giãn cơ. Bạn cứ chọn một danh sách phát khoảng 20 phút, hết bài là hết buổi."}
+    expect:
+      ops:
+        - {op: ADD, category: preference, groups: [["trữ tình"]]}
+      forbidden: []
+
+  - id: c24_en_ate_and_did_today
+    lang: en
+    date: "2026-10-14"
+    stored: []
+    messages:
+      - {role: user, content: "ugh, today was a mess. I had pizza for lunch and then went for a long walk by the river"}
+      - {role: assistant, content: "A long walk by the river sounds like a good way to balance the pizza. How are your legs feeling after it?"}
+      - {role: user, content: "fine, a bit tired. I also watched two movies in the evening, lazy day"}
+      - {role: assistant, content: "Lazy days are allowed. Tomorrow we can ease back in with something short if you feel like it."}
+    expect:
+      ops: []
+      forbidden: ["pizza", "walk", "movie"]
+
+  - id: c25_vi_someone_elses_like
+    lang: vi
+    date: "2026-10-14"
+    stored: []
+    messages:
+      - {role: user, content: "chị gái mình mê chạy bộ lắm, tuần nào cũng chạy ba buổi, còn nhà mình thì mẹ thích nấu ăn"}
+      - {role: assistant, content: "Chị bạn chăm thật đấy, còn mẹ nấu ăn ngon thì cả nhà có phúc rồi. Bạn thì sao, hôm nay muốn nói chuyện gì?"}
+      - {role: user, content: "mình chưa nghĩ ra, chắc hỏi bạn về giấc ngủ"}
+      - {role: assistant, content: "Được chứ. Bạn thường đi ngủ lúc mấy giờ và có hay thức giữa đêm không?"}
+    expect:
+      ops: []
+      forbidden: ["chạy bộ", "nấu ăn", "chị"]
+
+  - id: c26_en_assistant_guess_unconfirmed
+    lang: en
+    date: "2026-10-14"
+    stored: []
+    messages:
+      - {role: user, content: "what should I do this weekend to stay active"}
+      - {role: assistant, content: "You probably like hiking, a lot of people who ask this do. A trail walk on Saturday could be a nice option. What kind of outdoor stuff do you usually enjoy?"}
+      - {role: user, content: "haha who knows, I'll see how the weather is"}
+      - {role: assistant, content: "Fair enough. If the weather is bad, a short indoor session works too."}
+    expect:
+      ops: []
+      forbidden: ["hiking", "hike", "trail"]

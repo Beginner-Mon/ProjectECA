@@ -692,3 +692,28 @@ async def test_the_probes_call_goes_through_this_modules_request():
         [("system", fe.MEMORY_PROMPT), ("user", "the user message")],)
     assert record["parse_ok"] is True and record["error"] is None
     assert record["kept_ops"] == [{"op": "ADD", "fact": "Likes yoga", "category": "preference"}]
+
+
+def test_the_prompt_wants_lasting_likes_and_habits_not_only_health_and_help_style():
+    flat = " ".join(fe.MEMORY_PROMPT.split())
+    assert ("Also goals; lasting personal likes, dislikes and habits, the things a friend "
+            "would remember about them (a favourite food or drink, a sport or hobby, how "
+            "they like to be spoken to, how answers should be written); and basic profile "
+            "facts (job, routine, equipment). A lasting like or habit counts even when it "
+            "is mentioned in passing; what happened today does not.") in flat
+    assert "lasting preferences about how they want to be helped" not in flat
+    assert "that matter for exercise advice" not in flat
+
+
+def test_the_probes_live_slices_follow_what_production_sends():
+    from langgraph_agents.local_tests import run_memory_probe as probe
+
+    u1, a1 = {"role": "user", "content": "u1"}, {"role": "assistant", "content": "a1"}
+    u2, a2 = {"role": "user", "content": "u2"}, {"role": "assistant", "content": "a2"}
+    # The first user message alone, read from the start; then the previous answer plus
+    # the next user message; the closing answer has no user message after it: no slice.
+    assert probe._live_slices([u1, a1, u2, a2]) == [
+        ([u1], fe._SCOPE_FROM_START),
+        ([a1, u2], fe._SCOPE_CONTINUED),
+    ]
+    assert probe._live_slices([u1, a1]) == [([u1], fe._SCOPE_FROM_START)]

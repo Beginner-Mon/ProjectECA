@@ -367,21 +367,24 @@ def set_ltm(value: str) -> None:
 
 def seed_label(label: str, spec: dict, only: set[str], collector: Collector,
                owner_dsn: str) -> tuple[list[dict], list[str]]:
-    """Seed conversations + k batches. Returns (scenario recs, quota stops)."""
+    """Seed conversations + k batches. Returns (scenario recs, quota stops).
+
+    All pool-backed work (session_store writes, housekeep) runs in ONE event
+    loop: the pg pool binds connections to the loop that opened them, so one
+    asyncio.run per scenario corrupts it (InterfaceError: another operation
+    is in progress). Raw-asyncpg helpers (delete/read) are loop-agnostic.
+    """
     from langgraph_agents.db.postgres import bind_request_user
 
-    recs, quota_stops = [], []
-    for sc in spec["scenarios"]:
-        if only and sc["id"] not in only:
-            continue
-        sid = sc["id"]
-        uid = str(uuid.uuid5(NS, f"memory-benchmark-{label}-{sid}"))
-        asyncio.run(delete_user(owner_dsn, uid))
-
-        async def _seed() -> tuple[list[str], list[dict]]:
-            from langgraph_agents.db.postgres import bind_request_user as _bind
-
-            _bind(uid)
+    async def _seed_all() -> tuple[list[dict], list[str]]:
+        recs, quota_stops = [], []
+        for sc in spec["scenarios"]:
+            if only and sc["id"] not in only:
+                continue
+            sid = sc["id"]
+            uid = str(uuid.uuid5(NS, f"memory-benchmark-{label}-{sid}"))
+            await delete_user(owner_dsn, uid)
+            bind_request_user(uid)
             sessions: list[str] = []
             hlogs: list[dict] = []
             if sc.get("conversations"):
@@ -399,39 +402,39 @@ def seed_label(label: str, spec: dict, only: set[str], collector: Collector,
                 for batch in sc["batches"]:
                     await seed_session(uid, sess, batch["turns"])
                     hlogs += await run_housekeep(uid, sess, collector)
-            return sessions, hlogs
+            rec: dict = {"scenario": sid, "user_id": uid, "sessions": sessions,
+                         "seed_turns": sum(len(c["turns"]) for c in sc.get("conversations", []))
+                         + sum(len(b["turns"]) for b in sc.get("batches", [])),
+                         "turns": [], "probes": []}
+            rec["seed_llm_calls"] = count_llm_calls(hlogs)
+            if any(is_quota(find_invalid({"done": {}}, [r])) for r in hlogs):
+                quota_stops.append(sid)
+            check = sc.get("check_summary")
+            if check:
+                summary = await read_summary_text(owner_dsn, sessions[0])
+                compactions = sum(
+                    1 for r in hlogs
+                    if r.get("message") in ("summarizer_done", "stm_compacted")
+                    and str(r.get("session_id")) == sessions[0])
+                kept = [k for k in check["keywords"] if fold(k) in fold(summary["text"])]
+                rec["summary_check"] = {
+                    "kind": summary.get("kind"), "compactions": compactions,
+                    "keywords_kept": kept, "keywords_wanted": check["keywords"],
+                    "passed": (compactions >= check["min_compactions"]
+                               and len(kept) == len(check["keywords"])),
+                    "summary_chars": len(summary["text"]),
+                    "summary_excerpt": summary["text"][:800],
+                }
+            recs.append(rec)
+            print(f"[seed {sid}] llm_calls={rec['seed_llm_calls']}"
+                  + (f" summary={'PASS' if rec['summary_check']['passed'] else 'FAIL'}"
+                     f" compactions={rec['summary_check']['compactions']}" if check else ""),
+                  flush=True)
+            if quota_stops:
+                break
+        return recs, quota_stops
 
-        bind_request_user(uid)
-        sessions, hlogs = asyncio.run(_seed())
-        rec: dict = {"scenario": sid, "user_id": uid, "sessions": sessions,
-                     "seed_turns": sum(len(c["turns"]) for c in sc.get("conversations", []))
-                     + sum(len(b["turns"]) for b in sc.get("batches", [])),
-                     "turns": [], "probes": []}
-        rec["seed_llm_calls"] = count_llm_calls(hlogs)
-        if any(is_quota(find_invalid({"done": {}}, [r])) for r in hlogs):
-            quota_stops.append(sid)
-        check = sc.get("check_summary")
-        if check:
-            summary = asyncio.run(read_summary_text(owner_dsn, sessions[0]))
-            compactions = sum(
-                1 for r in hlogs
-                if r.get("message") in ("summarizer_done", "stm_compacted")
-                and str(r.get("session_id")) == sessions[0])
-            kept = [k for k in check["keywords"] if fold(k) in fold(summary["text"])]
-            rec["summary_check"] = {
-                "kind": summary.get("kind"), "compactions": compactions,
-                "keywords_kept": kept, "keywords_wanted": check["keywords"],
-                "passed": (compactions >= check["min_compactions"]
-                           and len(kept) == len(check["keywords"])),
-                "summary_chars": len(summary["text"]),
-                "summary_excerpt": summary["text"][:800],
-            }
-        recs.append(rec)
-        print(f"[seed {sid}] llm_calls={rec['seed_llm_calls']}"
-              + (f" summary={'PASS' if rec['summary_check']['passed'] else 'FAIL'}"
-                 f" compactions={rec['summary_check']['compactions']}" if check else ""),
-              flush=True)
-    return recs, quota_stops
+    return asyncio.run(_seed_all())
 
 
 def run_probe(client, owner_dsn: str, uid: str, sess: str, probe: dict,

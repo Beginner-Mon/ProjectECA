@@ -67,7 +67,7 @@ NS = uuid.NAMESPACE_URL
 
 def fold(s: str) -> str:
     """Lowercase, strip Vietnamese diacritics (including d) for matching."""
-    s = unicodedata.normalize("NFD", (s or "").lower().replace("d", "d"))
+    s = unicodedata.normalize("NFD", (s or "").lower().replace("đ", "d"))
     return "".join(c for c in s if unicodedata.category(c) != "Mn")
 
 
@@ -199,6 +199,24 @@ async def delete_user(owner_dsn: str, user_id: str) -> None:
         await conn.close()
 
 
+async def read_last_answer(owner_dsn: str, session_id: str) -> str:
+    """Newest persisted assistant message of a session (answer-write source).
+
+    Some turns (grader/refuse paths) emit no `token` events, so the stream
+    carries no text even though the model produced an answer. Scoring falls
+    back to this row; `answer_source` records which one was scored.
+    """
+    import asyncpg
+
+    conn = await asyncpg.connect(owner_dsn)
+    try:
+        return await conn.fetchval(
+            "SELECT content FROM messages WHERE session_id = $1::uuid "
+            "AND role = 'assistant' ORDER BY seq_id DESC LIMIT 1", session_id) or ""
+    finally:
+        await conn.close()
+
+
 async def read_summary(owner_dsn: str, session_id: str) -> dict:
     """stm_summary when migration 016 is live, else the legacy chunk count."""
     import asyncpg
@@ -251,7 +269,7 @@ def background_cost(logs: list[dict]) -> dict:
     return {"llm_calls": llm_calls, "tokens": tokens, "elapsed_ms": elapsed}
 
 
-def run_label(label: str, spec: dict) -> dict:
+def run_label(label: str, spec: dict, only: set[str] = frozenset()) -> dict:
     from fastapi.testclient import TestClient
 
     from langgraph_agents.api.auth import current_user_id, override_user
@@ -260,13 +278,16 @@ def run_label(label: str, spec: dict) -> dict:
 
     configure_root_logger()
     collector = Collector()
-    logging.getLogger().addHandler(collector)
     try:
         owner_dsn = os.environ["ECA_TEST_PG_DSN_OWNER"]
         app = create_app()
         results: list[dict] = []
         with TestClient(app) as client:
+            # Lifespan re-creates the root handlers, so attach only after it ran.
+            logging.getLogger().addHandler(collector)
             for sc in spec["scenarios"]:
+                if only and sc["id"] not in only:
+                    continue
                 sid = sc["id"]
                 uid = str(uuid.uuid5(NS, f"memory-benchmark-{label}-{sid}"))
                 asyncio.run(delete_user(owner_dsn, uid))
@@ -294,14 +315,19 @@ def run_label(label: str, spec: dict) -> dict:
                         sessions.append(sess)
                     turn = chat_turn(client, sess, probe["ask"],
                                      probe.get("locale", "vi"), collector)
-                    verdict = score_probe(turn["answer"], probe.get("expect_any") or [],
+                    answer = turn["answer"]
+                    source = "stream" if answer.strip() else "persisted"
+                    if not answer.strip():
+                        answer = asyncio.run(read_last_answer(owner_dsn, sess))
+                    verdict = score_probe(answer, probe.get("expect_any") or [],
                                           probe.get("forbid") or [])
                     top_sim, top_src = retrieval_top(turn["logs"])
                     rec["probes"].append({
                         "group": probe["group"], "ask": probe["ask"], "where": where,
                         "expect_any": probe.get("expect_any") or [],
                         "forbid": probe.get("forbid") or [],
-                        "answer": turn["answer"], "error": turn["error"],
+                        "answer": answer, "answer_source": source,
+                        "error": turn["error"],
                         "passed": verdict["passed"] and turn["error"] is None,
                         "hit": verdict["hit"], "leak": verdict["leak"],
                         "retrieval_top_sim": top_sim, "retrieval_src": top_src,
@@ -416,7 +442,8 @@ def render_md(label: str, report: dict, stats: dict) -> str:
             L.append("")
             L.append(f"- where: {p['where']}, expect: {p['expect_any']}, "
                      f"forbid: {p['forbid']}")
-            L.append(f"- hit: {p['hit']}, leak: {p['leak']}, error: {p['error']}")
+            L.append(f"- hit: {p['hit']}, leak: {p['leak']}, error: {p['error']}, "
+                     f"answer_source: {p.get('answer_source', 'stream')}")
             L.append(f"- retrieval: {p['retrieval_src']}={p['retrieval_top_sim']}, "
                      f"memory_ms={p['memory_ms']}, to_done={p['t_to_done_s']}s, "
                      f"housekeep={p['t_housekeep_s']}s, "
@@ -438,16 +465,30 @@ def main(argv: list[str]) -> int:
     ap = argparse.ArgumentParser(description="Memory end-to-end benchmark.")
     ap.add_argument("--label", required=True)
     ap.add_argument("--yaml", default=str(THIS_FILE.parent / "memory_benchmark.yaml"))
+    ap.add_argument("--only", default="",
+                    help="Comma-separated scenario ids (foreground chunks: the "
+                         "harness kills processes that outlive one call, so a "
+                         "full label runs as several chunks + --append).")
+    ap.add_argument("--append", action="store_true",
+                    help="Merge this chunk into the existing label report instead "
+                         "of overwriting it.")
     args = ap.parse_args(argv)
     check_not_prod()
     with open(args.yaml, encoding="utf-8") as f:
         spec = yaml.safe_load(f)
-    report = run_label(args.label, spec)
+    only = {s.strip() for s in args.only.split(",") if s.strip()}
+    report = run_label(args.label, spec, only)
+    TRACKING_DIR.mkdir(parents=True, exist_ok=True)
+    json_path = TRACKING_DIR / f"memory-benchmark-{args.label}.json"
+    if args.append and json_path.exists():
+        prev = json.loads(json_path.read_text(encoding="utf-8"))
+        have = {sc["scenario"] for sc in report["scenarios"]}
+        merged = [sc for sc in prev["scenarios"] if sc["scenario"] not in have]
+        merged.extend(report["scenarios"])
+        report = {"label": args.label, "scenarios": merged}
     stats = summarize(report)
     payload = {"label": args.label, "stats": stats, "scenarios": report["scenarios"]}
-    TRACKING_DIR.mkdir(parents=True, exist_ok=True)
     md_path = TRACKING_DIR / f"memory-benchmark-{args.label}.md"
-    json_path = TRACKING_DIR / f"memory-benchmark-{args.label}.json"
     md_path.write_text(render_md(args.label, report, stats), encoding="utf-8")
     json_path.write_text(json.dumps(payload, ensure_ascii=False, indent=1),
                          encoding="utf-8")

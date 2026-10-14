@@ -44,24 +44,72 @@ def evidence_messages(messages: list) -> list:
     return out
 
 
-def _turn_items(data, header: str) -> list[EvidenceItem]:
-    """memory_search results from the turn index: one readable item per past turn.
+def _when(date: str, title: str | None = None) -> str:
+    """Date and title, as `2026-10-12 — Knee talk`; either alone; empty when neither is known."""
+    day = str(date or "")[:10]
+    return f"{day} — {title}" if day and title else (day or title or "")
 
-    Only the new shape (results with a `snippet`) is rendered here; the older
-    summary shape returns [] and keeps being dumped as JSON.
-    """
+
+def _item(header: str, *parts: str) -> EvidenceItem:
+    text = "\n".join(p for p in parts if p)
+    return EvidenceItem(header=header, text=text, cite_key=None, title="")
+
+
+def _turn_items(data, header: str) -> list[EvidenceItem]:
+    """memory_search results from the turn index: one readable item per past turn."""
     results = data.get("results") if isinstance(data, dict) else None
     if not isinstance(results, list) or not results:
         return []
     if not all(isinstance(r, dict) and "snippet" in r for r in results):
         return []
-    items = []
-    for r in results:
-        title = r.get("session_title")
-        when = f"{r.get('date', '')} — {title}" if title else str(r.get("date", ""))
-        items.append(EvidenceItem(header=header, text=f"{when}\n{r['snippet']}",
-                                  cite_key=None, title=""))
+    return [_item(header, _when(r.get("date", ""), r.get("session_title")), r["snippet"])
+            for r in results]
+
+
+def _summary_items(data, header: str) -> list[EvidenceItem]:
+    """memory_search results of the older shape: one item per conversation summary.
+
+    An ambiguous result repeats its top hits as `candidates`; the hits are
+    already items here, so the candidates add nothing.
+    """
+    results = data.get("results") if isinstance(data, dict) else None
+    if not isinstance(results, list) or not results:
+        return []
+    if not all(isinstance(r, dict) and "summary_text" in r for r in results):
+        return []
+    return [_item(header, _when(r.get("created_at", "")), r["summary_text"])
+            for r in results]
+
+
+def _resumed_items(data, header: str) -> list[EvidenceItem]:
+    """resume_last_session: the conversation as readable text, then (when the
+    two newest were close in time) the others it could have meant."""
+    if not isinstance(data, dict) or not data.get("found"):
+        return []
+    lines = []
+    for m in data.get("recent_messages") or []:
+        if isinstance(m, dict) and m.get("content"):
+            lines.append(f"{'User' if m.get('role') == 'user' else 'You'}: {m['content']}")
+    items = [_item(header, _when(data.get("updated_at", ""), data.get("title")),
+                   *[str(c) for c in data.get("summary_chunks") or []], *lines)]
+    candidates = [c for c in data.get("candidates") or [] if isinstance(c, dict)]
+    if data.get("ambiguous") and candidates:
+        listed = [f"- {_when(c.get('updated_at', ''))}: {c.get('preview', '')}"
+                  for c in candidates]
+        items.append(_item(header, "Several recent conversations could be the one "
+                           "meant:", *listed))
     return items
+
+
+def _memory_items(data, header: str) -> list[EvidenceItem]:
+    """Readable items for a memory tool's result, whatever shape it has.
+
+    Never raw JSON: the answering model would repeat our key names and ids.
+    """
+    if isinstance(data, dict) and data.get("found") and data.get("results") == []:
+        return [_item(header, "Nothing matching was found in earlier conversations.")]
+    return (_turn_items(data, header) or _summary_items(data, header)
+            or _resumed_items(data, header))
 
 
 def _message_items(m: ToolMessage) -> list[EvidenceItem]:
@@ -70,14 +118,14 @@ def _message_items(m: ToolMessage) -> list[EvidenceItem]:
     header = "[From another source]" if src is None else f"[From {src.label}]"
     cite_key = src.id if src is not None and src.id in _CITABLE_SOURCE_IDS else None
     whole = [EvidenceItem(header=header, text=str(m.content), cite_key=cite_key, title="")]
-    if name not in ("kb_search", "memory_search"):
+    if name not in ("kb_search", "memory_search", "resume_last_session"):
         return whole
     try:
         data = json.loads(str(m.content))
     except (json.JSONDecodeError, TypeError):
         return whole
-    if name == "memory_search":
-        return _turn_items(data, header) or whole
+    if name != "kb_search":
+        return _memory_items(data, header)
     if not isinstance(data, list) or not data:
         return whole
     items = []

@@ -396,8 +396,10 @@ def test_evidence_caps_each_rendered_item():
     assert len(item.text) == 1500
 
 
-def test_evidence_leaves_the_summary_shape_as_it_was():
+def test_evidence_renders_the_summary_shape_as_text():
+    # No memory result reaches the answering model as raw JSON, whichever shape.
     payload = {"found": True, "results": [{"summary_text": "talked about squats"}]}
     (item,) = evidence_items([_tm(payload)])
-    assert item.text == json.dumps(payload)
+    assert "talked about squats" in item.text
+    assert "{" not in item.text and "summary_text" not in item.text
     assert item.header == "[From your earlier conversations with this user]"

@@ -250,3 +250,23 @@ probes:
     group: e
     lang: en
     query: "i get chest pain when i exercise"
+
+  # ── Nhóm (f): tin nhắn nhiều phần — kỳ vọng: câu trả lời đọc đúng cả lời user ──
+  # f1: câu hỏi + lời kể về user; f2: hai câu hỏi cần hai tool khác nhau;
+  # f3: kể trước, hỏi sau; f4: hỏi lại chuyện cũ (không được có chữ "session").
+  - id: f1_en
+    group: f
+    lang: en
+    query: "what is your favorite food or drinks, mine is noodles but I try not to eat too much of it"
+  - id: f2_en
+    group: f
+    lang: en
+    query: "what stretch helps with tight shoulders, and do you remember what we talked about last time?"
+  - id: f3_en
+    group: f
+    lang: en
+    query: "I work at a desk all day and my neck gets stiff by the afternoon, so what can I do about it?"
+  - id: f4_en
+    group: f
+    lang: en
+    query: "yo what have we talked about before, you remember?"

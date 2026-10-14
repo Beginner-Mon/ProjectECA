@@ -134,8 +134,8 @@ Answer the user's wellness question from the evidence below.
 ## Retrieved evidence
 {tool_results}
 
-## User's question (cleaned, coreferences resolved)
-{resolved_query}
+## What the user wrote
+{user_message}
 
 Instructions:
 - Cover ALL required_outputs tags in your response
@@ -160,8 +160,8 @@ Speak only to that part — anything else in the turn you can still answer.
 ## Required deliverables (tags)
 {required_outputs}
 
-## User's question
-{resolved_query}
+## What the user wrote
+{user_message}
 
 Instructions:
 - Be honest: explain WHY you cannot give that guidance (out of scope / no sources)
@@ -177,8 +177,8 @@ The user's query needs clarification before you can give a useful answer.
 
 {language_rule}
 
-## User's question
-{resolved_query}
+## What the user wrote
+{user_message}
 
 ## Context (tool results may contain ambiguity candidates)
 {tool_results}
@@ -187,7 +187,7 @@ Instructions:
 - Ask for the specific missing information
 - Explain briefly WHY you need it
 - Keep concise (1-3 sentences)
-- If tool results contain candidates (multiple matching sessions/articles), list 2-3 briefly for the user to choose
+- If tool results contain candidates (multiple matching past conversations/articles), list 2-3 briefly for the user to choose
 """
 
 _CHAT_TASK = """## This turn
@@ -195,8 +195,8 @@ A casual conversational message — no clinical content needed.
 
 {language_rule}
 
-## User's question
-{resolved_query}
+## What the user wrote
+{user_message}
 
 Instructions:
 - Respond naturally, the way you would speak
@@ -618,7 +618,11 @@ async def synthesizer_node(state: AgentState, config: RunnableConfig) -> dict:
     t0 = time.perf_counter()
     request_id = config["configurable"].get("request_id", "-")
     persona_id = config["configurable"].get("persona_id", "anne")
-    resolved_query = state.get("resolved_query") or config["configurable"]["query"]
+    # The user's own words, not the planner's one-sentence rewrite: the rewrite
+    # drops statements and second questions. History is in the messages, so
+    # references resolve here. No `query` (tests, local probes): the rewrite.
+    user_message = (config["configurable"].get("query")
+                    or state.get("resolved_query") or "")
     required_outputs = state.get("required_outputs", [])
 
     previous = state.get("final_answer") or ""
@@ -643,7 +647,7 @@ async def synthesizer_node(state: AgentState, config: RunnableConfig) -> dict:
         "node": "synthesizer", "request_id": request_id,
         "mode": mode, "persona_id": persona_id,
         "tags": required_outputs,
-        "query_preview": resolved_query[:80],
+        "query_preview": user_message[:80],
         "evidence": _evidence_summary(state.get("messages", [])),
     })
 
@@ -666,27 +670,27 @@ async def synthesizer_node(state: AgentState, config: RunnableConfig) -> dict:
     if mode == "clarify":
         task_system = _CLARIFY_TASK.format(
             language_rule=_LANGUAGE_RULE,
-            resolved_query=resolved_query,
+            user_message=user_message,
             tool_results=tool_results or "(no tool results — static clarification)",
         )
     elif mode == "refuse":
         task_system = _REFUSE_TASK.format(
             language_rule=_LANGUAGE_RULE,
             required_outputs=tags_str,
-            resolved_query=resolved_query,
+            user_message=user_message,
         )
     elif mode == "synthesize":
         task_system = _SYNTHESIZE_TASK.format(
             language_rule=_LANGUAGE_RULE,
             required_outputs=tags_str,
             tool_results=tool_results or "(no evidence)",
-            resolved_query=resolved_query,
+            user_message=user_message,
             tag_instructions=tag_instructions,
         )
     else:  # chat
         task_system = _CHAT_TASK.format(
             language_rule=_LANGUAGE_RULE,
-            resolved_query=resolved_query,
+            user_message=user_message,
         )
 
     contract_note = _build_contract_note(opening, required_outputs)
@@ -739,7 +743,7 @@ async def synthesizer_node(state: AgentState, config: RunnableConfig) -> dict:
         msgs = [
             SystemMessage(content=system),
             *history,
-            HumanMessage(content=resolved_query),
+            HumanMessage(content=user_message),
             AIMessage(content=previous),
             SystemMessage(content=voice_card + _ADD_MISSING_BLOCK.format(
                 feedback=feedback)),
@@ -748,7 +752,7 @@ async def synthesizer_node(state: AgentState, config: RunnableConfig) -> dict:
         msgs = [
             SystemMessage(content=system),
             *history,
-            HumanMessage(content=resolved_query),
+            HumanMessage(content=user_message),
             SystemMessage(content=voice_card),
         ]
 

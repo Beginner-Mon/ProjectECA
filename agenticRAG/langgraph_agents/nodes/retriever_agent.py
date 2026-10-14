@@ -107,7 +107,8 @@ You choose which tools this turn needs. You do not write the answer.
 
 ## This turn
 Required outputs: {required_outputs}
-Request: {resolved_query}
+User's message: {user_message}
+Same request, references resolved: {resolved_query}
 """
 
 
@@ -147,6 +148,7 @@ def _build_retriever_system_prompt(
     retry_note: str,
     required_outputs: str,
     resolved_query: str,
+    user_message: str | None = None,
     self_tool_available: bool = False,
 ) -> str:
     """Build the retriever system prompt.
@@ -166,6 +168,7 @@ def _build_retriever_system_prompt(
         web_policy_line=web_policy_line,
         retry_note=retry_note,
         required_outputs=required_outputs,
+        user_message=user_message or resolved_query,
         resolved_query=resolved_query,
     )
 
@@ -181,7 +184,8 @@ async def retriever_agent_node(state: AgentState, config: RunnableConfig) -> dic
     t0 = time.perf_counter()
     request_id = config["configurable"].get("request_id", "-")
 
-    resolved_query = state.get("resolved_query") or config["configurable"]["query"]
+    user_message = config["configurable"].get("query") or ""
+    resolved_query = state.get("resolved_query") or user_message
     required_outputs = state.get("required_outputs", [])
 
     # Hard-cap round counter (P2): increment each node execution
@@ -232,6 +236,7 @@ async def retriever_agent_node(state: AgentState, config: RunnableConfig) -> dic
         retry_note=retry_note,
         required_outputs=", ".join(required_outputs) if required_outputs else "(none — general/chat)",
         resolved_query=resolved_query,
+        user_message=user_message,
         self_tool_available=_persona_has_sheet(
             config["configurable"].get("persona_id", "anne")),
     )
@@ -241,7 +246,9 @@ async def retriever_agent_node(state: AgentState, config: RunnableConfig) -> dic
     try:
         ai_msg = await llm.ainvoke([
             SystemMessage(content=system),
-            HumanMessage(content=f"Request: {resolved_query}"),
+            HumanMessage(content=(
+                f"User's message: {user_message or resolved_query}\n"
+                f"Same request, references resolved: {resolved_query}")),
         ])
     except Exception as exc:
         elapsed_ms = round((time.perf_counter() - t0) * 1000)

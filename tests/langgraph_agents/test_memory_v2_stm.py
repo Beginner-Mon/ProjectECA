@@ -801,7 +801,7 @@ async def test_twelve_turn_session_has_no_hole(budgets, caplog, summarise):
     embed = MagicMock()
     embed.aembed_passage = AsyncMock(return_value=[0.1] * 384)
 
-    async def fake_summary(rows, session_id):
+    async def fake_summary(rows, session_id, usage=None):
         return f"summary of seq {rows[0]['seq_id']}..{rows[-1]['seq_id']}"
 
     ceiling = budgets["history_compact_at"] + budgets["history"]

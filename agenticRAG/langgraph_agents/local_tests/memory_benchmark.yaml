@@ -1,0 +1,186 @@
+# Memory benchmark — scenarios and probes (memory-v2 step 1).
+#
+# Shape per scenario:
+#   conversations: prior conversations, each a list of user messages sent in
+#     one session; the agent answers for real.
+#   probes: each probe is one turn asking about the past.
+#     group: a|b|c|d|e|f|k  (g|h|i|j are added in step 6, B only)
+#     where: last = continue the scenario's last session,
+#            new  = a fresh session
+#     expect_any: phrases that must appear (at least one) in the answer
+#     forbid: phrases that must not appear
+#     locale: site language for the turn (default vi)
+# Scoring (run_memory_benchmark.py): the answer is lowercased with Vietnamese
+# diacritics stripped (NFD); pass = some expect_any phrase present (an empty
+# list is vacuously true — used by group f, whose only assertion is "no leak")
+# and no forbid phrase present. The verbatim answer is kept in the report.
+
+scenarios:
+
+- id: back_vi
+  conversations:
+    - - "Tôi bị đau lưng dưới mỗi khi ngồi lâu."
+      - "Bác sĩ dặn tôi tránh squat sâu."
+  probes:
+    - group: a
+      ask: "Nhắc lại xem tôi bị đau lưng khi nào?"
+      where: last
+      expect_any: ["ngoi", "lau"]
+      forbid: []
+    - group: b
+      ask: "Tôi ngồi làm việc cả ngày, buổi tối nên tập gì nhẹ nhàng?"
+      where: new
+      expect_any: ["lung"]
+      forbid: []
+    - group: f
+      ask: "Hôm nay trời đẹp, cuối tuần tôi nên đi đâu chơi?"
+      where: new
+      expect_any: []
+      forbid: ["lung", "ngoi", "squat"]
+
+- id: knee_recall
+  conversations:
+    - - "Tôi mổ sụn chêm đầu gối trái hồi tháng 5/2025."
+  probes:
+    - group: a
+      ask: "Tôi mổ đầu gối khi nào?"
+      where: last
+      expect_any: ["thang 5", "2025"]
+      forbid: []
+    - group: d
+      locale: en
+      ask: "When did I have my left knee surgery?"
+      where: new
+      expect_any: ["may", "2025"]
+      forbid: []
+
+- id: knee_correct
+  conversations:
+    - - "Tôi mổ sụn chêm đầu gối trái hồi tháng 5/2025."
+    - - "Bác sĩ xác nhận ca mổ của tôi là tháng 6/2025, tôi nhớ nhầm tháng 5."
+  probes:
+    - group: e
+      ask: "Rốt cuộc tôi mổ đầu gối tháng nào?"
+      where: last
+      expect_any: ["thang 6"]
+      forbid: ["thang 5"]
+
+- id: job_change
+  conversations:
+    - - "Tôi làm y tá ca đêm."
+    - - "Tôi đã chuyển sang làm giáo viên, không còn làm y tá nữa."
+  probes:
+    - group: e
+      ask: "Hiện giờ tôi làm nghề gì?"
+      where: last
+      expect_any: ["giao vien"]
+      forbid: ["y ta"]
+
+- id: morning_habit
+  conversations:
+    - - "Tôi thích bơi lội vào mỗi buổi sáng."
+    - - "Dạo này tôi chuyển sang chạy bộ buổi sáng thay vì bơi lội."
+  probes:
+    - group: e
+      ask: "Buổi sáng tôi hay vận động thế nào?"
+      where: last
+      expect_any: ["chay bo"]
+      forbid: ["boi"]
+
+- id: run_goal
+  conversations:
+    - - "Mục tiêu của tôi là chạy được 5km vào mùa xuân."
+  probes:
+    - group: a
+      ask: "Nhắc lại mục tiêu chạy bộ của tôi?"
+      where: last
+      expect_any: ["5km", "5 km"]
+      forbid: []
+    - group: b
+      ask: "Lên giúp tôi một lịch tập cho tuần này?"
+      where: new
+      expect_any: ["chay", "5km", "5 km", "xuan"]
+      forbid: []
+    - group: f
+      ask: "Thủ đô của Pháp là thành phố nào?"
+      where: new
+      expect_any: []
+      forbid: ["chay", "5km", "xuan"]
+
+- id: latex_band
+  conversations:
+    - - "Tôi bị dị ứng latex nên không dùng được dây kháng lực làm từ latex."
+  probes:
+    - group: b
+      ask: "Gợi ý cho tôi vài bài tập với dây kháng lực?"
+      where: new
+      expect_any: ["latex"]
+      forbid: []
+    - group: f
+      ask: "Gợi ý cho tôi món ăn sáng nhanh gọn?"
+      where: new
+      expect_any: []
+      forbid: ["latex", "day", "di ung"]
+
+- id: lang_pref
+  conversations:
+    - locale: en
+      messages:
+        - "I prefer short answers. I have knee osteoarthritis."
+  probes:
+    - group: d
+      ask: "Tôi thích câu trả lời thế nào?"
+      where: new
+      expect_any: ["ngan"]
+      forbid: []
+    - group: d
+      ask: "Đầu gối của tôi bị gì?"
+      where: new
+      expect_any: ["khop"]
+      forbid: []
+
+- id: ice_advice
+  conversations:
+    - - "Đầu gối tôi hơi sưng sau khi đi bộ lâu, có nên chườm đá không?"
+      - "Cảm ơn bạn, tối nay tôi sẽ thử chườm đá."
+  probes:
+    - group: c
+      ask: "Bạn vừa khuyên gì về đầu gối của tôi?"
+      where: last
+      expect_any: ["goi", "da"]
+      forbid: []
+    - group: c
+      ask: "Tóm tắt lại những gì bạn vừa nói với tôi?"
+      where: last
+      expect_any: ["goi", "da", "chuom"]
+      forbid: []
+    - group: c
+      ask: "Hôm trước bạn đã dặn tôi những gì?"
+      where: new
+      expect_any: ["goi"]
+      forbid: []
+
+- id: long_knee
+  check_summary:
+    keywords: ["vai", "ngan"]
+    min_compactions: 3
+  conversations:
+    - - "Từ giờ hãy trả lời tôi ngắn gọn thôi. À, vai phải của tôi hay bị đau mỗi khi giơ tay cao."
+      - "Bài heel-slide tập đúng cách thế nào?"
+      - "Bài nâng chân thẳng tập mấy hiệp thì đủ?"
+      - "Đi bộ mỗi ngày bao lâu thì tốt cho khớp gối?"
+      - "Bong gân cổ chân nên xử lý ra sao trong 2 ngày đầu?"
+      - "Bài giãn cơ cổ nào dễ làm ở văn phòng?"
+      - "Bài nâng bắp chân đứng tập thế nào cho đúng?"
+      - "Đau gân kheo sau khi chạy nên nghỉ bao lâu?"
+      - "Tư thế ngồi làm việc nào đỡ mỏi lưng?"
+      - "Bài plank cho người mới bắt đầu tập sao?"
+      - "Khởi động trước khi đá bóng gồm những gì?"
+      - "Uống nước thế nào khi tập luyện mùa nóng?"
+      - "Giãn cơ đùi sau bằng khăn tập ra sao?"
+  probes:
+    - group: k
+      ask: "Nhắc lại giúp tôi: vai tôi bị sao, và từ đầu buổi tôi đã dặn cách trả lời thế nào?"
+      where: last
+      expect_any: ["vai", "ngan"]
+      forbid: []

@@ -425,13 +425,18 @@ def _writes(kept: list[dict], stored: list[dict], row_ids: dict,
     return writes, duplicates
 
 
-async def _operations(session_id, user_message: str) -> list | None:
+async def _operations(session_id, user_message: str,
+                      usage: dict | None = None) -> list | None:
     """The model's operations for one slice, or None without a usable answer.
 
     A timeout, a provider error and an answer that is not the envelope all mean
     the same thing here: nothing is written and the next run reads the slice
     again. The warning names the type of the error only. A provider error can
     repeat the request and a parsing error quotes the answer.
+
+    `usage`, when given, is filled with the call's `input_tokens` /
+    `output_tokens` (None when the answer reports none) for the
+    `fact_extraction_done` telemetry. Counts only, never message text.
     """
     started = time.perf_counter()
     reason, error = "call_failed", None
@@ -440,6 +445,11 @@ async def _operations(session_id, user_message: str) -> list | None:
     except Exception as exc:
         error = exc
     else:
+        if usage is not None:
+            raw = result.get("raw") if isinstance(result, dict) else None
+            meta = getattr(raw, "usage_metadata", None) or {}
+            usage["input_tokens"] = meta.get("input_tokens")
+            usage["output_tokens"] = meta.get("output_tokens")
         parsed = result.get("parsed")
         if parsed is not None:
             return list(parsed.operations)
@@ -464,6 +474,7 @@ async def _read_conversation(pg, user_id: str, session_id, messages: list) -> di
     # Only the user's own words can become a fact. A slice without any (the
     # answer of the turn before, typically) is stepped over without a call.
     llm_called = any(m["role"] == "user" for m in messages)
+    usage: dict = {"input_tokens": None, "output_tokens": None}
     if not llm_called:
         await pg.execute(_MARK_SQL, session_id, user_id, from_seq, up_to_seq)
     else:
@@ -475,7 +486,7 @@ async def _read_conversation(pg, user_id: str, session_id, messages: list) -> di
                   for short, r in zip(row_ids, rows)]
         raw_ops = await _operations(session_id, render_user_message(
             _conversation_date(messages[-1]), stored, messages,
-            _SCOPE_CONTINUED if from_seq else _SCOPE_FROM_START))
+            _SCOPE_CONTINUED if from_seq else _SCOPE_FROM_START), usage)
         if raw_ops is None:
             return {"llm_called": True, "failed": True, **applied}
 
@@ -503,6 +514,8 @@ async def _read_conversation(pg, user_id: str, session_id, messages: list) -> di
         "llm_called": llm_called,
         **applied,
         "dropped": dict(dropped),
+        "input_tokens": usage["input_tokens"],
+        "output_tokens": usage["output_tokens"],
         "elapsed_ms": round((time.perf_counter() - started) * 1000),
     })
     return {"llm_called": llm_called, "failed": False, **applied}

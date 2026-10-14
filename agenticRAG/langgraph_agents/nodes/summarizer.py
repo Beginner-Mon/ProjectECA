@@ -210,12 +210,17 @@ async def housekeep(user_id: str, session_id: str,
             })
 
 
-async def _summarize_messages(rows: list, session_id: str) -> str | None:
+async def _summarize_messages(rows: list, session_id: str,
+                              usage: dict | None = None) -> str | None:
     """LLM-summarize a list of message rows → summary_text or None if fail.
 
     rows = records with {role, content}.
     Uses the same prompt + retry logic as _run_summarize.
     Extracted so rebuild_dirty_chunk can reuse it (M.8 #5).
+
+    `usage`, when given, is filled with the call's `input_tokens` /
+    `output_tokens` (None when the answer reports none) for the
+    `summarizer_done` telemetry. Counts only, never message text.
     """
     lines = []
     for r in rows:
@@ -250,6 +255,10 @@ async def _summarize_messages(rows: list, session_id: str) -> str | None:
             ai_msg = await llm.ainvoke(prompt)
             summary_text = ai_msg.content.strip() if ai_msg.content else ""
             if summary_text:
+                if usage is not None:
+                    meta = getattr(ai_msg, "usage_metadata", None) or {}
+                    usage["input_tokens"] = meta.get("input_tokens")
+                    usage["output_tokens"] = meta.get("output_tokens")
                 break
         except Exception as exc:
             if attempt < _MAX_RETRY:
@@ -312,7 +321,8 @@ async def _run_summarize(
         covers_up_to_seq = rows[-1]["seq_id"]
 
         # ── LLM summarize (cheap model tier) ───────────────────────────
-        summary_text = await _summarize_messages(rows, session_id)
+        usage: dict = {"input_tokens": None, "output_tokens": None}
+        summary_text = await _summarize_messages(rows, session_id, usage)
         if not summary_text:
             return
 
@@ -336,6 +346,8 @@ async def _run_summarize(
             "covers_up_to_seq": covers_up_to_seq,
             "token_count": total_tokens,
             "summary_length": len(summary_text),
+            "input_tokens": usage["input_tokens"],
+            "output_tokens": usage["output_tokens"],
             "elapsed_ms": elapsed_ms,
         })
 

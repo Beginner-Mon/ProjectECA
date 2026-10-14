@@ -637,7 +637,8 @@ async def test_the_done_line_carries_counts_and_ids_only(caplog):
     standard = set(vars(logging.LogRecord("", 0, "", 0, "", (), None))) | {"message", "asctime"}
     assert set(vars(done)) - standard == {
         "session_id", "message_count", "char_count", "llm_called",
-        "added", "updated", "deleted", "dropped", "elapsed_ms"}
+        "added", "updated", "deleted", "dropped",
+        "input_tokens", "output_tokens", "elapsed_ms"}
 
 
 # ── The probe ─────────────────────────────────────────────────────────────────

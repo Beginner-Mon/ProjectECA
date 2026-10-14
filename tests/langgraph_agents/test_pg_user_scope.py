@@ -255,6 +255,7 @@ async def test_create_user_memory_runs_both_inserts_in_one_transaction():
     conn.fetchrow = AsyncMock(return_value={
         "id": "33333333-3333-3333-3333-333333333333",
         "created_at": __import__("datetime").datetime(2026, 8, 18),
+        "updated_at": __import__("datetime").datetime(2026, 8, 18),
     })
 
     with patch("langgraph_agents.api.routes_crud.get_pg_client", return_value=client):

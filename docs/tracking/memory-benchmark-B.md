@@ -22,6 +22,12 @@ Model: qwen/qwen3.8-27b via Groq. A và B cùng chạy trên model này nên so 
 - run 2026-10-15T14:20:00+07:00 phase=probes only=['job_e'] key=llm=deepseek llm_calls=3 turns=5 probes=11
 - run 2026-10-15T14:22:07+07:00 phase=probes only=['goal_f'] key=llm=deepseek llm_calls=1 turns=6 probes=12
 - run 2026-10-15T14:24:16+07:00 phase=all only=all key=llm=deepseek llm_calls=1 turns=7 probes=12
+- run 2026-10-15T15:01:14+07:00 phase=seed only=['instr_general_g'] key=llm=deepseek llm_calls=3 turns=7 probes=12
+- run 2026-10-15T15:03:58+07:00 phase=seed only=['instr_project_g'] key=llm=deepseek llm_calls=3 turns=7 probes=12
+- run 2026-10-15T15:06:34+07:00 phase=seed only=['safe_once_h'] key=llm=deepseek llm_calls=1 turns=7 probes=12
+- run 2026-10-15T15:09:03+07:00 phase=seed only=['name_churn_i'] key=llm=deepseek llm_calls=3 turns=7 probes=12
+- run 2026-10-15T15:11:53+07:00 phase=seed only=['forget_j'] key=llm=deepseek llm_calls=2 turns=7 probes=12
+- run 2026-10-15T15:14:10+07:00 phase=seed only=['forget_all_j'] key=llm=deepseek llm_calls=2 turns=7 probes=12
 
 8/11 probes passed (1 invalid, không chấm).
 
@@ -166,7 +172,7 @@ Bạn đang thấy các triệu chứng này không?
 - where: db, session: 73a784eb-9994-5376-80c9-fe4037e338c2, attempt: 1, expect: ['lưng'], forbid: []
 - hit: [], leak: ["no row matching {'fact_contains': 'lưng', 'tier': 1, 'status': 'active'}"], error: None, invalid: [], answer_source: db, request_id: None
 - retrieval: db=None, memory_ms=None, to_done=Nones, housekeep=Nones, total_tokens=None, bg={'llm_calls': 0, 'tokens': 0, 'elapsed_ms': 0}
-- answer: Do not suggest back exercises [instruction/t2/active]
+- answer: Do not suggest back exercises [instruction/t1/active]
 
 ## name_churn_i
 

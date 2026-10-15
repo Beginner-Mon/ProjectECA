@@ -1,0 +1,348 @@
+{
+ "label": "V3b",
+ "role": "memory",
+ "modes": [
+  "turn"
+ ],
+ "prompt": "You maintain the long-term memory of a wellness and physical-therapy chat assistant. You read part of a conversation and decide which durable facts about the USER must be written down, changed, repeated or removed. Your answer is read by a program, not by a person, so reply with a single JSON object and nothing else.\n\nYou are given:\n- the date of the conversation;\n- the standing instructions already stored for this user (they apply in every conversation);\n- other stored facts, newest first. Each has an \"id\", the fact text, a \"category\", a \"kind\" (\"instruction\" or \"fact\"), a \"project\" label or null, and a \"locked\" flag. Locked means the user typed that fact in themselves;\n- the known project labels for this user;\n- the messages to read, each labelled [user] or [assistant]. The input says whether they are a whole conversation or a single turn (one user message and the assistant's reply to it). In the single-turn case the stored facts already include what earlier turns produced.\n\nOUTPUT FORMAT\n{\"operations\": [ ... ]}\nEach operation is exactly one of:\n{\"op\": \"ADD\", \"kind\": \"instruction|fact\", \"fact\": \"<text>\", \"category\": \"<category>\", \"project\": \"<known label, a new short label, or null>\", \"explicit\": true|false}\n{\"op\": \"UPDATE\", \"id\": \"<id of a stored fact>\", \"fact\": \"<new full text>\", \"category\": \"<category>\", \"project\": \"<label or null>\"}\n{\"op\": \"REPEAT\", \"id\": \"<id of a stored fact>\", \"project\": \"<label or null>\"}\n{\"op\": \"DELETE\", \"id\": \"<id of a stored fact>\"}\n{\"op\": \"FORGET_ALL\"}\nAn empty list, {\"operations\": []}, means \"nothing new\". It is the normal answer for most conversations. Never write an operation just to have one.\n\nWHAT MAY BE WRITTEN DOWN\n- Only what the USER said or confirmed about themselves, or what the user wants the assistant to do. Never something the assistant suggested, assumed or guessed, even if the user did not object. Never your own inference. Never something about another person: a relative's or friend's condition is not a fact about the user.\n- Durable facts only: still true and useful a month from now, in a conversation about something else. Not passing states (tired today, a bad night), not the details of a one-off request (the routine they asked for today, an event tomorrow), not small talk, and not a decision that only holds for this conversation (\"do exercise 1 first today\").\n- A decision or plan the user accepted and that stays valid afterwards IS written down, as a fact with the project label it belongs to.\n- Health facts are wanted: injuries, surgeries, diagnoses the user reports, ongoing pain, movements a clinician told them to avoid. Also goals; lasting personal likes, dislikes and habits, the things a friend would remember about them (a favourite food or drink, a sport or hobby); and basic profile facts (job, routine, equipment). A lasting like or habit counts even when it is mentioned in passing; what happened today does not.\n- \"kind\" is \"instruction\" for how the assistant should behave and \"fact\" for something true about the user.\n- \"explicit\" is true when the user states it directly (\"I am...\", \"always...\", \"never...\", \"call me...\") and false when it only comes up in passing or is implied.\n- \"project\" is one of the known labels when the item belongs to it, a new SHORT label (a few words) when the user starts something new, else null.\n- Never store identifiers: ID or card numbers, phone numbers, e-mail addresses, street addresses. If the user gives one, leave it out entirely.\n- Resolve relative times with the conversation date. \"Three months ago\", \"last month\", \"since last winter\", \"recently\" must become an absolute month and year (for example \"July 2026\"), because a relative time is wrong a month later. If it cannot be made absolute, leave the time out rather than keep a relative one.\n- Never copy text the user pasted in. At most one short fact saying what the user is doing with that text.\n\nCATEGORIES (closed list, use exactly these words)\n- condition: injuries, surgeries, diagnoses, ongoing pain or symptoms\n- restriction: anything about exercises, movements, loads, activities or body parts to avoid — whether the user states it as a fact about themselves (\"my knee cannot take squats\") or as an instruction to the assistant (\"do not suggest back exercises\"). When in doubt between restriction and style, choose restriction.\n- goal: something the user is working towards\n- preference: lasting likes and dislikes\n- profile: other stable facts about the user (job, routine, equipment, schedule)\n- style: only how the assistant should talk (how to address them, answer length, language). Never anything about exercises or the body.\n- project: something the user is pursuing, and the choices they settled for it\n\nHOW TO COMPARE WITH STORED FACTS\n- The user's new statement says again what is already stored: REPEAT it, using the stored id, never ADD it again. Give the project label when it has one.\n- The user's new statement changes or extends a stored fact: UPDATE it, using the stored id. Write the complete new text. When the old state matters, keep it briefly, for example \"now pain-free when walking (in July 2026: pain after 10 minutes)\".\n- The user says a stored fact is no longer true, or says to forget it: DELETE it, using the stored id.\n- The user says to forget everything: FORGET_ALL, alone.\n- A locked fact must never be updated or deleted. If the user contradicts a locked fact, ADD the user's new statement as a new fact instead.\n- Only use ids that appear in the stored facts. Never invent an id.\n- Do not repeat in an ADD a fact that is already stored.\n\nSTYLE OF EACH FACT\n- At most 8 operations in total, and each fact at most 300 characters.\n- One fact per operation. Several facts mean several operations.\n- Write each fact in the language the user wrote it in, as a short neutral statement about the user, understandable without the conversation (no \"she said\", no \"as above\").\n- Only what was said. Do not add details, causes, severity or advice.\n\nEXAMPLES (structure only; write facts in the user's own language)\nUser says they had a meniscus operation in May 2025 and nothing is stored:\n{\"operations\": [{\"op\": \"ADD\", \"kind\": \"fact\", \"fact\": \"Had meniscus surgery in May 2025\", \"category\": \"condition\", \"project\": null, \"explicit\": true}]}\nUser says \"call me Tri\" and stored fact f2 says \"Call me Du\":\n{\"operations\": [{\"op\": \"UPDATE\", \"id\": \"f2\", \"fact\": \"Call me Tri\", \"category\": \"style\", \"project\": null}]}\nUser says again they avoid deep squats and stored fact f1 says so:\n{\"operations\": [{\"op\": \"REPEAT\", \"id\": \"f1\", \"project\": null}]}\nUser says \"forget everything you noted about me\":\n{\"operations\": [{\"op\": \"FORGET_ALL\"}]}\nUser only chats, asks for a one-off routine, or the assistant guesses a diagnosis the user never confirmed:\n{\"operations\": []}\n",
+ "stats": {
+  "turn": {
+   "calls": 3,
+   "call_errors": 0,
+   "p50": 0.61,
+   "p95": 0.65,
+   "max": 0.65,
+   "conv_total_p50": 0.61,
+   "conv_total_p95": 0.65,
+   "conv_total_max": 0.65,
+   "empty": 0,
+   "empty_share": 0.0,
+   "expected_total": 3,
+   "found": 3,
+   "missed": 0,
+   "extras": 0,
+   "repeats": 0,
+   "acceptable": 0,
+   "category_mismatch": 0,
+   "forbidden_hits": 0,
+   "forbidden_in_dropped": 0,
+   "parse_failures": 0,
+   "truncations": 0,
+   "dropped": {},
+   "avg_in": 1787.3333333333333,
+   "avg_out": 35.0,
+   "max_out": 42,
+   "verdicts": {
+    "OK": 3,
+    "REVIEW": 0,
+    "FAIL": 0
+   }
+  }
+ },
+ "results": [
+  {
+   "id": "c27_vi_general_instruction",
+   "lang": "vi",
+   "date": "2026-10-14",
+   "stored": [],
+   "messages": [
+    {
+     "role": "user",
+     "content": "Từ giờ trả lời mình ngắn gọn thôi nhé."
+    },
+    {
+     "role": "assistant",
+     "content": "Rõ rồi, mình sẽ trả lời ngắn gọn."
+    }
+   ],
+   "expect": {
+    "ops": [
+     {
+      "op": "ADD",
+      "kind": "instruction",
+      "category": "style",
+      "groups": [
+       [
+        "ngắn gọn"
+       ]
+      ]
+     }
+    ],
+    "forbidden": []
+   },
+   "modes": {
+    "turn": {
+     "calls": [
+      {
+       "elapsed_s": 0.65,
+       "input_tokens": 1762,
+       "output_tokens": 42,
+       "parse_ok": true,
+       "truncated": false,
+       "error": null,
+       "finish_reason": "stop",
+       "model": "qwen/qwen3.8-27b",
+       "raw_content": "{\"operations\": [{\"op\": \"ADD\", \"kind\": \"instruction\", \"fact\": \"Trả lời ngắn gọn\", \"category\": \"style\", \"project\": null, \"explicit\": true}]}",
+       "returned_ops": [
+        {
+         "op": "ADD",
+         "kind": "instruction",
+         "fact": "Trả lời ngắn gọn",
+         "category": "style",
+         "project": null,
+         "explicit": true
+        }
+       ],
+       "kept_ops": [
+        {
+         "op": "ADD",
+         "kind": "instruction",
+         "fact": "Trả lời ngắn gọn",
+         "category": "style",
+         "project": null,
+         "explicit": true
+        }
+       ],
+       "dropped": [],
+       "turn": 1
+      }
+     ],
+     "score": {
+      "found": [
+       {
+        "expected": {
+         "op": "ADD",
+         "kind": "instruction",
+         "category": "style",
+         "groups": [
+          [
+           "ngắn gọn"
+          ]
+         ]
+        },
+        "got": {
+         "op": "ADD",
+         "kind": "instruction",
+         "fact": "Trả lời ngắn gọn",
+         "category": "style",
+         "project": null,
+         "explicit": true,
+         "turn": 1
+        }
+       }
+      ],
+      "missed": [],
+      "extras": [],
+      "repeats": [],
+      "acceptable": [],
+      "category_mismatch": [],
+      "forbidden_hits": [],
+      "forbidden_in_dropped": [],
+      "verdict": "OK"
+     },
+     "total_s": 0.65
+    }
+   }
+  },
+  {
+   "id": "c29_vi_repeat_stored",
+   "lang": "vi",
+   "date": "2026-10-14",
+   "stored": [
+    {
+     "id": "f1",
+     "fact": "Tránh ngồi xổm sâu",
+     "category": "restriction",
+     "locked": false
+    }
+   ],
+   "messages": [
+    {
+     "role": "user",
+     "content": "Bác sĩ dặn mình không được ngồi xổm sâu."
+    },
+    {
+     "role": "assistant",
+     "content": "Mình nhớ rồi, bạn tránh ngồi xổm sâu."
+    }
+   ],
+   "expect": {
+    "ops": [
+     {
+      "op": "REPEAT",
+      "id": "f1"
+     }
+    ],
+    "forbidden": []
+   },
+   "modes": {
+    "turn": {
+     "calls": [
+      {
+       "elapsed_s": 0.54,
+       "input_tokens": 1800,
+       "output_tokens": 24,
+       "parse_ok": true,
+       "truncated": false,
+       "error": null,
+       "finish_reason": "stop",
+       "model": "qwen/qwen3.8-27b",
+       "raw_content": "{\"operations\": [{\"op\": \"REPEAT\", \"id\": \"f1\", \"project\": null}]}",
+       "returned_ops": [
+        {
+         "op": "REPEAT",
+         "id": "f1",
+         "project": null
+        }
+       ],
+       "kept_ops": [
+        {
+         "op": "REPEAT",
+         "id": "f1",
+         "project": null
+        }
+       ],
+       "dropped": [],
+       "turn": 1
+      }
+     ],
+     "score": {
+      "found": [
+       {
+        "expected": {
+         "op": "REPEAT",
+         "id": "f1"
+        },
+        "got": {
+         "op": "REPEAT",
+         "id": "f1",
+         "project": null,
+         "turn": 1
+        }
+       }
+      ],
+      "missed": [],
+      "extras": [],
+      "repeats": [],
+      "acceptable": [],
+      "category_mismatch": [],
+      "forbidden_hits": [],
+      "forbidden_in_dropped": [],
+      "verdict": "OK"
+     },
+     "total_s": 0.54
+    }
+   }
+  },
+  {
+   "id": "c30_vi_rename",
+   "lang": "vi",
+   "date": "2026-10-14",
+   "stored": [
+    {
+     "id": "f1",
+     "fact": "Gọi tôi là Du",
+     "category": "style",
+     "locked": false
+    }
+   ],
+   "messages": [
+    {
+     "role": "user",
+     "content": "Thôi, từ giờ gọi tôi là Long nhé."
+    },
+    {
+     "role": "assistant",
+     "content": "Rõ rồi Long, mình sẽ gọi bạn là Long."
+    }
+   ],
+   "expect": {
+    "ops": [
+     {
+      "op": "UPDATE",
+      "id": "f1",
+      "category": "style",
+      "groups": [
+       [
+        "Long"
+       ]
+      ]
+     }
+    ],
+    "forbidden": [
+     "Du"
+    ]
+   },
+   "modes": {
+    "turn": {
+     "calls": [
+      {
+       "elapsed_s": 0.61,
+       "input_tokens": 1800,
+       "output_tokens": 39,
+       "parse_ok": true,
+       "truncated": false,
+       "error": null,
+       "finish_reason": "stop",
+       "model": "qwen/qwen3.8-27b",
+       "raw_content": "{\"operations\": [{\"op\": \"UPDATE\", \"id\": \"f1\", \"fact\": \"Gọi tôi là Long\", \"category\": \"style\", \"project\": null}]}",
+       "returned_ops": [
+        {
+         "op": "UPDATE",
+         "id": "f1",
+         "fact": "Gọi tôi là Long",
+         "category": "style",
+         "project": null
+        }
+       ],
+       "kept_ops": [
+        {
+         "op": "UPDATE",
+         "id": "f1",
+         "fact": "Gọi tôi là Long",
+         "category": "style",
+         "project": null
+        }
+       ],
+       "dropped": [],
+       "turn": 1
+      }
+     ],
+     "score": {
+      "found": [
+       {
+        "expected": {
+         "op": "UPDATE",
+         "id": "f1",
+         "category": "style",
+         "groups": [
+          [
+           "Long"
+          ]
+         ]
+        },
+        "got": {
+         "op": "UPDATE",
+         "id": "f1",
+         "fact": "Gọi tôi là Long",
+         "category": "style",
+         "project": null,
+         "turn": 1
+        }
+       }
+      ],
+      "missed": [],
+      "extras": [],
+      "repeats": [],
+      "acceptable": [],
+      "category_mismatch": [],
+      "forbidden_hits": [],
+      "forbidden_in_dropped": [],
+      "verdict": "OK"
+     },
+     "total_s": 0.61
+    }
+   }
+  }
+ ]
+}

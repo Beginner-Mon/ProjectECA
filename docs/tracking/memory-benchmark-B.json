@@ -1,5 +1,6 @@
 {
  "label": "B",
+ "model": "qwen/qwen3.8-27b via Groq",
  "stats": {
   "groups": {
    "a": {
@@ -1164,7 +1165,7 @@
       "lưng"
      ],
      "forbid": [],
-     "answer": "Do not suggest back exercises [instruction/t2/active]",
+     "answer": "Do not suggest back exercises [instruction/t1/active]",
      "answer_source": "db",
      "request_id": null,
      "error": null,
@@ -1578,6 +1579,84 @@
    "retry_invalid": true,
    "key_label": "llm=deepseek",
    "llm_calls": 1,
+   "turns": 7,
+   "probes": 12,
+   "quota_stops": []
+  },
+  {
+   "started_at": "2026-10-15T15:01:14+07:00",
+   "phase": "seed",
+   "only": [
+    "instr_general_g"
+   ],
+   "retry_invalid": false,
+   "key_label": "llm=deepseek",
+   "llm_calls": 3,
+   "turns": 7,
+   "probes": 12,
+   "quota_stops": []
+  },
+  {
+   "started_at": "2026-10-15T15:03:58+07:00",
+   "phase": "seed",
+   "only": [
+    "instr_project_g"
+   ],
+   "retry_invalid": false,
+   "key_label": "llm=deepseek",
+   "llm_calls": 3,
+   "turns": 7,
+   "probes": 12,
+   "quota_stops": []
+  },
+  {
+   "started_at": "2026-10-15T15:06:34+07:00",
+   "phase": "seed",
+   "only": [
+    "safe_once_h"
+   ],
+   "retry_invalid": false,
+   "key_label": "llm=deepseek",
+   "llm_calls": 1,
+   "turns": 7,
+   "probes": 12,
+   "quota_stops": []
+  },
+  {
+   "started_at": "2026-10-15T15:09:03+07:00",
+   "phase": "seed",
+   "only": [
+    "name_churn_i"
+   ],
+   "retry_invalid": false,
+   "key_label": "llm=deepseek",
+   "llm_calls": 3,
+   "turns": 7,
+   "probes": 12,
+   "quota_stops": []
+  },
+  {
+   "started_at": "2026-10-15T15:11:53+07:00",
+   "phase": "seed",
+   "only": [
+    "forget_j"
+   ],
+   "retry_invalid": false,
+   "key_label": "llm=deepseek",
+   "llm_calls": 2,
+   "turns": 7,
+   "probes": 12,
+   "quota_stops": []
+  },
+  {
+   "started_at": "2026-10-15T15:14:10+07:00",
+   "phase": "seed",
+   "only": [
+    "forget_all_j"
+   ],
+   "retry_invalid": false,
+   "key_label": "llm=deepseek",
+   "llm_calls": 2,
    "turns": 7,
    "probes": 12,
    "quota_stops": []

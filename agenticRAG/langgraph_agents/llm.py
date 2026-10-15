@@ -37,6 +37,7 @@ import threading
 import time
 from functools import lru_cache
 from typing import Any
+from urllib.parse import urlsplit
 
 from langchain_openai import ChatOpenAI
 from langgraph_agents.core.circuit_breaker import CircuitBreaker
@@ -326,7 +327,14 @@ def _eca_chat_model(role: str, *, temperature: float | None = None):
         })
         return get_fallback_chat_model(role, primary=True)
     base_url = os.getenv("DEEPSEEK_BASE_URL", _DEFAULT_BASE_URL)
-    extra_kwargs = {"extra_body": _ROLE_EXTRA_BODY[role]} if role in _ROLE_EXTRA_BODY else {}
+    # `thinking` is a DeepSeek-only field: other OpenAI-compatible hosts (Groq,
+    # used for benchmarks) reject it with 400 "property is unsupported".
+    on_deepseek = (urlsplit(base_url).hostname or "").endswith("deepseek.com")
+    extra_kwargs = (
+        {"extra_body": _ROLE_EXTRA_BODY[role]}
+        if on_deepseek and role in _ROLE_EXTRA_BODY
+        else {}
+    )
     model = ChatOpenAI(
         model=model_name,
         temperature=temp,

@@ -129,15 +129,22 @@ class _Script:
 
 
 def _stored_in(user_message: str) -> list[dict]:
-    block = user_message.split("Stored facts:\n", 1)[1].split("\n\nMessages to read", 1)[0]
-    return [] if block == "(none)" else json.loads(block)
+    """The stored rows the model was shown, both tiers, in prompt order."""
+    rows = []
+    for line in user_message.splitlines():
+        line = line.strip()
+        if line.startswith('{"id": "f'):
+            shown = json.loads(line)
+            rows.append({"id": shown["id"], "fact": shown["fact"],
+                         "category": shown.get("category"),
+                         "locked": shown.get("locked", False)})
+    return rows
 
 
-async def _extract(user_id: str, current: str, script: _Script, include_current: bool = True):
+async def _extract(user_id: str, current: str, script: _Script):
     from langgraph_agents.nodes import fact_extractor as fe
 
-    with patch.object(fe, "extraction_llm", return_value=script), \
-         patch.object(fe, "include_current_session", return_value=include_current):
+    with patch.object(fe, "extraction_llm", return_value=script):
         return await fe.extract_user_facts(user_id, current)
 
 
@@ -157,8 +164,12 @@ async def test_add_then_a_later_update_and_delete_and_the_marker_follows(pg):
                                           "lower back hurts when I sit for long.")
     answered = await _message(client, first, "assistant", "Thanks, I will keep that in mind.")
 
-    script = _Script([{"op": "ADD", "fact": _ACL, "category": "condition"},
-                      {"op": "ADD", "fact": _BACK, "category": "condition"}])
+    script = _Script([{"op": "ADD", "kind": "fact", "fact": _ACL,
+                       "category": "condition", "project": None,
+                       "explicit": True},
+                      {"op": "ADD", "kind": "fact", "fact": _BACK,
+                       "category": "condition", "project": None,
+                       "explicit": True}])
     summary = await _extract(user, first, script)
 
     assert (summary["llm_calls"], summary["added"]) == (1, 2)
@@ -180,7 +191,8 @@ async def test_add_then_a_later_update_and_delete_and_the_marker_follows(pg):
     said = await _message(client, second, "user", "My back is fine now, and the knee no "
                                                   "longer hurts when I walk.")
     script = _Script(lambda ids: [
-        {"op": "UPDATE", "id": ids[_ACL], "fact": _KNEE_NOW, "category": "condition"},
+        {"op": "UPDATE", "id": ids[_ACL], "fact": _KNEE_NOW, "category": "condition",
+         "project": None},
         {"op": "DELETE", "id": ids[_BACK]},
     ])
     summary = await _extract(user, second, script)
@@ -206,7 +218,8 @@ async def test_a_second_run_with_nothing_new_reads_nothing_and_calls_no_model(pg
     session = await _conversation(client, user)
     last = await _message(client, session, "user", "I work night shifts as a nurse.")
     await _extract(user, session, _Script(
-        [{"op": "ADD", "fact": "Works night shifts as a nurse", "category": "profile"}]))
+        [{"op": "ADD", "kind": "fact", "fact": "Works night shifts as a nurse",
+          "category": "profile", "project": None, "explicit": True}]))
 
     idle = _Script()
     summary = await _extract(user, session, idle)
@@ -231,7 +244,9 @@ async def test_long_backlog_is_read_over_several_runs_and_an_answer_alone_needs_
 
     # Run 1: the second message would pass 8,000 characters, so the slice is the
     # assistant message alone, and that needs no model.
-    script = _Script([{"op": "ADD", "fact": "Avoids running", "category": "restriction"}])
+    script = _Script([{"op": "ADD", "kind": "fact", "fact": "Avoids running",
+                       "category": "restriction", "project": None,
+                       "explicit": True}])
     summary = await _extract(user, session, script)
     assert (summary["conversations"], summary["llm_calls"]) == (1, 0)
     assert script.seen == [] and await _marker(client, session) == first
@@ -251,7 +266,7 @@ async def test_long_backlog_is_read_over_several_runs_and_an_answer_alone_needs_
 
 
 @pytest.mark.asyncio
-async def test_current_conversation_first_then_the_newest_two_per_run_only_unread(pg):
+async def test_conversations_are_read_most_recently_updated_first(pg):
     client, _ = pg
     user = await _user(pg)
     oldest = await _conversation(client, user)
@@ -261,30 +276,24 @@ async def test_current_conversation_first_then_the_newest_two_per_run_only_unrea
     newest = await _conversation(client, user)
     await _message(client, newest, "user", "said in the newest")
 
-    # The user is in the OLDEST one: it still comes first. One slot is left,
-    # and it goes to the most recently updated of the others.
+    # The current conversation reads like any other: most recently updated
+    # first, at most two per run.
     script = _Script([], [])
     summary = await _extract(user, oldest, script)
     assert summary["conversations"] == 2
-    assert "said in the oldest" in script.seen[0]
-    assert "said in the newest" in script.seen[1]
-    assert await _marker(client, middle) == 0
+    assert "said in the newest" in script.seen[0]
+    assert "said in the middle one" in script.seen[1]
+    assert await _marker(client, oldest) == 0
 
-    # The user moves to the newest one and says more. With the current
-    # conversation left out, only the middle one is read.
+    # The user says more in the newest one; it and the oldest are read next.
     said_later = await _message(client, newest, "user", "said later in the newest")
-    script = _Script([])
-    summary = await _extract(user, newest, script, include_current=False)
-    assert summary["conversations"] == 1
-    assert "said in the middle one" in script.seen[0]
-    assert await _marker(client, newest) < said_later
-
-    # Switched back on, the current conversation is read; then nothing is left.
-    script = _Script([])
-    assert (await _extract(user, newest, script))["conversations"] == 1
+    script = _Script([], [])
+    summary = await _extract(user, newest, script)
+    assert summary["conversations"] == 2
     assert "said later in the newest" in script.seen[0]
-    assert "said in the newest\n" not in script.seen[0]
+    assert "said in the oldest" in script.seen[1]
     assert await _marker(client, newest) == said_later
+
     assert (await _extract(user, newest, _Script()))["conversations"] == 0
 
 
@@ -300,7 +309,8 @@ async def test_a_fact_the_user_typed_survives_an_update_and_a_delete_aimed_at_it
     await _message(client, session, "user", "I do HIIT three times a week now.")
 
     script = _Script(lambda ids: [
-        {"op": "UPDATE", "id": ids[typed_text], "fact": "Does HIIT", "category": "preference"},
+        {"op": "UPDATE", "id": ids[typed_text], "fact": "Does HIIT",
+         "category": "preference", "project": None},
         {"op": "DELETE", "id": ids[typed_text]},
     ])
     summary = await _extract(user, session, script)
@@ -342,7 +352,9 @@ async def test_user_b_is_neither_read_nor_changed_when_running_as_user_a(pg):
     a_session = await _conversation(client, a)
     await _message(client, a_session, "user", "A said: I sprained my ankle last week.")
 
-    script = _Script([{"op": "ADD", "fact": "A: sprained ankle", "category": "condition"}])
+    script = _Script([{"op": "ADD", "kind": "fact", "fact": "A: sprained ankle",
+                       "category": "condition", "project": None,
+                       "explicit": True}])
     summary = await _extract(a, a_session, script)
     assert (summary["conversations"], summary["added"]) == (1, 1)
     assert _stored_in(script.seen[0]) == []
@@ -378,9 +390,12 @@ async def test_deleting_a_conversation_removes_its_facts_and_keeps_the_typed_one
     doomed = await _conversation(client, user)
     await _message(client, doomed, "user", "My right shoulder clicks when I lift.")
 
-    script = _Script([{"op": "ADD", "fact": "Right shoulder clicks when lifting",
-                       "category": "condition"}],
-                     [{"op": "ADD", "fact": "Wants to run 5 km by spring", "category": "goal"}])
+    script = _Script([{"op": "ADD", "kind": "fact",
+                        "fact": "Right shoulder clicks when lifting",
+                        "category": "condition", "project": None, "explicit": True}],
+                     [{"op": "ADD", "kind": "fact",
+                       "fact": "Wants to run 5 km by spring", "category": "goal",
+                       "project": None, "explicit": True}])
     summary = await _extract(user, doomed, script)
     assert summary["added"] == 2
     assert len(await _facts(client)) == 3
@@ -402,8 +417,10 @@ async def test_after_a_failed_call_the_marker_has_not_moved_and_the_next_run_ret
     assert await _marker(client, session) == 0
     assert await _facts(client) == {}
 
-    script = _Script([{"op": "ADD", "fact": "Had a left hip replacement in 2024",
-                       "category": "condition"}])
+    script = _Script([{"op": "ADD", "kind": "fact",
+                        "fact": "Had a left hip replacement in 2024",
+                        "category": "condition", "project": None,
+                        "explicit": True}])
     summary = await _extract(user, session, script)
     assert (summary["failed"], summary["added"]) == (0, 1)
     assert "[user] I had my left hip replaced in 2024." in script.seen[0]
@@ -422,10 +439,14 @@ async def test_the_memory_node_loads_the_extracted_facts_safety_first(pg):
     await _message(client, session, "user", "A few things about me.")
 
     await _extract(user, session, _Script([
-        {"op": "ADD", "fact": "Prefers short answers", "category": "preference"},
-        {"op": "ADD", "fact": "Has knee osteoarthritis", "category": "condition"},
-        {"op": "ADD", "fact": "Avoids deep squats", "category": "restriction"},
-        {"op": "ADD", "fact": "Wants to hike again", "category": "goal"},
+        {"op": "ADD", "kind": "fact", "fact": "Prefers short answers",
+         "category": "preference", "project": None, "explicit": True},
+        {"op": "ADD", "kind": "fact", "fact": "Has knee osteoarthritis",
+         "category": "condition", "project": None, "explicit": True},
+        {"op": "ADD", "kind": "fact", "fact": "Avoids deep squats",
+         "category": "restriction", "project": None, "explicit": True},
+        {"op": "ADD", "kind": "fact", "fact": "Wants to hike again",
+         "category": "goal", "project": None, "explicit": True},
     ]))
     # One of them is retired by a later conversation and must stop being loaded.
     later = await _conversation(client, user)

@@ -72,19 +72,28 @@ def _lower_nfc(s: str) -> str:
 
 
 def _apply_ops(stored: list[dict], kept: list[dict], counter: list[int]) -> list[dict]:
-    """Mang fact sang lượt sau (chế độ turn). ADD cấp id mới n1, n2, ..."""
+    """Mang fact sang lượt sau (chế độ turn). ADD cấp id mới n1, n2, ...
+
+    REPEAT giữ nguyên (nói lại điều đã có). FORGET_ALL chỉ giữ lại fact khoá
+    (user tự gõ)."""
     facts = [dict(f) for f in stored]
     for op in kept:
         if op["op"] == "ADD":
             counter[0] += 1
             facts.append({"id": f"n{counter[0]}", "fact": op["fact"],
-                          "category": op["category"], "locked": False})
+                          "category": op["category"],
+                          "kind": op.get("kind", "fact"),
+                          "project": op.get("project"), "locked": False})
         elif op["op"] == "UPDATE":
             for f in facts:
                 if f["id"] == op["id"]:
                     f["fact"], f["category"] = op["fact"], op["category"]
+                    if op.get("project") is not None:
+                        f["project"] = op["project"]
         elif op["op"] == "DELETE":
             facts = [f for f in facts if f["id"] != op["id"]]
+        elif op["op"] == "FORGET_ALL":
+            facts = [f for f in facts if f.get("locked")]
     return facts
 
 
@@ -181,6 +190,9 @@ def _score(expect: dict, ops: list[dict], dropped: list[dict]) -> dict[str, Any]
         if (exp.get("category") and ops[hit].get("category")
                 and exp["category"] != ops[hit]["category"]):
             category_mismatch.append({"expected": exp, "got": ops[hit]})
+        if (exp.get("kind") and ops[hit].get("kind")
+                and exp["kind"] != ops[hit]["kind"]):
+            category_mismatch.append({"expected": exp, "got": ops[hit]})
 
     extras: list[dict] = []
     repeats: list[dict] = []
@@ -197,7 +209,7 @@ def _score(expect: dict, ops: list[dict], dropped: list[dict]) -> dict[str, Any]
 
     hits: list[dict] = []
     for op in ops:
-        if op["op"] == "DELETE":
+        if "fact" not in op:
             continue
         text = _lower_nfc(op["fact"])
         for phrase in forbidden:
@@ -225,6 +237,21 @@ def _score(expect: dict, ops: list[dict], dropped: list[dict]) -> dict[str, Any]
 
 
 # ── Chạy một hội thoại ───────────────────────────────────────────────────
+
+def _split_tiers(stored: list[dict]) -> tuple[list, list, list]:
+    """Chia stored thành (tier1, tier2, project labels) cho prompt mới."""
+    tier1 = [dict(f, kind=f.get("kind", "fact"), project=f.get("project"),
+                  tier=1) for f in stored if f.get("tier", 2) == 1]
+    tier2 = [dict(f, kind=f.get("kind", "fact"), project=f.get("project"),
+                  tier=2) for f in stored if f.get("tier", 2) != 1]
+    projects = sorted({f["project"] for f in tier2 if f.get("project")})
+    return tier1, tier2, projects
+
+
+def _render(date: str, stored: list[dict], msgs: list[dict], scope: str) -> str:
+    tier1, tier2, projects = _split_tiers(stored)
+    return render_user_message(date, tier1, tier2, projects, msgs, scope)
+
 
 def _pairs(messages: list[dict]) -> list[list[dict]]:
     return [messages[i:i + 2] for i in range(0, len(messages), 2)]
@@ -254,8 +281,8 @@ async def _run_conv(structured_llm: Any, conv: dict, modes: list[str]
                            "expect": conv["expect"], "modes": {}}
 
     if "session" in modes:
-        msg = render_user_message(conv["date"], stored, conv["messages"],
-                                  "a whole conversation")
+        msg = _render(conv["date"], stored, conv["messages"],
+                      "a whole conversation")
         call = await _call(structured_llm, msg, stored)
         sc = _score(conv["expect"], call["kept_ops"], call["dropped"])
         out["modes"]["session"] = {"calls": [call], "score": sc,
@@ -268,7 +295,7 @@ async def _run_conv(structured_llm: Any, conv: dict, modes: list[str]
         all_ops: list[dict] = []
         all_dropped: list[dict] = []
         for n, pair in enumerate(_pairs(conv["messages"]), start=1):
-            msg = render_user_message(
+            msg = _render(
                 conv["date"], facts, pair,
                 f"one turn, number {n}: a user message and the assistant's reply")
             call = await _call(structured_llm, msg, facts)
@@ -289,7 +316,7 @@ async def _run_conv(structured_llm: Any, conv: dict, modes: list[str]
         all_ops = []
         all_dropped = []
         for n, (sl, scope) in enumerate(_live_slices(conv["messages"]), start=1):
-            msg = render_user_message(conv["date"], facts, sl, scope)
+            msg = _render(conv["date"], facts, sl, scope)
             call = await _call(structured_llm, msg, facts)
             call["turn"] = n
             calls.append(call)
@@ -367,9 +394,14 @@ def _mode_stats(results: list[dict], mode: str) -> dict[str, Any]:
 def _op_str(op: dict) -> str:
     if op["op"] == "DELETE":
         return f"DELETE {op['id']}"
+    if op["op"] == "REPEAT":
+        return f"REPEAT {op['id']}"
+    if op["op"] == "FORGET_ALL":
+        return "FORGET_ALL"
     ident = f" {op['id']}" if op["op"] == "UPDATE" else ""
     turn = f" (lượt {op['turn']})" if op.get("turn") else ""
-    return f"{op['op']}{ident} [{op['category']}] \"{op['fact']}\"{turn}"
+    kind = f"{op.get('kind')}/" if op.get("kind") else ""
+    return f"{op['op']}{ident} [{kind}{op['category']}] \"{op['fact']}\"{turn}"
 
 
 def _exp_str(e: dict) -> str:

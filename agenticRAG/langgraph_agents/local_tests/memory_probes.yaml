@@ -420,3 +420,98 @@ probes:
     expect:
       ops: []
       forbidden: ["hiking", "hike", "trail"]
+  - id: c27_vi_general_instruction
+    lang: vi
+    date: "2026-10-14"
+    stored: []
+    messages:
+      - {role: user, content: "Từ giờ trả lời mình ngắn gọn thôi nhé."}
+      - {role: assistant, content: "Rõ rồi, mình sẽ trả lời ngắn gọn."}
+    expect:
+      ops:
+        - op: ADD
+          kind: instruction
+          category: style
+          groups: [["ngắn gọn"]]
+      forbidden: []
+  - id: c28_en_project_instruction
+    lang: en
+    date: "2026-10-14"
+    stored: []
+    messages:
+      - {role: user, content: "For my marathon training, always suggest low-impact cross-training on rest days."}
+      - {role: assistant, content: "Got it, low-impact cross-training on rest days for your marathon prep."}
+    expect:
+      ops:
+        - op: ADD
+          kind: instruction
+          category: project
+          groups: [["marathon"], ["low-impact", "low impact"]]
+      forbidden: []
+  - id: c29_vi_repeat_stored
+    lang: vi
+    date: "2026-10-14"
+    stored:
+      - {id: f1, fact: "Tránh ngồi xổm sâu", category: restriction, locked: false}
+    messages:
+      - {role: user, content: "Bác sĩ dặn mình không được ngồi xổm sâu."}
+      - {role: assistant, content: "Mình nhớ rồi, bạn tránh ngồi xổm sâu."}
+    expect:
+      ops:
+        - op: REPEAT
+          id: f1
+      forbidden: []
+  - id: c30_vi_rename
+    lang: vi
+    date: "2026-10-14"
+    stored:
+      - {id: f1, fact: "Gọi tôi là Du", category: style, locked: false}
+    messages:
+      - {role: user, content: "Thôi, từ giờ gọi tôi là Long nhé."}
+      - {role: assistant, content: "Rõ rồi Long, mình sẽ gọi bạn là Long."}
+    expect:
+      ops:
+        - op: UPDATE
+          id: f1
+          category: style
+          groups: [["Long"]]
+      forbidden: ["Du"]
+  - id: c31_en_forget_all
+    lang: en
+    date: "2026-10-14"
+    stored:
+      - {id: f1, fact: "Prefers morning sessions", category: preference, locked: false}
+      - {id: f2, fact: "Allergic to latex", category: condition, locked: false}
+    messages:
+      - {role: user, content: "Please forget everything you noted about me."}
+      - {role: assistant, content: "Done, I have forgotten what I noted."}
+    expect:
+      ops:
+        - op: FORGET_ALL
+      forbidden: []
+  - id: c32_vi_accepted_plan
+    lang: vi
+    date: "2026-10-14"
+    stored: []
+    messages:
+      - {role: user, content: "Mình quyết định tập chạy 5km vào mùa xuân, mỗi tuần 3 buổi sáng. Bạn thấy sao?"}
+      - {role: assistant, content: "Kế hoạch hợp lý đó! 3 buổi sáng mỗi tuần vừa sức, nhớ tăng dần quãng đường."}
+      - {role: user, content: "Ừ, chốt vậy nhé."}
+      - {role: assistant, content: "Chốt nhé, chúc bạn tập vui!"}
+    expect:
+      ops:
+        - op: ADD
+          kind: fact
+          category: project
+          groups: [["5km", "5 km"], ["mùa xuân"]]
+      forbidden: []
+  - id: c33_vi_session_only_decision
+    lang: vi
+    date: "2026-10-14"
+    stored: []
+    messages:
+      - {role: user, content: "Hôm nay mình tập bài 1 trước nhé, mai tính tiếp."}
+      - {role: assistant, content: "Được thôi, hôm nay tập bài 1 trước."}
+    expect:
+      ops: []
+      forbidden: []

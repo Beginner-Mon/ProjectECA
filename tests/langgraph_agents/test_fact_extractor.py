@@ -60,18 +60,22 @@ def test_an_env_value_that_is_neither_0_nor_1_falls_back_to_the_yaml(monkeypatch
         assert fe.enabled() is False
 
 
-def test_include_current_session_defaults_to_on_and_follows_the_yaml():
+def test_policy_thresholds_default_to_the_plan_values():
     with patch.object(fe, "_memory_config", return_value={}):
-        assert fe.include_current_session() is True
-    with patch.object(fe, "_memory_config",
-                      return_value={"ltm_include_current_session": False}):
-        assert fe.include_current_session() is False
+        assert fe._policy_defaults() == {
+            "promote_fact_at": 2, "promote_instruction_at": 3,
+            "candidate_ttl_days": 60, "forget_purge_days": 30,
+        }
+    with patch.object(fe, "_memory_config", return_value={
+            "promote_fact_at": 5, "forget_purge_days": 7}):
+        policy = fe._policy_defaults()
+        assert (policy["promote_fact_at"], policy["forget_purge_days"]) == (5, 7)
+        assert policy["promote_instruction_at"] == 3
 
 
-def test_the_shipped_yaml_has_extraction_off_and_the_current_conversation_included(monkeypatch):
+def test_the_shipped_yaml_has_extraction_off(monkeypatch):
     monkeypatch.delenv("VVA_LTM", raising=False)
     assert fe.enabled() is False
-    assert fe.include_current_session() is True
 
 
 # ── housekeep ─────────────────────────────────────────────────────────────────
@@ -142,17 +146,24 @@ def _msg(seq, role, content, session=_CURRENT, marker=0, at=_AT):
             "role": role, "content": content, "created_at": at}
 
 
-def _fact(text, category="condition", source="extracted", fact_id=None):
+def _fact(text, category="condition", source="extracted", fact_id=None,
+          kind="fact", tier=2, status="active", project=None):
     return {"id": fact_id or uuid.uuid4(), "fact_text": text,
-            "category": category, "source": source}
+            "category": category, "source": source, "kind": kind, "tier": tier,
+            "status": status, "project": project, "seen_count": 1,
+            "seen_projects": [project or ""],
+            "last_seen_session_id": None, "said_at": _AT}
 
 
 _TAGS = {"_MARK_SQL": "UPDATE 1", "_ADD_SQL": "INSERT 0 1",
-         "_UPDATE_SQL": "UPDATE 1", "_RETIRE_SQL": "UPDATE 1"}
+         "_UPDATE_SQL": "UPDATE 1", "_REPEAT_SQL": "UPDATE 1",
+         "_HIDE_SQL": "UPDATE 1", "_FORGET_ALL_SQL": "UPDATE 5",
+         "_PURGE_SQL": "DELETE 0"}
 
 
 def _name(sql):
-    for name in ("_UNREAD_SQL", "_FACTS_SQL", *_TAGS):
+    for name in ("_UNREAD_SQL", "_TIER1_SQL", "_TIER2_SQL", "_PROJECTS_SQL",
+                 *_TAGS):
         if sql is getattr(fe, name):
             return name
     raise AssertionError(f"a statement this module does not own: {sql!r}")
@@ -181,7 +192,14 @@ class _Pg:
     async def fetch(self, sql, *args):
         name = _name(sql)
         self.calls.append((name, args))
-        return self.unread if name == "_UNREAD_SQL" else self.facts
+        if name == "_UNREAD_SQL":
+            return self.unread
+        if name == "_TIER1_SQL":
+            return [f for f in self.facts if f["tier"] == 1]
+        if name == "_TIER2_SQL":
+            return [f for f in self.facts if f["tier"] == 2]
+        return [{"project": p} for p in
+                sorted({f["project"] for f in self.facts if f["project"]})]
 
     async def execute(self, sql, *args):
         name = _name(sql)
@@ -219,11 +237,10 @@ def _llm(*answers):
     return llm
 
 
-async def _run(pg, llm=None, include_current=True):
+async def _run(pg, llm=None):
     llm = llm or _llm()
     with patch.object(fe, "get_pg_client", return_value=pg), \
-         patch.object(fe, "extraction_llm", return_value=llm), \
-         patch.object(fe, "include_current_session", return_value=include_current):
+         patch.object(fe, "extraction_llm", return_value=llm):
         summary = await fe.extract_user_facts(_USER, _CURRENT)
     return summary, llm
 
@@ -235,9 +252,21 @@ def _user_message(llm, call=0):
     return user[1]
 
 
-def _stored_in(user_message):
-    block = user_message.split("Stored facts:\n", 1)[1].split("\n\nMessages to read", 1)[0]
-    return [] if block == "(none)" else json.loads(block)
+def _tier_in(user_message, tier):
+    block = user_message.split(
+        "Standing instructions (apply in every conversation):\n", 1)[1]
+    block = block.split("\n\nOther stored facts, newest first:\n", 1)
+    standing, rest = block[0], block[1]
+    others = rest.split("\n\nKnown project labels:", 1)[0]
+    return standing if tier == 1 else others
+
+
+def _stored_ids(user_message, tier):
+    import json as _json
+    block = _tier_in(user_message, tier)
+    if block == "(none)":
+        return []
+    return [_json.loads(line)["id"] for line in block.split("\n")]
 
 
 def _formatted(records):
@@ -252,27 +281,26 @@ def _done(records):
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("include_current", [True, False])
-async def test_one_read_selects_the_conversations_and_their_unread_messages(include_current):
+async def test_one_read_selects_the_conversations_and_their_unread_messages():
     pg = _Pg([])
-    summary, llm = await _run(pg, include_current=include_current)
-    assert pg.calls == [("_UNREAD_SQL", (_USER, _CURRENT, include_current,
-                                         fe._MAX_CONVERSATIONS, fe._SLICE_MAX_ROWS))]
+    summary, llm = await _run(pg)
+    assert pg.calls == [("_UNREAD_SQL", (_USER, _CURRENT,
+                                         fe._MAX_CONVERSATIONS, fe._SLICE_MAX_ROWS)),
+                        ("_PURGE_SQL", (_USER, 60, 30))]
     assert fe._MAX_CONVERSATIONS == 2
     llm.ainvoke.assert_not_awaited()
     assert summary["conversations"] == 0 and summary["llm_calls"] == 0
+    assert summary["purged"] == 0
 
 
-def test_the_read_takes_unread_conversations_the_current_one_first_then_the_newest():
+def test_the_read_takes_unread_conversations_most_recently_updated_first():
     sql = " ".join(fe._UNREAD_SQL.split())
     assert "c.user_id = $1" in sql
-    # Absent when the include switch is off, first when it is on.
-    assert "($3::boolean OR c.session_id <> $2)" in sql
-    assert sql.count("ORDER BY (c.session_id = $2) DESC, c.updated_at DESC") == 2
+    assert "ORDER BY c.updated_at DESC" in sql
     assert "m.seq_id > c.ltm_up_to_seq" in sql and "EXISTS" in sql
-    assert "LIMIT $4" in sql
+    assert "LIMIT $2" in sql
     # Each conversation's messages oldest first, a bounded number of them.
-    assert "ORDER BY m.seq_id LIMIT $5" in sql
+    assert "ORDER BY m.seq_id LIMIT $3" in sql
 
 
 @pytest.mark.asyncio
@@ -335,11 +363,13 @@ async def test_a_slice_with_no_user_message_costs_one_read_and_one_write(caplog)
         summary, llm = await _run(pg)
     llm.ainvoke.assert_not_awaited()
     assert pg.calls == [
-        ("_UNREAD_SQL", (_USER, _CURRENT, True, fe._MAX_CONVERSATIONS, fe._SLICE_MAX_ROWS)),
+        ("_UNREAD_SQL", (_USER, _CURRENT, fe._MAX_CONVERSATIONS, fe._SLICE_MAX_ROWS)),
         ("_MARK_SQL", (_CURRENT, _USER, 11, 12)),
+        ("_PURGE_SQL", (_USER, 60, 30)),
     ]
     assert summary == {"conversations": 1, "llm_calls": 0, "failed": 0,
-                       "added": 0, "updated": 0, "deleted": 0}
+                       "added": 0, "updated": 0, "deleted": 0, "repeated": 0,
+                       "purged": 0}
     (done,) = _done(caplog.records)
     assert done.llm_called is False and done.message_count == 1
 
@@ -359,16 +389,14 @@ async def test_the_model_gets_the_date_the_stored_facts_and_the_labelled_message
         facts=[typed, extracted])
     _, llm = await _run(pg, _llm([]))
 
-    assert pg.names()[:2] == ["_UNREAD_SQL", "_FACTS_SQL"]
-    assert pg.calls[1] == ("_FACTS_SQL", (_USER, 50))
+    assert pg.names()[:4] == ["_UNREAD_SQL", "_TIER1_SQL", "_TIER2_SQL",
+                              "_PROJECTS_SQL"]
+    assert pg.calls[2] == ("_TIER2_SQL", (_USER, 60))
     message = _user_message(llm)
     assert message.startswith("Conversation date: 2026-10-12\n")
-    assert _stored_in(message) == [
-        {"id": "f1", "fact": "Prefers low-impact exercise", "category": "preference",
-         "locked": True},
-        {"id": "f2", "fact": "Has lower back pain", "category": "condition",
-         "locked": False},
-    ]
+    assert _stored_ids(message, 1) == []
+    assert _stored_ids(message, 2) == ["f1", "f2"]
+    assert '"locked": true' in _tier_in(message, 2)
     assert "[assistant] How is your back?\n[user] My back is fine now" in message
     assert message.endswith("Reply with the JSON object only.")
     # No database id reaches the model: it answers with the short ones.
@@ -385,10 +413,14 @@ async def test_the_scope_line_says_whether_the_conversation_is_read_from_its_sta
 
 
 def test_the_stored_facts_read_is_the_users_valid_facts_safety_first():
-    sql = " ".join(fe._FACTS_SQL.split())
-    assert "WHERE user_id = $1 AND valid = true" in sql and "LIMIT $2" in sql
-    assert sql.index("'restriction'") < sql.index("'condition'")
-    assert fe._MAX_STORED_FACTS == 50
+    tier1 = " ".join(fe._TIER1_SQL.split())
+    assert "WHERE user_id = $1 AND valid = true AND tier = 1" in tier1
+    assert tier1.index("'restriction'") < tier1.index("'condition'")
+    assert "said_at DESC" in tier1
+    tier2 = " ".join(fe._TIER2_SQL.split())
+    assert "WHERE user_id = $1 AND valid = true AND tier = 2" in tier2
+    assert "ORDER BY said_at DESC" in tier2 and "LIMIT $2" in tier2
+    assert fe._MAX_TIER2_SHOWN == 60
 
 
 def test_the_model_is_the_memory_role_answering_in_json_mode():
@@ -405,67 +437,88 @@ def test_the_model_is_the_memory_role_answering_in_json_mode():
 
 
 @pytest.mark.asyncio
-async def test_add_update_delete_and_the_marker_go_in_one_transaction(caplog):
+async def test_add_update_repeat_delete_and_the_marker_go_in_one_transaction(caplog):
     back = _fact("Has lower back pain", "condition")
     knee = _fact("Left knee hurts after 10 minutes of walking", "condition")
     pg = _Pg([_msg(21, "assistant", "noted", marker=20), _msg(22, "user", "an update", marker=20)],
              facts=[back, knee])
     ops = [
-        {"op": "ADD", "fact": " Wants to run 5 km by spring ", "category": "goal"},
+        {"op": "ADD", "kind": "fact", "fact": " Wants to run 5 km by spring ",
+         "category": "goal", "project": None, "explicit": True},
         {"op": "UPDATE", "id": "f2", "fact": "Left knee is pain-free when walking",
-         "category": "condition"},
+         "category": "condition", "project": None},
+        {"op": "REPEAT", "id": "f1", "project": None},
         {"op": "DELETE", "id": "f1"},
     ]
     with caplog.at_level(logging.INFO, logger="langgraph.fact_extractor"):
         summary, _ = await _run(pg, _llm(ops))
 
-    assert pg.names() == ["_UNREAD_SQL", "_FACTS_SQL", "transaction"]
+    assert pg.names() == ["_UNREAD_SQL", "_TIER1_SQL", "_TIER2_SQL",
+                          "_PROJECTS_SQL", "transaction", "_PURGE_SQL"]
     (conn,) = pg.transactions
     assert conn.statements == [
         ("_MARK_SQL", (_CURRENT, _USER, 20, 22)),
-        ("_ADD_SQL", (_USER, "Wants to run 5 km by spring", "goal", _CURRENT)),
+        ("_ADD_SQL", (_USER, "Wants to run 5 km by spring", "goal", "fact",
+                      2, "active", None, 1, [""], _CURRENT)),
         ("_UPDATE_SQL", (knee["id"], _USER, "Left knee is pain-free when walking",
-                         "condition", _CURRENT)),
-        ("_RETIRE_SQL", (back["id"], _USER)),
+                         "condition", None, 2, "active", 1, [""], _CURRENT)),
+        ("_REPEAT_SQL", (back["id"], _USER, 2, ["", ""], _CURRENT,
+                         2, "active", None)),
+        ("_HIDE_SQL", (back["id"], _USER)),
     ]
     assert summary == {"conversations": 1, "llm_calls": 1, "failed": 0,
-                       "added": 1, "updated": 1, "deleted": 1}
+                       "added": 1, "updated": 1, "deleted": 1, "repeated": 1,
+                       "purged": 0}
     (done,) = _done(caplog.records)
-    assert (done.added, done.updated, done.deleted) == (1, 1, 1)
+    assert (done.added, done.updated, done.deleted, done.repeated) == (1, 1, 1, 1)
     assert done.session_id == _CURRENT and done.llm_called is True
     assert done.message_count == 2 and done.char_count == len("noted") + len("an update")
     assert done.dropped == {} and done.elapsed_ms >= 0
 
 
 def test_the_writes_are_scoped_to_the_user_and_to_extracted_facts():
-    add, update, retire, mark = (" ".join(s.split()) for s in (
-        fe._ADD_SQL, fe._UPDATE_SQL, fe._RETIRE_SQL, fe._MARK_SQL))
+    stmts = {name: " ".join(getattr(fe, name).split()) for name in (
+        "_ADD_SQL", "_UPDATE_SQL", "_REPEAT_SQL", "_HIDE_SQL",
+        "_FORGET_ALL_SQL", "_PURGE_SQL", "_MARK_SQL")}
+    add = stmts["_ADD_SQL"]
     assert "INSERT INTO user_memory" in add and "'extracted'" in add
-    assert "source_session_id" in add
-    for sql in (update, retire):
+    assert "source_session_id" in add and "last_seen_session_id" in add
+    assert "said_at, updated_at" in add
+    for name in ("_UPDATE_SQL", "_REPEAT_SQL", "_HIDE_SQL"):
+        sql = stmts[name]
         assert sql.startswith("UPDATE user_memory SET")
         assert "WHERE id = $1::uuid AND user_id = $2::uuid AND source = 'extracted'" in sql
         assert "updated_at = now()" in sql
-    assert "fact_text = $3" in update and "category = $4" in update
-    assert "source_session_id = $5::uuid" in update
-    # Retiring a fact never removes the row.
-    assert "valid = false" in retire
-    assert not any("DELETE FROM" in sql for sql in (add, update, retire, mark))
-    assert mark.startswith("UPDATE conversations SET ltm_up_to_seq = $4")
-    assert "session_id = $1::uuid AND user_id = $2::uuid" in mark
+    assert "fact_text = $3" in stmts["_UPDATE_SQL"]
+    assert "category = $4" in stmts["_UPDATE_SQL"]
+    # Hiding a fact never removes the row; only the purge deletes.
+    assert "valid = false" in stmts["_HIDE_SQL"]
+    assert "valid = false" in stmts["_FORGET_ALL_SQL"]
+    assert "source = 'extracted'" in stmts["_FORGET_ALL_SQL"]
+    assert "status = 'candidate'" in stmts["_PURGE_SQL"]
+    assert "valid = false" in stmts["_PURGE_SQL"]
+    assert not any("DELETE FROM" in stmts[n]
+                   for n in ("_ADD_SQL", "_UPDATE_SQL", "_REPEAT_SQL",
+                             "_HIDE_SQL", "_MARK_SQL"))
+    assert stmts["_MARK_SQL"].startswith("UPDATE conversations SET ltm_up_to_seq = $4")
+    assert "session_id = $1::uuid AND user_id = $2::uuid" in stmts["_MARK_SQL"]
 
 
 @pytest.mark.asyncio
 async def test_an_add_identical_to_a_stored_fact_is_skipped(caplog):
     pg = _Pg([_msg(2, "user", "again", marker=1)],
              facts=[_fact("Has lower back pain", source="user")])
-    ops = [{"op": "ADD", "fact": "Has lower back pain", "category": "condition"},
-           {"op": "ADD", "fact": "Works night shifts", "category": "profile"},
-           {"op": "ADD", "fact": "Works night shifts", "category": "profile"}]
+    ops = [{"op": "ADD", "kind": "fact", "fact": "Has lower back pain",
+            "category": "condition", "project": None, "explicit": True},
+           {"op": "ADD", "kind": "fact", "fact": "Works night shifts",
+            "category": "profile", "project": None, "explicit": True},
+           {"op": "ADD", "kind": "fact", "fact": "Works night shifts",
+            "category": "profile", "project": None, "explicit": True}]
     with caplog.at_level(logging.INFO, logger="langgraph.fact_extractor"):
         summary, _ = await _run(pg, _llm(ops))
     adds = [args for name, args in pg.transactions[0].statements if name == "_ADD_SQL"]
-    assert adds == [(_USER, "Works night shifts", "profile", _CURRENT)]
+    assert adds == [(_USER, "Works night shifts", "profile", "fact",
+                     2, "active", None, 1, [""], _CURRENT)]
     assert summary["added"] == 1
     assert _done(caplog.records)[0].dropped == {"duplicate": 2}
 
@@ -474,28 +527,42 @@ async def test_an_add_identical_to_a_stored_fact_is_skipped(caplog):
 async def test_update_and_delete_never_reach_a_typed_fact_or_an_unknown_id(caplog):
     typed = _fact("Prefers low-impact exercise", "preference", source="user")
     pg = _Pg([_msg(2, "user", "I do HIIT now", marker=1)], facts=[typed])
-    ops = [{"op": "UPDATE", "id": "f1", "fact": "Does HIIT", "category": "preference"},
+    ops = [{"op": "UPDATE", "id": "f1", "fact": "Does HIIT", "category": "preference",
+            "project": None},
            {"op": "DELETE", "id": "f1"},
-           {"op": "UPDATE", "id": "f9", "fact": "Does HIIT", "category": "preference"},
+           {"op": "REPEAT", "id": "f1", "project": None},
+           {"op": "UPDATE", "id": "f9", "fact": "Does HIIT", "category": "preference",
+            "project": None},
            {"op": "DELETE", "id": str(typed["id"])}]
     with caplog.at_level(logging.INFO, logger="langgraph.fact_extractor"):
         summary, _ = await _run(pg, _llm(ops))
     assert pg.transactions[0].statements == [("_MARK_SQL", (_CURRENT, _USER, 1, 2))]
     assert (summary["updated"], summary["deleted"]) == (0, 0)
-    assert _done(caplog.records)[0].dropped == {"locked_id": 2, "unknown_id": 2}
+    assert _done(caplog.records)[0].dropped == {"locked_id": 3, "unknown_id": 2}
 
 
 @pytest.mark.asyncio
 async def test_the_checks_drop_and_count_what_breaks_a_limit(caplog):
     pg = _Pg([_msg(2, "user", "a lot", marker=1)])
     ops = [
-        {"op": "ADD", "fact": "x" * 301, "category": "profile"},
-        {"op": "ADD", "fact": "Likes swimming", "category": "hobby"},
-        {"op": "ADD", "fact": "Phone is 0912 345 678", "category": "profile"},
-        {"op": "ADD", "fact": "Mail me at someone@example.com", "category": "profile"},
-        {"op": "ADD", "fact": "Had knee surgery on 12/07/2026", "category": "condition"},
-        {"op": "ADD", "fact": "Sixth operation", "category": "profile"},
-        {"op": "ADD", "fact": "Seventh operation", "category": "profile"},
+        {"op": "ADD", "kind": "fact", "fact": "x" * 301, "category": "profile",
+         "project": None, "explicit": True},
+        {"op": "ADD", "kind": "fact", "fact": "Likes swimming", "category": "hobby",
+         "project": None, "explicit": True},
+        {"op": "ADD", "kind": "fact", "fact": "Phone is 0912 345 678",
+         "category": "profile", "project": None, "explicit": True},
+        {"op": "ADD", "kind": "fact", "fact": "Mail me at someone@example.com",
+         "category": "profile", "project": None, "explicit": True},
+        {"op": "ADD", "kind": "fact", "fact": "Had knee surgery on 12/07/2026",
+         "category": "condition", "project": None, "explicit": True},
+        {"op": "ADD", "kind": "note", "fact": "A note", "category": "profile",
+         "project": None, "explicit": True},
+        {"op": "ADD", "kind": "fact", "fact": "Long project label",
+         "category": "profile", "project": "P" * 61, "explicit": True},
+        {"op": "ADD", "kind": "fact", "fact": "Said out loud",
+         "category": "profile", "project": None, "explicit": "yes"},
+        {"op": "ADD", "kind": "fact", "fact": "Ninth operation",
+         "category": "profile", "project": None, "explicit": True},
     ]
     with caplog.at_level(logging.INFO, logger="langgraph.fact_extractor"):
         summary, _ = await _run(pg, _llm(ops))
@@ -503,24 +570,29 @@ async def test_the_checks_drop_and_count_what_breaks_a_limit(caplog):
     assert adds == ["Had knee surgery on 12/07/2026"]
     assert summary["added"] == 1
     assert _done(caplog.records)[0].dropped == {
-        "too_long": 1, "bad_category": 1, "identifier": 2, "over_limit": 2}
+        "too_long": 1, "bad_category": 1, "identifier": 2, "bad_kind": 1,
+        "bad_project": 1, "bad_explicit": 1, "over_limit": 1}
 
 
 @pytest.mark.asyncio
 async def test_a_fact_of_exactly_300_characters_is_kept():
     pg = _Pg([_msg(2, "user", "long", marker=1)])
-    summary, _ = await _run(pg, _llm([{"op": "ADD", "fact": "y" * 300, "category": "profile"}]))
-    assert summary["added"] == 1 and fe.MAX_FACT_CHARS == 300 and fe.MAX_OPS == 5
-    assert fe.CATEGORIES == ("condition", "restriction", "goal", "preference", "profile")
+    summary, _ = await _run(pg, _llm([{"op": "ADD", "kind": "fact", "fact": "y" * 300,
+                                       "category": "profile", "project": None,
+                                       "explicit": True}]))
+    assert summary["added"] == 1 and fe.MAX_FACT_CHARS == 300 and fe.MAX_OPS == 8
+    assert fe.CATEGORIES == ("condition", "restriction", "goal", "preference",
+                             "profile", "style", "project")
 
 
 @pytest.mark.asyncio
 async def test_a_write_that_touches_no_row_is_not_counted_as_applied(caplog):
     gone = _fact("Has lower back pain")
     pg = _Pg([_msg(2, "user", "fine now", marker=1)], facts=[gone],
-             tags={"_RETIRE_SQL": "UPDATE 0", "_ADD_SQL": "INSERT 0 0"})
+             tags={"_HIDE_SQL": "UPDATE 0", "_ADD_SQL": "INSERT 0 0"})
     ops = [{"op": "DELETE", "id": "f1"},
-           {"op": "ADD", "fact": "Stored beyond the fifty shown", "category": "profile"}]
+           {"op": "ADD", "kind": "fact", "fact": "Stored beyond the sixty shown",
+            "category": "profile", "project": None, "explicit": True}]
     with caplog.at_level(logging.INFO, logger="langgraph.fact_extractor"):
         summary, _ = await _run(pg, _llm(ops))
     assert (summary["added"], summary["deleted"]) == (0, 0)
@@ -530,7 +602,8 @@ async def test_a_write_that_touches_no_row_is_not_counted_as_applied(caplog):
 @pytest.mark.asyncio
 async def test_a_conversation_another_run_already_read_is_left_alone(caplog):
     pg = _Pg([_msg(2, "user", "I had knee surgery", marker=1)], tags={"_MARK_SQL": "UPDATE 0"})
-    ops = [{"op": "ADD", "fact": "Had knee surgery", "category": "condition"}]
+    ops = [{"op": "ADD", "kind": "fact", "fact": "Had knee surgery",
+            "category": "condition", "project": None, "explicit": True}]
     with caplog.at_level(logging.INFO, logger="langgraph.fact_extractor"):
         summary, _ = await _run(pg, _llm(ops))
     assert pg.transactions[0].statements == [("_MARK_SQL", (_CURRENT, _USER, 1, 2))]
@@ -557,10 +630,12 @@ async def test_a_failed_call_writes_nothing_and_leaves_the_marker(caplog, answer
     with caplog.at_level(logging.DEBUG):
         summary, llm = await _run(pg, _llm(answer))
     assert llm.ainvoke.await_count == 1
-    assert pg.names() == ["_UNREAD_SQL", "_FACTS_SQL"]
+    assert pg.names() == ["_UNREAD_SQL", "_TIER1_SQL", "_TIER2_SQL", "_PROJECTS_SQL",
+                          "_PURGE_SQL"]
     assert pg.transactions == []
     assert summary == {"conversations": 1, "llm_calls": 1, "failed": 1,
-                       "added": 0, "updated": 0, "deleted": 0}
+                       "added": 0, "updated": 0, "deleted": 0, "repeated": 0,
+                       "purged": 0}
     (failed,) = [r for r in caplog.records if r.getMessage() == "fact_extraction_llm_failed"]
     assert failed.levelno == logging.WARNING
     assert (failed.session_id, failed.reason, failed.error) == (_CURRENT, reason, error)
@@ -603,17 +678,28 @@ async def test_no_fact_text_and_no_message_text_reaches_any_log_record(caplog):
          _msg(8, "assistant", "MSGSECRET what the assistant said", _OTHER, marker=3)],
         facts=[typed, stored])
     ops = [
-        {"op": "ADD", "fact": "FACTSECRET new fact", "category": "goal"},
-        {"op": "UPDATE", "id": "f2", "fact": "FACTSECRET changed", "category": "condition"},
+        {"op": "ADD", "kind": "fact", "fact": "FACTSECRET new fact",
+         "category": "goal", "project": None, "explicit": True},
+        {"op": "UPDATE", "id": "f2", "fact": "FACTSECRET changed",
+         "category": "condition", "project": None},
         {"op": "DELETE", "id": "f1"},
-        {"op": "ADD", "fact": "FACTSECRET call 0912 345 678", "category": "profile"},
-        {"op": "ADD", "fact": "FACTSECRET " + "x" * 300, "category": "profile"},
-        {"op": "ADD", "fact": "FACTSECRET over the limit", "category": "profile"},
+        {"op": "ADD", "kind": "fact", "fact": "FACTSECRET call 0912 345 678",
+         "category": "profile", "project": None, "explicit": True},
+        {"op": "ADD", "kind": "fact", "fact": "FACTSECRET " + "x" * 300,
+         "category": "profile", "project": None, "explicit": True},
+        {"op": "ADD", "kind": "fact", "fact": "FACTSECRET second",
+         "category": "profile", "project": None, "explicit": True},
+        {"op": "ADD", "kind": "fact", "fact": "FACTSECRET third",
+         "category": "profile", "project": None, "explicit": True},
+        {"op": "ADD", "kind": "fact", "fact": "FACTSECRET fourth",
+         "category": "profile", "project": None, "explicit": True},
+        {"op": "ADD", "kind": "fact", "fact": "FACTSECRET over the limit",
+         "category": "profile", "project": None, "explicit": True},
     ]
     with caplog.at_level(logging.DEBUG):
         summary, _ = await _run(pg, _llm(ops))
 
-    assert summary["conversations"] == 2 and summary["added"] == 1
+    assert summary["conversations"] == 2 and summary["added"] == 4
     assert len(_done(caplog.records)) == 2
     text = _formatted(caplog.records)
     assert not any(secret in text for secret in ("MSGSECRET", "FACTSECRET", "RAWSECRET"))
@@ -626,13 +712,15 @@ async def test_no_fact_text_and_no_message_text_reaches_any_log_record(caplog):
 async def test_the_done_line_carries_counts_and_ids_only(caplog):
     pg = _Pg([_msg(2, "user", "hello", marker=1)])
     with caplog.at_level(logging.INFO, logger="langgraph.fact_extractor"):
-        await _run(pg, _llm([{"op": "ADD", "fact": "Likes yoga", "category": "preference"}]))
+        await _run(pg, _llm([{"op": "ADD", "kind": "fact", "fact": "Likes yoga",
+                               "category": "preference", "project": None,
+                               "explicit": True}]))
     (done,) = _done(caplog.records)
     # A handler that formats the record adds these two.
     standard = set(vars(logging.LogRecord("", 0, "", 0, "", (), None))) | {"message", "asctime"}
     assert set(vars(done)) - standard == {
         "session_id", "message_count", "char_count", "llm_called",
-        "added", "updated", "deleted", "dropped",
+        "added", "updated", "deleted", "repeated", "dropped",
         "input_tokens", "output_tokens", "elapsed_ms"}
 
 
@@ -659,14 +747,17 @@ def test_the_probes_pure_helpers_still_work():
     stored = [{"id": "f1", "fact": "Has lower back pain", "category": "condition",
                "locked": False}]
     kept, dropped = probe.enforce(
-        [{"op": "ADD", "fact": "Had ACL surgery in March 2025", "category": "condition"},
+        [{"op": "ADD", "kind": "fact", "fact": "Had ACL surgery in March 2025",
+          "category": "condition", "project": None, "explicit": True},
          {"op": "DELETE", "id": "f1"},
-         {"op": "ADD", "fact": "Call 0912 345 678", "category": "profile"}], stored)
+         {"op": "ADD", "kind": "fact", "fact": "Call 0912 345 678",
+          "category": "profile", "project": None, "explicit": True}], stored)
     assert [d["reason"] for d in dropped] == ["identifier"]
 
     facts = probe._apply_ops(stored, kept, [0])
     assert facts == [{"id": "n1", "fact": "Had ACL surgery in March 2025",
-                      "category": "condition", "locked": False}]
+                      "category": "condition", "kind": "fact", "project": None,
+                      "locked": False}]
 
     score = probe._score(
         {"ops": [{"op": "ADD", "category": "condition", "groups": [["ACL"], ["2025"]]}],
@@ -682,23 +773,26 @@ def test_the_probes_pure_helpers_still_work():
 async def test_the_probes_call_goes_through_this_modules_request():
     from langgraph_agents.local_tests import run_memory_probe as probe
 
-    llm = _llm([{"op": "ADD", "fact": "Likes yoga", "category": "preference"}])
+    llm = _llm([{"op": "ADD", "kind": "fact", "fact": "Likes yoga",
+                       "category": "preference", "project": None, "explicit": True}])
     record = await probe._call(llm, "the user message", [])
     assert llm.ainvoke.await_args.args == (
         [("system", fe.MEMORY_PROMPT), ("user", "the user message")],)
     assert record["parse_ok"] is True and record["error"] is None
-    assert record["kept_ops"] == [{"op": "ADD", "fact": "Likes yoga", "category": "preference"}]
+    assert record["kept_ops"] == [{"op": "ADD", "kind": "fact", "fact": "Likes yoga",
+                                   "category": "preference", "project": None,
+                                   "explicit": True}]
 
 
-def test_the_prompt_wants_lasting_likes_and_habits_not_only_health_and_help_style():
+def test_the_prompt_wants_repeat_not_add_and_project_scoped_decisions():
     flat = " ".join(fe.MEMORY_PROMPT.split())
-    assert ("Also goals; lasting personal likes, dislikes and habits, the things a friend "
-            "would remember about them (a favourite food or drink, a sport or hobby, how "
-            "they like to be spoken to, how answers should be written); and basic profile "
-            "facts (job, routine, equipment). A lasting like or habit counts even when it "
-            "is mentioned in passing; what happened today does not.") in flat
-    assert "lasting preferences about how they want to be helped" not in flat
-    assert "that matter for exercise advice" not in flat
+    assert "REPEAT it, using the stored id, never ADD it again" in flat
+    assert "as a fact with the project label it belongs to" in flat
+    assert "not a decision that only holds for this conversation" in flat
+    assert "Never copy text the user pasted in" in flat
+    assert "style: how the assistant should talk" in flat
+    assert "project: something the user is pursuing" in flat
+    assert '"explicit" is true when the user states it directly' in flat
 
 
 def test_the_probes_live_slices_follow_what_production_sends():

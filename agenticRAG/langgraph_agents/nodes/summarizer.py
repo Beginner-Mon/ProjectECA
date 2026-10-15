@@ -263,4 +263,15 @@ async def housekeep(user_id: str, session_id: str,
                 "session_id": session_id, "error": type(exc).__name__,
             })
 
+    async def _embed() -> None:
+        # Tier-2 top-up, even with extraction off: a fact the user typed in
+        # the settings screen has no embedding until this runs.
+        try:
+            await fact_extractor.embed_pending_facts(user_id)
+        except Exception as exc:
+            logger.warning("fact_embedding_failed", extra={
+                "session_id": session_id, "error": type(exc).__name__,
+            })
+
     await asyncio.gather(_compact(), _extract())
+    await _embed()

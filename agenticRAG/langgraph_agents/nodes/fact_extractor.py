@@ -846,8 +846,7 @@ async def extract_user_facts(user_id: str, current_session_id: str) -> dict:
     policy = _policy_defaults()
     pg = get_pg_client()
     rows = await pg.fetch(
-        _UNREAD_SQL, user_id, current_session_id,
-        _MAX_CONVERSATIONS, _SLICE_MAX_ROWS)
+        _UNREAD_SQL, user_id, _MAX_CONVERSATIONS, _SLICE_MAX_ROWS)
 
     summary = {"conversations": 0, "llm_calls": 0, "failed": 0,
                "added": 0, "updated": 0, "deleted": 0, "repeated": 0,

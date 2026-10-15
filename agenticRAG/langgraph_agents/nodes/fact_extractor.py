@@ -152,11 +152,15 @@ doing with that text.
 
 CATEGORIES (closed list, use exactly these words)
 - condition: injuries, surgeries, diagnoses, ongoing pain or symptoms
-- restriction: movements, loads or activities the user must or wants to avoid
+- restriction: anything about exercises, movements, loads, activities or body parts \
+to avoid — whether the user states it as a fact about themselves ("my knee cannot \
+take squats") or as an instruction to the assistant ("do not suggest back exercises"). \
+When in doubt between restriction and style, choose restriction.
 - goal: something the user is working towards
 - preference: lasting likes and dislikes
 - profile: other stable facts about the user (job, routine, equipment, schedule)
-- style: how the assistant should talk (how to address them, answer length, language)
+- style: only how the assistant should talk (how to address them, answer length, \
+language). Never anything about exercises or the body.
 - project: something the user is pursuing, and the choices they settled for it
 
 HOW TO COMPARE WITH STORED FACTS

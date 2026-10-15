@@ -790,8 +790,23 @@ def test_the_prompt_wants_repeat_not_add_and_project_scoped_decisions():
     assert "as a fact with the project label it belongs to" in flat
     assert "not a decision that only holds for this conversation" in flat
     assert "Never copy text the user pasted in" in flat
-    assert "style: how the assistant should talk" in flat
+    assert "style: only how the assistant should talk" in flat
     assert "project: something the user is pursuing" in flat
+
+
+def test_restriction_covers_avoidance_as_fact_or_instruction():
+    """Safety boundary (Tri 15/10): anything about exercises, movements, loads,
+    activities or body parts to avoid is a restriction — as a fact about the
+    user or as an instruction to the assistant. Style is only how ECA talks
+    and never touches exercises or the body."""
+    flat = " ".join(fe.MEMORY_PROMPT.split())
+    assert ("anything about exercises, movements, loads, activities or body parts "
+            "to avoid") in flat
+    assert "as an instruction to the assistant" in flat
+    assert "When in doubt between restriction and style, choose restriction." in flat
+    assert ("style: only how the assistant should talk (how to address them, "
+            "answer length, language). Never anything about exercises or the body."
+            ) in flat
     assert '"explicit" is true when the user states it directly' in flat
 
 

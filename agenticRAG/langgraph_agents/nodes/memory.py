@@ -3,8 +3,9 @@
 Runs FIRST before planner (D9: coreference resolve needs memory context).
 Loads what the model is shown about this user and this conversation:
 
-    user_facts        user_memory facts (Tier 1), safety-relevant first
+    user_instructions tier-1 standing instructions (safety-relevant first)
     session_summary   this session's rolling summary (0 or 1 item)
+    user_facts        tier-2 facts about this turn's topic (dated, by project)
     messages          raw history the summary does not cover yet (user/assistant only)
 
 Facts and the summary are state fields of their own, which reverses D20 ("context
@@ -90,14 +91,14 @@ def history_ceiling() -> int:
     return context_budget("history_compact_at") + history_budget()
 
 
-# ── Tier 1: user_memory facts (always-on, cheap, no vector search) ────────
+# ── Tier 1: standing user instructions (always-on, cheap, no vector search)
 
-async def _load_user_facts(user_id: str) -> list[str]:
-    """Load Tier 1 facts from user_memory, the ones that bear on safety first.
+async def _load_user_instructions(user_id: str) -> list[str]:
+    """Load tier-1 instructions, the safety-relevant ones first.
 
-    The prompt budgets downstream drop facts from the END of this list, so a
+    The prompt budgets downstream drop lines from the END of this list, so a
     movement restriction or a health condition must not queue behind a
-    preference. Newest first within each group.
+    preference. Newest said first within each group.
     """
     try:
         pg = get_pg_client()
@@ -106,20 +107,124 @@ async def _load_user_facts(user_id: str) -> list[str]:
             """
             SELECT fact_text FROM user_memory
             WHERE user_id = $1 AND valid = true
+              AND tier = 1 AND status = 'active'
             ORDER BY CASE category
                          WHEN 'restriction' THEN 0
                          WHEN 'condition' THEN 1
                          ELSE 2
                      END,
-                     created_at DESC
-            LIMIT 50
+                     said_at DESC
             """,
             user_id,
         )
         return [r["fact_text"] for r in rows]
     except Exception as exc:
-        logger.warning("user_facts_load_failed", extra={"error": str(exc)})
+        logger.warning("user_instructions_load_failed", extra={"error": str(exc)})
         return []
+
+
+# ── Tier 2: project facts, retrieved by similarity to this turn's query ──
+
+def _tier2_config() -> dict:
+    import yaml
+    from pathlib import Path
+    try:
+        config_path = Path(__file__).resolve().parents[3] / "config" / "langgraph.yaml"
+        if config_path.exists():
+            with open(config_path, "r", encoding="utf-8") as f:
+                memory = yaml.safe_load(f).get("langgraph", {}).get("memory", {})
+            return {
+                "timeout_ms": int(memory.get("tier2_embed_timeout_ms", 300)),
+                "top_k": int(memory.get("tier2_top_k", 5)),
+                "min_similarity": float(memory.get("tier2_min_similarity", 0.86)),
+            }
+    except Exception:
+        pass
+    return {"timeout_ms": 300, "top_k": 5, "min_similarity": 0.86}
+
+
+def _tier2_line(row) -> str:
+    """One tier-2 row as `- [date] (project) fact` (no parens without a label)."""
+    said = row["said_at"]
+    day = said.date().isoformat() if hasattr(said, "date") else str(said)[:10]
+    label = f"({row['project']}) " if row.get("project") else ""
+    return f"- [{day}] {label}{row['fact_text']}"
+
+
+async def _load_tier2_facts(
+    user_id: str, session_id: str, query: str | None,
+) -> tuple[list[str], float | None, str | None, int | None]:
+    """Tier-2 facts about this turn's topic.
+
+    Returns (lines, top_similarity, skipped_reason, embed_ms). A row last
+    seen in this conversation is skipped there — the STM summary already
+    covers it. Tier 1 has no such filter: an instruction is one row, and a
+    safety note must not depend on the summary.
+    """
+    import asyncio
+    import time
+
+    from langgraph_agents.shared import get_embedding_service
+
+    cfg = _tier2_config()
+    if not query:
+        return [], None, "no_query", None
+    t0 = time.perf_counter()
+    try:
+        vector = await asyncio.wait_for(
+            get_embedding_service().aembed_query(query),
+            timeout=cfg["timeout_ms"] / 1000,
+        )
+    except asyncio.TimeoutError:
+        logger.info("tier2_skipped", extra={"reason": "embed_timeout"})
+        return [], None, "embed_timeout", None
+    except Exception as exc:
+        logger.info("tier2_skipped", extra={
+            "reason": "embed_error", "error": type(exc).__name__})
+        return [], None, "embed_error", None
+    embed_ms = round((time.perf_counter() - t0) * 1000)
+    try:
+        pg = get_pg_client()
+        await pg.connect()
+        rows = await pg.fetch(
+            """
+            SELECT id, fact_text, project, said_at,
+                   1 - (embedding <=> $1) AS similarity
+            FROM user_memory
+            WHERE user_id = $2 AND valid = true
+              AND tier = 2 AND status = 'active'
+              AND embedding IS NOT NULL
+              AND last_seen_session_id IS DISTINCT FROM $3::uuid
+            ORDER BY embedding <=> $1
+            LIMIT $4
+            """,
+            vector, user_id, session_id, cfg["top_k"],
+        )
+        top_sim = max((float(r["similarity"]) for r in rows), default=None)
+        hits = [r for r in rows if float(r["similarity"]) >= cfg["min_similarity"]]
+        if not hits:
+            return [], top_sim, None, embed_ms
+        labels = sorted({r["project"] for r in hits if r.get("project")})
+        lines = [_tier2_line(r) for r in hits]
+        if labels:
+            mates = await pg.fetch(
+                """
+                SELECT id, fact_text, project, said_at
+                FROM user_memory
+                WHERE user_id = $1 AND valid = true
+                  AND tier = 2 AND status = 'active'
+                  AND project = ANY($2)
+                  AND last_seen_session_id IS DISTINCT FROM $3::uuid
+                ORDER BY said_at DESC
+                """,
+                user_id, labels, session_id,
+            )
+            seen = {r["id"] for r in hits}
+            lines += [_tier2_line(r) for r in mates if r["id"] not in seen]
+        return lines, top_sim, None, embed_ms
+    except Exception as exc:
+        logger.warning("tier2_load_failed", extra={"error": str(exc)})
+        return [], None, "load_error", embed_ms
 
 
 # ── Rolling STM summary + raw history (one statement) ───────────────
@@ -269,9 +374,10 @@ def _recent_raw_to_messages(recent: list[dict]) -> list:
 async def memory_node(state: AgentState, config: RunnableConfig) -> dict:
     """Memory node — runs FIRST (before planner, D9).
 
-    Loads user facts + rolling summary + raw history. Facts and the summary go
-    out as `user_facts` / `session_summary`; `messages` gets the raw history
-    as user/assistant messages and nothing else.
+    Loads standing instructions + rolling summary + raw history + the tier-2
+    facts about this turn's topic. Instructions and the summary go out as
+    `user_instructions` / `session_summary`, tier-2 lines as `user_facts`;
+    `messages` gets the raw history as user/assistant messages and nothing else.
     """
     t0 = time.perf_counter()
     request_id = config["configurable"].get("request_id", "-")
@@ -279,16 +385,19 @@ async def memory_node(state: AgentState, config: RunnableConfig) -> dict:
     session_id = config["configurable"]["session_id"]
     # Absent outside /chat (the local probes): nothing is left out then.
     user_message_id = config["configurable"].get("user_message_id")
+    query = config["configurable"].get("query")
 
     logger.info("node_start", extra={
         "node": "memory", "request_id": request_id, "session_id": session_id,
     })
 
-    # Both loads are independent — run concurrently
-    user_facts, (summary_chunks, raw_history) = await asyncio.gather(
-        _load_user_facts(user_id),
+    # All three loads are independent — run concurrently
+    user_instructions, (summary_chunks, raw_history), tier2 = await asyncio.gather(
+        _load_user_instructions(user_id),
         _load_stm(session_id, user_message_id),
+        _load_tier2_facts(user_id, session_id, query),
     )
+    user_facts, tier2_top_similarity, tier2_skipped, tier2_embed_ms = tier2
     if raw_history:
         raw_history = _drop_history_overflow(raw_history, session_id)
     elif summary_chunks:
@@ -300,13 +409,19 @@ async def memory_node(state: AgentState, config: RunnableConfig) -> dict:
     logger.info("node_complete", extra={
         "node": "memory", "request_id": request_id,
         "elapsed_ms": elapsed_ms,
+        "user_instructions_count": len(user_instructions),
         "user_facts_count": len(user_facts),
+        "tier2_top_similarity": tier2_top_similarity,
+        "tier2_embed_ms": tier2_embed_ms,
+        "tier2_skipped": tier2_skipped,
         "summary_chunks_count": len(summary_chunks),
+        "summary_present": bool(summary_chunks),
         "recent_raw_count": len(raw_history),
     })
 
     return {
         "messages": _recent_raw_to_messages(raw_history),
+        "user_instructions": user_instructions,
         "user_facts": user_facts,
         "session_summary": summary_chunks,
     }

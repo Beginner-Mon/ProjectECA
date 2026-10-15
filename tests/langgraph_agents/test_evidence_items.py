@@ -23,12 +23,14 @@ _KB = [
     {"content": "Stay active.", "similarity": 0.8,
      "source_type": "nhs_uk", "document_title": "NHS — Back pain", "chunk_index": 0},
 ]
-_MEM = {"found": True, "results": [{"summary_text": "talked about squats"}]}
+_MEM = {"found": True, "summary_chunks": ["talked about squats"],
+        "recent_messages": [{"role": "user", "content": "hello again"}]}
 _WEB = [{"title": "Guide", "url": "https://x.example", "content": "..."}]
 
 
 def test_render_matches_extract_tool_results():
-    msgs = [_tm("kb_search", _KB), _tm("memory_search", _MEM), _tm("search_medical", _WEB)]
+    msgs = [_tm("kb_search", _KB), _tm("resume_last_session", _MEM),
+            _tm("search_medical", _WEB)]
     assert render_evidence(evidence_items(msgs)) == _extract_tool_results(msgs)
 
 
@@ -40,7 +42,8 @@ def test_kb_items_carry_title_and_cite_key():
 
 
 def test_memory_has_no_cite_key_and_web_has_one():
-    items = evidence_items([_tm("memory_search", _MEM), _tm("search_medical", _WEB)])
+    items = evidence_items([_tm("resume_last_session", _MEM),
+                            _tm("search_medical", _WEB)])
     assert [i.cite_key for i in items] == [None, "web"]
 
 
@@ -57,7 +60,7 @@ def test_named_items_matches_title_case_insensitively():
 
 
 def test_named_items_never_returns_untitled_items():
-    items = evidence_items([_tm("memory_search", _MEM)])
+    items = evidence_items([_tm("resume_last_session", _MEM)])
     assert named_items(items, "anything at all") == []
 
 

@@ -36,8 +36,10 @@ class AgentState(TypedDict):
     messages: Annotated[list, add_messages]
 
     # ── Memory node output (read by planner + synthesizer) ─────────────
-    # What the user has told ECA about themselves (rows of user_memory), in
+    # Standing instructions for this user (tier-1 rows of user_memory), in
     # priority order: restrictions, then conditions, then the rest.
+    user_instructions: list[str]
+    # Tier-2 rows about this turn's topic, each dated and project-labelled.
     user_facts: list[str]
     # Frozen summaries of the older part of THIS conversation, oldest first.
     # Together with the raw history in `messages` they cover the whole session.

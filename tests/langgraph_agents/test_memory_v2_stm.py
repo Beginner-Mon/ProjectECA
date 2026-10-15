@@ -20,9 +20,11 @@ from langgraph_agents.shared import context as ctx_mod
 
 pytestmark = pytest.mark.unit
 
-_FACTS_HEADING = "## What this user has told you about themselves"
+_FACTS_HEADING = "## Things this user mentioned in earlier conversations"
+_INSTRUCTIONS_HEADING = "## Standing instructions from this user"
 _SUMMARY_HEADING = "## Earlier in this conversation"
 _PLANNER_FACTS_LINE = "Known about the user (their own account):"
+_PLANNER_INSTRUCTIONS_LINE = "Standing instructions from the user:"
 
 _BUDGETS = {
     "history": 1000,
@@ -45,7 +47,7 @@ _QUESTION_ID = "33333333-3333-3333-3333-333333333333"
 
 def _config(session_id="s-1", user_message_id=None):
     configurable = {
-        "user_id": "u-1", "session_id": session_id, "query": "hello",
+        "user_id": "u-1", "session_id": session_id, "query": None,
         "persona_id": "anne", "request_id": "r-1",
     }
     if user_message_id is not None:
@@ -216,16 +218,34 @@ async def _synth_messages(**state_fields) -> list:
 
 @pytest.mark.asyncio
 async def test_synthesizer_system_prompt_carries_user_facts(budgets):
-    msgs = await _synth_messages(user_facts=["Left knee surgery in July 2026"])
+    msgs = await _synth_messages(user_facts=["- [2026-10-14] Left knee surgery in July 2026"])
     system = msgs[0].content
     assert isinstance(msgs[0], SystemMessage)
     assert _FACTS_HEADING in system
-    assert "- Left knee surgery in July 2026" in system
+    assert "- [2026-10-14] Left knee surgery in July 2026" in system
     block = system[system.index(_FACTS_HEADING):]
-    assert "earlier conversations" in block
+    assert "Each line has the date it was said" in block
+    assert "Newer beats older" in block
+    assert "Use one only when it changes what you say" in block
+
+
+@pytest.mark.asyncio
+async def test_synthesizer_system_prompt_carries_user_instructions(budgets):
+    msgs = await _synth_messages(user_instructions=["No overhead lifting"])
+    system = msgs[0].content
+    assert _INSTRUCTIONS_HEADING in system
+    assert "- No overhead lifting" in system
+    block = system[system.index(_INSTRUCTIONS_HEADING):]
+    assert "Follow these in every answer unless today's message says otherwise" in block
     assert "not a diagnosis" in block
-    assert "only when it changes what you should say or do" in block
-    assert "go by today's message" in block
+
+
+@pytest.mark.asyncio
+async def test_instructions_come_before_facts_in_the_prompt(budgets):
+    msgs = await _synth_messages(user_instructions=["No overhead lifting"],
+                                 user_facts=["- [2026-10-14] Vegan"])
+    system = msgs[0].content
+    assert system.index(_INSTRUCTIONS_HEADING) < system.index(_FACTS_HEADING)
 
 
 @pytest.mark.asyncio
@@ -244,8 +264,10 @@ async def test_synthesizer_system_prompt_carries_session_summary(budgets):
 @pytest.mark.asyncio
 async def test_synthesizer_prompt_is_unchanged_without_facts_or_summary(budgets):
     bare = await _synth_messages()
-    empty = await _synth_messages(user_facts=[], session_summary=[])
+    empty = await _synth_messages(user_instructions=[], user_facts=[],
+                                 session_summary=[])
     assert [m.content for m in bare] == [m.content for m in empty]
+    assert _INSTRUCTIONS_HEADING not in bare[0].content
     assert _FACTS_HEADING not in bare[0].content
     assert _SUMMARY_HEADING not in bare[0].content
 
@@ -261,9 +283,20 @@ async def test_synthesizer_keeps_the_raw_history_beside_the_new_blocks(budgets):
 
 def test_user_facts_block_follows_the_about_you_pattern(budgets):
     assert syn._build_user_facts([]) == ""
-    block = syn._build_user_facts(["Vegan"])
+    assert syn._build_user_instructions([]) == ""
+    block = syn._build_user_facts(["- [2026-10-14] Vegan"])
     assert block.startswith(f"\n\n{_FACTS_HEADING}\n")
-    assert block.endswith("- Vegan")
+    assert block.endswith("- [2026-10-14] Vegan")
+    instructions = syn._build_user_instructions(["Vegan"])
+    assert instructions.startswith(f"\n\n{_INSTRUCTIONS_HEADING}\n")
+    assert instructions.endswith("- Vegan")
+
+
+def test_no_prompt_block_mentions_session(budgets):
+    for block in (syn._build_user_instructions(["Vegan"]),
+                  syn._build_user_facts(["- [2026-10-14] Vegan"]),
+                  syn._build_session_summary(["Knee pain reported."])):
+        assert "session" not in block.lower()
 
 
 def test_user_facts_block_keeps_restriction_and_condition_whole(budgets):
@@ -297,11 +330,15 @@ def test_session_summary_block_drops_the_oldest_chunks_over_budget(budgets):
 @pytest.mark.asyncio
 async def test_prompt_blocks_log_reports_both_new_blocks(budgets, caplog):
     with caplog.at_level(logging.INFO, logger="langgraph.synthesizer"):
-        await _synth_messages(user_facts=["Vegan"],
+        await _synth_messages(user_instructions=["No overhead lifting"],
+                              user_facts=["- [2026-10-14] Vegan"],
                               session_summary=["Knee pain reported."])
     done = [r for r in caplog.records if r.getMessage() == "node_complete"]
     assert len(done) == 1
-    assert done[0].prompt_blocks["user_facts"] == len(syn._build_user_facts(["Vegan"]))
+    assert done[0].prompt_blocks["user_instructions"] == len(
+        syn._build_user_instructions(["No overhead lifting"]))
+    assert done[0].prompt_blocks["user_facts"] == len(
+        syn._build_user_facts(["- [2026-10-14] Vegan"]))
     assert done[0].prompt_blocks["session_summary"] == len(
         syn._build_session_summary(["Knee pain reported."]))
 
@@ -311,11 +348,14 @@ async def test_prompt_blocks_log_reports_both_new_blocks_on_the_addition_pass(
         budgets, caplog):
     with caplog.at_level(logging.INFO, logger="langgraph.synthesizer"):
         await _synth_messages(
-            user_facts=["Vegan"], session_summary=["Knee pain reported."],
+            user_instructions=["No overhead lifting"],
+            user_facts=["- [2026-10-14] Vegan"],
+            session_summary=["Knee pain reported."],
             retry_count=1, grader_feedback="- how often",
             final_answer="Do heel slides.")
     done = [r for r in caplog.records if r.getMessage() == "node_complete"]
     assert len(done) == 1 and done[0].mode == "addition"
+    assert done[0].prompt_blocks["user_instructions"] > 0
     assert done[0].prompt_blocks["user_facts"] > 0
     assert done[0].prompt_blocks["session_summary"] > 0
 
@@ -352,6 +392,21 @@ async def test_planner_user_message_carries_user_facts(budgets):
     assert user_msg == (
         "what about it" + _HINT
         + f"\n\n{_PLANNER_FACTS_LINE}\n- Left knee surgery in July 2026\n- Vegan")
+
+
+@pytest.mark.asyncio
+async def test_planner_user_message_carries_standing_instructions(budgets):
+    prompt = await _planner_prompt({
+        "messages": list(_HISTORY),
+        "user_instructions": ["No overhead lifting"],
+        "user_facts": ["Vegan"],
+    })
+    role, user_msg = prompt[1]
+    assert role == "user"
+    assert user_msg == (
+        "what about it" + _HINT
+        + f"\n\n{_PLANNER_INSTRUCTIONS_LINE}\n- No overhead lifting"
+        + f"\n\n{_PLANNER_FACTS_LINE}\n- Vegan")
 
 
 @pytest.mark.asyncio
@@ -408,7 +463,8 @@ async def test_memory_node_returns_facts_summary_and_only_uncovered_history(budg
     with patch.object(mem, "get_pg_client", return_value=db):
         out = await mem.memory_node({"messages": []}, _config())
 
-    assert out["user_facts"] == ["Left knee surgery in July 2026"]
+    assert out["user_instructions"] == ["Left knee surgery in July 2026"]
+    assert out["user_facts"] == []
     assert out["session_summary"] == ["The user asked about knee pain."]
     assert not any(isinstance(m, SystemMessage) for m in out["messages"])
     assert [(type(m), m.content) for m in out["messages"]] == [
@@ -423,7 +479,8 @@ async def test_memory_node_returns_facts_summary_and_only_uncovered_history(budg
 async def test_memory_node_returns_empty_fields_for_a_new_session(budgets):
     with patch.object(mem, "get_pg_client", return_value=FakeDB()):
         out = await mem.memory_node({"messages": []}, _config())
-    assert out == {"messages": [], "user_facts": [], "session_summary": []}
+    assert out == {"messages": [], "user_instructions": [], "user_facts": [],
+                   "session_summary": []}
 
 
 @pytest.mark.asyncio
@@ -586,7 +643,8 @@ async def test_a_new_session_makes_no_second_read(budgets):
     with patch.object(mem, "get_pg_client", return_value=db):
         out = await mem.memory_node({"messages": []}, _config(user_message_id=_QUESTION_ID))
 
-    assert out == {"messages": [], "user_facts": [], "session_summary": []}
+    assert out == {"messages": [], "user_instructions": [], "user_facts": [],
+                   "session_summary": []}
     assert len(db.statements) == 2
 
 
@@ -735,19 +793,20 @@ async def test_one_turn_over_the_ceiling_is_handed_on_whole(budgets, caplog):
 
 
 @pytest.mark.asyncio
-async def test_user_facts_are_asked_for_in_safety_first_order(budgets):
+async def test_user_instructions_are_asked_for_in_safety_first_order(budgets):
     pg = AsyncMock()
     pg.fetch.return_value = [{"fact_text": "No overhead lifting"},
                              {"fact_text": "Type 2 diabetes"},
                              {"fact_text": "Vegan"}]
     with patch.object(mem, "get_pg_client", return_value=pg):
-        facts = await mem._load_user_facts("u-1")
+        facts = await mem._load_user_instructions("u-1")
 
     assert facts == ["No overhead lifting", "Type 2 diabetes", "Vegan"]
     sql = " ".join(pg.fetch.await_args.args[0].split())
+    assert "tier = 1" in sql and "status = 'active'" in sql
     order = sql[sql.index("ORDER BY"):]
-    assert order.index("'restriction'") < order.index("'condition'") < order.index("created_at DESC")
-    assert order.endswith("LIMIT 50")
+    assert order.index("'restriction'") < order.index("'condition'")
+    assert "said_at DESC" in order
     assert "valid = true" in sql
 
 

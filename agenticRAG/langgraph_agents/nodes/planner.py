@@ -28,7 +28,7 @@ from langgraph_agents.llm import (
     get_chat_model, get_fallback_chat_model, get_gemini_cached_chat_model,
     extract_cache_tokens,
 )
-from langgraph_agents.shared.context import render_user_facts
+from langgraph_agents.shared.context import render_user_facts, render_user_instructions
 from langgraph_agents.shared.logging import get_logger
 
 logger = get_logger("langgraph.planner")
@@ -280,8 +280,12 @@ async def planner_node(state: AgentState, config: RunnableConfig) -> dict:
     facts_hint = (
         f"\n\nKnown about the user (their own account):\n{facts}" if facts else ""
     )
+    instructions = render_user_instructions(state.get("user_instructions") or [])
+    instructions_hint = (
+        f"\n\nStanding instructions from the user:\n{instructions}" if instructions else ""
+    )
 
-    user_msg = query + context_hint + facts_hint
+    user_msg = query + context_hint + instructions_hint + facts_hint
 
     prompt_msgs = [
         ("system", _PLANNER_SYSTEM_PROMPT),

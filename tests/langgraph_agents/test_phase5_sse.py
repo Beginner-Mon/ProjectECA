@@ -360,7 +360,7 @@ def test_retriever_stage_sources_library(api_client, monkeypatch):
 def test_retriever_stage_sources_memory_deduped_ordered(api_client, monkeypatch):
     client, _, mock_graph = api_client
     stages = _stage_data(api_client, mock_graph,
-                         ["memory_search", "kb_search", "memory_search"])
+                         ["resume_last_session", "kb_search", "resume_last_session"])
     ret = next(s for s in stages if s.get("node") == "retriever_agent")
     assert ret["sources"] == ["memory", "library"]
 

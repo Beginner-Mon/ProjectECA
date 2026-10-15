@@ -1,15 +1,12 @@
-"""Retrieval tools — M.2 + M.6 (kb_search + memory_search + resume_last_session).
+"""Retrieval tools — M.2 + M.6 (kb_search + resume_last_session).
 
 M.4 schema targets:
   - kb_search → kb_embeddings table (public KB, FK documents)
-  - memory_search → summaries table (2-step tenant scope, D19)
 
 Decisions encoded:
   D11:  Memory tách Knowledge — 2 index/tool riêng
-  D19:  NO user_id on summaries — tenant via 2-step (conversations→summaries)
   D23:  Empty {found:[]} ≠ error {error}
-  D28:  Top-k caps: kb=5, memory=3
-  M.6:  memory_search: topic→vector, temporal→SQL filter (tách 2 trục)
+  D28:  Top-k caps: kb=5
 """
 
 from __future__ import annotations
@@ -21,7 +18,6 @@ from typing import Optional
 from langchain_core.runnables import RunnableConfig
 from langchain_core.tools import tool
 
-from langgraph_agents.db import turn_index
 from langgraph_agents.shared import get_embedding_service, get_pg_client
 from langgraph_agents.shared.logging import get_logger
 
@@ -71,53 +67,6 @@ def _kb_min_similarity() -> float | None:
 def _self_min_similarity() -> float | None:
     """Ngưỡng riêng cho recall_self (plan T8e). None = không lọc."""
     return _retrieval_threshold("self_min_similarity")
-
-
-def _memory_min_similarity() -> float | None:
-    """Ngưỡng cho memory_search. None = không lọc.
-
-    Không có ngưỡng thì có summary là trả về, kể cả cho "bạn là ai". Số 0.84
-    trong config đo 12/10 trên bộ tổng hợp (10 câu nhắc lại / 12 câu khác):
-    giữ 10/10, chặn câu ngoài lề (danh tính, thời tiết, nấu ăn); câu sức khoẻ
-    khác chủ đề vẫn lọt. Chỉnh lại theo `memory_search_done.top_similarity`.
-    """
-    return _retrieval_threshold("memory_min_similarity")
-
-
-_TURN_SNIPPET_CHARS = 700
-
-
-def _history_min_similarity() -> float:
-    """Ngưỡng cho memory_search khi đọc turn_index (0.87, probe 13/10).
-
-    Khác ngưỡng trên: 0.84 đo trên summary, còn đây đo trên từng lượt
-    (docs/tracking/history-search-probe-V0.md). Thiếu key thì vẫn có sàn.
-    """
-    value = _retrieval_threshold("history_min_similarity")
-    return 0.87 if value is None else value
-
-
-async def _embed_query_and_words(embed_svc, query: str, config) -> tuple:
-    """(embedding of the retriever's query, embedding of the user's own words).
-
-    Scored against the user's own words as well as the retriever's query. The
-    retriever writes its queries in English; stored text is in the conversation's
-    language. English query vs Vietnamese summary ranked the right summary first
-    in 1 of 7 cases; the user's own words, 7 of 7 (scripts measured 12/10,
-    docs/worklogs/12-10-2026.md). One embedding when the two texts are equal.
-    """
-    user_words = (config["configurable"].get("query") or "").strip()
-    texts = [query] if user_words in ("", query) else [query, user_words]
-    vecs = await asyncio.gather(*(embed_svc.aembed_query(t) for t in texts))
-    return vecs[0], vecs[-1]
-
-
-def _ambiguous(results: list) -> bool:
-    """Top-2 results from different sessions with similarity gap < 0.05 (A1)."""
-    if len(results) < 2:
-        return False
-    r0, r1 = results[0], results[1]
-    return r0["session_id"] != r1["session_id"] and (r0["similarity"] - r1["similarity"]) < 0.05
 
 
 def _to_uuid(value: str) -> str:
@@ -212,194 +161,6 @@ async def kb_search(query: str, top_k: int = 5) -> list[dict]:
         # D23: error → raise so retriever can retry
         logger.error("kb_search_error", extra={"query": query[:80], "error": str(exc)})
         raise
-
-
-# ═══════════════════════════════════════════════════════════════════════════
-# memory_search — user's past session summaries (summaries table, 2-step)
-# ═══════════════════════════════════════════════════════════════════════════
-
-@tool(description=(
-    "Search this user's earlier conversations with you. Use when the user "
-    "refers back to something said before, names a past time (last week, "
-    "yesterday), or asks you to repeat something. `since_days` limits the "
-    "search to recent days."
-))
-async def memory_search(
-    query: str,
-    since_days: Optional[int] = None,
-    top_k: int = 3,
-    config: RunnableConfig = None,
-) -> dict:
-    """Search user's past conversation summaries for relevant context.
-
-    Use for: "lần trước", "tuần trước", "tôi đã hỏi", "nhắc lại",
-    "tiếp tục bài tập". Topic search uses vector similarity;
-    temporal search uses SQL date filter (M.6: tách 2 trục).
-
-    Args:
-        query: What to search for in past conversations.
-        since_days: Optional — only search within N days (e.g. 7 for "tuần trước").
-        top_k: Max results (default 3, capped at 3 per D28).
-
-    Returns:
-        {found: true, results: [{summary_text, session_id, similarity, created_at}]}
-        OR {found: false} if no results (NOT error — D23).
-    """
-    top_k = min(top_k, 3)  # D28 cap
-
-    # Scope injected from runtime config — LLM does NOT see these (M.6/D19)
-    user_id = _to_uuid(config["configurable"]["user_id"])
-    current_session_id = config["configurable"]["session_id"]
-
-    try:
-        if turn_index.enabled():
-            return await _search_turn_index(
-                query, since_days, top_k, user_id, current_session_id, config)
-        return await _search_summaries(
-            query, since_days, top_k, user_id, current_session_id, config)
-    except Exception as exc:
-        logger.error("memory_search_error", extra={"query": query[:80], "error": str(exc)})
-        raise
-
-
-async def _search_summaries(query, since_days, top_k, user_id, current_session_id, config) -> dict:
-    """The original path: the user's conversation summaries (summaries table)."""
-    embed_svc = get_embedding_service()
-    pg = get_pg_client()
-    await pg.connect()
-
-    # Step 1: Get user's session_ids (tenant scope — M.6)
-    session_rows = await pg.fetch(
-        "SELECT session_id FROM conversations WHERE user_id = $1",
-        user_id,
-    )
-    user_session_ids = [r["session_id"] for r in session_rows]
-
-    if not user_session_ids:
-        return {"found": False}
-
-    # Step 2: Vector search scoped to user's summaries (D19), scored against the
-    # user's own words as well as the retriever's query (see the helper).
-    query_vec, words_vec = await _embed_query_and_words(embed_svc, query, config)
-
-    # When the conversation happened, not when it was summarised: a session
-    # is now summarised once the user starts the next one, possibly days
-    # later. Read from the last message the summary covers.
-    sql = """
-        SELECT s.summary_text, s.session_id,
-               COALESCE(m.created_at, s.created_at) AS created_at,
-               GREATEST(1 - (s.embedding <=> $1), 1 - (s.embedding <=> $2)) AS similarity
-        FROM summaries s
-        LEFT JOIN messages m
-          ON m.session_id = s.session_id AND m.seq_id = s.covers_up_to_seq
-        WHERE s.session_id = ANY($3)
-          AND s.session_id != $4
-          AND s.status = 'active'
-    """
-    params = [query_vec, words_vec, user_session_ids, current_session_id]
-    # Temporal filter (M.6: tách topic/temporal — 2 trục)
-    if since_days is not None and since_days > 0:
-        params.append(str(since_days))
-        sql += f" AND COALESCE(m.created_at, s.created_at) >= now() - (${len(params)} || ' days')::interval"
-    params.append(top_k)
-    sql += f" ORDER BY similarity DESC LIMIT ${len(params)}"
-    rows = await pg.fetch(sql, *params)
-
-    results = [
-        {
-            "summary_text": r["summary_text"],
-            "session_id": str(r["session_id"]),
-            "similarity": round(float(r["similarity"]), 4),
-            "created_at": r["created_at"].isoformat(),
-        }
-        for r in rows
-    ]
-    top_similarity = results[0]["similarity"] if results else None
-    min_sim = _memory_min_similarity()
-    if min_sim is not None:
-        results = [r for r in results if r["similarity"] >= min_sim]
-
-    response = {"found": True, "results": results}
-    if _ambiguous(results):
-        response["ambiguous"] = True
-        response["candidates"] = [
-            {"summary_text": r["summary_text"][:80],
-             "session_id": r["session_id"]}
-            for r in results[:3]
-        ]
-
-    logger.info("memory_search_done", extra={
-        "query": query[:80],
-        "user_sessions": len(user_session_ids),
-        "results": len(results),
-        "dropped_below_min": len(rows) - len(results),
-        "top_similarity": top_similarity,
-        "since_days": since_days,
-        "source": "summaries",
-    })
-    return response if results else {"found": False}
-
-
-# One statement: the user's own conversations (join on conversations.user_id),
-# never the current one, scored as the greater of the two similarities.
-_TURN_SEARCH_SQL = """
-    SELECT t.content, t.session_id, c.title, t.turn_at,
-           GREATEST(1 - (t.embedding <=> $1), 1 - (t.embedding <=> $2)) AS similarity
-    FROM turn_index t
-    JOIN conversations c ON c.session_id = t.session_id
-    WHERE c.user_id = $3
-      AND t.session_id != $4
-"""
-
-
-async def _search_turn_index(query, since_days, top_k, user_id, current_session_id, config) -> dict:
-    """Memory v2: the original turns (turn_index), floor `history_min_similarity`."""
-    embed_svc = get_embedding_service()
-    pg = get_pg_client()
-    await pg.connect()
-
-    query_vec, words_vec = await _embed_query_and_words(embed_svc, query, config)
-
-    sql = _TURN_SEARCH_SQL
-    params = [query_vec, words_vec, user_id, current_session_id]
-    if since_days is not None and since_days > 0:
-        params.append(str(since_days))
-        sql += f" AND t.turn_at >= now() - (${len(params)} || ' days')::interval"
-    params.append(top_k)
-    sql += f" ORDER BY similarity DESC LIMIT ${len(params)}"
-    rows = await pg.fetch(sql, *params)
-
-    results = [
-        {
-            "snippet": r["content"][:_TURN_SNIPPET_CHARS],
-            "session_id": str(r["session_id"]),
-            "session_title": r["title"],
-            "date": r["turn_at"].date().isoformat(),
-            "similarity": round(float(r["similarity"]), 4),
-        }
-        for r in rows
-    ]
-    top_similarity = results[0]["similarity"] if results else None
-    floor = _history_min_similarity()
-    results = [r for r in results if r["similarity"] >= floor]
-
-    response = {"found": True, "results": results}
-    if _ambiguous(results):
-        response["ambiguous"] = True
-        response["candidates"] = [
-            {"snippet": r["snippet"][:80], "session_id": r["session_id"]}
-            for r in results[:3]
-        ]
-
-    logger.info("memory_search_done", extra={
-        "query": query[:80],
-        "results": len(results),
-        "dropped_below_min": len(rows) - len(results),
-        "top_similarity": top_similarity,
-        "since_days": since_days,
-        "source": "turn_index",
-    })
-    return response if results else {"found": False}
 
 
 # ═══════════════════════════════════════════════════════════════════════════

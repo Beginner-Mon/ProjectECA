@@ -19,7 +19,8 @@ def test_config_carries_all_plan_budgets():
         "evidence": 1200,
         "history": 1000,
         "voice_card": 280,
-        "user_facts": 300,
+        "user_instructions": 300,
+        "user_facts": 400,
         "session_summary": 500,
         "history_compact_at": 2000,
     }
@@ -33,7 +34,8 @@ def test_missing_key_falls_back_to_old_behavior(monkeypatch):
     assert context_budget("about_you") == 225
     assert budget_chars("evidence") == 4000
     # Memory v2 keys have no older value: the default is the config's number.
-    assert context_budget("user_facts") == 300
+    assert context_budget("user_instructions") == 300
+    assert context_budget("user_facts") == 400
     assert context_budget("session_summary") == 500
     assert context_budget("history_compact_at") == 2000
 

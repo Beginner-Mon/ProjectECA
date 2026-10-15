@@ -155,21 +155,6 @@ _RESUME_AMBIGUOUS = {
          "updated_at": "2026-10-12T20:00:00+00:00"},
     ],
 }
-_SEARCH_OLD = {"found": True, "results": [
-    {"summary_text": "They talked about noodles and nutrition.",
-     "session_id": _SID_1, "similarity": 0.8, "created_at": "2026-10-10T08:00:00+00:00"}]}
-_SEARCH_OLD_AMBIGUOUS = {"found": True, "ambiguous": True, "results": [
-    {"summary_text": "They talked about noodles.", "session_id": _SID_1,
-     "similarity": 0.81, "created_at": "2026-10-10T08:00:00+00:00"},
-    {"summary_text": "They talked about rice.", "session_id": _SID_2,
-     "similarity": 0.80, "created_at": "2026-10-11T08:00:00+00:00"}],
-    "candidates": [
-        {"summary_text": "They talked about noodles.", "session_id": _SID_1},
-        {"summary_text": "They talked about rice.", "session_id": _SID_2}]}
-_SEARCH_NEW = {"found": True, "results": [
-    {"snippet": "I love noodles", "session_id": _SID_1, "session_title": "Food chat",
-     "date": "2026-10-10", "similarity": 0.8}]}
-
 _SHAPES = {
     "resume": ("resume_last_session", _RESUME,
                ["Da Nang", "my knee hurts after stairs", "slow step-downs"]),
@@ -177,11 +162,6 @@ _SHAPES = {
                           ["my knee hurts after stairs", "slow step-downs"]),
     "resume_ambiguous": ("resume_last_session", _RESUME_AMBIGUOUS,
                          ["my knee hurts after stairs", "what should I eat before a run"]),
-    "search_old": ("memory_search", _SEARCH_OLD,
-                   ["noodles and nutrition", "2026-10-10"]),
-    "search_old_ambiguous": ("memory_search", _SEARCH_OLD_AMBIGUOUS,
-                             ["talked about noodles", "talked about rice"]),
-    "search_new": ("memory_search", _SEARCH_NEW, ["I love noodles", "Food chat"]),
 }
 
 
@@ -226,11 +206,10 @@ def test_per_item_cap_and_total_budget_still_apply():
     items = evidence_items([_tm("resume_last_session", long_chat)])
     assert all(len(i.text) <= EVIDENCE_PER_MESSAGE_CAP for i in items)
 
-    many = {"found": True, "results": [
-        {"summary_text": f"topic {n} " + "y" * 1400, "session_id": _SID_1,
-         "similarity": 0.5, "created_at": "2026-10-10T08:00:00+00:00"}
-        for n in range(40)]}
-    items = evidence_items([_tm("memory_search", many)])
+    many = [{"content": f"topic {n} " + "y" * 1400, "similarity": 0.5,
+             "source_type": "exercise_db", "document_title": f"Doc {n}",
+             "chunk_index": n} for n in range(40)]
+    items = evidence_items([_tm("kb_search", many)])
     assert 1 < len(items) < 40
     assert sum(len(i.text) for i in items) <= budget_chars("evidence") + EVIDENCE_PER_MESSAGE_CAP
 

@@ -43,7 +43,8 @@ _CONTEXT_BUDGET_DEFAULTS = {
     "voice_card": 280,
     # Memory v2. These three had no earlier behaviour to fall back to, so the
     # default is the same number the config carries.
-    "user_facts": 300,
+    "user_instructions": 300,
+    "user_facts": 400,
     "session_summary": 500,
     # Unsummarised history above this is compacted down to `history`.
     "history_compact_at": 2000,
@@ -134,16 +135,34 @@ def budget_chars(key: str) -> int:
 def render_user_facts(facts: list[str]) -> str:
     """The user's facts as a "- fact" list, within the `user_facts` budget.
 
-    The list arrives in priority order (memory node: restrictions, then
-    conditions, then the rest), so what does not fit is dropped from the end.
-    A fact is kept whole or not at all: half a restriction reads as a
-    different restriction. "" when there are none or none fits.
+    The list arrives in priority order (memory node: direct hits first, then
+    same-project rows), so what does not fit is dropped from the end. A fact
+    is kept whole or not at all. "" when there are none or none fits.
     """
     limit = budget_chars("user_facts")
     lines: list[str] = []
     used = 0
     for fact in facts:
         line = f"- {fact}"
+        cost = len(line) + (1 if lines else 0)
+        if used + cost > limit:
+            break
+        lines.append(line)
+        used += cost
+    return "\n".join(lines)
+
+
+def render_user_instructions(instructions: list[str]) -> str:
+    """Standing instructions verbatim, within the `user_instructions` budget.
+
+    Same shape as `render_user_facts`: priority order in, whole lines only,
+    dropped from the end. "" when there are none or none fits.
+    """
+    limit = budget_chars("user_instructions")
+    lines: list[str] = []
+    used = 0
+    for instruction in instructions:
+        line = f"- {instruction}"
         cost = len(line) + (1 if lines else 0)
         if used + cost > limit:
             break

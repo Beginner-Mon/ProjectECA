@@ -61,8 +61,8 @@ class TestMemoryLoaderMocks:
     """Test async loader functions with mocked PostgreSQL."""
 
     @pytest.mark.asyncio
-    async def test_load_user_facts_returns_facts(self):
-        from langgraph_agents.nodes.memory import _load_user_facts
+    async def test_load_user_instructions_returns_tier1_safety_first(self):
+        from langgraph_agents.nodes.memory import _load_user_instructions
         mock_pg = AsyncMock()
         mock_pg.fetch.return_value = [
             {"fact_text": "65 tuổi"},
@@ -70,18 +70,21 @@ class TestMemoryLoaderMocks:
         ]
 
         with patch("langgraph_agents.nodes.memory.get_pg_client", return_value=mock_pg):
-            facts = await _load_user_facts("test-user-id")
+            facts = await _load_user_instructions("test-user-id")
             assert len(facts) == 2
             assert "65 tuổi" in facts
+            sql = " ".join(mock_pg.fetch.await_args.args[0].split())
+            assert "tier = 1" in sql and "status = 'active'" in sql
+            assert "said_at DESC" in sql
 
     @pytest.mark.asyncio
-    async def test_load_user_facts_handles_db_error(self):
-        from langgraph_agents.nodes.memory import _load_user_facts
+    async def test_load_user_instructions_handles_db_error(self):
+        from langgraph_agents.nodes.memory import _load_user_instructions
         mock_pg = AsyncMock()
         mock_pg.fetch.side_effect = RuntimeError("DB connection failed")
 
         with patch("langgraph_agents.nodes.memory.get_pg_client", return_value=mock_pg):
-            facts = await _load_user_facts("test-user-id")
+            facts = await _load_user_instructions("test-user-id")
             assert facts == []  # graceful degradation
 
     @pytest.mark.asyncio
@@ -170,7 +173,9 @@ class TestMemoryLoaderMocks:
         })
 
         with patch("langgraph_agents.nodes.memory.get_pg_client", return_value=mock_pg), \
-             patch("langgraph_agents.shared.stm.get_stm") as mock_get_stm:
+             patch("langgraph_agents.shared.stm.get_stm") as mock_get_stm, \
+             patch("langgraph_agents.nodes.memory._load_tier2_facts",
+                   new=AsyncMock(return_value=([], None, None, None))):
             await memory_node({"messages": []}, config)
 
         mock_get_stm.assert_not_called()
@@ -195,8 +200,9 @@ class TestMemoryNode:
         state: AgentState = {"messages": [], "errors": [], "total_tokens": 0,
                              "retry_count": 0}
 
-        with patch("langgraph_agents.nodes.memory._load_user_facts") as mock_facts, \
-             patch("langgraph_agents.nodes.memory._load_stm") as mock_stm:
+        with patch("langgraph_agents.nodes.memory._load_user_instructions") as mock_facts, \
+             patch("langgraph_agents.nodes.memory._load_stm") as mock_stm, \
+             patch("langgraph_agents.nodes.memory._load_tier2_facts") as mock_tier2:
             mock_facts.return_value = ["65 tuoi"]
             mock_stm.return_value = (
                 ["Session: squat"],
@@ -205,10 +211,12 @@ class TestMemoryNode:
                     {"role": "assistant", "content": "Chao ban!"},
                 ],
             )
+            mock_tier2.return_value = (["- [2026-10-14] di bo"], 0.9, None, 5)
 
             result = await memory_node(state, config)
             # Facts and summaries are fields of their own, not a SystemMessage.
-            assert result["user_facts"] == ["65 tuoi"]
+            assert result["user_instructions"] == ["65 tuoi"]
+            assert result["user_facts"] == ["- [2026-10-14] di bo"]
             assert result["session_summary"] == ["Session: squat"]
             assert [type(m) for m in result["messages"]] == [HumanMessage, AIMessage]
 
@@ -225,10 +233,13 @@ class TestMemoryNode:
         state: AgentState = {"messages": [], "errors": [], "total_tokens": 0,
                              "retry_count": 0}
 
-        with patch("langgraph_agents.nodes.memory._load_user_facts") as mock_facts, \
-             patch("langgraph_agents.nodes.memory._load_stm") as mock_stm:
+        with patch("langgraph_agents.nodes.memory._load_user_instructions") as mock_facts, \
+             patch("langgraph_agents.nodes.memory._load_stm") as mock_stm, \
+             patch("langgraph_agents.nodes.memory._load_tier2_facts") as mock_tier2:
             mock_facts.return_value = []
             mock_stm.return_value = ([], [])
+            mock_tier2.return_value = ([], None, None, None)
 
             result = await memory_node(state, config)
-            assert result == {"messages": [], "user_facts": [], "session_summary": []}
+            assert result == {"messages": [], "user_instructions": [],
+                              "user_facts": [], "session_summary": []}

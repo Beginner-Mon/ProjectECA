@@ -32,6 +32,7 @@ from langgraph_agents.shared.context import (
     budget_chars,
     estimate_tokens,
     render_user_facts,
+    render_user_instructions,
 )
 from langgraph_agents.evidence import (
     classify_tool_result as _classify_tool_result,
@@ -434,22 +435,37 @@ def _build_about_you(messages: list) -> str:
     return ""
 
 
-def _build_user_facts(facts: list[str]) -> str:
-    """What the user has told ECA about themselves (state `user_facts`).
+def _build_user_instructions(instructions: list[str]) -> str:
+    """Standing instructions from this user (state `user_instructions`).
 
-    Capped by whole facts, last ones first to go: the memory node puts
-    restrictions and conditions at the head of the list. Empty when there are
-    no facts, so a user with none keeps the exact prompt they had before.
+    Capped by whole lines, last ones first to go. Empty when there are none,
+    so a user with none keeps the exact prompt they had before.
+    """
+    content = render_user_instructions(instructions)
+    if not content:
+        return ""
+    return (
+        "\n\n## Standing instructions from this user\n"
+        "Follow these in every answer unless today's message says otherwise. "
+        "Health notes are the user's own account, not a diagnosis.\n"
+        f"{content}"
+    )
+
+
+def _build_user_facts(facts: list[str]) -> str:
+    """Things this user mentioned in earlier conversations (state `user_facts`).
+
+    Each line carries the date it was said. Capped by whole lines, last ones
+    first to go. Empty when there are none, so a user with none keeps the
+    exact prompt they had before.
     """
     content = render_user_facts(facts)
     if not content:
         return ""
     return (
-        "\n\n## What this user has told you about themselves\n"
-        "These are things the user said in earlier conversations: their own "
-        "account, not a diagnosis.\n"
-        "Use one only when it changes what you should say or do, and if what the "
-        "user says today differs, go by today's message.\n"
+        "\n\n## Things this user mentioned in earlier conversations\n"
+        "Each line has the date it was said. Newer beats older, and today's "
+        "message beats both. Use one only when it changes what you say.\n"
         f"{content}"
     )
 
@@ -530,7 +546,7 @@ sentence."""
 
 async def _run_addition(state, config, llm, writer, msgs, previous,
                         request_id, t0, persona_system, body_note, about_you,
-                        user_facts, session_summary,
+                        user_instructions, user_facts, session_summary,
                         task_system, tool_results, history, voice_card,
                         tag_stream) -> dict:
     """Lượt viết thêm: chỉ nối phần thiếu vào bản đã hiện, không viết lại.
@@ -596,6 +612,7 @@ async def _run_addition(state, config, llm, writer, msgs, previous,
             "persona": len(persona_system),
             "body_state": len(body_note),
             "about_you": len(about_you),
+            "user_instructions": len(user_instructions),
             "user_facts": len(user_facts),
             "session_summary": len(session_summary),
             "task": len(task_system),
@@ -704,12 +721,14 @@ async def synthesizer_node(state: AgentState, config: RunnableConfig) -> dict:
     body_note = _build_body_state_note(state.get("messages", []))
     app_note = _build_app_state_note(config["configurable"].get("speaks_aloud"))
     about_you = _build_about_you(state.get("messages", []))
-    # What the memory node loaded beyond the raw history: the user's own facts,
-    # and the summaries of the part of this conversation `history` no longer holds.
+    # What the memory node loaded beyond the raw history: standing
+    # instructions, earlier-conversation facts, and the rolling summary of
+    # the part of this conversation `history` no longer holds.
+    user_instructions = _build_user_instructions(state.get("user_instructions") or [])
     user_facts = _build_user_facts(state.get("user_facts") or [])
     session_summary = _build_session_summary(state.get("session_summary") or [])
-    middle_blocks = [b for b in (body_note, app_note, about_you, user_facts,
-                                 session_summary) if b]
+    middle_blocks = [b for b in (body_note, app_note, about_you, user_instructions,
+                                 user_facts, session_summary) if b]
     middle = ("\n\n".join(middle_blocks) + "\n\n") if middle_blocks else ""
     system = f"{persona_system}\n\n---\n\n{middle}{task_system}"
 
@@ -775,7 +794,7 @@ async def synthesizer_node(state: AgentState, config: RunnableConfig) -> dict:
         return await _run_addition(
             state, config, llm, writer, msgs, previous,
             request_id, t0, persona_system, body_note, about_you,
-            user_facts, session_summary,
+            user_instructions, user_facts, session_summary,
             task_system, tool_results, history, voice_card, tag_stream)
 
     try:
@@ -900,6 +919,7 @@ async def synthesizer_node(state: AgentState, config: RunnableConfig) -> dict:
         "persona": len(persona_system),
         "body_state": len(body_note),
         "about_you": len(about_you),
+        "user_instructions": len(user_instructions),
         "user_facts": len(user_facts),
         "session_summary": len(session_summary),
         "task": len(task_system),

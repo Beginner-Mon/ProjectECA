@@ -15,14 +15,15 @@ langgraph:
     redis_url: "redis://localhost:6379"
     stm_session_ttl: 7200                 # 2h
     ltm_top_k: 5
-    # Memory v2: index each turn (question + answer) and let memory_search read
-    # that instead of conversation summaries. Off until the migration 014 table
-    # is live; VVA_HISTORY_INDEX=1|0 overrides this.
-    history_index_enabled: false
-    # Memory v2: after a turn, read what the user said and add, change or
-    # retire facts in user_memory. Off until migration 015 is live;
+    # Memory v2 tiers: after a turn, read what the user said and add, change or
+    # retire facts in user_memory. Off until migration 016 is live;
     # VVA_LTM=1|0 overrides this.
     ltm_enabled: false
+    # Tier-2 recall: embed this turn's query (milliseconds), take this many
+    # rows, keep what scores at or above this cosine similarity.
+    tier2_embed_timeout_ms: 300
+    tier2_top_k: 5
+    tier2_min_similarity: 0.86
     # Tier promotion thresholds (memory-v2 tiers): a candidate fact goes
     # active after seen in this many conversations, a repeated instruction
     # becomes a standing tier-1 instruction after this many — unless every
@@ -38,15 +39,6 @@ langgraph:
     top_k: 5
     web_search_enabled: true
     web_search_max_results: 3
-    # memory_search: below this, a past-session summary is not returned.
-    # Measured 12/10 (synthetic, e5-small, max of retriever query and the
-    # user's own words): related 0.843-0.900, off-topic chat <= 0.82.
-    memory_min_similarity: 0.84
-    # memory_search over the turn index: below this a past turn is not returned.
-    # Measured 13/10 (synthetic, e5-small, docs/tracking/history-search-probe-V0.md):
-    # 0.84 was measured on summaries and let 9/14 off-topic queries through;
-    # 0.87 keeps 21/25 recalls and lets 3/14 through. Re-measure on real turns.
-    history_min_similarity: 0.87
 
   # Prompt budgets, in TOKENS (plan T11 — model nhỏ, cửa sổ ~10K).
   # Code đọc qua shared/context.py::context_budget, giữ giá trị cũ khi thiếu.
@@ -58,9 +50,10 @@ langgraph:
     evidence: 1200
     history: 1000
     voice_card: 280
-    # Memory v2: what the user has told ECA about themselves, and the summaries
-    # of the older part of the current conversation.
-    user_facts: 300
+    # Memory tiers: standing instructions, earlier-conversation facts, and the
+    # rolling summary of the older part of the current conversation.
+    user_instructions: 300
+    user_facts: 400
     session_summary: 500
     # Unsummarised history above this is summarised down to `history`; the
     # memory node stops loading raw history at history_compact_at + history.

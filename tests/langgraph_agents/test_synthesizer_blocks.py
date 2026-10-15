@@ -26,8 +26,8 @@ def _tm(name: str, payload) -> ToolMessage:
 
 _KB = [{"content": "Cat-cow for back pain.", "similarity": 0.9,
         "source_type": "exercise_db", "document_title": "Back", "chunk_index": 0}]
-_MEM = {"found": True, "results": [{"summary_text": "talked about squats",
-                                    "similarity": 0.8}]}
+_MEM = {"found": True, "summary_chunks": ["talked about squats"],
+        "recent_messages": [{"role": "user", "content": "hello again"}]}
 _WEB = [{"title": "Back pain guide", "url": "https://x.example", "content": "..."}]
 _MOTION = {"state": "queued", "job_id": "j1", "prompt": "squat"}
 
@@ -45,7 +45,7 @@ def test_motion_only_means_no_tool_results():
 
 
 def test_memory_result_titled_by_source_not_library():
-    ev = _extract_tool_results([_tm("memory_search", _MEM)])
+    ev = _extract_tool_results([_tm("resume_last_session", _MEM)])
     assert "your earlier conversations" in ev
     assert "library" not in ev.lower()
 

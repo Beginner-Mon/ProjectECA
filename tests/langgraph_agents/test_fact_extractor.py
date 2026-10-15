@@ -284,8 +284,8 @@ def _done(records):
 async def test_one_read_selects_the_conversations_and_their_unread_messages():
     pg = _Pg([])
     summary, llm = await _run(pg)
-    assert pg.calls == [("_UNREAD_SQL", (_USER, _CURRENT,
-                                         fe._MAX_CONVERSATIONS, fe._SLICE_MAX_ROWS)),
+    assert pg.calls == [("_UNREAD_SQL", (_USER, fe._MAX_CONVERSATIONS,
+                                         fe._SLICE_MAX_ROWS)),
                         ("_PURGE_SQL", (_USER, 60, 30))]
     assert fe._MAX_CONVERSATIONS == 2
     llm.ainvoke.assert_not_awaited()
@@ -363,7 +363,7 @@ async def test_a_slice_with_no_user_message_costs_one_read_and_one_write(caplog)
         summary, llm = await _run(pg)
     llm.ainvoke.assert_not_awaited()
     assert pg.calls == [
-        ("_UNREAD_SQL", (_USER, _CURRENT, fe._MAX_CONVERSATIONS, fe._SLICE_MAX_ROWS)),
+        ("_UNREAD_SQL", (_USER, fe._MAX_CONVERSATIONS, fe._SLICE_MAX_ROWS)),
         ("_MARK_SQL", (_CURRENT, _USER, 11, 12)),
         ("_PURGE_SQL", (_USER, 60, 30)),
     ]

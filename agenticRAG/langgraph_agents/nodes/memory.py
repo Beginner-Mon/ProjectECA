@@ -4,22 +4,22 @@ Runs FIRST before planner (D9: coreference resolve needs memory context).
 Loads what the model is shown about this user and this conversation:
 
     user_facts        user_memory facts (Tier 1), safety-relevant first
-    session_summary   summary chunks of this session (frozen), oldest first
-    messages          raw history no chunk covers yet (user/assistant only)
+    session_summary   this session's rolling summary (0 or 1 item)
+    messages          raw history the summary does not cover yet (user/assistant only)
 
-Facts and summaries are state fields of their own, which reverses D20 ("context
+Facts and the summary are state fields of their own, which reverses D20 ("context
 flows through messages"): the message route is exactly where they were being
 dropped.
 
 M.5 rules:
   - PostgreSQL = source of truth, and the only store read here
-  - Summary: chunk-based, frozen on write, CAS idempotent
-  - Raw history = every message after the last active chunk, so chunks + raw
+  - Summary: one rolling summary per session, merged forward, CAS idempotent
+  - Raw history = every message after the summary, so summary + raw
     always cover the whole session
   - ... except the running turn's own question: /chat writes it as the turn
     starts, and the synthesizer adds it to the prompt itself. A question left
     by an earlier turn that never got its answer stays in
-  - A session a chunk covers to its last message still hands on its latest
+  - A session the summary covers to its last message still hands on its latest
     turns, the one case where raw history and summaries overlap
   - The summarizer compacts once the raw part passes `history_compact_at`,
     leaving `history` raw
@@ -122,67 +122,51 @@ async def _load_user_facts(user_id: str) -> list[str]:
         return []
 
 
-# ── Summary chunks (frozen, append-only, from summaries table) ────────────
+# ── Rolling STM summary + raw history (one statement) ───────────────
 
-async def _load_summary_chunks(session_id: str) -> list[str]:
-    """Load active summary chunks for session, ordered by covers_from_seq."""
-    try:
-        pg = get_pg_client()
-        await pg.connect()
-        rows = await pg.fetch(
-            """
-            SELECT summary_text FROM summaries
-            WHERE session_id = $1 AND status = 'active'
-            ORDER BY covers_from_seq
-            """,
-            session_id,
-        )
-        return [r["summary_text"] for r in rows]
-    except Exception as exc:
-        logger.warning("summary_chunks_load_failed", extra={"error": str(exc)})
-        return []
-
-
-# ── Raw history (every message no summary chunk covers yet) ───────────────
-
-def _token_estimate(text: str) -> int:
-    """Rough token count: ~4 chars per token for Vietnamese/English."""
-    return len(text) // 4
-
-
-async def _load_raw_history(
+async def _load_stm(
     session_id: str, exclude_message_id: str | None = None,
-) -> list[dict]:
-    """Messages after the last active summary chunk, oldest first.
+) -> tuple[list[str], list[dict]]:
+    """This session's rolling summary plus the messages it does not cover yet.
 
-    One statement, so it runs alongside the other two loads. A dirty chunk
-    (a message in its range was deleted) is not coverage until it is rebuilt.
+    One statement: the summary rides along every message row. Read newest
+    first so that the row limit keeps the recent end.
 
     `exclude_message_id` is the running turn's own question, which may or may
-    not have reached the table yet. Read newest first so that the row limit
-    keeps the recent end.
+    not have reached the table yet.
     """
     try:
         pg = get_pg_client()
         await pg.connect()
         rows = await pg.fetch(
             """
-            SELECT role, content FROM messages
-            WHERE session_id = $1
-              AND seq_id > COALESCE((
-                  SELECT MAX(covers_up_to_seq) FROM summaries
-                  WHERE session_id = $1 AND status = 'active'
-              ), 0)
-              AND ($2::uuid IS NULL OR id <> $2)
-            ORDER BY seq_id DESC
-            LIMIT $3
+            SELECT c.stm_summary, m.role, m.content FROM conversations c
+            LEFT JOIN LATERAL (
+                SELECT m.role, m.content FROM messages m
+                WHERE m.session_id = c.session_id
+                  AND m.seq_id > c.stm_up_to_seq
+                  AND ($2::uuid IS NULL OR m.id <> $2)
+                ORDER BY m.seq_id DESC
+                LIMIT $3
+            ) m ON true
+            WHERE c.session_id = $1
             """,
             session_id, exclude_message_id, _RAW_HISTORY_MAX_ROWS,
         )
-        return [{"role": r["role"], "content": r["content"]} for r in reversed(rows)]
+        if not rows:
+            return [], []
+        summary = rows[0]["stm_summary"]
+        history = [{"role": r["role"], "content": r["content"]}
+                   for r in reversed(rows) if r["role"] is not None]
+        return ([summary] if summary else [], history)
     except Exception as exc:
-        logger.warning("raw_history_load_failed", extra={"error": str(exc)})
-        return []
+        logger.warning("stm_load_failed", extra={"error": str(exc)})
+        return [], []
+
+
+def _token_estimate(text: str) -> int:
+    """Rough token count: ~4 chars per token for Vietnamese/English."""
+    return len(text) // 4
 
 
 async def _load_latest_turns(
@@ -285,7 +269,7 @@ def _recent_raw_to_messages(recent: list[dict]) -> list:
 async def memory_node(state: AgentState, config: RunnableConfig) -> dict:
     """Memory node — runs FIRST (before planner, D9).
 
-    Loads user facts + summary chunks + raw history. Facts and summaries go
+    Loads user facts + rolling summary + raw history. Facts and the summary go
     out as `user_facts` / `session_summary`; `messages` gets the raw history
     as user/assistant messages and nothing else.
     """
@@ -300,11 +284,10 @@ async def memory_node(state: AgentState, config: RunnableConfig) -> dict:
         "node": "memory", "request_id": request_id, "session_id": session_id,
     })
 
-    # All three loads are independent — run concurrently
-    user_facts, summary_chunks, raw_history = await asyncio.gather(
+    # Both loads are independent — run concurrently
+    user_facts, (summary_chunks, raw_history) = await asyncio.gather(
         _load_user_facts(user_id),
-        _load_summary_chunks(session_id),
-        _load_raw_history(session_id, user_message_id),
+        _load_stm(session_id, user_message_id),
     )
     if raw_history:
         raw_history = _drop_history_overflow(raw_history, session_id)

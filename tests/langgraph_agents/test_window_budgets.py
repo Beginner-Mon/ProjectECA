@@ -126,14 +126,17 @@ def test_compaction_cut_uses_given_budgets():
 
 
 @pytest.mark.asyncio
-async def test_maybe_summarize_passes_budgets_to_cut():
+async def test_compact_stm_passes_budgets_to_cut():
     pg = AsyncMock()
-    pg.fetchval.return_value = 0
+    pg.fetchrow = AsyncMock(
+        return_value={"stm_summary": None, "stm_up_to_seq": 0})
     pg.fetch.return_value = _rows((300, 300), (300, 300), (300, 300))
     with patch.object(summ, "get_pg_client", return_value=pg), \
-         patch.object(summ, "_run_summarize", new=AsyncMock()) as run:
-        await summ.maybe_summarize("s-1", 600, 600)
-    run.assert_awaited_once_with("s-1", 0, 4)
+         patch.object(summ, "_summarize_rolling",
+                      new=AsyncMock(return_value="S")) as roll:
+        await summ.compact_stm("s-1", 600, 600)
+    covered = roll.await_args.args[1]
+    assert [r["seq_id"] for r in covered][-1] == 4
 
 
 @pytest.mark.asyncio
@@ -146,8 +149,7 @@ async def test_housekeep_forwards_budgets_and_still_unbinds():
         seen["llm"] = current_request_llm()
 
     _bind(5_000)
-    with patch.object(summ, "summarize_finished_sessions", new=AsyncMock(return_value=0)), \
-         patch.object(summ, "maybe_summarize", side_effect=record):
+    with patch.object(summ, "compact_stm", side_effect=record):
         await asyncio.create_task(summ.housekeep("u", "s", history_budget=500, compact_at=1000))
     assert seen["args"] == ("s", 500, 1000)
     assert seen["llm"] is None

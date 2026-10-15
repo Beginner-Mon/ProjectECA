@@ -77,7 +77,7 @@ def test_the_shipped_yaml_has_extraction_off_and_the_current_conversation_includ
 # ── housekeep ─────────────────────────────────────────────────────────────────
 
 
-def _housekeep_patches(ltm_on, index_on=False, extract_error=None):
+def _housekeep_patches(ltm_on, extract_error=None):
     calls = []
 
     def step(name, error=None):
@@ -90,10 +90,7 @@ def _housekeep_patches(ltm_on, index_on=False, extract_error=None):
 
     extract = step("extract", extract_error)
     return calls, extract, [
-        patch("langgraph_agents.db.turn_index.enabled", return_value=index_on),
-        patch.object(summ, "summarize_finished_sessions", new=step("finished")),
-        patch.object(summ, "maybe_summarize", new=step("compact")),
-        patch("langgraph_agents.db.turn_index.index_new_turns", new=step("index")),
+        patch.object(summ, "compact_stm", new=step("compact")),
         patch.object(fe, "enabled", return_value=ltm_on),
         patch.object(fe, "extract_user_facts", new=extract),
     ]
@@ -109,20 +106,18 @@ async def _housekeep(patches, **kwargs):
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("index_on, before", [(False, "finished"), (True, "index")])
-async def test_housekeep_with_the_switch_off_never_calls_the_extractor(index_on, before):
-    calls, extract, patches = _housekeep_patches(False, index_on)
+async def test_housekeep_with_the_switch_off_never_calls_the_extractor():
+    calls, extract, patches = _housekeep_patches(False)
     await _housekeep(patches, history_budget=5, compact_at=9)
-    assert calls == [before, "compact"]
+    assert calls == ["compact"]
     extract.assert_not_awaited()
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("index_on, before", [(False, "finished"), (True, "index")])
-async def test_housekeep_with_the_switch_on_extracts_last(index_on, before):
-    calls, extract, patches = _housekeep_patches(True, index_on)
+async def test_housekeep_with_the_switch_on_extracts_alongside_compaction():
+    calls, extract, patches = _housekeep_patches(True)
     await _housekeep(patches)
-    assert calls == [before, "compact", "extract"]
+    assert sorted(calls) == ["compact", "extract"]
     extract.assert_awaited_once_with("user-1", "s-1")
 
 
@@ -132,7 +127,7 @@ async def test_housekeep_survives_an_extraction_error_and_logs_its_type_only(cap
         True, extract_error=RuntimeError("Failing row contains (FACTSECRET)"))
     with caplog.at_level(logging.DEBUG):
         await _housekeep(patches)
-    assert calls == ["finished", "compact", "extract"]
+    assert sorted(calls) == ["compact", "extract"]
     (failed,) = [r for r in caplog.records if r.getMessage() == "fact_extraction_failed"]
     assert failed.levelno == logging.WARNING
     assert failed.error == "RuntimeError" and failed.session_id == "s-1"

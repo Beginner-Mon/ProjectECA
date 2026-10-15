@@ -1,9 +1,8 @@
-"""Long-term memory: a session is summarised once the user has moved on (12/10).
+"""Rolling STM: each conversation keeps one summary, merged forward.
 
-Prod before this: no session reached the 10k-token threshold (largest ~2,800,
-median ~400), and the few summaries that did trigger ran as fire-and-forget
-tasks that Lambda froze after the response — 26 `summarizer_trigger_failed`
-("the underlying connection is closed") against 5 `summarizer_done` since 01/09.
+A session compacts in place once its raw part outgrows the budget; the next
+compaction folds the previous summary in. housekeep runs the compaction on
+ECA's key and awaits it after `done`.
 """
 
 import asyncio
@@ -17,58 +16,42 @@ from langgraph_agents.nodes import summarizer as summ
 pytestmark = pytest.mark.unit
 
 
-def _pg(rows):
+def _pg(head=(None, 0), rows=()):
     pg = MagicMock()
     pg.connect = AsyncMock()
-    pg.fetch = AsyncMock(return_value=rows)
+    pg.fetchrow = AsyncMock(return_value={"stm_summary": head[0],
+                                          "stm_up_to_seq": head[1]})
+    pg.fetch = AsyncMock(return_value=list(rows))
+    pg.execute = AsyncMock(return_value="UPDATE 1")
     return pg
 
 
 @pytest.mark.asyncio
-async def test_finished_sessions_are_summarised_from_where_their_summary_stops():
-    pg = _pg([{"session_id": "s-new", "covered": 0},
-              {"session_id": "s-old", "covered": 41}])
-    with patch.object(summ, "get_pg_client", return_value=pg), \
-         patch.object(summ, "_run_summarize", new=AsyncMock()) as run:
-        n = await summ.summarize_finished_sessions("user-1", "s-current")
-    assert n == 2
-    assert [c.args for c in run.await_args_list] == [("s-new", 0), ("s-old", 41)]
-    sql, *args = pg.fetch.await_args.args
-    assert args == ["user-1", "s-current", summ._MIN_FINISHED_TURNS,
-                    summ._MAX_FINISHED_PER_TURN]
-    assert summ._MIN_FINISHED_TURNS == 2
-    assert "session_id <> $2" in sql
-    # Counted in answers: a turn that died left a question and nothing to
-    # summarise it with.
-    assert "m.role = 'assistant'" in sql
-
-
-@pytest.mark.asyncio
-async def test_nothing_to_summarise_makes_no_llm_call():
-    with patch.object(summ, "get_pg_client", return_value=_pg([])), \
-         patch.object(summ, "_run_summarize", new=AsyncMock()) as run:
-        assert await summ.summarize_finished_sessions("user-1", "s-current") == 0
-    run.assert_not_awaited()
-
-
-@pytest.mark.asyncio
-async def test_current_session_long_summary_runs_inline_not_as_a_task():
-    pg = MagicMock()
-    pg.connect = AsyncMock()
-    pg.fetchval = AsyncMock(return_value=0)
-    # Two long turns: well past any compaction threshold, whatever it is tuned to.
-    pg.fetch = AsyncMock(return_value=[
+async def test_compaction_merges_forward_from_the_rolling_summary():
+    pg = _pg(head=("old", 0), rows=[
         {"seq_id": 1, "role": "user", "content": "q" * 400},
         {"seq_id": 2, "role": "assistant", "content": "a" * 40_000},
         {"seq_id": 3, "role": "user", "content": "q" * 400},
         {"seq_id": 4, "role": "assistant", "content": "a" * 40_000},
     ])
     with patch.object(summ, "get_pg_client", return_value=pg), \
-         patch.object(summ, "_run_summarize", new=AsyncMock()) as run, \
+         patch.object(summ, "_summarize_rolling",
+                      new=AsyncMock(return_value="S")) as roll, \
          patch("asyncio.create_task") as create_task:
-        await summ.maybe_summarize("s-current")
-    run.assert_awaited_once_with("s-current", 0, 2)
+        await summ.compact_stm("s-current")
+    # One LLM call folding old + covered; written inline, never as a task.
+    assert roll.await_args.args[0] == "old"
+    assert pg.execute.await_args.args[1:5] == ("s-current", "S", 2, 0)
     create_task.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_nothing_to_compact_makes_no_llm_call():
+    with patch.object(summ, "get_pg_client", return_value=_pg()), \
+         patch.object(summ, "_summarize_rolling",
+                      new=AsyncMock()) as roll:
+        await summ.compact_stm("s-current")
+    roll.assert_not_awaited()
 
 
 @pytest.mark.asyncio
@@ -84,8 +67,8 @@ async def test_housekeep_runs_on_eca_key_not_the_users():
     user_llm = MagicMock()
     bind_request_llm(user_llm)
     try:
-        with patch.object(summ, "summarize_finished_sessions", side_effect=record), \
-             patch.object(summ, "maybe_summarize", new=AsyncMock()):
+        with patch.object(summ, "compact_stm", side_effect=record), \
+             patch.object(summ, "get_pg_client", return_value=_pg()):
             await asyncio.create_task(summ.housekeep("user-1", "s-current"))
         assert seen["llm"] is None
         assert current_request_llm() is user_llm      # the request keeps its key
@@ -95,11 +78,9 @@ async def test_housekeep_runs_on_eca_key_not_the_users():
 
 @pytest.mark.asyncio
 async def test_housekeep_never_raises(caplog):
-    with patch.object(summ, "summarize_finished_sessions",
-                      new=AsyncMock(side_effect=RuntimeError("db down"))), \
-         patch.object(summ, "maybe_summarize", new=AsyncMock()) as current:
+    with patch.object(summ, "compact_stm",
+                      new=AsyncMock(side_effect=RuntimeError("db down"))):
         await summ.housekeep("user-1", "s-current")
-    current.assert_awaited_once_with("s-current", None, None)
 
 
 @pytest.mark.asyncio

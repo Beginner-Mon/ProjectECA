@@ -478,33 +478,34 @@ async def resume_last_session(
                         "updated_at": t["updated_at"].isoformat(),
                     })
 
-        # Step 2: Load summaries (frozen chunks)
-        summary_rows = await pg.fetch(
+        # Step 2: Load the rolling summary (0 or 1 item, kept as a list)
+        summary_row = await pg.fetchrow(
             """
-            SELECT summary_text, covers_from_seq, covers_up_to_seq
-            FROM summaries
-            WHERE session_id = $1 AND status = 'active'
-            ORDER BY covers_from_seq
+            SELECT stm_summary, stm_up_to_seq FROM conversations
+            WHERE session_id = $1
             """,
             target_session,
         )
-        summary_chunks = [r["summary_text"] for r in summary_rows]
+        summary_chunks = (
+            [summary_row["stm_summary"]]
+            if summary_row and summary_row["stm_summary"] else []
+        )
 
-        # Step 3: Load recent messages after last summary
-        last_seq = summary_rows[-1]["covers_up_to_seq"] if summary_rows else 0
+        # Step 3: Load the 10 latest messages the summary does not cover yet
+        last_seq = summary_row["stm_up_to_seq"] if summary_row else 0
         msg_rows = await pg.fetch(
             """
             SELECT role, content, seq_id
             FROM messages
             WHERE session_id = $1 AND seq_id > $2
-            ORDER BY seq_id
+            ORDER BY seq_id DESC
             LIMIT 10
             """,
             target_session,
             last_seq,
         )
         recent_messages = [
-            {"role": r["role"], "content": r["content"]} for r in msg_rows
+            {"role": r["role"], "content": r["content"]} for r in reversed(msg_rows)
         ]
 
         logger.info("resume_last_session_done", extra={

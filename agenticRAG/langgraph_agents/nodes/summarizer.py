@@ -1,38 +1,29 @@
-"""Background summarizer — M.5 (chunk-based, frozen, CAS idempotent).
+"""Background STM compaction — one rolling summary per conversation.
 
 Decisions encoded:
-  M.5:  Summary chunk-based, trigger by message size, runs BACKGROUND,
-        frozen on write (never re-compressed), CAS idempotent
-  M.7:  Summary chunks = STATIC prefix → prompt cache works (append-only)
+  STM:   One summary per conversation (`conversations.stm_summary`), merged
+         forward — each compaction folds the previous summary plus the newly
+         covered messages into a single replacement, written compare-and-set
+         on `stm_up_to_seq`. No embedding: the summary is read by session id,
+         never searched.
 
-Two triggers, both run by `housekeep`, which /chat starts with the turn and
-awaits after its `done` event — inside the invocation, because Lambda freezes
-a container once the response ends, and a task left running after it resumed
-on a closed connection (12/10: 26 failed triggers, 5 summaries since 01/09):
-  - the user has moved on: another session of theirs has ≥ 2 unsummarised
-    turns → summarise it (long-term memory, read back by memory_search);
-  - the current session's unsummarised part passed `history_compact_at` →
-    summarise its oldest part, leaving the newest `history` tokens raw.
-
-Edge A (M.5): summarize fail → retry 1× → still fail → log WARNING, leave.
-Hard cap: memory node drops the oldest raw history past its ceiling.
+`housekeep`, which /chat starts with the turn and awaits after its `done`
+event — inside the invocation, because Lambda freezes the container once the
+response ends, and a task left running after it resumed on a closed
+connection (12/10: 26 failed triggers, 5 summaries since 01/09).
 """
 
 from __future__ import annotations
 
 import asyncio
 import time
-from datetime import datetime, timezone
 
-from langgraph_agents.shared import get_pg_client, get_embedding_service
+from langgraph_agents.shared import get_pg_client
 from langgraph_agents.shared.context import context_budget
 from langgraph_agents.shared.logging import get_logger
 from langgraph_agents.llm import get_chat_model
 
 logger = get_logger("langgraph.summarizer")
-
-# Strong references to fire-and-forget summarizer tasks (same pattern as TTS)
-_pending_summarizer_tasks: set = set()
 
 _MAX_RETRY = 1                # Edge A: retry once
 
@@ -83,170 +74,47 @@ def _compaction_cut(rows: list, history_budget: int | None = None,
     return rows[raw_from - 1]["seq_id"]
 
 
-async def maybe_summarize(session_id: str, history_budget: int | None = None,
-                          compact_at: int | None = None) -> None:
-    """Compact the current session once its raw part outgrows the budget.
+async def _summarize_rolling(previous: str | None, rows: list, session_id: str,
+                             usage: dict | None = None) -> str | None:
+    """Fold the previous summary plus `rows` into one new summary, or None.
 
-    Called from housekeep. Never raises — all errors logged.
-    """
-    try:
-        pg = get_pg_client()
-        await pg.connect()
-
-        # Get last summary chunk's covers_up_to_seq (0 if none)
-        last_chunk = await pg.fetchval(
-            """SELECT COALESCE(MAX(covers_up_to_seq), 0)
-               FROM summaries
-               WHERE session_id = $1 AND status = 'active'""",
-            session_id,
-        )
-
-        rows = await pg.fetch(
-            """SELECT seq_id, role, content FROM messages
-               WHERE session_id = $1 AND seq_id > $2
-               ORDER BY seq_id""",
-            session_id, last_chunk or 0,
-        )
-
-        up_to_seq = _compaction_cut(rows, history_budget, compact_at)
-        if up_to_seq is None:
-            return
-
-        await _run_summarize(session_id, last_chunk or 0, up_to_seq)
-
-    except Exception as exc:
-        logger.warning("summarizer_trigger_failed", extra={
-            "session_id": session_id, "error": str(exc),
-        })
-
-
-# A session counts as finished once the user chats in another one. Two turns is
-# enough to be worth remembering; real sessions are short (prod 12/10: median
-# ~400 tokens, largest ~2,800), so a token threshold never fired. Counted in
-# answers: a turn that died left a question and nothing to summarise it with.
-_MIN_FINISHED_TURNS = 2
-_MAX_FINISHED_PER_TURN = 2
-
-
-async def summarize_finished_sessions(user_id: str, current_session_id: str) -> int:
-    """Summarise the user's other sessions that have unsummarised turns.
-
-    Newest first, at most _MAX_FINISHED_PER_TURN per turn; each picks up from
-    where its last summary stopped, so a session the user returns to is
-    summarised again only for what is new. Returns how many were summarised.
-    """
-    pg = get_pg_client()
-    await pg.connect()
-    rows = await pg.fetch(
-        """SELECT c.session_id, COALESCE(s.covered, 0) AS covered
-           FROM conversations c
-           LEFT JOIN LATERAL (
-               SELECT MAX(covers_up_to_seq) AS covered FROM summaries
-               WHERE session_id = c.session_id AND status = 'active'
-           ) s ON true
-           WHERE c.user_id = $1 AND c.session_id <> $2
-             AND (SELECT count(*) FROM messages m
-                  WHERE m.session_id = c.session_id
-                    AND m.role = 'assistant'
-                    AND m.seq_id > COALESCE(s.covered, 0)) >= $3
-           ORDER BY c.updated_at DESC
-           LIMIT $4""",
-        user_id, current_session_id, _MIN_FINISHED_TURNS, _MAX_FINISHED_PER_TURN,
-    )
-    for r in rows:
-        await _run_summarize(r["session_id"], r["covered"])
-    return len(rows)
-
-
-async def housekeep(user_id: str, session_id: str,
-                    history_budget: int | None = None,
-                    compact_at: int | None = None) -> None:
-    """Both summary triggers for one chat turn. Never raises.
-
-    Runs on ECA's key: a user's own key (BYOK) is for their chat turn, not for
-    summaries written on their behalf. The unbind only touches this task's
-    copy of the context, never the request's. The two budgets come from the
-    request (see _compaction_cut); None reads them here.
-
-    With the turn index on (db/turn_index.py), each turn is indexed instead of
-    summarising finished sessions: memory_search then reads the original turns,
-    so the summaries' only reader is gone and each would cost an LLM call. The
-    indexing needs no LLM, so it runs first. In-conversation compaction is
-    unchanged either way.
-
-    With fact extraction on (nodes/fact_extractor.py), it runs last. /chat
-    writes the turn's question in a task started at the same moment as this
-    one, and by the end of the other steps that write has landed, so the
-    extractor reads what the user has just said.
-    """
-    from langgraph_agents.db import turn_index
-    from langgraph_agents.llm_byok import bind_request_llm
-    from langgraph_agents.nodes import fact_extractor
-
-    bind_request_llm(None)
-    if turn_index.enabled():
-        try:
-            await turn_index.index_new_turns(user_id)
-        except Exception as exc:
-            logger.warning("turn_index_failed", extra={
-                "session_id": session_id, "error": str(exc),
-            })
-    else:
-        try:
-            await summarize_finished_sessions(user_id, session_id)
-        except Exception as exc:
-            logger.warning("finished_session_summary_failed", extra={
-                "session_id": session_id, "error": str(exc),
-            })
-    await maybe_summarize(session_id, history_budget, compact_at)
-    if fact_extractor.enabled():
-        try:
-            await fact_extractor.extract_user_facts(user_id, session_id)
-        except Exception as exc:
-            # The type and not the message: a database error quotes the row it
-            # rejected, and that row is a fact about the user's health.
-            logger.warning("fact_extraction_failed", extra={
-                "session_id": session_id, "error": type(exc).__name__,
-            })
-
-
-async def _summarize_messages(rows: list, session_id: str,
-                              usage: dict | None = None) -> str | None:
-    """LLM-summarize a list of message rows → summary_text or None if fail.
-
-    rows = records with {role, content}.
-    Uses the same prompt + retry logic as _run_summarize.
-    Extracted so rebuild_dirty_chunk can reuse it (M.8 #5).
-
-    `usage`, when given, is filled with the call's `input_tokens` /
-    `output_tokens` (None when the answer reports none) for the
-    `summarizer_done` telemetry. Counts only, never message text.
+    rows = records with {role, content, seq_id}, oldest first, all covered by
+    the new summary. Uses the `memory` role with one retry, like the chunk
+    summariser before it.
     """
     lines = []
     for r in rows:
         label = "User" if r["role"] == "user" else "Assistant"
         lines.append(f"{label}: {r['content']}")
-
     conversation = "\n".join(lines)
 
     llm = get_chat_model("memory")
     # The summary stands in for these messages on later turns of the same
     # conversation, so it keeps what the assistant needs to carry on — not a
-    # description of the chat.
+    # description of the chat. The user's instructions for the assistant and
+    # the facts they told about themselves are part of that, alongside what
+    # the old prompt kept.
     #
     # "The same language as the conversation", not a named language. This used to
     # force Vietnamese, so an English session was summarised into Vietnamese and
     # then fed back to the model as context on the next turn — pushing it toward
     # a language the user had not written in.
+    if previous:
+        context = f"Previous summary:\n{previous}\n\nNew messages:\n{conversation}"
+    else:
+        context = conversation
     prompt = (
-        "Summarise the conversation below so that the assistant can continue it "
-        "without the original messages. Keep: what the user reported (symptoms, "
-        "conditions, limits); which exercises or advice were already given "
-        "(their names, and sets and reps if stated); what the user agreed to or "
-        "declined; cautions already given; and anything still open. Use at most "
-        "about 120 words, written in the SAME language as the conversation "
-        "itself.\n\n"
-        f"{conversation}"
+        "Write one rolling summary of the conversation below so that the "
+        "assistant can continue it without the original messages. "
+        "Fold the previous summary (when there is one) together with the new "
+        "messages: keep what is still true, drop what was superseded. Keep: "
+        "what the user reported (symptoms, conditions, limits); which exercises "
+        "or advice were already given (their names, and sets and reps if stated); "
+        "what the user agreed to or declined; the user's instructions for how "
+        "the assistant should behave; facts the user told about themselves; "
+        "cautions already given; and anything still open. Use at most about "
+        "250 words, written in the SAME language as the conversation itself.\n\n"
+        f"{context}"
     )
 
     summary_text = ""
@@ -282,113 +150,117 @@ async def _summarize_messages(rows: list, session_id: str,
     return summary_text
 
 
-async def _run_summarize(
-    session_id: str, from_seq: int, up_to_seq: int | None = None,
-) -> None:
-    """Summarize messages in (from_seq, up_to_seq] into one chunk.
+def _applied(status: str) -> int:
+    """Rows a statement touched, from its command tag ("UPDATE 1")."""
+    try:
+        return int(status.rsplit(" ", 1)[-1])
+    except (ValueError, AttributeError):
+        return 0
 
-    up_to_seq=None takes everything after from_seq (a finished session), up to
-    its last answer.
+
+async def compact_stm(session_id: str, history_budget: int | None = None,
+                      compact_at: int | None = None) -> None:
+    """Compact the current session once its raw part outgrows the budget.
+
+    Merges the previous rolling summary with the newly covered messages into
+    one replacement, compare-and-set on `stm_up_to_seq`: two compactions
+    racing write the same range and exactly one wins. Called from housekeep.
+    Never raises — all errors logged.
     """
     t0 = time.perf_counter()
-
     try:
         pg = get_pg_client()
         await pg.connect()
 
-        # Load messages not yet covered
+        head = await pg.fetchrow(
+            "SELECT stm_summary, stm_up_to_seq FROM conversations "
+            "WHERE session_id = $1",
+            session_id,
+        )
+        if head is None:
+            return
+        from_seq = head["stm_up_to_seq"] or 0
+
         rows = await pg.fetch(
-            """SELECT seq_id, role, content
-               FROM messages
+            """SELECT seq_id, role, content FROM messages
                WHERE session_id = $1 AND seq_id > $2
-                 AND ($3::bigint IS NULL OR seq_id <= $3)
                ORDER BY seq_id""",
-            session_id, from_seq, up_to_seq,
+            session_id, from_seq,
         )
 
-        # A session the user has left can still have a turn running: its
-        # question is here, its answer is not yet. A chunk that ended on the
-        # question would leave that answer as raw history with nothing asked.
+        up_to_seq = _compaction_cut(rows, history_budget, compact_at)
         if up_to_seq is None:
-            while rows and rows[-1]["role"] == "user":
-                rows = rows[:-1]
-
-        if not rows:
             return
 
-        total_tokens = sum(_token_estimate(r["content"] or "") for r in rows)
-
-        covers_up_to_seq = rows[-1]["seq_id"]
-
-        # ── LLM summarize (cheap model tier) ───────────────────────────
+        covered = [r for r in rows if r["seq_id"] <= up_to_seq]
         usage: dict = {"input_tokens": None, "output_tokens": None}
-        summary_text = await _summarize_messages(rows, session_id, usage)
-        if not summary_text:
+        new_summary = await _summarize_rolling(
+            head["stm_summary"], covered, session_id, usage)
+        if not new_summary:
             return
 
-        # ── Embed + INSERT (same transaction) ───────────────────────────
-        embed_svc = get_embedding_service()
-        embedding = await embed_svc.aembed_passage(summary_text)
-
-        await pg.execute(
-            """INSERT INTO summaries
-               (session_id, summary_text, covers_from_seq, covers_up_to_seq,
-                embedding, status)
-               VALUES ($1, $2, $3, $4, $5, 'active')
-               ON CONFLICT ON CONSTRAINT uq_chunk DO NOTHING""",
-            session_id, summary_text, from_seq + 1, covers_up_to_seq, embedding,
+        tag = await pg.execute(
+            "UPDATE conversations SET stm_summary = $2, stm_up_to_seq = $3 "
+            "WHERE session_id = $1 AND stm_up_to_seq = $4",
+            session_id, new_summary, up_to_seq, from_seq,
         )
+        if not _applied(tag if isinstance(tag, str) else str(tag)):
+            logger.info("stm_compaction_superseded", extra={
+                "session_id": session_id, "from_seq": from_seq,
+            })
+            return
 
-        elapsed_ms = round((time.perf_counter() - t0) * 1000)
-        logger.info("summarizer_done", extra={
+        logger.info("stm_compacted", extra={
             "session_id": session_id,
             "covers_from_seq": from_seq + 1,
-            "covers_up_to_seq": covers_up_to_seq,
-            "token_count": total_tokens,
-            "summary_length": len(summary_text),
+            "covers_up_to_seq": up_to_seq,
             "input_tokens": usage["input_tokens"],
             "output_tokens": usage["output_tokens"],
-            "elapsed_ms": elapsed_ms,
+            "elapsed_ms": round((time.perf_counter() - t0) * 1000),
         })
 
     except Exception as exc:
-        logger.error("summarizer_fatal", extra={
+        logger.warning("stm_compaction_failed", extra={
             "session_id": session_id, "error": str(exc),
         })
 
 
-async def rebuild_dirty_chunk(session_id: str, chunk_id: str) -> bool:
-    """Re-summarize 1 dirty chunk from messages remaining in its range (M.8 #5,#6).
+async def housekeep(user_id: str, session_id: str,
+                    history_budget: int | None = None,
+                    compact_at: int | None = None) -> None:
+    """One chat turn's background work: compact this session, extract facts.
 
-    Returns True if chunk is back to active; False if skipped (empty/LLM fail).
+    Runs on ECA's key: a user's own key (BYOK) is for their chat turn, not for
+    summaries written on their behalf. The unbind only touches this task's
+    copy of the context, never the request's. The two budgets come from the
+    request (see _compaction_cut); None reads them here.
+
+    The two steps are independent — run concurrently. Each catches its own
+    errors; housekeep never raises.
     """
-    pg = get_pg_client()
-    await pg.connect()
+    from langgraph_agents.llm_byok import bind_request_llm
+    from langgraph_agents.nodes import fact_extractor
 
-    # 1. Get range of the dirty chunk
-    chunk = await pg.fetchrow(
-        "SELECT covers_from_seq, covers_up_to_seq FROM summaries "
-        "WHERE id = $1 AND session_id = $2 AND status = 'dirty'",
-        chunk_id, session_id,
-    )
-    if not chunk:
-        return False   # already handled / no longer dirty (idempotent)
+    bind_request_llm(None)
 
-    # 2. Load messages REMAINING in range (deleted ones are gone)
-    rows = await pg.fetch(
-        "SELECT role, content, token_count FROM messages "
-        "WHERE session_id = $1 AND seq_id BETWEEN $2 AND $3 ORDER BY seq_id",
-        session_id, chunk["covers_from_seq"], chunk["covers_up_to_seq"],
-    )
-    if not rows:
-        return False   # empty-chunk: delete_message already removed it (M.8 #3)
+    async def _compact() -> None:
+        try:
+            await compact_stm(session_id, history_budget, compact_at)
+        except Exception as exc:
+            logger.warning("compaction_failed", extra={
+                "session_id": session_id, "error": str(exc),
+            })
 
-    # 3. Re-summarize + embed + UPDATE (call gdpr with correct 4-arg signature)
-    summary_text = await _summarize_messages(rows, session_id)
-    if not summary_text:
-        return False   # LLM fail → leave dirty, retry next time
+    async def _extract() -> None:
+        if not fact_extractor.enabled():
+            return
+        try:
+            await fact_extractor.extract_user_facts(user_id, session_id)
+        except Exception as exc:
+            # The type and not the message: a database error quotes the row it
+            # rejected, and that row is a fact about the user's health.
+            logger.warning("fact_extraction_failed", extra={
+                "session_id": session_id, "error": type(exc).__name__,
+            })
 
-    embedding = await get_embedding_service().aembed_passage(summary_text)
-
-    from langgraph_agents.db.gdpr import re_summarize_chunk
-    return await re_summarize_chunk(session_id, chunk_id, summary_text, embedding)
+    await asyncio.gather(_compact(), _extract())

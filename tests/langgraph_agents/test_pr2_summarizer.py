@@ -1,9 +1,12 @@
-"""Summarizer unit tests — PR 2 M.5 background summarizer.
+"""Summarizer unit tests — rolling STM compaction (memory-v2 tiers).
 
-Tests: trigger threshold, CAS idempotent, LLM summarize + embed, retry.
+One summary per conversation (conversations.stm_summary), merged forward and
+written compare-and-set on stm_up_to_seq. No embedding: the summary is read
+by session id, never searched.
+
+Tests: trigger threshold, CAS idempotent, rolling LLM call + retry.
 """
 
-import uuid
 import pytest
 from unittest.mock import AsyncMock, patch, MagicMock
 
@@ -18,6 +21,16 @@ def _turns(*chars, first_seq=1):
     return rows
 
 
+def _pg(head=(None, 0), rows=()):
+    """Fake pg client: fetchrow answers the stm head, fetch the messages."""
+    pg = AsyncMock()
+    pg.fetchrow = AsyncMock(return_value={"stm_summary": head[0],
+                                          "stm_up_to_seq": head[1]})
+    pg.fetch = AsyncMock(return_value=list(rows))
+    pg.execute = AsyncMock(return_value="UPDATE 1")
+    return pg
+
+
 @pytest.fixture
 def compact_at_2000(monkeypatch):
     from langgraph_agents.shared import context as ctx_mod
@@ -26,7 +39,7 @@ def compact_at_2000(monkeypatch):
 
 
 @pytest.mark.unit
-class TestSummarizerThreshold:
+class TestCompactionThreshold:
     """Verify trigger logic: unsummarised content above `history_compact_at`.
 
     Size is len(content) // 4. `messages.token_count` holds the whole turn's
@@ -35,214 +48,238 @@ class TestSummarizerThreshold:
 
     @pytest.mark.asyncio
     async def test_below_threshold_no_summarize(self, compact_at_2000):
-        """1.9k tokens of content → summarizer does NOT fire."""
-        from langgraph_agents.nodes.summarizer import maybe_summarize
-        mock_pg = AsyncMock()
-        mock_pg.fetchval.return_value = 0  # no prior summary
-        mock_pg.fetch.return_value = _turns((400, 3400), (400, 3400))
+        """1.9k tokens of content → compactor does NOT fire."""
+        from langgraph_agents.nodes import summarizer as summ_mod
+        pg = _pg(rows=_turns((400, 3400), (400, 3400)))
 
-        with patch("langgraph_agents.nodes.summarizer.get_pg_client", return_value=mock_pg):
-            with patch("langgraph_agents.nodes.summarizer._run_summarize",
-                       new=AsyncMock()) as mock_run:
-                await maybe_summarize("test-session")
-                mock_run.assert_not_awaited()
+        with patch.object(summ_mod, "get_pg_client", return_value=pg), \
+             patch.object(summ_mod, "_summarize_rolling",
+                          new=AsyncMock()) as mock_roll:
+            await summ_mod.compact_stm("test-session")
+            mock_roll.assert_not_awaited()
 
     @pytest.mark.asyncio
-    async def test_above_threshold_fires_task(self, compact_at_2000):
-        """2.1k tokens of content → summarizer runs (inline, inside the invocation)."""
-        from langgraph_agents.nodes.summarizer import maybe_summarize
-        mock_pg = AsyncMock()
-        mock_pg.fetchval.return_value = 0
-        mock_pg.fetch.return_value = _turns((400, 3800), (400, 3800))
+    async def test_above_threshold_folds_oldest_part(self, compact_at_2000):
+        """2.1k tokens of content → compactor merges, leaving the latest raw."""
+        from langgraph_agents.nodes import summarizer as summ_mod
+        rows = _turns((400, 3800), (400, 3800))
+        pg = _pg(rows=rows)
 
-        with patch("langgraph_agents.nodes.summarizer.get_pg_client", return_value=mock_pg):
-            with patch("langgraph_agents.nodes.summarizer._run_summarize",
-                       new=AsyncMock()) as mock_run:
-                await maybe_summarize("test-session")
-                # The older turn (seq 1-2) is folded; the latest stays raw.
-                mock_run.assert_awaited_once_with("test-session", 0, 2)
+        with patch.object(summ_mod, "get_pg_client", return_value=pg), \
+             patch.object(summ_mod, "_summarize_rolling",
+                          new=AsyncMock(return_value="S")) as mock_roll:
+            await summ_mod.compact_stm("test-session")
+            # The older turn (seq 1-2) is folded; the latest stays raw.
+            mock_roll.assert_awaited_once()
+            assert mock_roll.await_args.args[1] == [
+                {"seq_id": 1, "role": "user", "content": rows[0]["content"]},
+                {"seq_id": 2, "role": "assistant", "content": rows[1]["content"]},
+            ]
+            sql, *args = pg.execute.await_args.args
+            assert "stm_up_to_seq = $4" in " ".join(sql.split())
+            assert args == ["test-session", "S", 2, 0]
 
     @pytest.mark.asyncio
-    async def test_only_messages_after_the_last_summary_are_measured(self, compact_at_2000):
-        """The chunk starts where the last one stopped."""
-        from langgraph_agents.nodes.summarizer import maybe_summarize
-        mock_pg = AsyncMock()
-        mock_pg.fetchval.return_value = 50  # last summary covers up to seq 50
-        mock_pg.fetch.return_value = _turns((400, 3800), (400, 3800), first_seq=51)
+    async def test_only_messages_after_the_summary_are_measured(self, compact_at_2000):
+        """Compaction starts where the rolling summary stopped."""
+        from langgraph_agents.nodes import summarizer as summ_mod
+        rows = _turns((400, 3800), (400, 3800), first_seq=51)
+        pg = _pg(head=("old", 50), rows=rows)
 
-        with patch("langgraph_agents.nodes.summarizer.get_pg_client", return_value=mock_pg):
-            with patch("langgraph_agents.nodes.summarizer._run_summarize",
-                       new=AsyncMock()) as mock_run:
-                await maybe_summarize("test-session")
-                assert mock_pg.fetch.await_args.args[1:] == ("test-session", 50)
-                mock_run.assert_awaited_once_with("test-session", 50, 52)
+        with patch.object(summ_mod, "get_pg_client", return_value=pg), \
+             patch.object(summ_mod, "_summarize_rolling",
+                          new=AsyncMock(return_value="S")) as mock_roll:
+            await summ_mod.compact_stm("test-session")
+            assert pg.fetch.await_args.args[1:] == ("test-session", 50)
+            # The new summary folds the old one in.
+            assert mock_roll.await_args.args[0] == "old"
+            sql, *args = pg.execute.await_args.args
+            assert args == ["test-session", "S", 52, 50]
 
     @pytest.mark.asyncio
     async def test_token_count_is_not_what_is_measured(self, compact_at_2000):
         """A turn's LLM usage says nothing about how long its messages are."""
-        from langgraph_agents.nodes.summarizer import maybe_summarize
-        mock_pg = AsyncMock()
-        mock_pg.fetchval.return_value = 0
+        from langgraph_agents.nodes import summarizer as summ_mod
         rows = _turns((40, 200), (40, 200), (40, 200))
         for r in rows:
             r["token_count"] = 9000
-        mock_pg.fetch.return_value = rows
+        pg = _pg(rows=rows)
 
-        with patch("langgraph_agents.nodes.summarizer.get_pg_client", return_value=mock_pg):
-            with patch("langgraph_agents.nodes.summarizer._run_summarize",
-                       new=AsyncMock()) as mock_run:
-                await maybe_summarize("test-session")
-                mock_run.assert_not_awaited()
+        with patch.object(summ_mod, "get_pg_client", return_value=pg), \
+             patch.object(summ_mod, "_summarize_rolling",
+                          new=AsyncMock()) as mock_roll:
+            await summ_mod.compact_stm("test-session")
+            mock_roll.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_missing_conversation_row_compacts_nothing(self, compact_at_2000):
+        """A session with no conversations row is not ours to summarise."""
+        from langgraph_agents.nodes import summarizer as summ_mod
+        pg = AsyncMock()
+        pg.fetchrow = AsyncMock(return_value=None)
+        with patch.object(summ_mod, "get_pg_client", return_value=pg), \
+             patch.object(summ_mod, "_summarize_rolling",
+                          new=AsyncMock()) as mock_roll:
+            await summ_mod.compact_stm("test-session")
+            mock_roll.assert_not_awaited()
+            pg.fetch.assert_not_awaited()
 
 
 @pytest.mark.unit
-class TestSummarizerCAS:
-    """Verify CAS idempotent (ON CONFLICT ON CONSTRAINT uq_chunk DO NOTHING)."""
+class TestRollingMerge:
+    """The second compaction folds the first summary in (plan step 3)."""
 
     @pytest.mark.asyncio
-    async def test_cas_no_duplicate_chunk(self):
-        """Calling _run_summarize twice with same session → only 1 INSERT row."""
-        from langgraph_agents.nodes.summarizer import _run_summarize
-        mock_pg = AsyncMock()
-        mock_pg.connect = AsyncMock()
-        mock_pg.fetch.return_value = [
-            {"seq_id": 1, "role": "user", "content": "hello", "token_count": 10},
-            {"seq_id": 2, "role": "assistant", "content": "hi there", "token_count": 12},
-        ]
-        mock_pg.fetchrow = AsyncMock(return_value=None)
-        mock_pg.execute = AsyncMock()
+    async def test_second_compaction_merges_the_first(self, compact_at_2000):
+        from langgraph_agents.nodes import summarizer as summ_mod
+        rows = _turns((400, 3800), (400, 3800))
+        pg = _pg(head=("first summary", 0), rows=rows)
 
-        mock_embed = MagicMock()
-        mock_embed.aembed_passage = AsyncMock(return_value=[0.1] * 384)
+        seen = {}
 
-        mock_llm = MagicMock()
-        mock_ai = MagicMock()
-        mock_ai.content = "A summary of the conversation"
-        mock_llm.ainvoke = AsyncMock(return_value=mock_ai)
+        async def fake_roll(previous, covered, session_id, usage=None):
+            seen["previous"] = previous
+            return (previous or "") + " + more"
 
-        with patch("langgraph_agents.nodes.summarizer.get_pg_client", return_value=mock_pg):
-            with patch("langgraph_agents.nodes.summarizer.get_embedding_service", return_value=mock_embed):
-                with patch("langgraph_agents.nodes.summarizer.get_chat_model", return_value=mock_llm):
-                    await _run_summarize("test-session", 0)
-                    mock_pg.execute.assert_called_once()
-                    # Verify INSERT includes ON CONFLICT clause
-                    call_sql = mock_pg.execute.call_args[0][0]
-                    assert "ON CONFLICT" in call_sql
-                    assert "uq_chunk" in call_sql
+        with patch.object(summ_mod, "get_pg_client", return_value=pg), \
+             patch.object(summ_mod, "_summarize_rolling", side_effect=fake_roll):
+            await summ_mod.compact_stm("test-session")
+
+        assert seen["previous"] == "first summary"
+        sql, *args = pg.execute.await_args.args
+        assert args[1] == "first summary + more"
+        assert args[2:] == [2, 0]
 
 
 @pytest.mark.unit
-class TestSummarizerLLM:
-    """Verify LLM call and response handling."""
+class TestCompactionCAS:
+    """Compare-and-set: two compactions racing write the same range once."""
 
     @pytest.mark.asyncio
-    async def test_summarize_with_llm_content(self):
-        """LLM returns summary → embedded → INSERT."""
-        from langgraph_agents.nodes.summarizer import _run_summarize
-        mock_pg = AsyncMock()
-        mock_pg.fetch.return_value = [
-            {"seq_id": 1, "role": "user", "content": "toi bi dau lung", "token_count": 8000},
-            {"seq_id": 2, "role": "assistant", "content": "ban nen tap squat nhe", "token_count": 9000},
-        ]
-        mock_pg.execute = AsyncMock()
+    async def test_concurrent_compactions_write_once(self, compact_at_2000, caplog):
+        """The loser sees UPDATE 0 and logs superseded instead of writing."""
+        import asyncio
+        import logging
+        from langgraph_agents.nodes import summarizer as summ_mod
+        rows = _turns((400, 3800), (400, 3800))
 
-        mock_embed = MagicMock()
-        mock_embed.aembed_passage = AsyncMock(return_value=[0.1] * 384)
+        pg = _pg(rows=rows)
+        pg.execute = AsyncMock(side_effect=["UPDATE 1", "UPDATE 0"])
 
+        with patch.object(summ_mod, "get_pg_client", return_value=pg), \
+             patch.object(summ_mod, "_summarize_rolling",
+                          new=AsyncMock(return_value="S")):
+            with caplog.at_level(logging.DEBUG):
+                await asyncio.gather(
+                    summ_mod.compact_stm("test-session"),
+                    summ_mod.compact_stm("test-session"),
+                )
+        assert pg.execute.await_count == 2
+        assert [r.getMessage() for r in caplog.records].count("stm_compacted") == 1
+        assert [r.getMessage() for r in caplog.records].count(
+            "stm_compaction_superseded") == 1
+
+
+@pytest.mark.unit
+class TestRollingLLM:
+    """Verify rolling LLM call and response handling."""
+
+    def _llm(self, content):
         mock_llm = MagicMock()
         mock_ai = MagicMock()
-        mock_ai.content = "Nguoi dung hoi ve dau lung, duoc khuyen tap squat nhe."
+        mock_ai.content = content
+        mock_ai.usage_metadata = {"input_tokens": 7, "output_tokens": 3}
         mock_llm.ainvoke = AsyncMock(return_value=mock_ai)
-
-        with patch("langgraph_agents.nodes.summarizer.get_pg_client", return_value=mock_pg):
-            with patch("langgraph_agents.nodes.summarizer.get_embedding_service", return_value=mock_embed):
-                with patch("langgraph_agents.nodes.summarizer.get_chat_model", return_value=mock_llm):
-                    await _run_summarize("test-session", 0)
-                    # Verify INSERT was called with correct data
-                    args = mock_pg.execute.call_args
-                    assert args is not None
+        return mock_llm
 
     @pytest.mark.asyncio
-    async def test_summarize_llm_empty_response(self):
-        """LLM returns empty content → summarizer returns without INSERT."""
-        from langgraph_agents.nodes.summarizer import _run_summarize
-        mock_pg = AsyncMock()
-        # A whole turn: a finished session is summarised up to its last answer.
-        mock_pg.fetch.return_value = [
-            {"seq_id": 1, "role": "user", "content": "hello", "token_count": 5},
-            {"seq_id": 2, "role": "assistant", "content": "hi there", "token_count": 5},
-        ]
-        mock_pg.execute = AsyncMock()
+    async def test_rolling_prompt_folds_previous_and_keeps_instructions(self):
+        """The prompt carries the old summary plus the new messages, keeps
+        instructions/facts, caps at ~250 words, same language."""
+        from langgraph_agents.nodes import summarizer as summ_mod
+        rows = [{"seq_id": 1, "role": "user", "content": "tra loi ngan thoi"}]
+        with patch.object(summ_mod, "get_chat_model",
+                          return_value=self._llm("S")) as get_model:
+            text = await summ_mod._summarize_rolling("old", rows, "s-1")
+        get_model.assert_called_once_with("memory")
+        assert text == "S"
 
+    @pytest.mark.asyncio
+    async def test_rolling_prompt_shape(self):
+        from langgraph_agents.nodes import summarizer as summ_mod
+        llm = self._llm("S")
+        rows = [{"seq_id": 1, "role": "user", "content": "my knee hurts"}]
+        with patch.object(summ_mod, "get_chat_model", return_value=llm):
+            await summ_mod._summarize_rolling("old summary", rows, "s-1")
+        prompt = llm.ainvoke.await_args.args[0]
+        assert "old summary" in prompt
+        assert "User: my knee hurts" in prompt
+        assert "250 words" in prompt
+        assert "SAME language" in prompt
+        assert "instructions" in prompt
+
+    @pytest.mark.asyncio
+    async def test_rolling_without_previous_summarises_messages_only(self):
+        from langgraph_agents.nodes import summarizer as summ_mod
+        llm = self._llm("S")
+        rows = [{"seq_id": 1, "role": "user", "content": "hi"}]
+        with patch.object(summ_mod, "get_chat_model", return_value=llm):
+            await summ_mod._summarize_rolling(None, rows, "s-1")
+        prompt = llm.ainvoke.await_args.args[0]
+        assert "Previous summary" not in prompt
+
+    @pytest.mark.asyncio
+    async def test_rolling_llm_empty_response_writes_nothing(self):
+        """LLM returns empty content → compactor returns without UPDATE."""
+        from langgraph_agents.nodes import summarizer as summ_mod
+        pg = _pg(rows=_turns((400, 3800), (400, 3800)))
         mock_llm = MagicMock()
         mock_ai = MagicMock()
-        mock_ai.content = ""  # empty
+        mock_ai.content = ""
         mock_llm.ainvoke = AsyncMock(return_value=mock_ai)
-
-        with patch("langgraph_agents.nodes.summarizer.get_pg_client", return_value=mock_pg):
-            with patch("langgraph_agents.nodes.summarizer.get_chat_model", return_value=mock_llm):
-                await _run_summarize("test-session", 0)
-                mock_llm.ainvoke.assert_awaited()
-                # INSERT should NOT be called (empty response)
-                # execute is only called for INSERT — verify not called
-                insert_calls = [c for c in mock_pg.execute.call_args_list
-                                if "INSERT INTO summaries" in str(c)]
-                assert len(insert_calls) == 0
+        with patch.object(summ_mod, "get_pg_client", return_value=pg), \
+             patch.object(summ_mod, "get_chat_model", return_value=mock_llm):
+            await summ_mod.compact_stm("test-session")
+            mock_llm.ainvoke.assert_awaited()
+            pg.execute.assert_not_awaited()
 
     @pytest.mark.asyncio
-    async def test_summarize_llm_retry_once(self):
+    async def test_rolling_llm_retry_once(self):
         """LLM fails first call → retries once → succeeds on retry."""
-        from langgraph_agents.nodes.summarizer import _run_summarize
-        mock_pg = AsyncMock()
-        mock_pg.fetch.return_value = [
-            {"seq_id": 1, "role": "user", "content": "hello", "token_count": 5000},
-            {"seq_id": 2, "role": "assistant", "content": "hi there", "token_count": 5000},
-        ]
-        mock_pg.execute = AsyncMock()
-
-        mock_embed = MagicMock()
-        mock_embed.aembed_passage = AsyncMock(return_value=[0.1] * 384)
-
+        from langgraph_agents.nodes import summarizer as summ_mod
         mock_llm = MagicMock()
         mock_ai = MagicMock()
         mock_ai.content = "Summary after retry"
-        # First call fails, second succeeds
-        mock_llm.ainvoke = AsyncMock(side_effect=[
-            RuntimeError("LLM timeout"),
-            mock_ai,
-        ])
-
-        with patch("langgraph_agents.nodes.summarizer.get_pg_client", return_value=mock_pg):
-            with patch("langgraph_agents.nodes.summarizer.get_embedding_service", return_value=mock_embed):
-                with patch("langgraph_agents.nodes.summarizer.get_chat_model", return_value=mock_llm):
-                    await _run_summarize("test-session", 0)
-                    # Should have called LLM twice (retry)
-                    assert mock_llm.ainvoke.call_count == 2
+        mock_ai.usage_metadata = {}
+        mock_llm.ainvoke = AsyncMock(side_effect=[RuntimeError("LLM timeout"), mock_ai])
+        with patch.object(summ_mod, "get_chat_model", return_value=mock_llm):
+            text = await summ_mod._summarize_rolling(
+                None, [{"seq_id": 1, "role": "user", "content": "hi"}], "s-1")
+            assert text == "Summary after retry"
+            assert mock_llm.ainvoke.call_count == 2
 
 
 @pytest.mark.unit
-class TestSummarizerEdgeCases:
+class TestCompactionEdgeCases:
     """Edge cases: no messages, handle exceptions."""
 
     @pytest.mark.asyncio
     async def test_trigger_handles_db_error(self):
-        """maybe_summarize gracefully handles DB errors."""
-        from langgraph_agents.nodes.summarizer import maybe_summarize
+        """compact_stm gracefully handles DB errors."""
+        from langgraph_agents.nodes.summarizer import compact_stm
         mock_pg = AsyncMock()
-        mock_pg.fetchval.side_effect = RuntimeError("DB down")
+        mock_pg.fetchrow = AsyncMock(side_effect=RuntimeError("DB down"))
 
         with patch("langgraph_agents.nodes.summarizer.get_pg_client", return_value=mock_pg):
             # Should not raise — error is logged
-            await maybe_summarize("test-session")
+            await compact_stm("test-session")
 
     @pytest.mark.asyncio
     async def test_empty_messages_returns_early(self):
-        """No messages since last summary → returns without LLM call."""
-        from langgraph_agents.nodes.summarizer import _run_summarize
-        mock_pg = AsyncMock()
-        mock_pg.fetch.return_value = []  # no messages
-
-        with patch("langgraph_agents.nodes.summarizer.get_pg_client", return_value=mock_pg):
-            with patch("langgraph_agents.nodes.summarizer.get_chat_model") as mock_llm:
-                await _run_summarize("test-session", 0)
-                mock_llm.assert_not_called()
+        """No messages after the summary → returns without LLM call."""
+        from langgraph_agents.nodes import summarizer as summ_mod
+        pg = _pg(rows=[])
+        with patch.object(summ_mod, "get_pg_client", return_value=pg), \
+             patch.object(summ_mod, "get_chat_model") as mock_llm:
+            await summ_mod.compact_stm("test-session")
+            mock_llm.assert_not_called()

@@ -85,42 +85,59 @@ class TestMemoryLoaderMocks:
             assert facts == []  # graceful degradation
 
     @pytest.mark.asyncio
-    async def test_load_summary_chunks_returns_active(self):
-        from langgraph_agents.nodes.memory import _load_summary_chunks
+    async def test_load_stm_returns_summary_and_uncovered_history(self):
+        from langgraph_agents.nodes.memory import _load_stm
         mock_pg = AsyncMock()
         mock_pg.fetch.return_value = [
-            {"summary_text": "User asked about squat exercises"},
-            {"summary_text": "User asked about L4-L5 pain"},
+            {"stm_summary": "User asked about squat exercises",
+             "role": "assistant", "content": "Chào bạn!"},
+            {"stm_summary": "User asked about squat exercises",
+             "role": "user", "content": "xin chào"},
         ]
 
         with patch("langgraph_agents.nodes.memory.get_pg_client", return_value=mock_pg):
-            chunks = await _load_summary_chunks("test-session")
-            assert len(chunks) == 2
-            assert "squat" in chunks[0]
+            summary, rows = await _load_stm("test-session")
+            assert summary == ["User asked about squat exercises"]
+            # Asked newest first, handed on oldest first.
+            assert rows == [
+                {"role": "user", "content": "xin chào"},
+                {"role": "assistant", "content": "Chào bạn!"},
+            ]
 
     @pytest.mark.asyncio
-    async def test_load_summary_chunks_handles_db_error(self):
-        from langgraph_agents.nodes.memory import _load_summary_chunks
+    async def test_load_stm_handles_db_error(self):
+        from langgraph_agents.nodes.memory import _load_stm
         mock_pg = AsyncMock()
         mock_pg.fetch.side_effect = RuntimeError("DB down")
 
         with patch("langgraph_agents.nodes.memory.get_pg_client", return_value=mock_pg):
-            chunks = await _load_summary_chunks("test-session")
-            assert chunks == []
+            assert await _load_stm("test-session") == ([], [])
+
+    @pytest.mark.asyncio
+    async def test_load_stm_empty_without_summary_or_history(self):
+        from langgraph_agents.nodes.memory import _load_stm
+        mock_pg = AsyncMock()
+        mock_pg.fetch.return_value = [
+            {"stm_summary": None, "role": None, "content": None},
+        ]
+
+        with patch("langgraph_agents.nodes.memory.get_pg_client", return_value=mock_pg):
+            assert await _load_stm("test-session") == ([], [])
 
     @pytest.mark.asyncio
     async def test_load_raw_history_hands_on_oldest_first(self):
-        from langgraph_agents.nodes.memory import _load_raw_history
+        from langgraph_agents.nodes.memory import _load_stm
         mock_pg = AsyncMock()
         # The statement asks for the newest rows first: its row limit must
         # keep the recent end of a long session.
         mock_pg.fetch.return_value = [
-            {"role": "assistant", "content": "Chào bạn!"},
-            {"role": "user", "content": "xin chào"},
+            {"stm_summary": None, "role": "assistant", "content": "Chào bạn!"},
+            {"stm_summary": None, "role": "user", "content": "xin chào"},
         ]
 
         with patch("langgraph_agents.nodes.memory.get_pg_client", return_value=mock_pg):
-            result = await _load_raw_history("test-session")
+            summary, result = await _load_stm("test-session")
+            assert summary == []
             assert result == [
                 {"role": "user", "content": "xin chào"},
                 {"role": "assistant", "content": "Chào bạn!"},
@@ -128,13 +145,13 @@ class TestMemoryLoaderMocks:
 
     @pytest.mark.asyncio
     async def test_load_raw_history_error_returns_empty(self):
-        from langgraph_agents.nodes.memory import _load_raw_history
+        from langgraph_agents.nodes.memory import _load_stm
         mock_pg = AsyncMock()
         mock_pg.fetch.side_effect = RuntimeError("DB down")
 
         with patch("langgraph_agents.nodes.memory.get_pg_client", return_value=mock_pg):
-            result = await _load_raw_history("test-session")
-            assert result == []
+            result = await _load_stm("test-session")
+            assert result == ([], [])
 
     @pytest.mark.asyncio
     async def test_memory_node_reads_postgres_not_the_cache(self):
@@ -157,7 +174,7 @@ class TestMemoryLoaderMocks:
             await memory_node({"messages": []}, config)
 
         mock_get_stm.assert_not_called()
-        assert mock_pg.fetch.await_count == 3
+        assert mock_pg.fetch.await_count == 2
 
 
 @pytest.mark.unit
@@ -179,14 +196,15 @@ class TestMemoryNode:
                              "retry_count": 0}
 
         with patch("langgraph_agents.nodes.memory._load_user_facts") as mock_facts, \
-             patch("langgraph_agents.nodes.memory._load_summary_chunks") as mock_summaries, \
-             patch("langgraph_agents.nodes.memory._load_raw_history") as mock_history:
+             patch("langgraph_agents.nodes.memory._load_stm") as mock_stm:
             mock_facts.return_value = ["65 tuoi"]
-            mock_summaries.return_value = ["Session: squat"]
-            mock_history.return_value = [
-                {"role": "user", "content": "xin chao"},
-                {"role": "assistant", "content": "Chao ban!"},
-            ]
+            mock_stm.return_value = (
+                ["Session: squat"],
+                [
+                    {"role": "user", "content": "xin chao"},
+                    {"role": "assistant", "content": "Chao ban!"},
+                ],
+            )
 
             result = await memory_node(state, config)
             # Facts and summaries are fields of their own, not a SystemMessage.
@@ -208,11 +226,9 @@ class TestMemoryNode:
                              "retry_count": 0}
 
         with patch("langgraph_agents.nodes.memory._load_user_facts") as mock_facts, \
-             patch("langgraph_agents.nodes.memory._load_summary_chunks") as mock_summaries, \
-             patch("langgraph_agents.nodes.memory._load_raw_history") as mock_history:
+             patch("langgraph_agents.nodes.memory._load_stm") as mock_stm:
             mock_facts.return_value = []
-            mock_summaries.return_value = []
-            mock_history.return_value = []
+            mock_stm.return_value = ([], [])
 
             result = await memory_node(state, config)
             assert result == {"messages": [], "user_facts": [], "session_summary": []}

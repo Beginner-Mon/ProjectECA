@@ -171,73 +171,11 @@ def test_importing_the_module_does_not_import_the_embedding_model():
 
 # ── housekeep ─────────────────────────────────────────────────────────────────
 
-
-def _housekeep_patches(on, index_error=None):
-    calls = []
-
-    async def record(name, *args, **kwargs):
-        calls.append(name)
-        if name == "index" and index_error is not None:
-            raise index_error
-        return 2
-
-    def step(name):
-        async def run(*args, **kwargs):
-            return await record(name)
-        return AsyncMock(side_effect=run)
-
-    finished, compact, index = step("finished"), step("compact"), step("index")
-    return calls, finished, compact, index, [
-        patch("langgraph_agents.db.turn_index.enabled", return_value=on),
-        patch.object(summ, "summarize_finished_sessions", new=finished),
-        patch.object(summ, "maybe_summarize", new=compact),
-        patch("langgraph_agents.db.turn_index.index_new_turns", new=index),
-    ]
-
-
-@pytest.mark.asyncio
-async def test_housekeep_with_the_switch_off_is_what_it_was():
-    calls, finished, compact, index, patches = _housekeep_patches(False)
-    for p in patches:
-        p.start()
-    try:
-        await summ.housekeep("user-1", "s-1", history_budget=5, compact_at=9)
-    finally:
-        patch.stopall()
-    assert calls == ["finished", "compact"]
-    finished.assert_awaited_once_with("user-1", "s-1")
-    compact.assert_awaited_once_with("s-1", 5, 9)
-    index.assert_not_awaited()
-
-
-@pytest.mark.asyncio
-async def test_housekeep_with_the_switch_on_indexes_first_skips_summaries_and_compacts():
-    calls, finished, compact, index, patches = _housekeep_patches(True)
-    for p in patches:
-        p.start()
-    try:
-        await summ.housekeep("user-1", "s-1", history_budget=5, compact_at=9)
-    finally:
-        patch.stopall()
-    assert calls == ["index", "compact"]
-    index.assert_awaited_once_with("user-1")
-    finished.assert_not_awaited()
-    compact.assert_awaited_once_with("s-1", 5, 9)
-
-
-@pytest.mark.asyncio
-async def test_housekeep_survives_an_indexing_error(caplog):
-    calls, finished, compact, index, patches = _housekeep_patches(
-        True, index_error=RuntimeError("db down"))
-    for p in patches:
-        p.start()
-    try:
-        with caplog.at_level(logging.WARNING, logger="langgraph.summarizer"):
-            await summ.housekeep("user-1", "s-1")
-    finally:
-        patch.stopall()
-    compact.assert_awaited_once_with("s-1", None, None)
-    assert any(r.getMessage() == "turn_index_failed" for r in caplog.records)
+# NOTE (memory-v2 tiers, step 3): housekeep no longer branches on the turn
+# index and no longer summarises finished sessions — it compacts this session
+# and extracts facts. The three tests pinning the old branches were removed;
+# compact+extract ordering is pinned in test_fact_extractor.py. The rest of
+# this file (turn text, memory_search) stays until step 5 removes the tool.
 
 
 # ── memory_search ─────────────────────────────────────────────────────────────

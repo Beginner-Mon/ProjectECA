@@ -106,46 +106,47 @@ class _SumPg:
     async def connect(self):
         return None
 
+    async def fetchrow(self, sql, *args):
+        return {"stm_summary": None, "stm_up_to_seq": 0}
+
     async def fetch(self, sql, *args):
         return self.rows
 
     async def execute(self, sql, *args):
-        return "INSERT 0 1"
+        return "UPDATE 1"
 
 
-async def test_summarizer_done_carries_token_counts(caplog):
-    rows = [{"seq_id": 1, "role": "user", "content": "my knee hurts"},
-            {"seq_id": 2, "role": "assistant", "content": "try heel slides"}]
+async def test_stm_compacted_carries_token_counts(caplog):
+    rows = [{"seq_id": 1, "role": "user", "content": "my knee hurts " * 250},
+            {"seq_id": 2, "role": "assistant", "content": "try heel slides " * 250},
+            {"seq_id": 3, "role": "user", "content": "stairs hurt too " * 250},
+            {"seq_id": 4, "role": "assistant", "content": "try step-ups " * 250}]
     ai_msg = SimpleNamespace(content="A summary.",
                              usage_metadata={"input_tokens": 50, "output_tokens": 10})
     llm = MagicMock()
     llm.ainvoke = AsyncMock(return_value=ai_msg)
-    embed = MagicMock()
-    embed.aembed_passage = AsyncMock(return_value=[0.0] * 384)
     with patch.object(summ, "get_pg_client", return_value=_SumPg(rows)), \
-         patch.object(summ, "get_chat_model", return_value=llm), \
-         patch.object(summ, "get_embedding_service", return_value=embed):
+         patch.object(summ, "get_chat_model", return_value=llm):
         with caplog.at_level(logging.DEBUG):
-            await summ._run_summarize(_SESSION, 0)
-    (rec,) = _done(caplog.records, "summarizer_done")
+            await summ.compact_stm(_SESSION)
+    (rec,) = _done(caplog.records, "stm_compacted")
     assert rec.input_tokens == 50
     assert rec.output_tokens == 10
     assert isinstance(rec.elapsed_ms, int)
 
 
-async def test_summarizer_done_tolerates_missing_usage(caplog):
-    rows = [{"seq_id": 1, "role": "user", "content": "my knee hurts"},
-            {"seq_id": 2, "role": "assistant", "content": "try heel slides"}]
+async def test_stm_compacted_tolerates_missing_usage(caplog):
+    rows = [{"seq_id": 1, "role": "user", "content": "my knee hurts " * 250},
+            {"seq_id": 2, "role": "assistant", "content": "try heel slides " * 250},
+            {"seq_id": 3, "role": "user", "content": "stairs hurt too " * 250},
+            {"seq_id": 4, "role": "assistant", "content": "try step-ups " * 250}]
     llm = MagicMock()
     llm.ainvoke = AsyncMock(return_value=SimpleNamespace(content="A summary."))
-    embed = MagicMock()
-    embed.aembed_passage = AsyncMock(return_value=[0.0] * 384)
     with patch.object(summ, "get_pg_client", return_value=_SumPg(rows)), \
-         patch.object(summ, "get_chat_model", return_value=llm), \
-         patch.object(summ, "get_embedding_service", return_value=embed):
+         patch.object(summ, "get_chat_model", return_value=llm):
         with caplog.at_level(logging.DEBUG):
-            await summ._run_summarize(_SESSION, 0)
-    (rec,) = _done(caplog.records, "summarizer_done")
+            await summ.compact_stm(_SESSION)
+    (rec,) = _done(caplog.records, "stm_compacted")
     assert rec.input_tokens is None
     assert rec.output_tokens is None
     assert str(uuid.UUID(_SESSION)) == _SESSION  # session id passes through untouched

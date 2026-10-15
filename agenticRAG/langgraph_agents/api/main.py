@@ -59,7 +59,7 @@ from langgraph_agents.services.exceptions import ServiceUnavailableError
 from langgraph_agents.services.vieneu_tts.client import get_vieneu_tts_client
 from langgraph_agents.services.vieneu_tts.voice import resolve_voice
 from langgraph_agents.services.vieneu_tts.text_budget import plan_spoken_text
-from langgraph_agents.nodes.summarizer import housekeep, _pending_summarizer_tasks
+from langgraph_agents.nodes.summarizer import housekeep
 from langgraph_agents.db.session_store import write_turn_answer, write_turn_question
 from langgraph_agents.shared.logging import (
     configure_root_logger, get_logger, with_request_id,
@@ -169,8 +169,7 @@ def _get_graph():
     return _graph
 
 
-# Strong references, as for _pending_summarizer_tasks: create_task holds only a
-# weak one.
+# Strong references: create_task holds only a weak one.
 _warmup_tasks: set[asyncio.Task] = set()
 
 
@@ -507,10 +506,8 @@ def create_app() -> FastAPI:
         message_id: str,
         uid: str = Depends(current_user_id),
     ):
-        """GDPR: delete a single message + mark-dirty summaries + fire re-summarize."""
+        """GDPR: delete a single message, resetting the rolling summary cover."""
         from langgraph_agents.db.gdpr import delete_message as gdpr_delete_message
-        from langgraph_agents.db.gdpr import get_dirty_chunks
-        from langgraph_agents.nodes.summarizer import rebuild_dirty_chunk, _pending_summarizer_tasks
 
         # Ownership verify: message must belong to user via session
         pg = get_pg_client()
@@ -524,15 +521,7 @@ def create_app() -> FastAPI:
         if not owner:
             raise HTTPException(404, "Message not found or not owned by this user")
 
-        result = await gdpr_delete_message(message_id, session_id)
-
-        # Fire background re-summarize for dirty chunks
-        for chunk in await get_dirty_chunks(session_id):
-            task = asyncio.create_task(rebuild_dirty_chunk(session_id, chunk["id"]))
-            _pending_summarizer_tasks.add(task)
-            task.add_done_callback(_pending_summarizer_tasks.discard)
-
-        return result
+        return await gdpr_delete_message(message_id, session_id)
 
     @application.delete("/me")
     async def delete_user_endpoint(uid: str = Depends(current_user_id)):

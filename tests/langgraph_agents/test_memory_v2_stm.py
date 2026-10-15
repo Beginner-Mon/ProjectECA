@@ -54,21 +54,23 @@ def _config(session_id="s-1", user_message_id=None):
     return RunnableConfig(configurable=configurable)
 
 
-# ── A stand-in for the three tables the memory path reads and writes ─────
+# ── A stand-in for the tables the memory path reads and writes ─────────
 
 class FakeDB:
     """Answers by the shape of the statement, as Postgres would for these.
 
     The code under test still decides every range and every cut; this only
-    stores rows and applies the WHERE clause the statement asks for.
+    stores rows and applies the WHERE clause the statement asks for. One
+    rolling summary per session (stm_summary/stm_up_to_seq), not chunks.
     """
 
     def __init__(self):
         self.messages: list[dict] = []
-        self.summaries: list[dict] = []
         self.facts: list[dict] = []
         self.statements: list[str] = []
         self._seq = 100
+        self.stm_summary: str | None = None
+        self.stm_up_to_seq: int = 0
 
     def add_message(self, role: str, content: str, token_count=None,
                     message_id=None) -> int:
@@ -84,66 +86,58 @@ class FakeDB:
         # What the answer row stores: the whole turn's LLM usage.
         self.add_message("assistant", answer, token_count=6000)
 
-    def add_summary(self, covers_from: int, covers_up_to: int, text: str,
-                    status: str = "active") -> None:
-        self.summaries.append({
-            "covers_from_seq": covers_from, "covers_up_to_seq": covers_up_to,
-            "summary_text": text, "status": status,
-        })
-
-    def _active(self) -> list[dict]:
-        return [s for s in self.summaries if s["status"] == "active"]
-
-    def covered(self) -> int:
-        return max((s["covers_up_to_seq"] for s in self._active()), default=0)
+    def set_stm(self, text: str, up_to_seq: int) -> None:
+        self.stm_summary = text
+        self.stm_up_to_seq = up_to_seq
 
     async def connect(self):
         return None
 
-    async def fetchval(self, sql, *args):
-        sql = " ".join(sql.split())
-        self.statements.append(sql)
-        assert "MAX(covers_up_to_seq)" in sql and "status = 'active'" in sql
-        return self.covered()
+    async def fetchrow(self, sql, *args):
+        # compact_stm reads the rolling-summary head.
+        self.statements.append(" ".join(sql.split()))
+        return {"stm_summary": self.stm_summary,
+                "stm_up_to_seq": self.stm_up_to_seq}
 
     async def fetch(self, sql, *args):
         sql = " ".join(sql.split())
         self.statements.append(sql)
         if "FROM user_memory" in sql:
             return [{"fact_text": f["fact_text"]} for f in self.facts]
-        if "FROM messages" in sql and "ORDER BY seq_id DESC" in sql:
-            # The memory node's reads: newest first, bounded, and without the
-            # running turn's own question.
+        if "FROM conversations c" in sql:
+            # The memory node's single STM statement: the summary rides along
+            # every message row; with no message after the summary the join
+            # still yields one row of NULLs.
             _session, exclude_id, limit = args
-            assert "id <> $2" in sql and "LIMIT $3" in sql
-            low = 0
-            if "FROM summaries" in sql:
-                # Coverage resolved inside the statement itself.
-                assert "status = 'active'" in sql
-                low = self.covered()
+            assert "stm_up_to_seq" in sql and "LIMIT $3" in sql
             rows = [m for m in self.messages
-                    if m["seq_id"] > low and m["id"] != exclude_id]
+                    if m["seq_id"] > self.stm_up_to_seq and m["id"] != exclude_id]
+            rows = rows[::-1][:limit]
+            if not rows:
+                return [{"stm_summary": self.stm_summary,
+                         "role": None, "content": None}]
+            return [{"stm_summary": self.stm_summary,
+                     "role": m["role"], "content": m["content"]} for m in rows]
+        if "ORDER BY seq_id DESC" in sql:
+            # _load_latest_turns: newest first, bounded, without the question.
+            _session, exclude_id, limit = args
+            rows = [m for m in self.messages if m["id"] != exclude_id]
             return rows[::-1][:limit]
         if "FROM messages" in sql:
-            low = args[1]
-            high = args[2] if len(args) > 2 else None
-            return [m for m in self.messages
-                    if m["seq_id"] > low and (high is None or m["seq_id"] <= high)]
-        if "FROM summaries" in sql:
-            assert "status = 'active'" in sql
-            rows = sorted(self._active(), key=lambda s: s["covers_from_seq"])
-            return [{"summary_text": s["summary_text"]} for s in rows]
+            # compact_stm: messages after the summary, oldest first.
+            return [m for m in self.messages if m["seq_id"] > args[1]]
         raise AssertionError(f"unexpected statement: {sql}")
 
     async def execute(self, sql, *args):
         sql = " ".join(sql.split())
         self.statements.append(sql)
-        assert "INSERT INTO summaries" in sql
-        assert "ON CONFLICT ON CONSTRAINT uq_chunk DO NOTHING" in sql
-        _session, text, covers_from, covers_up_to, _embedding = args
-        if any(s["covers_from_seq"] == covers_from for s in self.summaries):
-            return
-        self.add_summary(covers_from, covers_up_to, text)
+        # compact_stm compare-and-set: only the first writer wins.
+        assert "stm_up_to_seq = $4" in sql
+        _session, text, up_to, frm = args
+        if self.stm_up_to_seq != frm:
+            return "UPDATE 0"
+        self.stm_summary, self.stm_up_to_seq = text, up_to
+        return "UPDATE 1"
 
 
 # ── Facts → capped text (shared by synthesizer and planner) ──────────────
@@ -406,9 +400,8 @@ def test_planner_system_prompt_has_no_rule_about_user_facts():
 async def test_memory_node_returns_facts_summary_and_only_uncovered_history(budgets):
     db = FakeDB()
     db.facts = [{"fact_text": "Left knee surgery in July 2026"}]
-    first = db.add_message("user", "old question")
-    last_covered = db.add_message("assistant", "old answer")
-    db.add_summary(first, last_covered, "The user asked about knee pain.")
+    db.add_turn("old question", "old answer")
+    db.set_stm("The user asked about knee pain.", db.messages[-1]["seq_id"])
     db.add_turn("new question", "new answer")
     db.add_turn("newer question", "newer answer")
 
@@ -422,8 +415,8 @@ async def test_memory_node_returns_facts_summary_and_only_uncovered_history(budg
         (HumanMessage, "new question"), (AIMessage, "new answer"),
         (HumanMessage, "newer question"), (AIMessage, "newer answer"),
     ]
-    # Three independent loads, one statement each.
-    assert len(db.statements) == 3
+    # Two independent loads, one statement each.
+    assert len(db.statements) == 2
 
 
 @pytest.mark.asyncio
@@ -434,51 +427,50 @@ async def test_memory_node_returns_empty_fields_for_a_new_session(budgets):
 
 
 @pytest.mark.asyncio
-async def test_a_dirty_summary_does_not_count_as_coverage(budgets):
+async def test_stm_summary_alone_counts_as_coverage(budgets):
     db = FakeDB()
-    first = db.add_message("user", "question")
-    last = db.add_message("assistant", "answer")
-    db.add_summary(first, last, "stale", status="dirty")
+    db.add_turn("question", "answer")
+    db.set_stm("stale", db.messages[-1]["seq_id"])
 
     with patch.object(mem, "get_pg_client", return_value=db):
         out = await mem.memory_node({"messages": []}, _config())
 
-    assert [m.content for m in out["messages"]] == ["question", "answer"]
-    assert out["session_summary"] == []
+    assert out["session_summary"] == ["stale"]
 
 
 @pytest.mark.asyncio
-async def test_raw_history_is_one_statement_that_resolves_coverage_itself(budgets):
+async def test_stm_read_is_one_statement_that_resolves_coverage_itself(budgets):
     db = FakeDB()
     db.add_turn("q", "a")
     with patch.object(mem, "get_pg_client", return_value=db):
-        rows = await mem._load_raw_history("s-1")
+        summary, rows = await mem._load_stm("s-1")
     # Asked for newest first (that is what the row limit keeps), handed on oldest first.
+    assert summary == []
     assert [r["content"] for r in rows] == ["q", "a"]
     assert len(db.statements) == 1
     sql = db.statements[0]
-    assert "MAX(covers_up_to_seq)" in sql and "status = 'active'" in sql
-    assert sql.endswith("ORDER BY seq_id DESC LIMIT $3")
+    assert "stm_up_to_seq" in sql
+    assert "ORDER BY m.seq_id DESC LIMIT $3" in sql
     assert "token_count" not in sql
 
 
 @pytest.mark.asyncio
-async def test_raw_history_read_is_bounded_to_the_newest_rows(budgets):
+async def test_stm_read_is_bounded_to_the_newest_rows(budgets):
     db = FakeDB()
     for i in range(1, 251):
         db.add_message("user" if i % 2 else "assistant", f"m{i}")
     with patch.object(mem, "get_pg_client", return_value=db):
-        rows = await mem._load_raw_history("s-1")
+        summary, rows = await mem._load_stm("s-1")
     assert mem._RAW_HISTORY_MAX_ROWS == 200
     assert [r["content"] for r in rows] == [f"m{i}" for i in range(51, 251)]
 
 
 @pytest.mark.asyncio
-async def test_raw_history_load_failure_degrades_to_empty(budgets):
+async def test_stm_read_failure_degrades_to_empty(budgets):
     pg = AsyncMock()
     pg.fetch.side_effect = RuntimeError("DB down")
     with patch.object(mem, "get_pg_client", return_value=pg):
-        assert await mem._load_raw_history("s-1") == []
+        assert await mem._load_stm("s-1") == ([], [])
 
 
 # ── The running turn's own question (written by /chat as the turn starts) ──
@@ -531,7 +523,7 @@ async def test_an_earlier_unanswered_question_stays_in_the_history(budgets):
 # ── Back in a conversation that a summary covers from end to end ─────────
 
 def _summarise_everything(db: FakeDB, text: str = "The whole conversation.") -> None:
-    db.add_summary(db.messages[0]["seq_id"], db.messages[-1]["seq_id"], text)
+    db.set_stm(text, db.messages[-1]["seq_id"])
 
 
 @pytest.mark.asyncio
@@ -552,7 +544,7 @@ async def test_a_fully_summarised_conversation_still_gets_its_last_turns_verbati
     assert [(type(m), m.content[:2]) for m in out["messages"]] == [
         (HumanMessage, "q3"), (AIMessage, "a3"), (HumanMessage, "q4"), (AIMessage, "a4"),
     ]
-    assert len(db.statements) == 4          # the three loads, then this one read
+    assert len(db.statements) == 3          # the two loads, then this one read
     assert db.statements[-1].endswith("ORDER BY seq_id DESC LIMIT $3")
     assert "FROM summaries" not in db.statements[-1]
 
@@ -583,7 +575,7 @@ async def test_summaries_and_raw_history_do_not_overlap_while_anything_is_uncove
         out = await mem.memory_node({"messages": []}, _config(user_message_id=_QUESTION_ID))
 
     assert [m.content for m in out["messages"]] == ["the turn that died"]
-    assert len(db.statements) == 3
+    assert len(db.statements) == 2
 
 
 @pytest.mark.asyncio
@@ -595,7 +587,7 @@ async def test_a_new_session_makes_no_second_read(budgets):
         out = await mem.memory_node({"messages": []}, _config(user_message_id=_QUESTION_ID))
 
     assert out == {"messages": [], "user_facts": [], "session_summary": []}
-    assert len(db.statements) == 3
+    assert len(db.statements) == 2
 
 
 @pytest.mark.asyncio
@@ -774,11 +766,9 @@ async def _assert_no_hole(db: FakeDB, running: str | None = None) -> dict:
     """running = id of the question of the turn in progress, if it is written."""
     out = await mem.memory_node({"messages": []}, _config(user_message_id=running))
     raw = {m.content for m in out["messages"]}
-    active = db._active()
     for m in db.messages:
         in_raw = m["content"] in raw
-        in_summary = sum(s["covers_from_seq"] <= m["seq_id"] <= s["covers_up_to_seq"]
-                         for s in active)
+        in_summary = m["seq_id"] <= db.stm_up_to_seq
         # The running turn's question is the synthesizer's to add, and no
         # summary may take it while its answer is still to come.
         expected = 0 if m["id"] == running else 1
@@ -786,7 +776,7 @@ async def _assert_no_hole(db: FakeDB, running: str | None = None) -> dict:
             f"seq {m['seq_id']}: raw={in_raw}, summaries={in_summary}")
     if out["messages"]:
         assert isinstance(out["messages"][0], HumanMessage)
-    assert len(out["session_summary"]) == len(active)
+    assert out["session_summary"] == ([db.stm_summary] if db.stm_summary else [])
     return out
 
 
@@ -801,37 +791,50 @@ async def test_twelve_turn_session_has_no_hole(budgets, caplog, summarise):
     embed = MagicMock()
     embed.aembed_passage = AsyncMock(return_value=[0.1] * 384)
 
-    async def fake_summary(rows, session_id, usage=None):
+    async def fake_summary(previous, rows, session_id, usage=None):
         return f"summary of seq {rows[0]['seq_id']}..{rows[-1]['seq_id']}"
 
     ceiling = budgets["history_compact_at"] + budgets["history"]
     with patch.object(mem, "get_pg_client", return_value=db), \
          patch.object(summ, "get_pg_client", return_value=db), \
-         patch.object(summ, "get_embedding_service", return_value=embed), \
-         patch.object(summ, "_summarize_messages", side_effect=fake_summary), \
+         patch.object(summ, "_summarize_rolling", side_effect=fake_summary), \
          caplog.at_level(logging.WARNING):
         for turn, (q_chars, a_chars) in enumerate(_TURNS, start=1):
             question_id = f"question-{turn}"
             if summarise == "before_the_question":
-                await summ.maybe_summarize("s-1")
+                await summ.compact_stm("s-1")
                 await _assert_no_hole(db)
             db.add_message("user", f"q{turn}: " + "x" * q_chars, message_id=question_id)
             seen = await _assert_no_hole(db, question_id)   # what this turn's model is shown
             assert sum(len(m.content) // 4 for m in seen["messages"]) <= ceiling
             if summarise == "after_the_question":
-                await summ.maybe_summarize("s-1")
+                await summ.compact_stm("s-1")
                 await _assert_no_hole(db, question_id)
             db.add_message("assistant", f"a{turn}: " + "y" * a_chars, token_count=6000)
             if summarise == "after_the_answer":
-                await summ.maybe_summarize("s-1")
+                await summ.compact_stm("s-1")
             await _assert_no_hole(db)
 
-    assert len(db.summaries) >= 2, "the session never compacted"
-    ranges = sorted((s["covers_from_seq"], s["covers_up_to_seq"]) for s in db.summaries)
-    for (_, up_to), (next_from, _) in zip(ranges, ranges[1:]):
-        assert next_from == up_to + 1
-    assert "history_overflow_dropped" not in caplog.text
-    assert "summarizer_" not in caplog.text
+    assert db.stm_up_to_seq > 0, "the session never compacted"
+
+
+@pytest.mark.asyncio
+async def test_compaction_only_moves_the_marker_forward(budgets):
+    """Ranges never overlap: the next compaction starts where the last stopped."""
+    db = FakeDB()
+    db.add_turn("q1 ".ljust(400, "x"), "a1 ".ljust(14000, "y"))
+    db.add_turn("q2 ".ljust(400, "x"), "a2 ".ljust(14000, "y"))
+
+    async def fake_summary(previous, rows, session_id, usage=None):
+        return "S"
+
+    with patch.object(summ, "get_pg_client", return_value=db), \
+         patch.object(summ, "_summarize_rolling", side_effect=fake_summary):
+        await summ.compact_stm("s-1")
+        first_up_to = db.stm_up_to_seq
+        assert first_up_to > 0
+        await summ.compact_stm("s-1")
+        assert db.stm_up_to_seq >= first_up_to
 
 
 # ── Summariser: when to compact and where to cut ─────────────────────────
@@ -850,22 +853,25 @@ def _rows(*turns, start_seq=200):
     return rows
 
 
-async def _maybe_summarize(rows, covered=0):
+async def _compact_stm(rows, up_to=0, summary=None):
     pg = AsyncMock()
-    pg.fetchval.return_value = covered
-    pg.fetch.return_value = rows
+    pg.fetchrow = AsyncMock(
+        return_value={"stm_summary": summary, "stm_up_to_seq": up_to})
+    pg.fetch = AsyncMock(return_value=rows)
+    pg.execute = AsyncMock(return_value="UPDATE 1")
     with patch.object(summ, "get_pg_client", return_value=pg), \
-         patch.object(summ, "_run_summarize", new=AsyncMock()) as run:
-        await summ.maybe_summarize("s-1")
-    return run
+         patch.object(summ, "_summarize_rolling",
+                      new=AsyncMock(return_value="S")) as roll:
+        await summ.compact_stm("s-1")
+    return roll, pg
 
 
 @pytest.mark.asyncio
 async def test_huge_token_count_with_short_content_does_not_trigger(budgets):
     rows = [{"seq_id": i, "role": "assistant", "content": "ok", "token_count": 50_000}
             for i in range(1, 9)]
-    run = await _maybe_summarize(rows)
-    run.assert_not_awaited()
+    roll, _ = await _compact_stm(rows)
+    roll.assert_not_awaited()
 
 
 @pytest.mark.asyncio
@@ -873,151 +879,170 @@ async def test_long_content_triggers_whatever_token_count_says(budgets):
     rows = _rows((100, 900), (100, 900), (100, 900))
     for r in rows:
         r["token_count"] = 1
-    run = await _maybe_summarize(rows)
-    run.assert_awaited_once()
+    roll, _ = await _compact_stm(rows)
+    roll.assert_awaited_once()
 
 
 @pytest.mark.asyncio
 async def test_at_the_threshold_nothing_is_summarised(budgets):
-    run = await _maybe_summarize(_rows((500, 500), (500, 500)))       # 2000
-    run.assert_not_awaited()
+    roll, _ = await _compact_stm(_rows((500, 500), (500, 500)))       # 2000
+    roll.assert_not_awaited()
 
 
 @pytest.mark.asyncio
 async def test_above_the_threshold_the_oldest_part_is_summarised(budgets):
     rows = _rows((500, 500), (500, 501))                               # 2001
-    run = await _maybe_summarize(rows, covered=41)
-    run.assert_awaited_once_with("s-1", 41, rows[1]["seq_id"])
+    roll, pg = await _compact_stm(rows, up_to=41)
+    roll.assert_awaited_once()
+    # The new summary folds the old one plus the covered rows.
+    assert roll.await_args.args[0] is None
+    assert [r["seq_id"] for r in roll.await_args.args[1]] == [
+        r["seq_id"] for r in rows if r["seq_id"] <= rows[1]["seq_id"]]
+    sql, *args = pg.execute.await_args.args
+    assert "stm_up_to_seq = $4" in " ".join(sql.split())
+    assert args == ["s-1", "S", rows[1]["seq_id"], 41]
 
 
 @pytest.mark.asyncio
 async def test_newest_turns_stay_raw_while_they_fit_the_history_budget(budgets):
     rows = _rows((100, 800), (50, 250), (50, 250), (50, 250), (50, 250))   # 2100
-    run = await _maybe_summarize(rows)
+    roll, _ = await _compact_stm(rows)
     # Three newest turns = 900 tokens; a fourth would make 1200.
-    run.assert_awaited_once_with("s-1", 0, rows[3]["seq_id"])
+    assert [r["seq_id"] for r in roll.await_args.args[1]][-1] == rows[3]["seq_id"]
     assert rows[4]["role"] == "user"
 
 
 @pytest.mark.asyncio
 async def test_the_cut_never_splits_a_turn(budgets):
     rows = _rows((100, 500), (100, 500), (100, 500), (100, 500))           # 2400
-    run = await _maybe_summarize(rows)
+    roll, _ = await _compact_stm(rows)
     # Only the latest turn fits (600); the one before would make 1200.
-    run.assert_awaited_once_with("s-1", 0, rows[5]["seq_id"])
+    covered = roll.await_args.args[1]
+    assert covered[-1]["seq_id"] == rows[5]["seq_id"]
     assert rows[5]["role"] == "assistant" and rows[6]["role"] == "user"
 
 
 @pytest.mark.asyncio
 async def test_the_latest_turn_stays_raw_even_when_it_alone_is_over_budget(budgets):
     rows = _rows((100, 400), (100, 2400))
-    run = await _maybe_summarize(rows)
-    run.assert_awaited_once_with("s-1", 0, rows[1]["seq_id"])
+    roll, _ = await _compact_stm(rows)
+    assert roll.await_args.args[1][-1]["seq_id"] == rows[1]["seq_id"]
 
-    run = await _maybe_summarize(_rows((100, 2400)))
-    run.assert_not_awaited()
+    roll, _ = await _compact_stm(_rows((100, 2400)))
+    roll.assert_not_awaited()
 
 
 @pytest.mark.asyncio
 async def test_a_question_still_waiting_for_its_answer_counts_as_the_latest_turn(budgets):
     rows = _rows((100, 700), (100, 700), (100, 500), (20, None))           # 2220
-    run = await _maybe_summarize(rows)
+    roll, _ = await _compact_stm(rows)
     # Raw: the open question (20) + the turn before it (600); a third makes 1420.
-    run.assert_awaited_once_with("s-1", 0, rows[3]["seq_id"])
+    assert roll.await_args.args[1][-1]["seq_id"] == rows[3]["seq_id"]
     assert rows[4]["role"] == "user"
 
 
 @pytest.mark.asyncio
-async def test_run_summarize_stops_at_the_given_seq(budgets):
+async def test_compact_writes_the_cut_compare_and_set(budgets):
     pg = AsyncMock()
-    pg.fetch.return_value = _rows((10, 10))
-    embed = MagicMock()
-    embed.aembed_passage = AsyncMock(return_value=[0.1] * 384)
+    pg.fetchrow = AsyncMock(
+        return_value={"stm_summary": None, "stm_up_to_seq": 200})
+    pg.fetch.return_value = _rows((400, 3800), (400, 3800))
+    pg.execute = AsyncMock(return_value="UPDATE 1")
     with patch.object(summ, "get_pg_client", return_value=pg), \
-         patch.object(summ, "get_embedding_service", return_value=embed), \
-         patch.object(summ, "_summarize_messages", new=AsyncMock(return_value="S")):
-        await summ._run_summarize("s-1", 200, 204)
+         patch.object(summ, "_summarize_rolling",
+                      new=AsyncMock(return_value="S")):
+        await summ.compact_stm("s-1")
 
     sql, *args = pg.fetch.await_args.args
-    assert args == ["s-1", 200, 204]
-    assert "seq_id <= $3" in " ".join(sql.split())
-    pg.execute.assert_awaited_once()
-    insert_sql, *insert_args = pg.execute.await_args.args
-    assert "ON CONFLICT ON CONSTRAINT uq_chunk DO NOTHING" in insert_sql
-    assert insert_args[:4] == ["s-1", "S", 201, 204]
+    assert args == ["s-1", 200]
+    assert "seq_id > $2" in " ".join(sql.split())
+    update_sql, *update_args = pg.execute.await_args.args
+    assert "stm_up_to_seq = $4" in " ".join(update_sql.split())
+    assert update_args == ["s-1", "S", 204, 200]
 
 
 @pytest.mark.asyncio
-async def test_run_summarize_without_a_bound_takes_the_whole_remainder(budgets):
+async def test_compact_superseded_second_writer_writes_nothing(budgets, caplog):
+    """Two compactions race on the same range: UPDATE 0 logs superseded."""
+    import logging
     pg = AsyncMock()
-    rows = _rows((10, 10), (10, 10))
-    pg.fetch.return_value = rows
-    embed = MagicMock()
-    embed.aembed_passage = AsyncMock(return_value=[0.1] * 384)
+    pg.fetchrow = AsyncMock(
+        return_value={"stm_summary": None, "stm_up_to_seq": 200})
+    pg.fetch.return_value = _rows((400, 3800), (400, 3800))
+    pg.execute = AsyncMock(return_value="UPDATE 0")
     with patch.object(summ, "get_pg_client", return_value=pg), \
-         patch.object(summ, "get_embedding_service", return_value=embed), \
-         patch.object(summ, "_summarize_messages", new=AsyncMock(return_value="S")):
-        await summ._run_summarize("s-1", 200)
+         patch.object(summ, "_summarize_rolling",
+                      new=AsyncMock(return_value="S")):
+        with caplog.at_level(logging.DEBUG):
+            await summ.compact_stm("s-1")
+    assert [r.getMessage() for r in caplog.records].count(
+        "stm_compaction_superseded") == 1
+    assert "stm_compacted" not in caplog.text
 
-    assert pg.fetch.await_args.args[1:] == ("s-1", 200, None)
-    assert pg.execute.await_args.args[1:5] == ("s-1", "S", 201, rows[-1]["seq_id"])
 
-
-async def _run_summarize(rows, *bounds):
+async def _compact_from(rows, up_to):
     pg = AsyncMock()
-    pg.fetch.return_value = rows
-    embed = MagicMock()
-    embed.aembed_passage = AsyncMock(return_value=[0.1] * 384)
+    pg.fetchrow = AsyncMock(
+        return_value={"stm_summary": None, "stm_up_to_seq": up_to})
+    pg.fetch = AsyncMock(return_value=rows)
+    pg.execute = AsyncMock(return_value="UPDATE 1")
     with patch.object(summ, "get_pg_client", return_value=pg), \
-         patch.object(summ, "get_embedding_service", return_value=embed), \
-         patch.object(summ, "_summarize_messages",
-                      new=AsyncMock(return_value="S")) as summarise:
-        await summ._run_summarize("s-1", *bounds)
-    return pg, summarise
+         patch.object(summ, "_summarize_rolling",
+                      new=AsyncMock(return_value="S")) as roll:
+        await summ.compact_stm("s-1")
+    return pg, roll
 
 
 @pytest.mark.asyncio
-async def test_a_finished_session_is_summarised_up_to_its_last_answer(budgets):
+async def test_a_finished_session_is_compacted_up_to_its_last_answer(budgets):
     """Its last question may belong to a turn that outlived its client: the
     answer lands after this read, and would be left with no question."""
-    rows = _rows((10, 10), (10, 10), (10, None))
-    pg, summarise = await _run_summarize(rows, 200)
+    rows = _rows((500, 500), (500, 500), (500, None))
+    pg, roll = await _compact_from(rows, 200)
 
-    assert summarise.await_args.args[0] == rows[:4]
-    assert pg.execute.await_args.args[1:5] == ("s-1", "S", 201, rows[3]["seq_id"])
+    assert [r["seq_id"] for r in roll.await_args.args[1]] == [
+        r["seq_id"] for r in rows[:4]]
+    assert pg.execute.await_args.args[1:5] == ("s-1", "S", rows[3]["seq_id"], 200)
     assert rows[3]["role"] == "assistant" and rows[4]["role"] == "user"
 
 
 @pytest.mark.asyncio
 async def test_a_finished_session_of_unanswered_questions_is_left_alone(budgets):
-    pg, summarise = await _run_summarize(_rows((10, None), (10, None)), 200)
+    # One question alone is one turn: however long, nothing older to fold.
+    pg, roll = await _compact_from(_rows((1200, None)), 200)
 
-    summarise.assert_not_awaited()
+    roll.assert_not_awaited()
     pg.execute.assert_not_awaited()
 
 
 @pytest.mark.asyncio
 async def test_compaction_keeps_the_range_it_was_given(budgets):
     """_compaction_cut chose the cut; a question whose turn died may end it."""
-    rows = _rows((10, 10), (10, None))
-    pg, summarise = await _run_summarize(rows, 200, rows[-1]["seq_id"])
+    rows = _rows((500, 500), (500, 500), (500, None))
+    pg, roll = await _compact_from(rows, 200)
 
-    assert summarise.await_args.args[0] == rows
-    assert pg.execute.await_args.args[1:5] == ("s-1", "S", 201, rows[-1]["seq_id"])
+    covered = roll.await_args.args[1]
+    assert [r["seq_id"] for r in covered] == [r["seq_id"] for r in rows[:4]]
+    assert covered[-1]["role"] == "assistant" and rows[4]["role"] == "user"
 
 
 @pytest.mark.asyncio
-async def test_summaries_are_written_with_the_memory_role():
+async def test_rolling_summary_is_written_with_the_memory_role():
     llm = MagicMock()
-    llm.ainvoke = AsyncMock(return_value=MagicMock(content=" A summary. "))
+    mock_ai = MagicMock(content=" A summary. ")
+    mock_ai.usage_metadata = {}
+    llm.ainvoke = AsyncMock(return_value=mock_ai)
     with patch.object(summ, "get_chat_model", return_value=llm) as get_model:
-        text = await summ._summarize_messages(
-            [{"role": "user", "content": "my knee hurts"},
-             {"role": "assistant", "content": "try heel slides"}], "s-1")
+        text = await summ._summarize_rolling(
+            "old summary",
+            [{"seq_id": 1, "role": "user", "content": "my knee hurts"},
+             {"seq_id": 2, "role": "assistant", "content": "try heel slides"}],
+            "s-1")
 
     get_model.assert_called_once_with("memory")
     assert text == "A summary."
     prompt = llm.ainvoke.await_args.args[0]
+    assert "old summary" in prompt
     assert "User: my knee hurts\nAssistant: try heel slides" in prompt
     assert "same language" in prompt.lower()
-    assert "120 words" in prompt
+    assert "250 words" in prompt

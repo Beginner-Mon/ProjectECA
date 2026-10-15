@@ -391,54 +391,58 @@ async def test_a2_delete_user_cascades_all_data():
 
 @pytest.mark.unit
 @pytest.mark.asyncio
-async def test_a2_regression_r1_rebuild_dirty_chunk_no_raise():
-    """R1 regression: rebuild_dirty_chunk(session_id, chunk_id) does NOT raise TypeError.
+async def test_a2_delete_covered_message_resets_the_rolling_summary():
+    """Deleting a message at or below stm_up_to_seq clears the summary, which
+    described a message that is gone. An uncovered delete leaves it alone."""
+    from contextlib import asynccontextmanager
+    from langgraph_agents.db import gdpr as gdpr_mod
 
-    Mocks pg + LLM + embed so no real DB needed.
-    Verifies the correct 4-arg gdpr.re_summarize_chunk is called (not the old 2-arg bug).
-    """
-    from langgraph_agents.nodes.summarizer import rebuild_dirty_chunk
+    class _Conn:
+        def __init__(self, seq, up_to):
+            self._seq, self._up_to = seq, up_to
+            self.writes = []
 
-    mock_pg = AsyncMock()
-    mock_pg.connect = AsyncMock()
+        async def fetchrow(self, sql, *args):
+            if sql.strip().startswith("SELECT seq_id"):
+                return {"seq_id": self._seq} if self._seq else None
+            return {"stm_up_to_seq": self._up_to}
 
-    # fetchrow returns chunk range
-    mock_pg.fetchrow = AsyncMock(return_value={
-        "covers_from_seq": 1,
-        "covers_up_to_seq": 10,
-    })
-    # fetch returns 2 remaining messages
-    mock_pg.fetch = AsyncMock(return_value=[
-        {"role": "user", "content": "bị đau lưng", "token_count": 10},
-        {"role": "assistant", "content": "tập cầu mông nhẹ", "token_count": 10},
-    ])
+        async def execute(self, sql, *args):
+            self.writes.append(" ".join(sql.split()))
+            return "UPDATE 1"
 
-    mock_embed = MagicMock()
-    mock_embed.aembed_passage = AsyncMock(return_value=[0.1] * 384)
+        @asynccontextmanager
+        async def transaction(self):
+            yield self
 
-    mock_llm = MagicMock()
-    mock_ai = MagicMock()
-    mock_ai.content = "Người dùng bị đau lưng, được khuyên tập cầu mông."
-    mock_llm.ainvoke = AsyncMock(return_value=mock_ai)
+    class _Pool:
+        def __init__(self, conn):
+            self._conn = conn
 
-    mock_re_summarize = AsyncMock(return_value=True)
+        @asynccontextmanager
+        async def acquire(self):
+            yield self._conn
 
-    with patch("langgraph_agents.nodes.summarizer.get_pg_client", return_value=mock_pg):
-        with patch("langgraph_agents.nodes.summarizer.get_embedding_service", return_value=mock_embed):
-            with patch("langgraph_agents.nodes.summarizer.get_chat_model", return_value=mock_llm):
-                with patch("langgraph_agents.db.gdpr.re_summarize_chunk", mock_re_summarize):
-                    # Must not raise — this was the R1 bug (TypeError on wrong args)
-                    result = await rebuild_dirty_chunk("test-session", "test-chunk-id")
+    async def _delete(seq, up_to):
+        conn = _Conn(seq, up_to)
+        pg = MagicMock()
+        pg.connect = AsyncMock()
+        pg._pool = _Pool(conn)
+        with patch.object(gdpr_mod, "get_pg_client", return_value=pg):
+            result = await gdpr_mod.delete_message("m-1", "s-1")
+        return result, conn
 
-    assert result is True, "rebuild_dirty_chunk must return True when gdpr.re_summarize_chunk returns True"
+    result, conn = await _delete(seq=5, up_to=10)
+    assert result == {"deleted": True, "stm_reset": True}
+    assert any("stm_summary = NULL, stm_up_to_seq = 0" in w for w in conn.writes)
+    assert any(w.startswith("DELETE FROM messages") for w in conn.writes)
 
-    # Verify gdpr.re_summarize_chunk was called with correct 4-arg signature
-    mock_re_summarize.assert_called_once()
-    call_args = mock_re_summarize.call_args[0]
-    assert call_args[0] == "test-session", "First arg must be session_id"
-    assert call_args[1] == "test-chunk-id", "Second arg must be chunk_id"
-    assert isinstance(call_args[2], str) and len(call_args[2]) > 0, "Third arg must be summary_text string"
-    assert isinstance(call_args[3], list), "Fourth arg must be embedding list"
+    result, conn = await _delete(seq=11, up_to=10)
+    assert result == {"deleted": True, "stm_reset": False}
+    assert all("stm_summary" not in w for w in conn.writes)
+
+    result, _ = await _delete(seq=None, up_to=10)
+    assert result == {"deleted": False, "reason": "not_found"}
 
 
 # ═══════════════════════════════════════════════════════════════════════════
@@ -483,13 +487,15 @@ async def test_a1_resume_within_24h_returns_ambiguous():
         {"session_id": session_b, "title": "Session B", "updated_at": now - timedelta(hours=2)},
     ]
 
-    # fetchrow for preview messages
+    # fetchrow serves the rolling-summary head and the preview messages
     async def fetchrow_side(query, *args):
+        if "stm_summary" in query:
+            return {"stm_summary": "Dau vai duoc khuyen xoay vai.",
+                    "stm_up_to_seq": 4}
         return {"content": "Xin chào, tôi bị đau vai."}
 
     mock_pg.fetch = AsyncMock(side_effect=[
         mock_top2_list,       # top2 sessions query
-        [],                   # summary_rows
         [],                   # recent messages
     ])
     mock_pg.fetchrow = AsyncMock(side_effect=fetchrow_side)
@@ -528,7 +534,6 @@ async def test_a1_resume_beyond_24h_no_ambiguous():
     mock_pg.connect = AsyncMock()
     mock_pg.fetch = AsyncMock(side_effect=[
         mock_top2_list,  # top2 query
-        [],              # summary_rows
         [],              # recent messages
     ])
     mock_pg.fetchrow = AsyncMock(return_value=None)

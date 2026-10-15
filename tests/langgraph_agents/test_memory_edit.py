@@ -27,7 +27,8 @@ class MemoryEditTests(TestCase):
         self.conn = MagicMock()
         self.row = dict(
             id=FACT, fact_text="Updated fact", category="preference", valid=True,
-            source="extracted", created_at=STAMP, updated_at=STAMP,
+            kind="fact", tier=2, status="active", project=None,
+            source="extracted", created_at=STAMP, updated_at=STAMP, said_at=STAMP,
         )
         self.conn.fetchrow = AsyncMock(side_effect=[{"updated_at": STAMP}, self.row])
         pg = MagicMock()
@@ -61,9 +62,20 @@ class MemoryEditTests(TestCase):
         self.assertNotIn("source", assignments)
         self.assertNotIn("category", assignments)
         self.assertNotIn("created_at", assignments)
+        self.assertIn("said_at = now()", assignments)
+        self.assertIn("updated_at = now()", assignments)
 
     def test_stale_edit_returns_conflict_without_writing(self):
         response = self.edit(expected_updated_at="2026-10-14T07:00:00+00:00")
+        self.assertEqual(response.status_code, 409)
+        self.assertEqual(self.conn.fetchrow.await_count, 1)
+
+    def test_extractor_write_between_list_and_save_returns_conflict(self):
+        """The extractor stamps updated_at on every write: a user saving over
+        a row the extractor just refreshed gets 409, which is correct."""
+        self.conn.fetchrow.side_effect = [{"updated_at": datetime(
+            2026, 10, 14, 8, 0, 1, tzinfo=timezone.utc)}]
+        response = self.edit()
         self.assertEqual(response.status_code, 409)
         self.assertEqual(self.conn.fetchrow.await_count, 1)
 
@@ -110,3 +122,81 @@ class MemoryEditTests(TestCase):
             })
         self.assertEqual(response.status_code, 401)
         self.conn.fetchrow.assert_not_awaited()
+
+
+class MemoryTierFieldsTests(TestCase):
+    def setUp(self):
+        app = FastAPI()
+        app.include_router(router)
+        app.dependency_overrides[current_user_id] = lambda: UID
+        self.client = TestClient(app)
+        self.pg = MagicMock()
+        self.mock_pg = patch("langgraph_agents.api.routes_crud.get_pg_client",
+                             return_value=self.pg)
+        self.mock_pg.start()
+        self.addCleanup(self.mock_pg.stop)
+        self.addCleanup(self.client.close)
+
+    def _row(self, **over):
+        row = dict(id=FACT, fact_text="t", category="goal", valid=True,
+                   kind="fact", tier=2, status="active", project=None,
+                   source="user", created_at=STAMP, updated_at=STAMP,
+                   said_at=STAMP)
+        row.update(over)
+        return row
+
+    def test_create_instruction_lands_tier1_and_create_fact_tier2(self):
+        conn = MagicMock()
+        conn.execute = AsyncMock()
+        conn.fetchrow = AsyncMock(return_value=self._row())
+        self.pg.transaction.return_value.__aenter__ = AsyncMock(return_value=conn)
+        self.pg.transaction.return_value.__aexit__ = AsyncMock(return_value=False)
+        response = self.client.post("/me/memory", json={
+            "fact_text": "Answer briefly", "kind": "instruction", "project": "work"})
+        self.assertEqual(response.status_code, 200)
+        body = response.json()
+        self.assertEqual((body["kind"], body["tier"], body["status"],
+                          body["project"]), ("instruction", 1, "active", "work"))
+        insert = conn.fetchrow.await_args.args[0]
+        self.assertIn("kind, tier", " ".join(insert.split()))
+        self.assertIn("'user'", " ".join(insert.split()))
+
+        response = self.client.post("/me/memory", json={"fact_text": "Likes pho"})
+        body = response.json()
+        self.assertEqual((body["kind"], body["tier"]), ("fact", 2))
+        self.assertIsNone(body["project"])
+
+    def test_create_rejects_bad_kind_and_long_project(self):
+        self.assertEqual(self.client.post(
+            "/me/memory", json={"fact_text": "x", "kind": "note"}).status_code, 422)
+        self.assertEqual(self.client.post(
+            "/me/memory",
+            json={"fact_text": "x", "project": "p" * 61}).status_code, 422)
+
+    def test_list_returns_tier_fields_and_candidates(self):
+        self.pg.connect = AsyncMock()
+        self.pg.fetch = AsyncMock(return_value=[
+            self._row(id="a", kind="instruction", tier=1),
+            self._row(id="b", status="candidate", said_at=None),
+        ])
+        response = self.client.get("/me/memory")
+        self.assertEqual(response.status_code, 200)
+        facts = {f["id"]: f for f in response.json()["facts"]}
+        self.assertEqual(facts["a"]["tier"], 1)
+        self.assertEqual(facts["b"]["status"], "candidate")
+        self.assertIsNone(facts["b"]["said_at"])
+        self.assertEqual(facts["a"]["said_at"], STAMP.isoformat())
+        select = self.pg.fetch.await_args.args[0]
+        self.assertIn("kind", select)
+        self.assertIn("tier", select)
+        self.assertIn("said_at", select)
+        self.assertIn("valid = true", select)
+
+    def test_delete_all_returns_the_count(self):
+        self.pg.connect = AsyncMock()
+        self.pg.execute = AsyncMock(return_value="DELETE 3")
+        response = self.client.delete("/me/memory")
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json(), {"deleted": 3})
+        self.assertIn("DELETE FROM user_memory", self.pg.execute.await_args.args[0])
+        self.assertNotIn("source", self.pg.execute.await_args.args[0])

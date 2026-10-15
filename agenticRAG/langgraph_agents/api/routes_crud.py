@@ -106,8 +106,13 @@ async def create_user_memory(body: UserMemoryCreate, uid: str = Depends(current_
     with the second seeing a database where the first had not happened. The
     insert into `users` exists precisely to satisfy the foreign key of the
     insert that follows it, so they have to be one unit.
+
+    Something the user types is theirs: source 'user', status active. An
+    instruction lands on tier 1, a fact on tier 2 (its vector is filled in by
+    a later chat turn).
     """
     pg = get_pg_client()
+    tier = 1 if body.kind == "instruction" else 2
 
     async with pg.transaction() as conn:
         # Ensure user row exists — the FK on user_memory requires it, and a user
@@ -116,31 +121,38 @@ async def create_user_memory(body: UserMemoryCreate, uid: str = Depends(current_
             "INSERT INTO users (id) VALUES ($1::uuid) ON CONFLICT (id) DO NOTHING", uid,
         )
         row = await conn.fetchrow(
-            """INSERT INTO user_memory (user_id, fact_text, category)
-               VALUES ($1::uuid, $2, $3)
-               RETURNING id, created_at, updated_at""",
-            uid, body.fact_text, body.category,
+            """INSERT INTO user_memory (user_id, fact_text, category, kind, tier,
+                                         status, project, source)
+               VALUES ($1::uuid, $2, $3, $4, $5, 'active', $6, 'user')
+               RETURNING id, created_at, updated_at, said_at""",
+            uid, body.fact_text, body.category, body.kind, tier, body.project,
         )
 
     return UserMemoryItem(
         id=str(row["id"]),
         fact_text=body.fact_text,
         category=body.category,
+        kind=body.kind,
+        tier=tier,
+        status="active",
+        project=body.project,
         valid=True,
         source="user",
         created_at=row["created_at"].isoformat(),
         updated_at=row["updated_at"].isoformat(),
+        said_at=row["said_at"].isoformat() if row["said_at"] else None,
     )
 
 
 @router.get("/me/memory", response_model=UserMemoryListResponse)
 async def list_user_memory(uid: str = Depends(current_user_id)):
-    """List user facts (valid=true, newest first)."""
+    """List user rows, candidates included, newest first."""
     pg = get_pg_client()
     await pg.connect()
 
     rows = await pg.fetch(
-        """SELECT id, fact_text, category, valid, source, created_at, updated_at
+        """SELECT id, fact_text, category, kind, tier, status, project,
+                  valid, source, created_at, updated_at, said_at
            FROM user_memory
            WHERE user_id = $1::uuid AND valid = true
            ORDER BY created_at DESC, id""",
@@ -151,10 +163,15 @@ async def list_user_memory(uid: str = Depends(current_user_id)):
             id=str(r["id"]),
             fact_text=r["fact_text"],
             category=r["category"],
+            kind=r["kind"],
+            tier=r["tier"],
+            status=r["status"],
+            project=r["project"],
             valid=r["valid"],
             source=r["source"],
             created_at=r["created_at"].isoformat(),
             updated_at=r["updated_at"].isoformat(),
+            said_at=r["said_at"].isoformat() if r["said_at"] else None,
         )
         for r in rows
     ])
@@ -182,16 +199,36 @@ async def update_user_memory(
         if previous["updated_at"] != body.expected_updated_at:
             raise HTTPException(409, "Memory changed. Reload before saving.")
         row = await conn.fetchrow(
-            """UPDATE user_memory SET fact_text = $3, updated_at = now()
+            """UPDATE user_memory SET fact_text = $3, said_at = now(), updated_at = now()
                WHERE id = $1::uuid AND user_id = $2::uuid AND valid = true
-               RETURNING id, fact_text, category, valid, source, created_at, updated_at""",
+               RETURNING id, fact_text, category, kind, tier, status, project,
+                         valid, source, created_at, updated_at, said_at""",
             fact_id, uid, body.fact_text,
         )
     return UserMemoryItem(
         id=str(row["id"]), fact_text=row["fact_text"], category=row["category"],
-        valid=row["valid"], source=row["source"],
+        kind=row["kind"], tier=row["tier"], status=row["status"],
+        project=row["project"], valid=row["valid"], source=row["source"],
         created_at=row["created_at"].isoformat(), updated_at=row["updated_at"].isoformat(),
+        said_at=row["said_at"].isoformat() if row["said_at"] else None,
     )
+
+
+@router.delete("/me/memory")
+async def delete_all_user_memory(uid: str = Depends(current_user_id)):
+    """Hard-delete every memory row of the caller, typed and extracted alike."""
+    pg = get_pg_client()
+    await pg.connect()
+
+    result = await pg.execute(
+        "DELETE FROM user_memory WHERE user_id = $1::uuid",
+        uid,
+    )
+    try:
+        deleted = int(result.rsplit(" ", 1)[-1])
+    except (ValueError, AttributeError):
+        deleted = 0
+    return {"deleted": deleted}
 
 
 @router.delete("/me/memory/{fact_id}")

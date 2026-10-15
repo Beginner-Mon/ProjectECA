@@ -539,23 +539,38 @@ export interface UserMemoryItem {
   id: string
   fact_text: string
   category: string | null
+  /** 'instruction' = follow it everywhere, 'fact' = known about the user. */
+  kind: 'instruction' | 'fact'
+  /** 1 = standing instruction, 2 = project fact. */
+  tier: 1 | 2
+  /** 'active' = in use, 'candidate' = still being confirmed. */
+  status: 'active' | 'candidate'
+  project: string | null
   /** 'user' = typed by the user, 'extracted' = noted by ECA from a conversation. */
   source: 'user' | 'extracted'
   created_at: string
   updated_at: string
+  /** When the user said the current content. */
+  said_at: string | null
 }
 
 /**
  * What the server sends, before lib/userMemory.ts fills the gaps: an older
- * backend sends neither `source` nor `updated_at`.
+ * backend sends neither `source` nor `updated_at`, and nothing before the
+ * tiers change sends `kind`, `tier`, `status`, `project` or `said_at`.
  */
 export interface UserMemoryWire {
   id: string
   fact_text: string
   category?: string | null
+  kind?: string
+  tier?: number
+  status?: string
+  project?: string | null
   source?: string
   created_at: string
   updated_at?: string | null
+  said_at?: string | null
 }
 
 export async function listUserMemory(): Promise<{ facts: UserMemoryWire[] }> {
@@ -563,16 +578,26 @@ export async function listUserMemory(): Promise<{ facts: UserMemoryWire[] }> {
   return data
 }
 
-export async function createUserMemory(factText: string, category?: string): Promise<UserMemoryWire> {
+export async function createUserMemory(
+  factText: string,
+  opts?: { kind?: 'instruction' | 'fact'; category?: string; project?: string },
+): Promise<UserMemoryWire> {
   const { data } = await http.post('/me/memory', {
     fact_text: factText,
-    category,
+    kind: opts?.kind ?? 'fact',
+    category: opts?.category,
+    project: opts?.project,
   })
   return data
 }
 
 export async function deleteUserMemory(factId: string): Promise<{ deleted: string }> {
   const { data } = await http.delete(`/me/memory/${encodeURIComponent(factId)}`)
+  return data
+}
+
+export async function deleteAllUserMemory(): Promise<{ deleted: number }> {
+  const { data } = await http.delete('/me/memory')
   return data
 }
 

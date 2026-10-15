@@ -7,8 +7,8 @@ Project ECA ("ECA", "chúng tôi") là dự án sinh viên của Ordinary Studio
 ## 1. Chúng tôi thu thập gì
 
 - **Thông tin tài khoản.** Email và tên hiển thị. Nếu bạn đăng nhập bằng Google, chúng tôi nhận thêm tên, email và ảnh đại diện của tài khoản Google đó.
-- **Hội thoại của bạn.** Tin nhắn bạn gửi, câu trả lời của ECA, và bản tóm tắt ngắn ECA viết cho mỗi hội thoại đã xong để nhớ lại về sau. Nội dung có thể gồm thông tin sức khoẻ bạn chọn chia sẻ, như cơn đau, chấn thương, triệu chứng hay bài tập.
-- **Ghi chú về bạn.** Những ghi chú ngắn về điều bạn kể với ECA về bản thân, có thể gồm thông tin sức khoẻ như một chấn thương hay một sở thích. ECA tự ghi một số ghi chú từ các cuộc trò chuyện của bạn, và bạn cũng có thể tự thêm. Chúng chỉ được dùng để câu trả lời của ECA phù hợp với bạn, và được giữ cho đến khi bạn xoá chúng hoặc xoá tài khoản.
+- **Hội thoại của bạn.** Tin nhắn bạn gửi, câu trả lời của ECA, và một bản tóm tắt cuộn cho mỗi hội thoại mà ECA cập nhật dần khi hội thoại dài ra. ECA dùng nó để theo dõi hội thoại đó và để tiếp tục hội thoại gần nhất còn dang dở. Nội dung có thể gồm thông tin sức khoẻ bạn chọn chia sẻ, như cơn đau, chấn thương, triệu chứng hay bài tập.
+- **Ghi chú về bạn.** Hai loại ghi chú ngắn về điều bạn kể với ECA về bản thân, có thể gồm thông tin sức khoẻ như một chấn thương hay một sở thích: lời dặn ECA theo ở mọi nơi, và điều chỉ đúng trong một project. Mỗi ghi chú kèm ngày bạn nói ra nó. ECA tự ghi một số ghi chú từ các cuộc trò chuyện của bạn, và bạn cũng có thể tự thêm. Ghi chú ECA còn chưa chắc sẽ tự xoá sau 60 ngày nếu không gặp lại. Chúng chỉ được dùng để câu trả lời của ECA phù hợp với bạn, và được giữ cho đến khi bạn xoá chúng hoặc xoá tài khoản.
 - **Phản hồi** bạn gửi cho một câu trả lời: thích hoặc không thích, lý do bạn chọn và nhận xét bạn viết.
 - **Cài đặt**, như ngôn ngữ, nhân vật và đồ hoạ.
 - **Nhật ký kỹ thuật (log).** Khi bạn chat, máy chủ ghi lại sự kiện để xử lý lỗi: thời gian xử lý, lỗi, và phần đầu tin nhắn của bạn (tối đa 120 ký tự).
@@ -52,8 +52,8 @@ Dữ liệu của bạn được lưu tại Hoa Kỳ, và được xử lý tạ
 
 ## 6. Lựa chọn và quyền của bạn
 
-- **Xoá một hội thoại** trong lịch sử chat của ứng dụng. Tin nhắn và bản tóm tắt của hội thoại đó bị xoá theo.
-- **Xem, thêm và xoá ghi chú** của bạn tại Cài đặt → Ghi nhớ. Xoá một hội thoại cũng xoá những ghi chú ECA đã lấy từ hội thoại đó.
+- **Xoá một hội thoại** trong lịch sử chat của ứng dụng. Tin nhắn và bản tóm tắt cuộn của hội thoại đó bị xoá theo.
+- **Xem, thêm và xoá ghi chú** của bạn tại Cài đặt → Ghi nhớ. Nút xoá và nút "Xoá tất cả" ở đó xoá ngay mọi ghi chú, kể cả những điều bạn tự thêm. Bảo ECA "quên đi" trong lúc chat thì ghi chú do ECA tự ghi bị ẩn ngay và bị xoá hẳn sau 30 ngày; ghi chú bạn tự gõ không bao giờ bị đụng theo cách đó. Xoá một hội thoại cũng xoá những ghi chú ECA đã lấy từ hội thoại đó.
 - **Xem, sửa hoặc xoá** dữ liệu, **xoá tài khoản**, hoặc **rút lại sự đồng ý**: gửi email tới {CONTACT_EMAIL} từ địa chỉ email của tài khoản. Chúng tôi trả lời trong vòng 30 ngày.
 
 ## 7. Bảo mật

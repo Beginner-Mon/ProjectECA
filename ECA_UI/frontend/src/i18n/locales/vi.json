@@ -298,6 +298,7 @@
     "save": "Lưu",
     "saving": "Đang lưu…",
     "saved": "Đã lưu",
+    "fact_count_one": "{{count}} ghi nhớ",
     "fact_count_other": "{{count}} ghi nhớ",
     "empty_document": "Chưa có nội dung. Bấm dấu + để thêm điều bạn muốn ECA ghi nhớ.",
     "editor_hint": "Chỉnh sửa ghi nhớ này rồi lưu. Ctrl/⌘ + Enter để lưu; Esc để huỷ.",
@@ -313,6 +314,15 @@
     "save_failed": "Không lưu được. Thử lại.",
     "source_extracted": "ECA ghi lại từ một cuộc trò chuyện",
     "source_user": "Bạn đã thêm",
-    "title": "ECA nhớ gì về bạn"
+    "title": "ECA nhớ gì về bạn",
+    "section_instructions": "Lời dặn ECA luôn theo",
+    "section_facts": "Điều ECA biết về bạn",
+    "section_candidates": "ECA để ý thấy",
+    "candidates_note": "Những điều này tự xoá sau 60 ngày nếu ECA không gặp lại.",
+    "kind_label": "Đây là",
+    "kind_fact": "Điều về tôi",
+    "kind_instruction": "Lời dặn cho ECA",
+    "delete_all": "Xoá tất cả",
+    "delete_all_confirm": "Xoá mọi ghi nhớ, kể cả những điều bạn tự thêm?"
   }
 }

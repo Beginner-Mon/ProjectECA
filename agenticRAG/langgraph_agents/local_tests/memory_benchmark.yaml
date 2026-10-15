@@ -170,3 +170,104 @@ scenarios:
   check_summary:
     keywords: ["vai", "ngan"]
     min_compactions: 3
+
+# Nhóm g–j: chỉ cho B (đọc thẳng user_memory, không chat). Mỗi nhóm 1 mục kiểm.
+- id: instr_general_g
+  only_labels: [B]
+  conversations:
+    - turns:
+        - user: "Từ giờ hãy trả lời tôi ngắn gọn thôi."
+          assistant: "Rõ rồi, tôi sẽ trả lời ngắn gọn."
+    - turns:
+        - user: "Nhắc lại nhé: trả lời ngắn gọn thôi."
+          assistant: "Nhớ rồi, ngắn gọn thôi."
+    - turns:
+        - user: "Vẫn giữ yêu cầu trả lời ngắn gọn nhé."
+          assistant: "Vâng, vẫn ngắn gọn."
+  db_probes:
+    - group: g
+      note: "general instruction seen in 3 conversations"
+      assert_count: 1
+      assert_rows:
+        - {fact_contains: "ngắn gọn", kind: instruction, tier: 1, status: active}
+
+- id: instr_project_g
+  only_labels: [B]
+  conversations:
+    - turns:
+        - user: "Cho project A thì ưu tiên serverless nhé."
+          assistant: "Rõ rồi, project A ưu tiên serverless."
+    - turns:
+        - user: "Nhắc lại cho project A: ưu tiên serverless."
+          assistant: "Nhớ rồi, project A ưu tiên serverless."
+    - turns:
+        - user: "Vẫn giữ nguyên tắc serverless cho project A nhé."
+          assistant: "Vâng, project A vẫn serverless."
+  db_probes:
+    - group: g
+      note: "project-A instruction seen in 3 conversations"
+      assert_count: 1
+      assert_rows:
+        - {fact_contains: "serverless", kind: instruction, tier: 2,
+           status: active, project: "A"}
+
+- id: safe_once_h
+  only_labels: [B]
+  conversations:
+    - turns:
+        - user: "Đừng gợi ý bài tập cho lưng của tôi."
+          assistant: "Rõ rồi, tôi sẽ không gợi ý bài cho lưng."
+  db_probes:
+    - group: h
+      note: "safety instruction said once"
+      assert_count: 1
+      assert_rows:
+        - {fact_contains: "lưng", tier: 1, status: active}
+
+- id: name_churn_i
+  only_labels: [B]
+  conversations:
+    - turns:
+        - user: "Gọi tôi là Tri."
+          assistant: "Chào Tri."
+    - turns:
+        - user: "Thôi, gọi tôi là Du."
+          assistant: "Chào Du."
+    - turns:
+        - user: "Đổi lại gọi tôi là Long."
+          assistant: "Chào Long."
+  db_probes:
+    - group: i
+      note: "name changed across 3 conversations"
+      assert_count: 1
+      assert_rows:
+        - {fact_contains: "Long", status: candidate, tier: 2}
+
+- id: forget_j
+  only_labels: [B]
+  conversations:
+    - turns:
+        - user: "Tôi thích bơi lội mỗi sáng."
+          assistant: "Đã nhớ bạn thích bơi lội buổi sáng."
+    - turns:
+        - user: "Quên chuyện bơi lội đi."
+          assistant: "Đã quên chuyện bơi lội."
+  db_probes:
+    - group: j
+      note: "one item forgotten"
+      assert_rows:
+        - {fact_contains: "bơi lội", valid: false}
+- id: forget_all_j
+  only_labels: [B]
+  conversations:
+    - turns:
+        - user: "Tôi làm y tá ca đêm."
+          assistant: "Đã nhớ bạn làm y tá ca đêm."
+    - turns:
+        - user: "Quên hết những gì bạn đã ghi về tôi đi."
+          assistant: "Đã quên hết."
+  db_probes:
+    - group: j
+      note: "everything forgotten"
+      assert_rows:
+        - {fact_contains: "y tá", valid: false}

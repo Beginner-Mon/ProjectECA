@@ -256,6 +256,7 @@ async def test_create_user_memory_runs_both_inserts_in_one_transaction():
         "id": "33333333-3333-3333-3333-333333333333",
         "created_at": __import__("datetime").datetime(2026, 8, 18),
         "updated_at": __import__("datetime").datetime(2026, 8, 18),
+        "said_at": __import__("datetime").datetime(2026, 8, 18),
     })
 
     with patch("langgraph_agents.api.routes_crud.get_pg_client", return_value=client):
@@ -289,10 +290,15 @@ async def test_list_user_memory_returns_where_each_fact_came_from():
         "id": "33333333-3333-3333-3333-333333333333",
         "fact_text": "prefers short answers",
         "category": None,
+        "kind": "fact",
+        "tier": 2,
+        "status": "active",
+        "project": None,
         "valid": True,
         "source": "extracted",
         "created_at": made,
         "updated_at": edited,
+        "said_at": edited,
     }])
 
     with patch("langgraph_agents.api.routes_crud.get_pg_client", return_value=pg):

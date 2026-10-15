@@ -74,6 +74,7 @@ describe('locale catalogues', () => {
       'providers.base_url_placeholder', // URL scheme, not language
       'providers.eca', // product name
       'providers.model_label', // "Model" is the same loanword in both
+      'memory.filename', // "memory.md" is a filename, not language
     ])
 
     const untranslated = [...flatVi]

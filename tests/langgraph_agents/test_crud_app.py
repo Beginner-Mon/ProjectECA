@@ -75,6 +75,7 @@ def test_crud_app_does_not_import_the_heavy_stack():
     ("DELETE", "/sessions/00000000-0000-0000-0000-000000000009"),
     ("GET", "/me/memory"),
     ("POST", "/me/memory"),
+    ("DELETE", "/me/memory"),
     ("POST", "/me/memory/00000000-0000-0000-0000-000000000009"),
     ("DELETE", "/me/memory/00000000-0000-0000-0000-000000000009"),
     ("POST", "/me/feedback/messages/00000000-0000-0000-0000-000000000009"),

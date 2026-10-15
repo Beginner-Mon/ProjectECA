@@ -96,17 +96,24 @@ class SessionResumeResponse(BaseModel):
 class UserMemoryCreate(BaseModel):
     fact_text: str = Field(min_length=1, max_length=500)
     category: Optional[str] = Field(default=None, max_length=100)
+    kind: Literal["instruction", "fact"] = "fact"
+    project: Optional[str] = Field(default=None, max_length=60)
 
 
 class UserMemoryItem(BaseModel):
     id: str
     fact_text: str
     category: Optional[str] = None
+    kind: Literal["instruction", "fact"] = "fact"
+    tier: Literal[1, 2] = 2
+    status: Literal["candidate", "active"] = "active"
+    project: Optional[str] = None
     valid: bool = True
     # 'user' = typed by the user, 'extracted' = noted from a conversation.
     source: str = "user"
     created_at: str
     updated_at: Optional[str] = None
+    said_at: Optional[str] = None
 
 
 class UserMemoryListResponse(BaseModel):

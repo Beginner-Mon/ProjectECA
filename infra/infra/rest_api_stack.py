@@ -246,6 +246,7 @@ class RestApiStack(Stack):
         memory = me.add_resource("memory")
         memory.add_method("GET", crud, **authed)
         memory.add_method("POST", crud, **authed)
+        memory.add_method("DELETE", crud, **authed)
         memory_fact = memory.add_resource("{fact_id}")
         memory_fact.add_method("DELETE", crud, **authed)
         memory_fact.add_method("POST", crud, **authed)

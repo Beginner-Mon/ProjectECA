@@ -267,6 +267,43 @@ async def run_housekeep(uid: str, session_id: str, collector: Collector) -> list
     return collector.records[mark:]
 
 
+async def read_memory_rows(owner_dsn: str, user_id: str) -> list[dict]:
+    import asyncpg
+
+    conn = await asyncpg.connect(owner_dsn)
+    try:
+        rows = await conn.fetch(
+            "SELECT fact_text, category, kind, tier, status, project, valid,"
+            " seen_count FROM user_memory WHERE user_id = $1::uuid",
+            user_id)
+        return [dict(r) for r in rows]
+    finally:
+        await conn.close()
+
+
+def check_db_probe(rows: list[dict], check: dict) -> dict:
+    """Evaluate one db probe against the user's memory rows."""
+    problems: list[str] = []
+    for want in check.get("assert_rows") or []:
+        needle = want.get("fact_contains", "")
+        hit = next((r for r in rows
+                    if needle in (r.get("fact_text") or "")
+                    and all(r.get(k) == v for k, v in want.items()
+                            if k != "fact_contains")), None)
+        if hit is None:
+            problems.append(f"no row matching {want}")
+    if "assert_count" in check:
+        valid = [r for r in rows if r.get("valid")]
+        if len(valid) != check["assert_count"]:
+            problems.append(f"want {check['assert_count']} valid rows, "
+                            f"have {len(valid)}")
+    shown = "; ".join(
+        f"{r['fact_text'][:60]} [{r.get('kind')}/t{r.get('tier')}/"
+        f"{r.get('status')}{'/' + r['project'] if r.get('project') else ''}]"
+        for r in rows if r.get("valid"))
+    return {"passed": not problems, "problems": problems, "rows_shown": shown}
+
+
 async def read_last_answer(owner_dsn: str, session_id: str) -> str:
     import asyncpg
 
@@ -381,6 +418,8 @@ def seed_label(label: str, spec: dict, only: set[str], collector: Collector,
         for sc in spec["scenarios"]:
             if only and sc["id"] not in only:
                 continue
+            if sc.get("only_labels") and label not in sc["only_labels"]:
+                continue
             sid = sc["id"]
             uid = str(uuid.uuid5(NS, f"memory-benchmark-{label}-{sid}"))
             await delete_user(owner_dsn, uid)
@@ -409,6 +448,33 @@ def seed_label(label: str, spec: dict, only: set[str], collector: Collector,
             rec["seed_llm_calls"] = count_llm_calls(hlogs)
             if any(is_quota(find_invalid({"done": {}}, [r])) for r in hlogs):
                 quota_stops.append(sid)
+            if sc.get("db_probes"):
+                rows = await read_memory_rows(owner_dsn, uid)
+                for check in sc["db_probes"]:
+                    verdict = check_db_probe(rows, check)
+                    rec["probes"].append({
+                        "group": check["group"],
+                        "ask": check.get("note", ""),
+                        "where": "db",
+                        "session_id": sessions[0] if sessions else None,
+                        "expect_any": [w.get("fact_contains", "")
+                                       for w in check.get("assert_rows") or []],
+                        "forbid": [],
+                        "answer": verdict["rows_shown"][:1500],
+                        "answer_source": "db",
+                        "request_id": None, "error": None, "attempt": 1,
+                        "invalid": [], "passed": verdict["passed"],
+                        "hit": [], "leak": verdict["problems"],
+                        "retrieval_top_sim": None, "retrieval_src": "db",
+                        "memory_ms": None, "t_to_done_s": None,
+                        "t_housekeep_s": None, "total_tokens": None,
+                        "background": {"llm_calls": 0, "tokens": 0,
+                                       "elapsed_ms": 0},
+                    })
+                    print(f"[seed {sid}] {check['group']}:"
+                          f"{'PASS' if verdict['passed'] else 'FAIL'}"
+                          + (f" ({verdict['problems']})" if verdict["problems"] else ""),
+                          flush=True)
             check = sc.get("check_summary")
             if check:
                 summary = await read_summary_text(owner_dsn, sessions[0])
@@ -492,6 +558,8 @@ def probes_label(label: str, spec: dict, only: set[str], collector: Collector,
             for sc in spec["scenarios"]:
                 if only and sc["id"] not in only:
                     continue
+                if sc.get("only_labels") and label not in sc["only_labels"]:
+                    continue
                 if not sc.get("probes"):
                     continue
                 sid = sc["id"]
@@ -500,8 +568,6 @@ def probes_label(label: str, spec: dict, only: set[str], collector: Collector,
                     rec = {"scenario": sid,
                            "user_id": str(uuid.uuid5(NS, f"memory-benchmark-{label}-{sid}")),
                            "sessions": [], "seed_turns": 0, "turns": [], "probes": []}
-                    recs.append(rec)
-                    by_id[sid] = rec
                 uid = rec["user_id"]
                 app.dependency_overrides[current_user_id] = override_user(uid)
                 for pi, probe in enumerate(sc["probes"]):
@@ -718,12 +784,17 @@ def render_md(label: str, report: dict, stats: dict) -> str:
     return "\n".join(L) + "\n"
 
 
-def validate_spec(spec: dict) -> list[str]:
-    """Offline checks for --dry-run (no DB, no LLM). Returns error strings."""
+def validate_spec(spec: dict, label: str) -> list[str]:
+    """Offline checks for --dry-run (no DB, no LLM). Returns error strings.
+
+    Groups g–j only exist for label B (they read tier rows directly).
+    """
     errors: list[str] = []
     seen: set[str] = set()
     groups: dict[str, int] = {}
     for sc in spec.get("scenarios", []):
+        if sc.get("only_labels") and label not in sc["only_labels"]:
+            continue
         sid = sc.get("id", "?")
         if sid in seen:
             errors.append(f"duplicate scenario id {sid}")
@@ -737,18 +808,30 @@ def validate_spec(spec: dict) -> list[str]:
                 errors.append(f"{sid}: where=last without a session")
             if not probe.get("ask"):
                 errors.append(f"{sid}: probe without ask")
+        for check in sc.get("db_probes", []):
+            groups[check.get("group", "?")] = groups.get(check.get("group", "?"), 0) + 1
     for g in ("a", "b", "c", "d", "e", "f"):
         if groups.get(g, 0) != 1:
             errors.append(f"group {g}: want exactly 1 probe, have {groups.get(g, 0)}")
+    for g in ("g", "h", "i", "j"):
+        want = 2 if (g == "g" or g == "j") else 1
+        have = groups.get(g, 0)
+        if label == "B":
+            if have != want:
+                errors.append(f"group {g}: want exactly {want}, have {have}")
+        elif have:
+            errors.append(f"group {g}: B-only, must not run for {label}")
     return errors
 
 
-def estimate_calls(spec: dict, only: set[str]) -> dict:
-    seeds = sum(1 for sc in spec["scenarios"]
-                if (not only or sc["id"] in only) for _ in (sc.get("conversations", [])
-                                                            + sc.get("batches", [])))
-    probes = sum(1 for sc in spec["scenarios"]
-                 if (not only or sc["id"] in only) for _ in sc.get("probes", []))
+def estimate_calls(spec: dict, only: set[str], label: str) -> dict:
+    def _in(sc):
+        return ((not only or sc["id"] in only)
+                and (not sc.get("only_labels") or label in sc["only_labels"]))
+    seeds = sum(1 for sc in spec["scenarios"] if _in(sc)
+                for _ in (sc.get("conversations", []) + sc.get("batches", [])))
+    probes = sum(1 for sc in spec["scenarios"] if _in(sc)
+                 for _ in sc.get("probes", []))
     return {"housekeeps": seeds, "probes": probes,
             "estimate": seeds * 2 + probes * 3}
 
@@ -769,7 +852,7 @@ def main(argv: list[str]) -> int:
     args = ap.parse_args(argv)
     with open(args.yaml, encoding="utf-8") as f:
         spec = yaml.safe_load(f)
-    errors = validate_spec(spec)
+    errors = validate_spec(spec, args.label)
     if errors:
         print("memory-benchmark: invalid spec:")
         for error in errors:
@@ -777,7 +860,7 @@ def main(argv: list[str]) -> int:
         return 2
     only = {s.strip() for s in args.only.split(",") if s.strip()}
     if args.dry_run:
-        print(json.dumps({"errors": [], "estimate": estimate_calls(spec, only),
+        print(json.dumps({"errors": [], "estimate": estimate_calls(spec, only, args.label),
                           "only": sorted(only) or "all"}, ensure_ascii=False, indent=1))
         return 0
     check_not_prod()

@@ -1,0 +1,1586 @@
+{
+ "label": "B",
+ "stats": {
+  "groups": {
+   "a": {
+    "passed": 1,
+    "total": 1,
+    "invalid": 0,
+    "rate": 1.0
+   },
+   "b": {
+    "passed": 1,
+    "total": 1,
+    "invalid": 0,
+    "rate": 1.0
+   },
+   "c": {
+    "passed": 1,
+    "total": 1,
+    "invalid": 0,
+    "rate": 1.0
+   },
+   "d": {
+    "passed": 1,
+    "total": 1,
+    "invalid": 0,
+    "rate": 1.0
+   },
+   "e": {
+    "passed": 1,
+    "total": 1,
+    "invalid": 0,
+    "rate": 1.0
+   },
+   "f": {
+    "passed": 0,
+    "total": 1,
+    "invalid": 1,
+    "rate": 0.0
+   },
+   "g": {
+    "passed": 1,
+    "total": 2,
+    "invalid": 0,
+    "rate": 0.5
+   },
+   "h": {
+    "passed": 0,
+    "total": 1,
+    "invalid": 0,
+    "rate": 0.0
+   },
+   "i": {
+    "passed": 0,
+    "total": 1,
+    "invalid": 0,
+    "rate": 0.0
+   },
+   "j": {
+    "passed": 2,
+    "total": 2,
+    "invalid": 0,
+    "rate": 1.0
+   }
+  },
+  "overall": {
+   "passed": 8,
+   "scored": 11,
+   "invalid": 1
+  },
+  "memory_node_ms": {
+   "n": 5,
+   "p50": 6911,
+   "p95": 7171
+  },
+  "retrieval_top_sim": {
+   "b_e_max": null,
+   "b_e_values": [],
+   "f_values": []
+  },
+  "background_per_turn": {
+   "llm_calls": 0.0,
+   "tokens": 0.0
+  },
+  "turn_tokens_avg": 1602.0,
+  "per_1000_turns": {
+   "background_tokens": 0,
+   "turn_tokens": 1602000
+  }
+ },
+ "scenarios": [
+  {
+   "scenario": "back_a",
+   "user_id": "e1fad4e4-834c-5529-9740-dbe38784f76c",
+   "sessions": [
+    "f52a4f13-4122-530a-9fb5-28abe7e53f5b",
+    "43e418cb-01d6-5662-b570-b7612909ef47"
+   ],
+   "seed_turns": 1,
+   "turns": [
+    {
+     "query": "Nhắc lại xem tôi bị đau ở đâu?",
+     "session_id": "43e418cb-01d6-5662-b570-b7612909ef47",
+     "locale": "vi",
+     "status": 200,
+     "error": null,
+     "answer": "Bạn đau ở vùng lưng dưới, thường xuất hiện mỗi khi ngồi lâu. Mình đã ghi nhớ thông tin này để tránh gợi ý các động tác gây áp lực lên khu vực đó.",
+     "done": {
+      "request_id": "b899c5e0-9452-4d36-bfba-1c6749f98e00",
+      "total_tokens": 1335,
+      "required_outputs": []
+     },
+     "t_to_done_s": 20.66,
+     "t_housekeep_s": 0.0,
+     "t_total_s": 20.66,
+     "logs": [
+      {
+       "message": "node_complete",
+       "created": 1792048314.2624996,
+       "node": "memory",
+       "request_id": "b899c5e0-9452-4d36-bfba-1c6749f98e00",
+       "elapsed_ms": 7171,
+       "user_instructions_count": 1,
+       "user_facts_count": 0,
+       "tier2_top_similarity": null,
+       "tier2_embed_ms": null,
+       "tier2_skipped": "embed_timeout",
+       "summary_chunks_count": 0,
+       "summary_present": false,
+       "recent_raw_count": 0
+      },
+      {
+       "message": "node_complete",
+       "created": 1792048315.6125479,
+       "node": "planner",
+       "request_id": "b899c5e0-9452-4d36-bfba-1c6749f98e00",
+       "elapsed_ms": 1348,
+       "tags": [],
+       "needs_retrieval": true,
+       "needs_clarification": false,
+       "cache_hit_tokens": null,
+       "cache_miss_tokens": null,
+       "llm_fallback_used": false
+      },
+      {
+       "message": "node_complete",
+       "created": 1792048315.9944491,
+       "node": "retriever_agent",
+       "request_id": "b899c5e0-9452-4d36-bfba-1c6749f98e00",
+       "elapsed_ms": 381,
+       "tokens": 784,
+       "tool_calls": 1,
+       "tool_names": [
+        "resume_last_session"
+       ],
+       "cache_hit_tokens": null,
+       "cache_miss_tokens": null
+      },
+      {
+       "message": "node_complete",
+       "created": 1792048322.0398376,
+       "node": "synthesizer",
+       "request_id": "b899c5e0-9452-4d36-bfba-1c6749f98e00",
+       "elapsed_ms": 1072,
+       "tokens": 1335,
+       "mode": "synthesize",
+       "output_chars": 145,
+       "streamed": true,
+       "cache_hit_tokens": null,
+       "cache_miss_tokens": null,
+       "llm_fallback_used": false,
+       "prompt_blocks": {
+        "persona": 2802,
+        "body_state": 0,
+        "about_you": 0,
+        "user_instructions": 203,
+        "user_facts": 0,
+        "session_summary": 0,
+        "task": 1342,
+        "evidence": 187,
+        "history": 0,
+        "voice_card": 717
+       },
+       "input_tokens": 1297,
+       "output_tokens": 38
+      },
+      {
+       "message": "chat_complete",
+       "created": 1792048327.7318168,
+       "elapsed_ms": 20652,
+       "total_tokens": 1335,
+       "required_outputs": []
+      }
+     ]
+    }
+   ],
+   "probes": [
+    {
+     "group": "a",
+     "ask": "Nhắc lại xem tôi bị đau ở đâu?",
+     "where": "new",
+     "session_id": "43e418cb-01d6-5662-b570-b7612909ef47",
+     "expect_any": [
+      "lung"
+     ],
+     "forbid": [],
+     "answer": "Bạn đau ở vùng lưng dưới, thường xuất hiện mỗi khi ngồi lâu. Mình đã ghi nhớ thông tin này để tránh gợi ý các động tác gây áp lực lên khu vực đó.",
+     "answer_source": "stream",
+     "request_id": "b899c5e0-9452-4d36-bfba-1c6749f98e00",
+     "error": null,
+     "attempt": 1,
+     "invalid": [],
+     "passed": true,
+     "hit": [
+      "lung"
+     ],
+     "leak": [],
+     "retrieval_top_sim": null,
+     "retrieval_src": "memory_search",
+     "memory_ms": 7171,
+     "t_to_done_s": 20.66,
+     "t_housekeep_s": 0.0,
+     "total_tokens": 1335,
+     "background": {
+      "llm_calls": 0,
+      "tokens": 0,
+      "elapsed_ms": 0
+     }
+    }
+   ],
+   "seed_llm_calls": 1
+  },
+  {
+   "scenario": "latex_b",
+   "user_id": "a79c1edd-5d30-58fc-96a7-ebfa369533dd",
+   "sessions": [
+    "0f8d3f93-9d5a-5b63-9407-62e3106e2b6d",
+    "25f3bc80-e953-571c-961f-4acc17ca8cda"
+   ],
+   "seed_turns": 1,
+   "turns": [
+    {
+     "query": "Gợi ý vài bài tập với dây kháng lực cho tôi?",
+     "session_id": "25f3bc80-e953-571c-961f-4acc17ca8cda",
+     "locale": "vi",
+     "status": 200,
+     "error": null,
+     "answer": "Chào bạn. Trước khi bắt đầu, mình phải nói thẳng: bạn dị ứng latex. **Dây kháng lực làm từ latex là chống chỉ định tuyệt đối với bạn.** Nếu dây của bạn có mùi cao su đặc trưng hoặc nguồn gốc không rõ, hãy dừng lại ngay và mang đi kiểm tra hoặc thay bằng loại nylon, TPE.\n\nThư viện ECA có một số bài dùng dây (bands), nhưng bạn cần chắc chắn chất liệu không phải latex. Dưới đây là vài gợi ý từ thư viện:\n\n1. **Band push-up (Ngực):** Bài nâng cấp của hít đất. Dây tạo lực động khớp với đường sức, tập trung vào ngực, tam đầu và vai.\n2. **Single-arm band low row (Lưng giữa):** Kéo dây neo thấp, tập tay một bên. Tác động lên cơ lưng rộng và cơ thang. Thường làm với nhịp 8-15 lần mỗi hiệp, đặt ở giai đoạn sau của buổi tập lưng.\n3. **Band overhead triceps extension (Tam đầu duỗi tay trên đầu):** Bài đơn khớp, nhắm vào phần đầu dài của cơ tam đầu. Thường làm cuối buổi tập tam đầu, nhịp 8-12 lần trở lên mỗi hiệp.\n4. **Lateral Raise - With Bands (Vai):** Nâng tay sang hai bên, mức độ khó dành cho người mới bắt đầu.\n\n**Lưu ý an toàn:**\n**Dừng tập ngay nếu thấy ngứa, đỏ da, khó thở hoặc bất kỳ phản ứng dị ứng nào.**\nNếu chưa rõ loại dây mình có đang dùng có chứa latex không, hãy kiểm tra kỹ nhãn hoặc hỏi nhà cung cấp trước khi tiếp xúc da.\n\nBạn có đang sở hữu loại dây nào cụ thể không?\n\n*Nguồn: thư viện bài tập của ECA — Band overhead triceps extension, Band push-up, Lateral Raise - With Bands.*\n\n*Đây là gợi ý, không thay thế khám lâm sàng.*",
+     "done": {
+      "request_id": "00abcaf1-07a2-4eaa-bda8-30068ecca095",
+      "total_tokens": 2457,
+      "required_outputs": [
+       "scope_disclaimer",
+       "contraindication",
+       "evidence_citation"
+      ]
+     },
+     "t_to_done_s": 19.03,
+     "t_housekeep_s": 0.0,
+     "t_total_s": 19.03,
+     "logs": [
+      {
+       "message": "node_complete",
+       "created": 1792048424.1155422,
+       "node": "memory",
+       "request_id": "00abcaf1-07a2-4eaa-bda8-30068ecca095",
+       "elapsed_ms": 6911,
+       "user_instructions_count": 1,
+       "user_facts_count": 0,
+       "tier2_top_similarity": null,
+       "tier2_embed_ms": null,
+       "tier2_skipped": "embed_timeout",
+       "summary_chunks_count": 0,
+       "summary_present": false,
+       "recent_raw_count": 0
+      },
+      {
+       "message": "node_complete",
+       "created": 1792048425.4408581,
+       "node": "planner",
+       "request_id": "00abcaf1-07a2-4eaa-bda8-30068ecca095",
+       "elapsed_ms": 1324,
+       "tags": [
+        "scope_disclaimer",
+        "contraindication",
+        "evidence_citation"
+       ],
+       "needs_retrieval": true,
+       "needs_clarification": false,
+       "cache_hit_tokens": null,
+       "cache_miss_tokens": null,
+       "llm_fallback_used": false
+      },
+      {
+       "message": "node_complete",
+       "created": 1792048426.0943599,
+       "node": "retriever_agent",
+       "request_id": "00abcaf1-07a2-4eaa-bda8-30068ecca095",
+       "elapsed_ms": 653,
+       "tokens": 866,
+       "tool_calls": 2,
+       "tool_names": [
+        "kb_search",
+        "kb_search"
+       ],
+       "cache_hit_tokens": null,
+       "cache_miss_tokens": null
+      },
+      {
+       "message": "node_complete",
+       "created": 1792048429.6142457,
+       "node": "synthesizer",
+       "request_id": "00abcaf1-07a2-4eaa-bda8-30068ecca095",
+       "elapsed_ms": 1524,
+       "tokens": 2457,
+       "mode": "synthesize",
+       "output_chars": 1290,
+       "streamed": true,
+       "cache_hit_tokens": null,
+       "cache_miss_tokens": null,
+       "llm_fallback_used": false,
+       "prompt_blocks": {
+        "persona": 2802,
+        "body_state": 0,
+        "about_you": 0,
+        "user_instructions": 226,
+        "user_facts": 0,
+        "session_summary": 0,
+        "task": 4857,
+        "evidence": 3471,
+        "history": 0,
+        "voice_card": 717
+       },
+       "input_tokens": 2097,
+       "output_tokens": 360
+      },
+      {
+       "message": "chat_complete",
+       "created": 1792048436.2196078,
+       "elapsed_ms": 19027,
+       "total_tokens": 2457,
+       "required_outputs": [
+        "scope_disclaimer",
+        "contraindication",
+        "evidence_citation"
+       ]
+      }
+     ]
+    }
+   ],
+   "probes": [
+    {
+     "group": "b",
+     "ask": "Gợi ý vài bài tập với dây kháng lực cho tôi?",
+     "where": "new",
+     "session_id": "25f3bc80-e953-571c-961f-4acc17ca8cda",
+     "expect_any": [
+      "latex"
+     ],
+     "forbid": [],
+     "answer": "Chào bạn. Trước khi bắt đầu, mình phải nói thẳng: bạn dị ứng latex. **Dây kháng lực làm từ latex là chống chỉ định tuyệt đối với bạn.** Nếu dây của bạn có mùi cao su đặc trưng hoặc nguồn gốc không rõ, hãy dừng lại ngay và mang đi kiểm tra hoặc thay bằng loại nylon, TPE.\n\nThư viện ECA có một số bài dùng dây (bands), nhưng bạn cần chắc chắn chất liệu không phải latex. Dưới đây là vài gợi ý từ thư viện:\n\n1. **Band push-up (Ngực):** Bài nâng cấp của hít đất. Dây tạo lực động khớp với đường sức, tập trung vào ngực, tam đầu và vai.\n2. **Single-arm band low row (Lưng giữa):** Kéo dây neo thấp, tập tay một bên. Tác động lên cơ lưng rộng và cơ thang. Thường làm với nhịp 8-15 lần mỗi hiệp, đặt ở giai đoạn sau của buổi tập lưng.\n3. **Band overhead triceps extension (Tam đầu duỗi tay trên đầu):** Bài đơn khớp, nhắm vào phần đầu dài của cơ tam đầu. Thường làm cuối buổi tập tam đầu, nhịp 8-12 lần trở lên mỗi hiệp.\n4. **Lateral Raise - With Bands (Vai):** Nâng tay sang hai bên, mức độ khó dành cho người mới bắt đầu.\n\n**Lưu ý an toàn:**\n**Dừng tập ngay nếu thấy ngứa, đỏ da, khó thở hoặc bất kỳ phản ứng dị ứng nào.**\nNếu chưa rõ loại dây mình có đang dùng có chứa latex không, hãy kiểm tra kỹ nhãn hoặc hỏi nhà cung cấp trước khi tiếp xúc da.\n\nBạn có đang sở hữu loại dây nào cụ thể không?\n\n*Nguồn: thư viện bài tập của ECA — Band overhead triceps extension, Band push-up, Lateral Raise - With Bands.*\n\n*Đây là gợi ý, không thay thế khám lâm sàng.*",
+     "answer_source": "stream",
+     "request_id": "00abcaf1-07a2-4eaa-bda8-30068ecca095",
+     "error": null,
+     "attempt": 1,
+     "invalid": [],
+     "passed": true,
+     "hit": [
+      "latex"
+     ],
+     "leak": [],
+     "retrieval_top_sim": null,
+     "retrieval_src": "memory_search",
+     "memory_ms": 6911,
+     "t_to_done_s": 19.03,
+     "t_housekeep_s": 0.0,
+     "total_tokens": 2457,
+     "background": {
+      "llm_calls": 0,
+      "tokens": 0,
+      "elapsed_ms": 0
+     }
+    }
+   ],
+   "seed_llm_calls": 1
+  },
+  {
+   "scenario": "ice_c",
+   "user_id": "4fad5723-0291-5701-b532-a5b2e5746d91",
+   "sessions": [
+    "9729b6e7-d0df-5ba6-abba-08ce2d45202a",
+    "5e7205d1-99e5-5ac6-8728-8954055c6cba"
+   ],
+   "seed_turns": 1,
+   "turns": [
+    {
+     "query": "Hôm trước bạn dặn tôi gì về vụ chườm đá?",
+     "session_id": "5e7205d1-99e5-5ac6-8728-8954055c6cba",
+     "locale": "vi",
+     "status": 200,
+     "error": null,
+     "answer": "Lúc trước mình dặn bạn chườm đá 15 phút mỗi tối và kê cao chân khi nghỉ.\n\nTheo hướng dẫn của NHS, quy cách chườm đá cụ thể là dùng túi đá hoặc đậu Hà Lan đông lạnh bọc trong khăn, áp lên đầu gối tối đa 20 phút, thực hiện mỗi 2 đến 3 giờ một lần. Bạn cũng có thể dùng thuốc giảm đau như paracetamol hoặc gel ibuprofen để hỗ trợ.\n\n**Nếu đầu gối sưng nặng hơn, thay đổi hình dạng, không thể di chuyển, đau dữ dội, hoặc bạn có sốt kèm theo vùng da quanh đầu gối đỏ và nóng, hãy liên hệ ngay với dịch vụ y tế khẩn cấp (tại UK là 111) hoặc đi khám ngay. Đây có thể là dấu hiệu nhiễm trùng hoặc chấn thương nghiêm trọng.**\n\nBạn đang thấy các triệu chứng này không?\n\n*Nguồn: hướng dẫn sức khỏe của NHS.*\n\n*Đây là gợi ý, không thay thế khám lâm sàng.*",
+     "done": {
+      "request_id": "780dc448-8205-477f-ae43-7632a2034745",
+      "total_tokens": 2397,
+      "required_outputs": [
+       "scope_disclaimer",
+       "evidence_citation"
+      ]
+     },
+     "t_to_done_s": 21.69,
+     "t_housekeep_s": 0.0,
+     "t_total_s": 21.69,
+     "logs": [
+      {
+       "message": "node_complete",
+       "created": 1792048601.122314,
+       "node": "memory",
+       "request_id": "780dc448-8205-477f-ae43-7632a2034745",
+       "elapsed_ms": 7026,
+       "user_instructions_count": 0,
+       "user_facts_count": 0,
+       "tier2_top_similarity": null,
+       "tier2_embed_ms": null,
+       "tier2_skipped": "embed_timeout",
+       "summary_chunks_count": 0,
+       "summary_present": false,
+       "recent_raw_count": 0
+      },
+      {
+       "message": "node_complete",
+       "created": 1792048602.8889866,
+       "node": "planner",
+       "request_id": "780dc448-8205-477f-ae43-7632a2034745",
+       "elapsed_ms": 1765,
+       "tags": [
+        "scope_disclaimer",
+        "evidence_citation"
+       ],
+       "needs_retrieval": true,
+       "needs_clarification": false,
+       "cache_hit_tokens": null,
+       "cache_miss_tokens": null,
+       "llm_fallback_used": false
+      },
+      {
+       "message": "node_complete",
+       "created": 1792048603.425861,
+       "node": "retriever_agent",
+       "request_id": "780dc448-8205-477f-ae43-7632a2034745",
+       "elapsed_ms": 535,
+       "tokens": 816,
+       "tool_calls": 2,
+       "tool_names": [
+        "resume_last_session",
+        "kb_search"
+       ],
+       "cache_hit_tokens": null,
+       "cache_miss_tokens": null
+      },
+      {
+       "message": "node_complete",
+       "created": 1792048610.0521102,
+       "node": "synthesizer",
+       "request_id": "780dc448-8205-477f-ae43-7632a2034745",
+       "elapsed_ms": 1501,
+       "tokens": 2397,
+       "mode": "synthesize",
+       "output_chars": 657,
+       "streamed": true,
+       "cache_hit_tokens": null,
+       "cache_miss_tokens": null,
+       "llm_fallback_used": false,
+       "prompt_blocks": {
+        "persona": 2802,
+        "body_state": 0,
+        "about_you": 0,
+        "user_instructions": 0,
+        "user_facts": 0,
+        "session_summary": 0,
+        "task": 5074,
+        "evidence": 3763,
+        "history": 0,
+        "voice_card": 717
+       },
+       "input_tokens": 2212,
+       "output_tokens": 185
+      },
+      {
+       "message": "chat_complete",
+       "created": 1792048615.7700706,
+       "elapsed_ms": 21684,
+       "total_tokens": 2397,
+       "required_outputs": [
+        "scope_disclaimer",
+        "evidence_citation"
+       ]
+      }
+     ]
+    }
+   ],
+   "probes": [
+    {
+     "group": "c",
+     "ask": "Hôm trước bạn dặn tôi gì về vụ chườm đá?",
+     "where": "new",
+     "session_id": "5e7205d1-99e5-5ac6-8728-8954055c6cba",
+     "expect_any": [
+      "chuom",
+      "da"
+     ],
+     "forbid": [],
+     "answer": "Lúc trước mình dặn bạn chườm đá 15 phút mỗi tối và kê cao chân khi nghỉ.\n\nTheo hướng dẫn của NHS, quy cách chườm đá cụ thể là dùng túi đá hoặc đậu Hà Lan đông lạnh bọc trong khăn, áp lên đầu gối tối đa 20 phút, thực hiện mỗi 2 đến 3 giờ một lần. Bạn cũng có thể dùng thuốc giảm đau như paracetamol hoặc gel ibuprofen để hỗ trợ.\n\n**Nếu đầu gối sưng nặng hơn, thay đổi hình dạng, không thể di chuyển, đau dữ dội, hoặc bạn có sốt kèm theo vùng da quanh đầu gối đỏ và nóng, hãy liên hệ ngay với dịch vụ y tế khẩn cấp (tại UK là 111) hoặc đi khám ngay. Đây có thể là dấu hiệu nhiễm trùng hoặc chấn thương nghiêm trọng.**\n\nBạn đang thấy các triệu chứng này không?\n\n*Nguồn: hướng dẫn sức khỏe của NHS.*\n\n*Đây là gợi ý, không thay thế khám lâm sàng.*",
+     "answer_source": "stream",
+     "request_id": "780dc448-8205-477f-ae43-7632a2034745",
+     "error": null,
+     "attempt": 1,
+     "invalid": [],
+     "passed": true,
+     "hit": [
+      "chuom",
+      "da"
+     ],
+     "leak": [],
+     "retrieval_top_sim": null,
+     "retrieval_src": "memory_search",
+     "memory_ms": 7026,
+     "t_to_done_s": 21.69,
+     "t_housekeep_s": 0.0,
+     "total_tokens": 2397,
+     "background": {
+      "llm_calls": 0,
+      "tokens": 0,
+      "elapsed_ms": 0
+     }
+    }
+   ],
+   "seed_llm_calls": 1
+  },
+  {
+   "scenario": "knee_d",
+   "user_id": "523a3524-9e89-5d9c-bfec-9e2cbfecaa37",
+   "sessions": [
+    "ec55f4e6-bf4e-5404-95d1-8b80ed588f38",
+    "6f12df4a-965c-5fd2-8030-40875f64a2aa"
+   ],
+   "seed_turns": 1,
+   "turns": [
+    {
+     "query": "When did I have my left knee surgery?",
+     "session_id": "6f12df4a-965c-5fd2-8030-40875f64a2aa",
+     "locale": "en",
+     "status": 200,
+     "error": null,
+     "answer": "You had meniscus surgery on your left knee in May 2025. I have that noted in your health history.",
+     "done": {
+      "request_id": "4cc96cc2-97f6-4fa2-81c3-6bec7b33baee",
+      "total_tokens": 1304,
+      "required_outputs": []
+     },
+     "t_to_done_s": 20.44,
+     "t_housekeep_s": 0.0,
+     "t_total_s": 20.44,
+     "logs": [
+      {
+       "message": "node_complete",
+       "created": 1792048714.055201,
+       "node": "memory",
+       "request_id": "4cc96cc2-97f6-4fa2-81c3-6bec7b33baee",
+       "elapsed_ms": 6759,
+       "user_instructions_count": 1,
+       "user_facts_count": 0,
+       "tier2_top_similarity": null,
+       "tier2_embed_ms": null,
+       "tier2_skipped": "embed_timeout",
+       "summary_chunks_count": 0,
+       "summary_present": false,
+       "recent_raw_count": 0
+      },
+      {
+       "message": "node_complete",
+       "created": 1792048716.1402397,
+       "node": "planner",
+       "request_id": "4cc96cc2-97f6-4fa2-81c3-6bec7b33baee",
+       "elapsed_ms": 2083,
+       "tags": [],
+       "needs_retrieval": true,
+       "needs_clarification": false,
+       "cache_hit_tokens": null,
+       "cache_miss_tokens": null,
+       "llm_fallback_used": false
+      },
+      {
+       "message": "node_complete",
+       "created": 1792048716.819762,
+       "node": "retriever_agent",
+       "request_id": "4cc96cc2-97f6-4fa2-81c3-6bec7b33baee",
+       "elapsed_ms": 679,
+       "tokens": 778,
+       "tool_calls": 1,
+       "tool_names": [
+        "resume_last_session"
+       ],
+       "cache_hit_tokens": null,
+       "cache_miss_tokens": null
+      },
+      {
+       "message": "node_complete",
+       "created": 1792048722.10945,
+       "node": "synthesizer",
+       "request_id": "4cc96cc2-97f6-4fa2-81c3-6bec7b33baee",
+       "elapsed_ms": 527,
+       "tokens": 1304,
+       "mode": "synthesize",
+       "output_chars": 97,
+       "streamed": true,
+       "cache_hit_tokens": null,
+       "cache_miss_tokens": null,
+       "llm_fallback_used": false,
+       "prompt_blocks": {
+        "persona": 2848,
+        "body_state": 0,
+        "about_you": 0,
+        "user_instructions": 219,
+        "user_facts": 0,
+        "session_summary": 0,
+        "task": 1319,
+        "evidence": 157,
+        "history": 0,
+        "voice_card": 770
+       },
+       "input_tokens": 1276,
+       "output_tokens": 28
+      },
+      {
+       "message": "chat_complete",
+       "created": 1792048727.7241244,
+       "elapsed_ms": 20440,
+       "total_tokens": 1304,
+       "required_outputs": []
+      }
+     ]
+    }
+   ],
+   "probes": [
+    {
+     "group": "d",
+     "ask": "When did I have my left knee surgery?",
+     "where": "new",
+     "session_id": "6f12df4a-965c-5fd2-8030-40875f64a2aa",
+     "expect_any": [
+      "may",
+      "2025"
+     ],
+     "forbid": [],
+     "answer": "You had meniscus surgery on your left knee in May 2025. I have that noted in your health history.",
+     "answer_source": "stream",
+     "request_id": "4cc96cc2-97f6-4fa2-81c3-6bec7b33baee",
+     "error": null,
+     "attempt": 1,
+     "invalid": [],
+     "passed": true,
+     "hit": [
+      "may",
+      "2025"
+     ],
+     "leak": [],
+     "retrieval_top_sim": null,
+     "retrieval_src": "memory_search",
+     "memory_ms": 6759,
+     "t_to_done_s": 20.44,
+     "t_housekeep_s": 0.0,
+     "total_tokens": 1304,
+     "background": {
+      "llm_calls": 0,
+      "tokens": 0,
+      "elapsed_ms": 0
+     }
+    }
+   ],
+   "seed_llm_calls": 1
+  },
+  {
+   "scenario": "job_e",
+   "user_id": "00084349-78d8-5942-9adb-f101bc18e49d",
+   "sessions": [
+    "bce1e120-501c-5524-8a65-38d9e10b621a",
+    "23cee912-71d9-57b0-8c16-85a0fa5c50af"
+   ],
+   "seed_turns": 2,
+   "turns": [
+    {
+     "query": "Hiện giờ tôi làm nghề gì?",
+     "session_id": "23cee912-71d9-57b0-8c16-85a0fa5c50af",
+     "locale": "vi",
+     "status": 200,
+     "error": null,
+     "answer": "Giáo viên.",
+     "done": {
+      "request_id": "50468632-93b5-4877-ba1c-b500b48c48a9",
+      "total_tokens": 1278,
+      "required_outputs": []
+     },
+     "t_to_done_s": 20.32,
+     "t_housekeep_s": 0.0,
+     "t_total_s": 20.32,
+     "logs": [
+      {
+       "message": "node_complete",
+       "created": 1792048826.8142045,
+       "node": "memory",
+       "request_id": "50468632-93b5-4877-ba1c-b500b48c48a9",
+       "elapsed_ms": 6882,
+       "user_instructions_count": 0,
+       "user_facts_count": 0,
+       "tier2_top_similarity": null,
+       "tier2_embed_ms": null,
+       "tier2_skipped": "embed_timeout",
+       "summary_chunks_count": 0,
+       "summary_present": false,
+       "recent_raw_count": 2
+      },
+      {
+       "message": "node_complete",
+       "created": 1792048827.8412168,
+       "node": "planner",
+       "request_id": "50468632-93b5-4877-ba1c-b500b48c48a9",
+       "elapsed_ms": 1025,
+       "tags": [],
+       "needs_retrieval": true,
+       "needs_clarification": false,
+       "cache_hit_tokens": null,
+       "cache_miss_tokens": null,
+       "llm_fallback_used": false
+      },
+      {
+       "message": "node_complete",
+       "created": 1792048828.753987,
+       "node": "retriever_agent",
+       "request_id": "50468632-93b5-4877-ba1c-b500b48c48a9",
+       "elapsed_ms": 912,
+       "tokens": 772,
+       "tool_calls": 1,
+       "tool_names": [
+        "resume_last_session"
+       ],
+       "cache_hit_tokens": null,
+       "cache_miss_tokens": null
+      },
+      {
+       "message": "node_complete",
+       "created": 1792048834.6420314,
+       "node": "synthesizer",
+       "request_id": "50468632-93b5-4877-ba1c-b500b48c48a9",
+       "elapsed_ms": 1106,
+       "tokens": 1278,
+       "mode": "synthesize",
+       "output_chars": 10,
+       "streamed": true,
+       "cache_hit_tokens": null,
+       "cache_miss_tokens": null,
+       "llm_fallback_used": false,
+       "prompt_blocks": {
+        "persona": 2802,
+        "body_state": 0,
+        "about_you": 0,
+        "user_instructions": 0,
+        "user_facts": 0,
+        "session_summary": 0,
+        "task": 1267,
+        "evidence": 117,
+        "history": 91,
+        "voice_card": 717
+       },
+       "input_tokens": 1273,
+       "output_tokens": 5
+      },
+      {
+       "message": "chat_complete",
+       "created": 1792048840.2381196,
+       "elapsed_ms": 20318,
+       "total_tokens": 1278,
+       "required_outputs": []
+      }
+     ]
+    }
+   ],
+   "probes": [
+    {
+     "group": "e",
+     "ask": "Hiện giờ tôi làm nghề gì?",
+     "where": "last",
+     "session_id": "23cee912-71d9-57b0-8c16-85a0fa5c50af",
+     "expect_any": [
+      "giao vien"
+     ],
+     "forbid": [
+      "y ta"
+     ],
+     "answer": "Giáo viên.",
+     "answer_source": "stream",
+     "request_id": "50468632-93b5-4877-ba1c-b500b48c48a9",
+     "error": null,
+     "attempt": 1,
+     "invalid": [],
+     "passed": true,
+     "hit": [
+      "giao vien"
+     ],
+     "leak": [],
+     "retrieval_top_sim": null,
+     "retrieval_src": "memory_search",
+     "memory_ms": 6882,
+     "t_to_done_s": 20.32,
+     "t_housekeep_s": 0.0,
+     "total_tokens": 1278,
+     "background": {
+      "llm_calls": 0,
+      "tokens": 0,
+      "elapsed_ms": 0
+     }
+    }
+   ],
+   "seed_llm_calls": 2
+  },
+  {
+   "scenario": "goal_f",
+   "user_id": "541d0416-8da8-5ae1-9532-fdc28e677387",
+   "sessions": [
+    "f8c25341-34cb-5a67-98be-d324a002fe66",
+    "be063fcc-4a65-5463-b0fa-74d75a20b5c0",
+    "68ba103f-2bab-5892-93e5-6428e07a8656"
+   ],
+   "seed_turns": 1,
+   "turns": [
+    {
+     "query": "Thủ đô của Pháp là thành phố nào?",
+     "session_id": "be063fcc-4a65-5463-b0fa-74d75a20b5c0",
+     "locale": "vi",
+     "status": 200,
+     "error": null,
+     "answer": "Bạn hỏi sai chỗ rồi. Mình là Anne, ở đây để nói chuyện về tập luyện và vận động.\n\nNếu bạn đang đau ở vùng hông, lưng hay vai và muốn tìm bài tập phù hợp, hãy cho mình biết cụ thể vị trí đau và cảm giác của bạn nhé. Mình mới giúp được.",
+     "done": {
+      "request_id": "f67e71d1-53fb-4e2e-aa23-4172adb13869",
+      "total_tokens": 1236,
+      "required_outputs": []
+     },
+     "t_to_done_s": 15.07,
+     "t_housekeep_s": 0.0,
+     "t_total_s": 15.07,
+     "logs": [
+      {
+       "message": "node_complete",
+       "created": 1792048954.4303548,
+       "node": "memory",
+       "request_id": "f67e71d1-53fb-4e2e-aa23-4172adb13869",
+       "elapsed_ms": 7333,
+       "user_instructions_count": 0,
+       "user_facts_count": 0,
+       "tier2_top_similarity": null,
+       "tier2_embed_ms": null,
+       "tier2_skipped": "embed_timeout",
+       "summary_chunks_count": 0,
+       "summary_present": false,
+       "recent_raw_count": 0
+      },
+      {
+       "message": "node_failed",
+       "created": 1792048955.5535011,
+       "node": "planner",
+       "request_id": "f67e71d1-53fb-4e2e-aa23-4172adb13869",
+       "elapsed_ms": 1122,
+       "error": "Failed to generate JSON. Please adjust your prompt. See 'failed_generation' for more details."
+      },
+      {
+       "message": "node_complete",
+       "created": 1792048956.3830388,
+       "node": "synthesizer",
+       "request_id": "f67e71d1-53fb-4e2e-aa23-4172adb13869",
+       "elapsed_ms": 828,
+       "tokens": 1236,
+       "mode": "clarify",
+       "output_chars": 234,
+       "streamed": true,
+       "cache_hit_tokens": null,
+       "cache_miss_tokens": null,
+       "llm_fallback_used": false,
+       "prompt_blocks": {
+        "persona": 2724,
+        "body_state": 0,
+        "about_you": 0,
+        "user_instructions": 0,
+        "user_facts": 0,
+        "session_summary": 0,
+        "task": 1103,
+        "evidence": 0,
+        "history": 0,
+        "voice_card": 697
+       },
+       "input_tokens": 1172,
+       "output_tokens": 64
+      },
+      {
+       "message": "chat_complete",
+       "created": 1792048962.1477306,
+       "elapsed_ms": 15062,
+       "total_tokens": 1236,
+       "required_outputs": []
+      }
+     ]
+    },
+    {
+     "query": "Thủ đô của Pháp là thành phố nào?",
+     "session_id": "68ba103f-2bab-5892-93e5-6428e07a8656",
+     "locale": "vi",
+     "status": 200,
+     "error": null,
+     "answer": "Bạn hỏi地理, mình không rành mảng này. Bạn đang muốn tìm lịch sử hay địa lý không? Mình chỉ hỗ trợ về luyện tập và sức khỏe thôi.",
+     "done": {
+      "request_id": "88425163-5d17-499c-8b79-5b10b76468bb",
+      "total_tokens": 1207,
+      "required_outputs": []
+     },
+     "t_to_done_s": 14.62,
+     "t_housekeep_s": 0.0,
+     "t_total_s": 14.62,
+     "logs": [
+      {
+       "message": "node_complete",
+       "created": 1792049082.6419606,
+       "node": "memory",
+       "request_id": "88425163-5d17-499c-8b79-5b10b76468bb",
+       "elapsed_ms": 6943,
+       "user_instructions_count": 0,
+       "user_facts_count": 0,
+       "tier2_top_similarity": null,
+       "tier2_embed_ms": null,
+       "tier2_skipped": "embed_timeout",
+       "summary_chunks_count": 0,
+       "summary_present": false,
+       "recent_raw_count": 0
+      },
+      {
+       "message": "node_failed",
+       "created": 1792049083.8486443,
+       "node": "planner",
+       "request_id": "88425163-5d17-499c-8b79-5b10b76468bb",
+       "elapsed_ms": 1205,
+       "error": "Failed to generate JSON. Please adjust your prompt. See 'failed_generation' for more details."
+      },
+      {
+       "message": "node_complete",
+       "created": 1792049084.6376145,
+       "node": "synthesizer",
+       "request_id": "88425163-5d17-499c-8b79-5b10b76468bb",
+       "elapsed_ms": 788,
+       "tokens": 1207,
+       "mode": "clarify",
+       "output_chars": 127,
+       "streamed": true,
+       "cache_hit_tokens": null,
+       "cache_miss_tokens": null,
+       "llm_fallback_used": false,
+       "prompt_blocks": {
+        "persona": 2724,
+        "body_state": 0,
+        "about_you": 0,
+        "user_instructions": 0,
+        "user_facts": 0,
+        "session_summary": 0,
+        "task": 1103,
+        "evidence": 0,
+        "history": 0,
+        "voice_card": 697
+       },
+       "input_tokens": 1172,
+       "output_tokens": 35
+      },
+      {
+       "message": "chat_complete",
+       "created": 1792049090.3045213,
+       "elapsed_ms": 14617,
+       "total_tokens": 1207,
+       "required_outputs": []
+      }
+     ]
+    }
+   ],
+   "probes": [
+    {
+     "group": "f",
+     "ask": "Thủ đô của Pháp là thành phố nào?",
+     "where": "new",
+     "session_id": "68ba103f-2bab-5892-93e5-6428e07a8656",
+     "expect_any": [],
+     "forbid": [
+      "chay",
+      "5km",
+      "xuan"
+     ],
+     "answer": "Bạn hỏi地理, mình không rành mảng này. Bạn đang muốn tìm lịch sử hay địa lý không? Mình chỉ hỗ trợ về luyện tập và sức khỏe thôi.",
+     "answer_source": "stream",
+     "request_id": "88425163-5d17-499c-8b79-5b10b76468bb",
+     "error": null,
+     "attempt": 2,
+     "invalid": [
+      "node_failed:planner"
+     ],
+     "passed": false,
+     "hit": [],
+     "leak": [],
+     "retrieval_top_sim": null,
+     "retrieval_src": "memory_search",
+     "memory_ms": 6943,
+     "t_to_done_s": 14.62,
+     "t_housekeep_s": 0.0,
+     "total_tokens": 1207,
+     "background": {
+      "llm_calls": 0,
+      "tokens": 0,
+      "elapsed_ms": 0
+     },
+     "retry_of": {
+      "error": null,
+      "invalid": [
+       "node_failed:planner"
+      ]
+     }
+    }
+   ],
+   "seed_llm_calls": 1
+  },
+  {
+   "scenario": "long_k",
+   "user_id": "4eba6f9c-4ea3-56d6-9b3f-1b5874ec809b",
+   "sessions": [
+    "2a94b56d-fae3-53a2-a0a8-ebf28e85ddf2"
+   ],
+   "seed_turns": 30,
+   "turns": [],
+   "probes": [],
+   "seed_llm_calls": 3,
+   "summary_check": {
+    "kind": "stm",
+    "compactions": 3,
+    "keywords_kept": [
+     "vai",
+     "ngan"
+    ],
+    "keywords_wanted": [
+     "vai",
+     "ngan"
+    ],
+    "passed": true,
+    "summary_chars": 1432,
+    "summary_excerpt": "Người dùng yêu cầu trả lời ngắn gọn. Người dùng bị đau vai phải khi giơ tay cao (tránh động tác quá đầu) và có tiền sử mổ gối. Các bài tập/lời khuyên đã cung cấp: Heel-slide, nâng chân thẳng, đi bộ, bong gân cổ chân, giãn cổ, dinh dưỡng/ngủ sau mổ gối, nâng bắp chân, đau gân kheo, tư thế ngồi, plank gối, khởi động đá bóng, uống nước mùa nóng, đạp xe tại chỗ, bơi lội, giãn đùi sau bằng khăn, tập tạ tay nhẹ, leo cầu thang. Mới đây, người dùng hỏi và được tư vấn về: đau mỏi vai gáy khi ngủ dậy (đổi gối, xoay cổ, chườm ấm, tránh bẻ cổ, thay nệm, hạn chế cúi điện thoại, bài rút cằm), squat nhẹ cho người đau gối (hạ 30 độ, vịn ghế, 8 lần x 2 đợt, thở đúng, tăng dần sau 3 tuần), khác biệt chườm nóng/lạnh (lạnh cho chấn thương mới/sưng, nóng cho cứng cơ mãn tính, thời gian 15-20 phút, lưu ý tiểu đ"
+   }
+  },
+  {
+   "scenario": "instr_general_g",
+   "user_id": "13a8fb56-1274-5783-a54c-030c706a1ebd",
+   "sessions": [
+    "7853c9b5-f8af-58b4-b9dd-84ab050663dd",
+    "88012096-227d-5c56-97a2-43f2b7367abd",
+    "244299af-ce7e-502e-8c05-e716bcf90cd9"
+   ],
+   "seed_turns": 3,
+   "turns": [],
+   "probes": [
+    {
+     "group": "g",
+     "ask": "general instruction seen in 3 conversations",
+     "where": "db",
+     "session_id": "7853c9b5-f8af-58b4-b9dd-84ab050663dd",
+     "expect_any": [
+      "ngắn gọn"
+     ],
+     "forbid": [],
+     "answer": "Trả lời ngắn gọn [instruction/t1/active]",
+     "answer_source": "db",
+     "request_id": null,
+     "error": null,
+     "attempt": 1,
+     "invalid": [],
+     "passed": true,
+     "hit": [],
+     "leak": [],
+     "retrieval_top_sim": null,
+     "retrieval_src": "db",
+     "memory_ms": null,
+     "t_to_done_s": null,
+     "t_housekeep_s": null,
+     "total_tokens": null,
+     "background": {
+      "llm_calls": 0,
+      "tokens": 0,
+      "elapsed_ms": 0
+     }
+    }
+   ],
+   "seed_llm_calls": 3
+  },
+  {
+   "scenario": "instr_project_g",
+   "user_id": "5aa1203e-ac24-57cb-8545-b379784484fd",
+   "sessions": [
+    "f9f668a3-1d6e-5804-a449-04195518897e",
+    "682b1f22-b645-5917-9716-304a748ccf5c",
+    "15a10311-6015-5d73-9cb0-e9b32a7f50da"
+   ],
+   "seed_turns": 3,
+   "turns": [],
+   "probes": [
+    {
+     "group": "g",
+     "ask": "project-A instruction seen in 3 conversations",
+     "where": "db",
+     "session_id": "f9f668a3-1d6e-5804-a449-04195518897e",
+     "expect_any": [
+      "serverless"
+     ],
+     "forbid": [],
+     "answer": "Project A ưu tiên kiến trúc serverless [fact/t2/active/Project A]",
+     "answer_source": "db",
+     "request_id": null,
+     "error": null,
+     "attempt": 1,
+     "invalid": [],
+     "passed": false,
+     "hit": [],
+     "leak": [
+      "no row matching {'fact_contains': 'serverless', 'kind': 'instruction', 'tier': 2, 'status': 'active', 'project': 'A'}"
+     ],
+     "retrieval_top_sim": null,
+     "retrieval_src": "db",
+     "memory_ms": null,
+     "t_to_done_s": null,
+     "t_housekeep_s": null,
+     "total_tokens": null,
+     "background": {
+      "llm_calls": 0,
+      "tokens": 0,
+      "elapsed_ms": 0
+     }
+    }
+   ],
+   "seed_llm_calls": 3
+  },
+  {
+   "scenario": "safe_once_h",
+   "user_id": "a0e52e93-eff6-56a6-9a17-ea74b021dbd1",
+   "sessions": [
+    "73a784eb-9994-5376-80c9-fe4037e338c2"
+   ],
+   "seed_turns": 1,
+   "turns": [],
+   "probes": [
+    {
+     "group": "h",
+     "ask": "safety instruction said once",
+     "where": "db",
+     "session_id": "73a784eb-9994-5376-80c9-fe4037e338c2",
+     "expect_any": [
+      "lưng"
+     ],
+     "forbid": [],
+     "answer": "Do not suggest back exercises [instruction/t2/active]",
+     "answer_source": "db",
+     "request_id": null,
+     "error": null,
+     "attempt": 1,
+     "invalid": [],
+     "passed": false,
+     "hit": [],
+     "leak": [
+      "no row matching {'fact_contains': 'lưng', 'tier': 1, 'status': 'active'}"
+     ],
+     "retrieval_top_sim": null,
+     "retrieval_src": "db",
+     "memory_ms": null,
+     "t_to_done_s": null,
+     "t_housekeep_s": null,
+     "total_tokens": null,
+     "background": {
+      "llm_calls": 0,
+      "tokens": 0,
+      "elapsed_ms": 0
+     }
+    }
+   ],
+   "seed_llm_calls": 1
+  },
+  {
+   "scenario": "name_churn_i",
+   "user_id": "6bcc10a2-5c08-55ff-9240-6c7260e70997",
+   "sessions": [
+    "4ea7f68d-62f7-5d73-b5e5-352937c9ddb2",
+    "5b99d67e-2c3c-5e47-9f2e-712b48910d77",
+    "a9142864-e050-5132-ba91-bdceba63e35c"
+   ],
+   "seed_turns": 3,
+   "turns": [],
+   "probes": [
+    {
+     "group": "i",
+     "ask": "name changed across 3 conversations",
+     "where": "db",
+     "session_id": "4ea7f68d-62f7-5d73-b5e5-352937c9ddb2",
+     "expect_any": [
+      "Long"
+     ],
+     "forbid": [],
+     "answer": "Gọi tôi là Long [instruction/t2/active]",
+     "answer_source": "db",
+     "request_id": null,
+     "error": null,
+     "attempt": 1,
+     "invalid": [],
+     "passed": false,
+     "hit": [],
+     "leak": [
+      "no row matching {'fact_contains': 'Long', 'status': 'candidate', 'tier': 2}"
+     ],
+     "retrieval_top_sim": null,
+     "retrieval_src": "db",
+     "memory_ms": null,
+     "t_to_done_s": null,
+     "t_housekeep_s": null,
+     "total_tokens": null,
+     "background": {
+      "llm_calls": 0,
+      "tokens": 0,
+      "elapsed_ms": 0
+     }
+    }
+   ],
+   "seed_llm_calls": 3
+  },
+  {
+   "scenario": "forget_j",
+   "user_id": "f60594d7-9e3f-59dc-b516-827569392508",
+   "sessions": [
+    "9a687aac-4fda-5899-a551-433c18d1a068",
+    "9776b14f-fd33-5a60-b194-b5a39f832e07"
+   ],
+   "seed_turns": 2,
+   "turns": [],
+   "probes": [
+    {
+     "group": "j",
+     "ask": "one item forgotten",
+     "where": "db",
+     "session_id": "9a687aac-4fda-5899-a551-433c18d1a068",
+     "expect_any": [
+      "bơi lội"
+     ],
+     "forbid": [],
+     "answer": "",
+     "answer_source": "db",
+     "request_id": null,
+     "error": null,
+     "attempt": 1,
+     "invalid": [],
+     "passed": true,
+     "hit": [],
+     "leak": [],
+     "retrieval_top_sim": null,
+     "retrieval_src": "db",
+     "memory_ms": null,
+     "t_to_done_s": null,
+     "t_housekeep_s": null,
+     "total_tokens": null,
+     "background": {
+      "llm_calls": 0,
+      "tokens": 0,
+      "elapsed_ms": 0
+     }
+    }
+   ],
+   "seed_llm_calls": 2
+  },
+  {
+   "scenario": "forget_all_j",
+   "user_id": "0ccc10dc-49d7-5be7-a827-0584fab0da07",
+   "sessions": [
+    "086ea21f-e40a-57e1-84ef-2508eaa5b1b0",
+    "3c5256df-4887-569e-89fc-76a181c0f23b"
+   ],
+   "seed_turns": 2,
+   "turns": [],
+   "probes": [
+    {
+     "group": "j",
+     "ask": "everything forgotten",
+     "where": "db",
+     "session_id": "086ea21f-e40a-57e1-84ef-2508eaa5b1b0",
+     "expect_any": [
+      "y tá"
+     ],
+     "forbid": [],
+     "answer": "",
+     "answer_source": "db",
+     "request_id": null,
+     "error": null,
+     "attempt": 1,
+     "invalid": [],
+     "passed": true,
+     "hit": [],
+     "leak": [],
+     "retrieval_top_sim": null,
+     "retrieval_src": "db",
+     "memory_ms": null,
+     "t_to_done_s": null,
+     "t_housekeep_s": null,
+     "total_tokens": null,
+     "background": {
+      "llm_calls": 0,
+      "tokens": 0,
+      "elapsed_ms": 0
+     }
+    }
+   ],
+   "seed_llm_calls": 2
+  }
+ ],
+ "runs": [
+  {
+   "started_at": "2026-10-15T13:35:27+07:00",
+   "phase": "seed",
+   "only": [
+    "back_a"
+   ],
+   "retry_invalid": false,
+   "key_label": "llm=deepseek",
+   "llm_calls": 1,
+   "turns": 0,
+   "probes": 0,
+   "quota_stops": []
+  },
+  {
+   "started_at": "2026-10-15T13:37:17+07:00",
+   "phase": "seed",
+   "only": [
+    "latex_b"
+   ],
+   "retry_invalid": false,
+   "key_label": "llm=deepseek",
+   "llm_calls": 1,
+   "turns": 0,
+   "probes": 0,
+   "quota_stops": []
+  },
+  {
+   "started_at": "2026-10-15T13:39:09+07:00",
+   "phase": "seed",
+   "only": [
+    "ice_c"
+   ],
+   "retry_invalid": false,
+   "key_label": "llm=deepseek",
+   "llm_calls": 1,
+   "turns": 0,
+   "probes": 0,
+   "quota_stops": []
+  },
+  {
+   "started_at": "2026-10-15T13:41:04+07:00",
+   "phase": "seed",
+   "only": [
+    "knee_d"
+   ],
+   "retry_invalid": false,
+   "key_label": "llm=deepseek",
+   "llm_calls": 1,
+   "turns": 0,
+   "probes": 0,
+   "quota_stops": []
+  },
+  {
+   "started_at": "2026-10-15T13:42:58+07:00",
+   "phase": "seed",
+   "only": [
+    "job_e"
+   ],
+   "retry_invalid": false,
+   "key_label": "llm=deepseek",
+   "llm_calls": 2,
+   "turns": 0,
+   "probes": 0,
+   "quota_stops": []
+  },
+  {
+   "started_at": "2026-10-15T13:46:41+07:00",
+   "phase": "seed",
+   "only": [
+    "goal_f"
+   ],
+   "retry_invalid": false,
+   "key_label": "llm=deepseek",
+   "llm_calls": 1,
+   "turns": 0,
+   "probes": 0,
+   "quota_stops": []
+  },
+  {
+   "started_at": "2026-10-15T13:48:36+07:00",
+   "phase": "seed",
+   "only": [
+    "long_k"
+   ],
+   "retry_invalid": false,
+   "key_label": "llm=deepseek",
+   "llm_calls": 3,
+   "turns": 0,
+   "probes": 0,
+   "quota_stops": []
+  },
+  {
+   "started_at": "2026-10-15T13:54:15+07:00",
+   "phase": "seed",
+   "only": [
+    "instr_general_g"
+   ],
+   "retry_invalid": false,
+   "key_label": "llm=deepseek",
+   "llm_calls": 3,
+   "turns": 0,
+   "probes": 1,
+   "quota_stops": []
+  },
+  {
+   "started_at": "2026-10-15T13:56:55+07:00",
+   "phase": "seed",
+   "only": [
+    "instr_project_g"
+   ],
+   "retry_invalid": false,
+   "key_label": "llm=deepseek",
+   "llm_calls": 3,
+   "turns": 0,
+   "probes": 2,
+   "quota_stops": []
+  },
+  {
+   "started_at": "2026-10-15T14:00:27+07:00",
+   "phase": "seed",
+   "only": [
+    "safe_once_h"
+   ],
+   "retry_invalid": false,
+   "key_label": "llm=deepseek",
+   "llm_calls": 1,
+   "turns": 0,
+   "probes": 3,
+   "quota_stops": []
+  },
+  {
+   "started_at": "2026-10-15T14:03:40+07:00",
+   "phase": "seed",
+   "only": [
+    "name_churn_i"
+   ],
+   "retry_invalid": false,
+   "key_label": "llm=deepseek",
+   "llm_calls": 3,
+   "turns": 0,
+   "probes": 4,
+   "quota_stops": []
+  },
+  {
+   "started_at": "2026-10-15T14:06:47+07:00",
+   "phase": "seed",
+   "only": [
+    "forget_j"
+   ],
+   "retry_invalid": false,
+   "key_label": "llm=deepseek",
+   "llm_calls": 2,
+   "turns": 0,
+   "probes": 5,
+   "quota_stops": []
+  },
+  {
+   "started_at": "2026-10-15T14:09:06+07:00",
+   "phase": "seed",
+   "only": [
+    "forget_all_j"
+   ],
+   "retry_invalid": false,
+   "key_label": "llm=deepseek",
+   "llm_calls": 2,
+   "turns": 0,
+   "probes": 6,
+   "quota_stops": []
+  },
+  {
+   "started_at": "2026-10-15T14:11:27+07:00",
+   "phase": "probes",
+   "only": [
+    "back_a"
+   ],
+   "retry_invalid": false,
+   "key_label": "llm=deepseek",
+   "llm_calls": 3,
+   "turns": 1,
+   "probes": 7,
+   "quota_stops": []
+  },
+  {
+   "started_at": "2026-10-15T14:13:18+07:00",
+   "phase": "probes",
+   "only": [
+    "latex_b"
+   ],
+   "retry_invalid": false,
+   "key_label": "llm=deepseek",
+   "llm_calls": 3,
+   "turns": 2,
+   "probes": 8,
+   "quota_stops": []
+  },
+  {
+   "started_at": "2026-10-15T14:16:15+07:00",
+   "phase": "probes",
+   "only": [
+    "ice_c"
+   ],
+   "retry_invalid": false,
+   "key_label": "llm=deepseek",
+   "llm_calls": 3,
+   "turns": 3,
+   "probes": 9,
+   "quota_stops": []
+  },
+  {
+   "started_at": "2026-10-15T14:18:08+07:00",
+   "phase": "probes",
+   "only": [
+    "knee_d"
+   ],
+   "retry_invalid": false,
+   "key_label": "llm=deepseek",
+   "llm_calls": 3,
+   "turns": 4,
+   "probes": 10,
+   "quota_stops": []
+  },
+  {
+   "started_at": "2026-10-15T14:20:00+07:00",
+   "phase": "probes",
+   "only": [
+    "job_e"
+   ],
+   "retry_invalid": false,
+   "key_label": "llm=deepseek",
+   "llm_calls": 3,
+   "turns": 5,
+   "probes": 11,
+   "quota_stops": []
+  },
+  {
+   "started_at": "2026-10-15T14:22:07+07:00",
+   "phase": "probes",
+   "only": [
+    "goal_f"
+   ],
+   "retry_invalid": false,
+   "key_label": "llm=deepseek",
+   "llm_calls": 1,
+   "turns": 6,
+   "probes": 12,
+   "quota_stops": []
+  },
+  {
+   "started_at": "2026-10-15T14:24:16+07:00",
+   "phase": "all",
+   "only": "all",
+   "retry_invalid": true,
+   "key_label": "llm=deepseek",
+   "llm_calls": 1,
+   "turns": 7,
+   "probes": 12,
+   "quota_stops": []
+  }
+ ]
+}

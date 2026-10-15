@@ -557,6 +557,8 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
     p.add_argument("--mode", default="both", choices=["both", "all", "session", "turn", "live"])
     p.add_argument("--out", default="",
                    help="Đường dẫn .md (mặc định docs/tracking/memory-probe-<label>.md).")
+    p.add_argument("--pace-seconds", type=float, default=0.0,
+                   help="Nghỉ giữa các hội thoại (Groq giới hạn token/phút).")
     return p.parse_args(argv)
 
 
@@ -597,8 +599,10 @@ async def amain(args: argparse.Namespace) -> int:
         return 2
 
     results: list[dict] = []
-    for conv in selected:
+    for n, conv in enumerate(selected):
         print(f"[{conv['id']}]", flush=True)
+        if n and args.pace_seconds > 0:
+            await asyncio.sleep(args.pace_seconds)
         try:
             r = await _run_conv(structured_llm, conv, modes)
         except Exception:  # noqa: BLE001

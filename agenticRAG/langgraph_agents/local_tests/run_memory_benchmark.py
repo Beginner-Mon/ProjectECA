@@ -69,7 +69,28 @@ import yaml  # noqa: E402
 
 TIMEOUT_S = 300
 NS = uuid.NAMESPACE_URL
-MODEL = "gemini-2.5-flash"
+
+
+def model_label() -> str:
+    """What actually answered, e.g. qwen/qwen3.8-27b via Groq.
+
+    Read from the environment at run time: A and B must share it, and the
+    report must name it (quality, latency and tokens do not represent prod
+    unless this is prod's own model).
+    """
+    base = os.environ.get("DEEPSEEK_BASE_URL", "")
+    host = host_of(base)
+    if "groq" in host:
+        via = "Groq"
+    elif "deepseek" in host:
+        via = "DeepSeek"
+    elif host:
+        via = host
+    else:
+        via = "the default endpoint"
+    model = (os.environ.get("DEEPSEEK_MODEL_FAST")
+             or os.environ.get("DEEPSEEK_MODEL", ""))
+    return f"{model} via {via}" if model else f"unknown model via {via}"
 QUOTA_RE = re.compile(r"429|ResourceExhausted|QuotaExceeded", re.IGNORECASE)
 HTTP_STATUS_RE = re.compile(r"HTTP/1\.1 (\d{3})")
 
@@ -715,10 +736,11 @@ def summarize(report: dict) -> dict:
 
 
 def render_md(label: str, report: dict, stats: dict) -> str:
+    model = report.get("model", "unknown model")
     L: list[str] = [f"# memory-benchmark-{label}", ""]
-    L.append(f"Model: {MODEL}. A và B cùng chạy trên {MODEL} nên so sánh hai thiết "
+    L.append(f"Model: {model}. A và B cùng chạy trên model này nên so sánh hai thiết "
              "kế memory là công bằng, nhưng chất lượng, độ trễ và token KHÔNG đại "
-             "diện cho prod (prod dùng DeepSeek).")
+             "diện cho prod (prod dùng DeepSeek trực tiếp).")
     L.append("")
     for run in report.get("runs", []):
         L.append(f"- run {run['started_at']} phase={run['phase']} only={run['only']} "
@@ -874,10 +896,11 @@ def main(argv: list[str]) -> int:
     mark = len(collector.records)
     TRACKING_DIR.mkdir(parents=True, exist_ok=True)
     json_path = TRACKING_DIR / f"memory-benchmark-{args.label}.json"
-    report: dict = {"label": args.label, "model": MODEL, "scenarios": [], "runs": []}
+    report: dict = {"label": args.label, "model": model_label(),
+                     "scenarios": [], "runs": []}
     if (args.append or args.retry_invalid) and json_path.exists():
         prev = json.loads(json_path.read_text(encoding="utf-8"))
-        report = {"label": args.label, "model": MODEL,
+        report = {"label": args.label, "model": model_label(),
                   "scenarios": prev["scenarios"], "runs": prev.get("runs", [])}
     quota_stops: list[str] = []
     if args.retry_invalid:

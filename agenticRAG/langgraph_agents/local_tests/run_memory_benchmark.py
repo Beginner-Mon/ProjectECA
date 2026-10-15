@@ -939,7 +939,8 @@ def main(argv: list[str]) -> int:
     stats = summarize(report)
     md_path = TRACKING_DIR / f"memory-benchmark-{args.label}.md"
     md_path.write_text(render_md(args.label, report, stats), encoding="utf-8")
-    json_path.write_text(json.dumps({"label": args.label, "stats": stats,
+    json_path.write_text(json.dumps({"label": args.label, "model": report.get("model"),
+                                     "stats": stats,
                                      "scenarios": report["scenarios"],
                                      "runs": report["runs"]},
                                     ensure_ascii=False, indent=1), encoding="utf-8")

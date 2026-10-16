@@ -278,11 +278,13 @@ async def planner_node(state: AgentState, config: RunnableConfig) -> dict:
     # there is none, so a user with no facts gets the same input as before.
     facts = render_user_facts(state.get("user_facts") or [])
     facts_hint = (
-        f"\n\nKnown about the user (their own account):\n{facts}" if facts else ""
+        f"\n\nKnown about the user (what they told you themselves; "
+        f"treat it as true):\n{facts}" if facts else ""
     )
     instructions = render_user_instructions(state.get("user_instructions") or [])
     instructions_hint = (
-        f"\n\nStanding instructions from the user:\n{instructions}" if instructions else ""
+        f"\n\nStanding instructions from the user (they gave these themselves; "
+        f"treat them as true):\n{instructions}" if instructions else ""
     )
 
     user_msg = query + context_hint + instructions_hint + facts_hint

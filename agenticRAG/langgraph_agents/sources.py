@@ -30,7 +30,7 @@ TOOL_SOURCES: dict[str, Source] = {
     ),
     "resume_last_session": Source(
         id="memory",
-        label="your earlier conversations with this user",
+        label="your earlier conversations with this same user",
         stage_key="stage_recalling",
         is_evidence=True,
     ),

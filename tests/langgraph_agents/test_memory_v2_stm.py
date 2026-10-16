@@ -20,11 +20,11 @@ from langgraph_agents.shared import context as ctx_mod
 
 pytestmark = pytest.mark.unit
 
-_FACTS_HEADING = "## Things this user mentioned in earlier conversations"
+_FACTS_HEADING = "## What this user told you in earlier conversations"
 _INSTRUCTIONS_HEADING = "## Standing instructions from this user"
 _SUMMARY_HEADING = "## Earlier in this conversation"
-_PLANNER_FACTS_LINE = "Known about the user (their own account):"
-_PLANNER_INSTRUCTIONS_LINE = "Standing instructions from the user:"
+_PLANNER_FACTS_LINE = "Known about the user (what they told you themselves; treat it as true):"
+_PLANNER_INSTRUCTIONS_LINE = "Standing instructions from the user (they gave these themselves; treat them as true):"
 
 _BUDGETS = {
     "history": 1000,
@@ -224,9 +224,11 @@ async def test_synthesizer_system_prompt_carries_user_facts(budgets):
     assert _FACTS_HEADING in system
     assert "- [2026-10-14] Left knee surgery in July 2026" in system
     block = system[system.index(_FACTS_HEADING):]
-    assert "Each line has the date it was said" in block
-    assert "Newer beats older" in block
-    assert "Use one only when it changes what you say" in block
+    assert "treat them as true" in block
+    assert "Each line has its date" in block
+    assert "a newer line replaces an older one" in block
+    assert "today's message replaces both" in block
+    assert "Use the ones that bear on this message" in block
 
 
 @pytest.mark.asyncio
@@ -236,7 +238,9 @@ async def test_synthesizer_system_prompt_carries_user_instructions(budgets):
     assert _INSTRUCTIONS_HEADING in system
     assert "- No overhead lifting" in system
     block = system[system.index(_INSTRUCTIONS_HEADING):]
-    assert "Follow these in every answer unless today's message says otherwise" in block
+    assert "The user gave these themselves" in block
+    assert "Treat them as true" in block
+    assert "only today's message can change one" in block
     assert "not a diagnosis" in block
 
 

@@ -197,7 +197,7 @@ def test_ambiguous_resume_lists_each_candidate_with_its_date():
 
 def test_memory_items_keep_the_source_label():
     items = evidence_items([_tm("resume_last_session", _RESUME)])
-    assert all(i.header == "[From your earlier conversations with this user]" for i in items)
+    assert all(i.header == "[From your earlier conversations with this same user]" for i in items)
 
 
 def test_per_item_cap_and_total_budget_still_apply():

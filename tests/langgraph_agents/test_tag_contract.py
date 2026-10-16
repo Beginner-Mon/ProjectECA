@@ -20,7 +20,7 @@ def _lib(title, text="x"):
 
 _NHS = EvidenceItem(header="[From NHS health guidance: NHS — Back pain]", text="x",
                     cite_key="nhs_uk", title="NHS — Back pain")
-_MEM = EvidenceItem(header="[From your earlier conversations with this user]", text="x",
+_MEM = EvidenceItem(header="[From your earlier conversations with this same user]", text="x",
                     cite_key=None, title="")
 
 

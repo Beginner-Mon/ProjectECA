@@ -1,0 +1,817 @@
+{
+ "label": "B3",
+ "model": "qwen/qwen3.8-27b via Groq",
+ "stats": {
+  "groups": {
+   "b": {
+    "passed": 1,
+    "total": 1,
+    "invalid": 0,
+    "rate": 1.0
+   },
+   "e": {
+    "passed": 1,
+    "total": 1,
+    "invalid": 0,
+    "rate": 1.0
+   },
+   "f": {
+    "passed": 0,
+    "total": 1,
+    "invalid": 1,
+    "rate": 0.0
+   },
+   "g": {
+    "passed": 1,
+    "total": 2,
+    "invalid": 0,
+    "rate": 0.5
+   }
+  },
+  "overall": {
+   "passed": 3,
+   "scored": 4,
+   "invalid": 1
+  },
+  "memory_node_ms": {
+   "n": 2,
+   "p50": 6342,
+   "p95": 6342
+  },
+  "retrieval_top_sim": {
+   "b_e_max": null,
+   "b_e_values": [],
+   "f_values": []
+  },
+  "background_per_turn": {
+   "llm_calls": 0.0,
+   "tokens": 0.0
+  },
+  "turn_tokens_avg": 1576.5,
+  "per_1000_turns": {
+   "background_tokens": 0,
+   "turn_tokens": 1576500
+  }
+ },
+ "scenarios": [
+  {
+   "scenario": "latex_b",
+   "user_id": "b1e3ba45-d793-536b-b319-9f6603f61ae6",
+   "sessions": [
+    "637df367-4fa6-5f5a-ac9c-04df41e61b54",
+    "9d060286-aab7-5f77-bdd9-00ce45975023"
+   ],
+   "seed_turns": 1,
+   "turns": [
+    {
+     "query": "Gợi ý vài bài tập với dây kháng lực cho tôi?",
+     "session_id": "9d060286-aab7-5f77-bdd9-00ce45975023",
+     "locale": "vi",
+     "status": 200,
+     "error": null,
+     "answer": "Dây kháng lực là lựa chọn tốt để tăng sức mạnh. Bạn dị ứng latex, nên khi chọn dây, hãy kiểm tra kỹ thành phần. **Tránh tuyệt đối các loại dây có chứa latex.**\n\nDưới đây là vài bài tập trong thư viện của ECA:\n\n1. **Band push-up** (Ngực, cơ tay sau, vai)\n   - Mức độ: Trung cấp\n   - Nguồn: Thư viện bài tập ECA\n\n2. **Single-arm band low row** (Cơ lưng rộng, cơ giữa lưng, lõi)\n   - Mức độ: Trung cấp\n   - Số lần: 8-15 lần mỗi set\n   - Nguồn: Thư viện bài tập ECA\n\n3. **Band lateral raise** (Vai)\n   - Mức độ: Trung cấp\n   - Số lần: 8-12 lần\n   - Nguồn: Thư viện bài tập ECA\n\n**Chống chỉ định:**\nNếu bạn đang gặp chấn thương cấp tính ở vùng cơ thể bài tập tác động (ví dụ: viêm khớp vai cấp tính khi tập Band lateral raise), hãy tạm dừng.\n\n**Dấu hiệu cần dừng ngay:**\nĐau tăng lên bất thường hoặc cảm giác khó chịu bất thường trong quá trình tập.\n\nBạn muốn bắt đầu với bài nào trước?\n\n*Nguồn: thư viện bài tập của ECA — Band push-up, Single-arm band low row, Band lateral raise.*\n\n*Đây là gợi ý, không thay thế khám lâm sàng.*",
+     "done": {
+      "request_id": "86817f92-1ae2-4bc2-965a-614291230c5e",
+      "total_tokens": 2508,
+      "required_outputs": [
+       "scope_disclaimer",
+       "contraindication",
+       "evidence_citation"
+      ]
+     },
+     "t_to_done_s": 16.83,
+     "t_housekeep_s": 0.0,
+     "t_total_s": 16.83,
+     "logs": [
+      {
+       "message": "node_complete",
+       "created": 1792124271.8860347,
+       "node": "memory",
+       "request_id": "86817f92-1ae2-4bc2-965a-614291230c5e",
+       "elapsed_ms": 6249,
+       "user_instructions_count": 2,
+       "user_facts_count": 0,
+       "tier2_top_similarity": null,
+       "tier2_embed_ms": 42,
+       "tier2_skipped": null,
+       "summary_chunks_count": 0,
+       "summary_present": false,
+       "recent_raw_count": 0
+      },
+      {
+       "message": "node_complete",
+       "created": 1792124272.7770286,
+       "node": "planner",
+       "request_id": "86817f92-1ae2-4bc2-965a-614291230c5e",
+       "elapsed_ms": 889,
+       "tags": [
+        "scope_disclaimer",
+        "contraindication",
+        "evidence_citation"
+       ],
+       "needs_retrieval": true,
+       "needs_clarification": false,
+       "cache_hit_tokens": null,
+       "cache_miss_tokens": null,
+       "llm_fallback_used": false
+      },
+      {
+       "message": "node_complete",
+       "created": 1792124273.4308739,
+       "node": "retriever_agent",
+       "request_id": "86817f92-1ae2-4bc2-965a-614291230c5e",
+       "elapsed_ms": 652,
+       "tokens": 883,
+       "tool_calls": 2,
+       "tool_names": [
+        "kb_search",
+        "kb_search"
+       ],
+       "cache_hit_tokens": null,
+       "cache_miss_tokens": null
+      },
+      {
+       "message": "node_complete",
+       "created": 1792124276.1799512,
+       "node": "synthesizer",
+       "request_id": "86817f92-1ae2-4bc2-965a-614291230c5e",
+       "elapsed_ms": 1090,
+       "tokens": 2508,
+       "mode": "synthesize",
+       "output_chars": 881,
+       "streamed": true,
+       "cache_hit_tokens": null,
+       "cache_miss_tokens": null,
+       "llm_fallback_used": false,
+       "prompt_blocks": {
+        "persona": 2802,
+        "body_state": 0,
+        "about_you": 0,
+        "user_instructions": 276,
+        "user_facts": 0,
+        "session_summary": 0,
+        "task": 5418,
+        "evidence": 4032,
+        "history": 0,
+        "voice_card": 717
+       },
+       "input_tokens": 2235,
+       "output_tokens": 273
+      },
+      {
+       "message": "chat_complete",
+       "created": 1792124282.4544325,
+       "elapsed_ms": 16827,
+       "total_tokens": 2508,
+       "required_outputs": [
+        "scope_disclaimer",
+        "contraindication",
+        "evidence_citation"
+       ]
+      }
+     ]
+    }
+   ],
+   "probes": [
+    {
+     "group": "b",
+     "ask": "Gợi ý vài bài tập với dây kháng lực cho tôi?",
+     "where": "new",
+     "session_id": "9d060286-aab7-5f77-bdd9-00ce45975023",
+     "tier2_top_similarity": null,
+     "tier2_embed_ms": 42,
+     "tier2_skipped": null,
+     "user_facts_count": 0,
+     "user_instructions_count": 2,
+     "expect_any": [
+      "latex"
+     ],
+     "expect_all": [],
+     "expect_tools": [],
+     "forbid_mode": null,
+     "forbid": [],
+     "answer": "Dây kháng lực là lựa chọn tốt để tăng sức mạnh. Bạn dị ứng latex, nên khi chọn dây, hãy kiểm tra kỹ thành phần. **Tránh tuyệt đối các loại dây có chứa latex.**\n\nDưới đây là vài bài tập trong thư viện của ECA:\n\n1. **Band push-up** (Ngực, cơ tay sau, vai)\n   - Mức độ: Trung cấp\n   - Nguồn: Thư viện bài tập ECA\n\n2. **Single-arm band low row** (Cơ lưng rộng, cơ giữa lưng, lõi)\n   - Mức độ: Trung cấp\n   - Số lần: 8-15 lần mỗi set\n   - Nguồn: Thư viện bài tập ECA\n\n3. **Band lateral raise** (Vai)\n   - Mức độ: Trung cấp\n   - Số lần: 8-12 lần\n   - Nguồn: Thư viện bài tập ECA\n\n**Chống chỉ định:**\nNếu bạn đang gặp chấn thương cấp tính ở vùng cơ thể bài tập tác động (ví dụ: viêm khớp vai cấp tính khi tập Band lateral raise), hãy tạm dừng.\n\n**Dấu hiệu cần dừng ngay:**\nĐau tăng lên bất thường hoặc cảm giác khó chịu bất thường trong quá trình tập.\n\nBạn muốn bắt đầu với bài nào trước?\n\n*Nguồn: thư viện bài tập của ECA — Band push-up, Single-arm band low row, Band lateral raise.*\n\n*Đây là gợi ý, không thay thế khám lâm sàng.*",
+     "answer_source": "stream",
+     "request_id": "86817f92-1ae2-4bc2-965a-614291230c5e",
+     "error": null,
+     "attempt": 1,
+     "invalid": [],
+     "passed": true,
+     "hit": [
+      "latex"
+     ],
+     "leak": [],
+     "all_hit": [],
+     "all_miss": [],
+     "tool_names": [
+      "kb_search"
+     ],
+     "synth_mode": "synthesize",
+     "tools_missing": [],
+     "mode_hit": false,
+     "retrieval_top_sim": null,
+     "retrieval_src": "memory_search",
+     "memory_ms": 6249,
+     "t_to_done_s": 16.83,
+     "t_housekeep_s": 0.0,
+     "total_tokens": 2508,
+     "background": {
+      "llm_calls": 0,
+      "tokens": 0,
+      "elapsed_ms": 0
+     }
+    }
+   ],
+   "seed_llm_calls": 1
+  },
+  {
+   "scenario": "job_e",
+   "user_id": "d78e03b8-5caa-5ea3-a8d0-fb51bf575f1c",
+   "sessions": [
+    "4f6e6cb7-e181-5f50-9460-b1ea716bdf92",
+    "6c2d6346-1560-55f0-9f90-ca25ef0d7f60"
+   ],
+   "seed_turns": 2,
+   "turns": [
+    {
+     "query": "Hiện giờ tôi làm nghề gì?",
+     "session_id": "6c2d6346-1560-55f0-9f90-ca25ef0d7f60",
+     "locale": "vi",
+     "status": 200,
+     "error": null,
+     "answer": "Bạn đang làm giáo viên.",
+     "done": {
+      "request_id": "4e5725f7-53f9-4c02-823b-f5f15492d417",
+      "total_tokens": 1281,
+      "required_outputs": []
+     },
+     "t_to_done_s": 20.11,
+     "t_housekeep_s": 0.0,
+     "t_total_s": 20.11,
+     "logs": [
+      {
+       "message": "node_complete",
+       "created": 1792124380.7964835,
+       "node": "memory",
+       "request_id": "4e5725f7-53f9-4c02-823b-f5f15492d417",
+       "elapsed_ms": 6342,
+       "user_instructions_count": 0,
+       "user_facts_count": 0,
+       "tier2_top_similarity": null,
+       "tier2_embed_ms": 29,
+       "tier2_skipped": null,
+       "summary_chunks_count": 0,
+       "summary_present": false,
+       "recent_raw_count": 2
+      },
+      {
+       "message": "node_complete",
+       "created": 1792124382.7816362,
+       "node": "planner",
+       "request_id": "4e5725f7-53f9-4c02-823b-f5f15492d417",
+       "elapsed_ms": 1983,
+       "tags": [],
+       "needs_retrieval": true,
+       "needs_clarification": false,
+       "cache_hit_tokens": null,
+       "cache_miss_tokens": null,
+       "llm_fallback_used": false
+      },
+      {
+       "message": "node_complete",
+       "created": 1792124383.2569652,
+       "node": "retriever_agent",
+       "request_id": "4e5725f7-53f9-4c02-823b-f5f15492d417",
+       "elapsed_ms": 475,
+       "tokens": 772,
+       "tool_calls": 1,
+       "tool_names": [
+        "resume_last_session"
+       ],
+       "cache_hit_tokens": null,
+       "cache_miss_tokens": null
+      },
+      {
+       "message": "node_complete",
+       "created": 1792124388.9305587,
+       "node": "synthesizer",
+       "request_id": "4e5725f7-53f9-4c02-823b-f5f15492d417",
+       "elapsed_ms": 770,
+       "tokens": 1281,
+       "mode": "synthesize",
+       "output_chars": 23,
+       "streamed": true,
+       "cache_hit_tokens": null,
+       "cache_miss_tokens": null,
+       "llm_fallback_used": false,
+       "prompt_blocks": {
+        "persona": 2802,
+        "body_state": 0,
+        "about_you": 0,
+        "user_instructions": 0,
+        "user_facts": 0,
+        "session_summary": 0,
+        "task": 1272,
+        "evidence": 122,
+        "history": 91,
+        "voice_card": 717
+       },
+       "input_tokens": 1274,
+       "output_tokens": 7
+      },
+      {
+       "message": "chat_complete",
+       "created": 1792124394.551627,
+       "elapsed_ms": 20108,
+       "total_tokens": 1281,
+       "required_outputs": []
+      }
+     ]
+    }
+   ],
+   "probes": [
+    {
+     "group": "e",
+     "ask": "Hiện giờ tôi làm nghề gì?",
+     "where": "last",
+     "session_id": "6c2d6346-1560-55f0-9f90-ca25ef0d7f60",
+     "tier2_top_similarity": null,
+     "tier2_embed_ms": 29,
+     "tier2_skipped": null,
+     "user_facts_count": 0,
+     "user_instructions_count": 0,
+     "expect_any": [
+      "giao vien"
+     ],
+     "expect_all": [],
+     "expect_tools": [],
+     "forbid_mode": null,
+     "forbid": [
+      "y ta"
+     ],
+     "answer": "Bạn đang làm giáo viên.",
+     "answer_source": "stream",
+     "request_id": "4e5725f7-53f9-4c02-823b-f5f15492d417",
+     "error": null,
+     "attempt": 1,
+     "invalid": [],
+     "passed": true,
+     "hit": [
+      "giao vien"
+     ],
+     "leak": [],
+     "all_hit": [],
+     "all_miss": [],
+     "tool_names": [
+      "resume_last_session"
+     ],
+     "synth_mode": "synthesize",
+     "tools_missing": [],
+     "mode_hit": false,
+     "retrieval_top_sim": null,
+     "retrieval_src": "memory_search",
+     "memory_ms": 6342,
+     "t_to_done_s": 20.11,
+     "t_housekeep_s": 0.0,
+     "total_tokens": 1281,
+     "background": {
+      "llm_calls": 0,
+      "tokens": 0,
+      "elapsed_ms": 0
+     }
+    }
+   ],
+   "seed_llm_calls": 2
+  },
+  {
+   "scenario": "goal_f",
+   "user_id": "61e278d5-235b-5d7b-b778-86953fcea070",
+   "sessions": [
+    "3667a5ad-15f2-5b9f-8e43-b015f7f79c68",
+    "0765e81f-8132-58f4-86f6-868b3b43760f",
+    "bfbe22f8-5fab-5c2d-90b2-462b3526b143"
+   ],
+   "seed_turns": 1,
+   "turns": [
+    {
+     "query": "Thủ đô của Pháp là thành phố nào?",
+     "session_id": "0765e81f-8132-58f4-86f6-868b3b43760f",
+     "locale": "vi",
+     "status": 200,
+     "error": null,
+     "answer": "Chuyện này hơi ngoài lề so với việc mình tập luyện ở đây, nên mình không chắc bạn đang hỏi để lấy thông tin chung hay cần hỗ trợ gì khác.\n\nBạn đang muốn tra cứu kiến thức chung, hay bạn đang có vấn đề cụ thể về vận động hoặc sức khỏe mà mình có thể giúp được?",
+     "done": {
+      "request_id": "bf69db4d-bb14-4e83-ba81-52d44652e798",
+      "total_tokens": 1257,
+      "required_outputs": []
+     },
+     "t_to_done_s": 14.98,
+     "t_housekeep_s": 0.0,
+     "t_total_s": 14.98,
+     "logs": [
+      {
+       "message": "node_complete",
+       "created": 1792124495.2441094,
+       "node": "memory",
+       "request_id": "bf69db4d-bb14-4e83-ba81-52d44652e798",
+       "elapsed_ms": 6297,
+       "user_instructions_count": 0,
+       "user_facts_count": 0,
+       "tier2_top_similarity": 0.7328960954752057,
+       "tier2_embed_ms": 30,
+       "tier2_skipped": null,
+       "summary_chunks_count": 0,
+       "summary_present": false,
+       "recent_raw_count": 0
+      },
+      {
+       "message": "node_failed",
+       "created": 1792124497.3635788,
+       "node": "planner",
+       "request_id": "bf69db4d-bb14-4e83-ba81-52d44652e798",
+       "elapsed_ms": 2117,
+       "error": "Failed to generate JSON. Please adjust your prompt. See 'failed_generation' for more details."
+      },
+      {
+       "message": "node_complete",
+       "created": 1792124498.264735,
+       "node": "synthesizer",
+       "request_id": "bf69db4d-bb14-4e83-ba81-52d44652e798",
+       "elapsed_ms": 900,
+       "tokens": 1257,
+       "mode": "clarify",
+       "output_chars": 259,
+       "streamed": true,
+       "cache_hit_tokens": null,
+       "cache_miss_tokens": null,
+       "llm_fallback_used": false,
+       "prompt_blocks": {
+        "persona": 2724,
+        "body_state": 0,
+        "about_you": 0,
+        "user_instructions": 0,
+        "user_facts": 0,
+        "session_summary": 0,
+        "task": 1181,
+        "evidence": 0,
+        "history": 0,
+        "voice_card": 697
+       },
+       "input_tokens": 1191,
+       "output_tokens": 66
+      },
+      {
+       "message": "chat_complete",
+       "created": 1792124503.9129882,
+       "elapsed_ms": 14978,
+       "total_tokens": 1257,
+       "required_outputs": []
+      }
+     ]
+    },
+    {
+     "query": "Thủ đô của Pháp là thành phố nào?",
+     "session_id": "bfbe22f8-5fab-5c2d-90b2-462b3526b143",
+     "locale": "vi",
+     "status": 200,
+     "error": null,
+     "answer": "Bạn hỏi gì đó? Mình là Anne ở đây, chuyên về vận động và thư giãn.\n\nMình không trả lời được câu hỏi địa lý đó. Nếu bạn cần tư vấn về bài tập thể dục, đau nhức hay muốn tìm một hoạt động phù hợp cho ngày hôm nay, hãy cho mình biết thêm chi tiết nhé.",
+     "done": {
+      "request_id": "1192a63b-4c57-4b5c-a9e5-079689b981b7",
+      "total_tokens": 1260,
+      "required_outputs": []
+     },
+     "t_to_done_s": 13.51,
+     "t_housekeep_s": 0.0,
+     "t_total_s": 13.51,
+     "logs": [
+      {
+       "message": "node_complete",
+       "created": 1792124607.3537753,
+       "node": "memory",
+       "request_id": "1192a63b-4c57-4b5c-a9e5-079689b981b7",
+       "elapsed_ms": 6201,
+       "user_instructions_count": 0,
+       "user_facts_count": 0,
+       "tier2_top_similarity": 0.7328960954752057,
+       "tier2_embed_ms": 15,
+       "tier2_skipped": null,
+       "summary_chunks_count": 0,
+       "summary_present": false,
+       "recent_raw_count": 0
+      },
+      {
+       "message": "node_failed",
+       "created": 1792124608.4462605,
+       "node": "planner",
+       "request_id": "1192a63b-4c57-4b5c-a9e5-079689b981b7",
+       "elapsed_ms": 1091,
+       "error": "Failed to generate JSON. Please adjust your prompt. See 'failed_generation' for more details."
+      },
+      {
+       "message": "node_complete",
+       "created": 1792124609.022962,
+       "node": "synthesizer",
+       "request_id": "1192a63b-4c57-4b5c-a9e5-079689b981b7",
+       "elapsed_ms": 575,
+       "tokens": 1260,
+       "mode": "clarify",
+       "output_chars": 248,
+       "streamed": true,
+       "cache_hit_tokens": null,
+       "cache_miss_tokens": null,
+       "llm_fallback_used": false,
+       "prompt_blocks": {
+        "persona": 2724,
+        "body_state": 0,
+        "about_you": 0,
+        "user_instructions": 0,
+        "user_facts": 0,
+        "session_summary": 0,
+        "task": 1181,
+        "evidence": 0,
+        "history": 0,
+        "voice_card": 697
+       },
+       "input_tokens": 1191,
+       "output_tokens": 69
+      },
+      {
+       "message": "chat_complete",
+       "created": 1792124614.6508563,
+       "elapsed_ms": 13507,
+       "total_tokens": 1260,
+       "required_outputs": []
+      }
+     ]
+    }
+   ],
+   "probes": [
+    {
+     "group": "f",
+     "ask": "Thủ đô của Pháp là thành phố nào?",
+     "where": "new",
+     "session_id": "bfbe22f8-5fab-5c2d-90b2-462b3526b143",
+     "tier2_top_similarity": 0.7328960954752057,
+     "tier2_embed_ms": 15,
+     "tier2_skipped": null,
+     "user_facts_count": 0,
+     "user_instructions_count": 0,
+     "expect_any": [],
+     "expect_all": [],
+     "expect_tools": [],
+     "forbid_mode": null,
+     "forbid": [
+      "chay",
+      "5km",
+      "xuan"
+     ],
+     "answer": "Bạn hỏi gì đó? Mình là Anne ở đây, chuyên về vận động và thư giãn.\n\nMình không trả lời được câu hỏi địa lý đó. Nếu bạn cần tư vấn về bài tập thể dục, đau nhức hay muốn tìm một hoạt động phù hợp cho ngày hôm nay, hãy cho mình biết thêm chi tiết nhé.",
+     "answer_source": "stream",
+     "request_id": "1192a63b-4c57-4b5c-a9e5-079689b981b7",
+     "error": null,
+     "attempt": 2,
+     "invalid": [
+      "node_failed:planner"
+     ],
+     "passed": false,
+     "hit": [],
+     "leak": [],
+     "all_hit": [],
+     "all_miss": [],
+     "tool_names": [],
+     "synth_mode": null,
+     "tools_missing": [],
+     "mode_hit": false,
+     "retrieval_top_sim": 0.7328960954752057,
+     "retrieval_src": "tier2",
+     "memory_ms": 6201,
+     "t_to_done_s": 13.51,
+     "t_housekeep_s": 0.0,
+     "total_tokens": 1260,
+     "background": {
+      "llm_calls": 0,
+      "tokens": 0,
+      "elapsed_ms": 0
+     },
+     "retry_of": {
+      "error": null,
+      "invalid": [
+       "node_failed:planner"
+      ]
+     }
+    }
+   ],
+   "seed_llm_calls": 1
+  },
+  {
+   "scenario": "instr_general_g",
+   "user_id": "91c53918-45a8-545d-a05c-d4e8561f2e89",
+   "sessions": [
+    "67efadfa-74fc-5406-8ccf-0cf83e2b8e14",
+    "478b16ed-324b-5d56-a600-e256cc73f54c",
+    "726a38e9-f992-519f-9469-22a24a704e19"
+   ],
+   "seed_turns": 3,
+   "turns": [],
+   "probes": [
+    {
+     "group": "g",
+     "ask": "general instruction seen in 3 conversations",
+     "where": "db",
+     "session_id": "67efadfa-74fc-5406-8ccf-0cf83e2b8e14",
+     "expect_any": [
+      "ngắn gọn"
+     ],
+     "forbid": [],
+     "answer": "Trả lời ngắn gọn [instruction/t1/active]",
+     "answer_source": "db",
+     "request_id": null,
+     "error": null,
+     "attempt": 1,
+     "invalid": [],
+     "passed": true,
+     "hit": [],
+     "leak": [],
+     "retrieval_top_sim": null,
+     "retrieval_src": "db",
+     "memory_ms": null,
+     "t_to_done_s": null,
+     "t_housekeep_s": null,
+     "total_tokens": null,
+     "background": {
+      "llm_calls": 0,
+      "tokens": 0,
+      "elapsed_ms": 0
+     }
+    }
+   ],
+   "seed_llm_calls": 3
+  },
+  {
+   "scenario": "instr_project_g",
+   "user_id": "bae2cdc8-2608-5703-a9a5-0514cca026f9",
+   "sessions": [
+    "3775aac9-40d0-55d0-a551-6899cd0ef29e",
+    "61846895-5515-5162-80ba-b6ecc4a3d4e4",
+    "88499154-cb17-5545-b593-324b3be0cfbb"
+   ],
+   "seed_turns": 3,
+   "turns": [],
+   "probes": [
+    {
+     "group": "g",
+     "ask": "project-A instruction seen in 3 conversations",
+     "where": "db",
+     "session_id": "3775aac9-40d0-55d0-a551-6899cd0ef29e",
+     "expect_any": [
+      "serverless"
+     ],
+     "forbid": [],
+     "answer": "Project A ưu tiên serverless [fact/t2/active/Project A]",
+     "answer_source": "db",
+     "request_id": null,
+     "error": null,
+     "attempt": 1,
+     "invalid": [],
+     "passed": false,
+     "hit": [],
+     "leak": [
+      "no row matching {'fact_contains': 'serverless', 'kind': 'instruction', 'tier': 2, 'status': 'active', 'project': 'A'}"
+     ],
+     "retrieval_top_sim": null,
+     "retrieval_src": "db",
+     "memory_ms": null,
+     "t_to_done_s": null,
+     "t_housekeep_s": null,
+     "total_tokens": null,
+     "background": {
+      "llm_calls": 0,
+      "tokens": 0,
+      "elapsed_ms": 0
+     }
+    }
+   ],
+   "seed_llm_calls": 3
+  }
+ ],
+ "runs": [
+  {
+   "started_at": "2026-10-16T11:06:18+07:00",
+   "phase": "seed",
+   "only": [
+    "latex_b"
+   ],
+   "retry_invalid": false,
+   "key_label": "llm=groq-qwen3.8-27b",
+   "llm_calls": 1,
+   "turns": 0,
+   "probes": 0,
+   "quota_stops": []
+  },
+  {
+   "started_at": "2026-10-16T11:08:02+07:00",
+   "phase": "seed",
+   "only": [
+    "job_e"
+   ],
+   "retry_invalid": false,
+   "key_label": "llm=groq-qwen3.8-27b",
+   "llm_calls": 2,
+   "turns": 0,
+   "probes": 0,
+   "quota_stops": []
+  },
+  {
+   "started_at": "2026-10-16T11:10:17+07:00",
+   "phase": "seed",
+   "only": [
+    "goal_f"
+   ],
+   "retry_invalid": false,
+   "key_label": "llm=groq-qwen3.8-27b",
+   "llm_calls": 1,
+   "turns": 0,
+   "probes": 0,
+   "quota_stops": []
+  },
+  {
+   "started_at": "2026-10-16T11:12:13+07:00",
+   "phase": "seed",
+   "only": [
+    "instr_general_g"
+   ],
+   "retry_invalid": false,
+   "key_label": "llm=groq-qwen3.8-27b",
+   "llm_calls": 3,
+   "turns": 0,
+   "probes": 1,
+   "quota_stops": []
+  },
+  {
+   "started_at": "2026-10-16T11:14:47+07:00",
+   "phase": "seed",
+   "only": [
+    "instr_project_g"
+   ],
+   "retry_invalid": false,
+   "key_label": "llm=groq-qwen3.8-27b",
+   "llm_calls": 3,
+   "turns": 0,
+   "probes": 2,
+   "quota_stops": []
+  },
+  {
+   "started_at": "2026-10-16T11:17:20+07:00",
+   "phase": "probes",
+   "only": [
+    "latex_b"
+   ],
+   "retry_invalid": false,
+   "key_label": "llm=groq-qwen3.8-27b",
+   "llm_calls": 3,
+   "turns": 1,
+   "probes": 3,
+   "quota_stops": []
+  },
+  {
+   "started_at": "2026-10-16T11:19:10+07:00",
+   "phase": "probes",
+   "only": [
+    "job_e"
+   ],
+   "retry_invalid": false,
+   "key_label": "llm=groq-qwen3.8-27b",
+   "llm_calls": 3,
+   "turns": 2,
+   "probes": 4,
+   "quota_stops": []
+  },
+  {
+   "started_at": "2026-10-16T11:21:03+07:00",
+   "phase": "probes",
+   "only": [
+    "goal_f"
+   ],
+   "retry_invalid": false,
+   "key_label": "llm=groq-qwen3.8-27b",
+   "llm_calls": 1,
+   "turns": 3,
+   "probes": 5,
+   "quota_stops": []
+  },
+  {
+   "started_at": "2026-10-16T11:22:55+07:00",
+   "phase": "all",
+   "only": [
+    "goal_f"
+   ],
+   "retry_invalid": true,
+   "key_label": "llm=groq-qwen3.8-27b",
+   "llm_calls": 1,
+   "turns": 4,
+   "probes": 5,
+   "quota_stops": []
+  }
+ ]
+}

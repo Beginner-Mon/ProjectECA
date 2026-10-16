@@ -173,7 +173,7 @@ scenarios:
 
 # Nhóm g–j: chỉ cho B (đọc thẳng user_memory, không chat). Mỗi nhóm 1 mục kiểm.
 - id: instr_general_g
-  only_labels: [B, B2]
+  only_labels: [B, B2, B3]
   conversations:
     - turns:
         - user: "Từ giờ hãy trả lời tôi ngắn gọn thôi."
@@ -192,7 +192,7 @@ scenarios:
         - {fact_contains: "ngắn gọn", kind: instruction, tier: 1, status: active}
 
 - id: instr_project_g
-  only_labels: [B, B2]
+  only_labels: [B, B2, B3]
   conversations:
     - turns:
         - user: "Cho project A thì ưu tiên serverless nhé."
@@ -212,7 +212,7 @@ scenarios:
            status: active, project: "A"}
 
 - id: safe_once_h
-  only_labels: [B, B2]
+  only_labels: [B, B2, B3]
   conversations:
     - turns:
         - user: "Đừng gợi ý bài tập cho lưng của tôi."
@@ -225,7 +225,7 @@ scenarios:
         - {fact_contains: "lưng", tier: 1, status: active}
 
 - id: name_churn_i
-  only_labels: [B, B2]
+  only_labels: [B, B2, B3]
   conversations:
     - turns:
         - user: "Gọi tôi là Tri."
@@ -244,7 +244,7 @@ scenarios:
         - {fact_contains: "Long", status: candidate, tier: 2}
 
 - id: forget_j
-  only_labels: [B, B2]
+  only_labels: [B, B2, B3]
   conversations:
     - turns:
         - user: "Tôi thích bơi lội mỗi sáng."
@@ -258,7 +258,7 @@ scenarios:
       assert_rows:
         - {fact_contains: "bơi lội", valid: false}
 - id: forget_all_j
-  only_labels: [B, B2]
+  only_labels: [B, B2, B3]
   conversations:
     - turns:
         - user: "Tôi làm y tá ca đêm."
@@ -277,7 +277,7 @@ scenarios:
 # m_ambig dựng hai hội thoại gần nhau để resume_last_session gắn ambiguous,
 # kiểm mode không phải clarify.
 - id: m_name
-  only_labels: [M0, M1]
+  only_labels: [M0, M1, M2]
   conversations:
     - turns:
         - user: "Tên tôi là Tri, gọi tôi là Mon nhé."
@@ -295,7 +295,7 @@ scenarios:
       forbid: []
 
 - id: m_food
-  only_labels: [M0, M1]
+  only_labels: [M0, M1, M2]
   conversations:
     - turns:
         - user: "Món ăn yêu thích của tôi là phở."
@@ -312,7 +312,7 @@ scenarios:
       forbid: []
 
 - id: m_ambig
-  only_labels: [M0, M1]
+  only_labels: [M0, M1, M2]
   conversations:
     - turns:
         - user: "Hôm trước tôi hỏi về bài giãn vai, bạn nhắc lại giúp tôi được không?"

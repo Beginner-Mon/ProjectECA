@@ -270,6 +270,43 @@ def check_tools_mode(logs: list[dict], expect_tools: list[str] | None,
             "passed": not missing and not mode_hit}
 
 
+def memory_probe_fields(logs: list[dict]) -> dict:
+    """What tier-2 recall actually did this turn (per-probe report columns).
+
+    tier2_top_similarity is the best score over every tier-2 row; user_facts_count
+    is how many tier-2 lines really entered the prompt. Both come from the
+    memory node's own node_complete record.
+    """
+    for r in reversed(logs):
+        if r.get("message") == "node_complete" and r.get("node") == "memory":
+            return {
+                "tier2_top_similarity": r.get("tier2_top_similarity"),
+                "tier2_embed_ms": r.get("tier2_embed_ms"),
+                "tier2_skipped": r.get("tier2_skipped"),
+                "user_facts_count": r.get("user_facts_count"),
+                "user_instructions_count": r.get("user_instructions_count"),
+            }
+    return {
+        "tier2_top_similarity": None, "tier2_embed_ms": None,
+        "tier2_skipped": "no_memory_node",
+        "user_facts_count": None, "user_instructions_count": None,
+    }
+
+
+def warm_embedding_for_probes() -> None:
+    """Load the embedding model synchronously before the first probe.
+
+    Every probe runs in a fresh process with a cold model; without this, the
+    turn's tier-2 embed always exceeds its 300 ms budget (the model alone
+    takes ~6 s to load) and tier 2 is never measured. One blocking load here
+    keeps it out of every measured turn. Probes-only: seeding does not need it.
+    """
+    from langgraph_agents.shared import get_embedding_service
+
+    get_embedding_service().warm_up()
+    print("memory-benchmark: embedding model warm", flush=True)
+
+
 def find_invalid(turn: dict, logs: list[dict]) -> list[str]:
     """Why a turn must not be scored (empty = valid)."""
     reasons: list[str] = []
@@ -285,6 +322,9 @@ def find_invalid(turn: dict, logs: list[dict]) -> list[str]:
             reasons.append(f"node_failed:{r.get('node', '?')}")
         if msg == "llm_fallback_used" or r.get("llm_fallback_used") is True:
             reasons.append("llm_fallback_used")
+        if (msg == "node_complete" and r.get("node") == "memory"
+                and r.get("tier2_skipped") == "embed_timeout"):
+            reasons.append("tier2_embed_timeout")
         blob = msg + " " + " ".join(
             str(r.get(k) or "") for k in ("error", "error_type", "reason"))
         m = re.search(r"429|503|504|ResourceExhausted|QuotaExceeded|"
@@ -591,9 +631,15 @@ def run_probe(client, owner_dsn: str, uid: str, sess: str, probe: dict,
         gate = check_tools_mode(turn["logs"], probe.get("expect_tools"),
                                 probe.get("forbid_mode"))
     top_sim, top_src = retrieval_top(turn["logs"])
+    mem_fields = memory_probe_fields(turn["logs"])
     return {
         "group": probe["group"], "ask": probe["ask"],
         "where": probe.get("where", "new"), "session_id": sess,
+        "tier2_top_similarity": mem_fields["tier2_top_similarity"],
+        "tier2_embed_ms": mem_fields["tier2_embed_ms"],
+        "tier2_skipped": mem_fields["tier2_skipped"],
+        "user_facts_count": mem_fields["user_facts_count"],
+        "user_instructions_count": mem_fields["user_instructions_count"],
         "expect_any": probe.get("expect_any") or [],
         "expect_all": probe.get("expect_all") or [],
         "expect_tools": probe.get("expect_tools") or [],
@@ -630,6 +676,7 @@ def probes_label(label: str, spec: dict, only: set[str], collector: Collector,
 
     configure_root_logger()
     set_ltm("0")
+    warm_embedding_for_probes()
     by_id = {r["scenario"]: r for r in recs}
     quota_stops: list[str] = []
     app = create_app()
@@ -671,6 +718,11 @@ def probes_label(label: str, spec: dict, only: set[str], collector: Collector,
                                     "tool_names": [], "synth_mode": None,
                                     "tools_missing": [], "mode_hit": False,
                                     "retrieval_top_sim": None,
+                                    "tier2_top_similarity": None,
+                                    "tier2_embed_ms": None,
+                                    "tier2_skipped": "no_session_for_last",
+                                    "user_facts_count": None,
+                                    "user_instructions_count": None,
                                     "retrieval_src": "none", "memory_ms": None,
                                     "t_to_done_s": None, "t_housekeep_s": None,
                                     "total_tokens": None,
@@ -709,6 +761,7 @@ def retry_label(label: str, spec: dict, only: set[str], collector: Collector,
 
     configure_root_logger()
     set_ltm("0")
+    warm_embedding_for_probes()
     quota_stops: list[str] = []
     app = create_app()
     with TestClient(app) as client:
@@ -867,6 +920,11 @@ def render_md(label: str, report: dict, stats: dict) -> str:
                      f"memory_ms={p['memory_ms']}, to_done={p['t_to_done_s']}s, "
                      f"housekeep={p['t_housekeep_s']}s, "
                      f"total_tokens={p['total_tokens']}, bg={p['background']}")
+            L.append(f"- tier2: top_sim={p.get('tier2_top_similarity')}, "
+                     f"skipped={p.get('tier2_skipped')}, "
+                     f"embed_ms={p.get('tier2_embed_ms')}, "
+                     f"user_facts={p.get('user_facts_count')}, "
+                     f"user_instructions={p.get('user_instructions_count')}")
             L.append(f"- answer: {p['answer'][:1500]}")
             L.append("")
         if sc.get("summary_check"):
@@ -882,18 +940,18 @@ def render_md(label: str, report: dict, stats: dict) -> str:
 
 
 def _is_b_label(label: str) -> bool:
-    return label in ("B", "B2")
+    return label in ("B", "B2", "B3")
 
 
 def _is_m_label(label: str) -> bool:
-    return label in ("M0", "M1")
+    return label in ("M0", "M1", "M2")
 
 
 def validate_spec(spec: dict, label: str) -> list[str]:
     """Offline checks for --dry-run (no DB, no LLM). Returns error strings.
 
-    Groups g–j only exist for label B/B2 (they read tier rows directly).
-    Group m only exists for labels M0/M1 (multi-intent + clarify-gate probes).
+    Groups g–j only exist for labels B/B2/B3 (they read tier rows directly).
+    Group m only exists for labels M0/M1/M2 (multi-intent + clarify-gate probes).
     """
     errors: list[str] = []
     seen: set[str] = set()

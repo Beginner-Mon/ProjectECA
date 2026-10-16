@@ -77,7 +77,7 @@ export function groupFacts(facts: readonly UserMemoryItem[]): GroupedFacts {
   for (const fact of facts) {
     if (fact.status === 'candidate') {
       candidates.push(fact)
-    } else if (fact.kind === 'instruction' && fact.tier === 1) {
+    } else if (fact.status === 'active' && fact.tier === 1) {
       instructions.push(fact)
     } else {
       const key = fact.project ?? null

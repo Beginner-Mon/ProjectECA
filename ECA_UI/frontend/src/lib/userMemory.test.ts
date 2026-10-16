@@ -119,4 +119,10 @@ describe('groupFacts', () => {
     expect(groups.instructions).toEqual([])
     expect(groups.byProject).toHaveLength(1)
   })
+
+  it('keeps tier-1 facts in the standing section regardless of kind', () => {
+    const groups = groupFacts([item({ id: 'f', kind: 'fact', tier: 1, fact_text: 'Has back pain' })])
+    expect(groups.instructions.map((f) => f.id)).toEqual(['f'])
+    expect(groups.byProject).toEqual([])
+  })
 })

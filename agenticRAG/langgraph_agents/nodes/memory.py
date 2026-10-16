@@ -136,11 +136,11 @@ def _tier2_config() -> dict:
             return {
                 "timeout_ms": int(memory.get("tier2_embed_timeout_ms", 300)),
                 "top_k": int(memory.get("tier2_top_k", 5)),
-                "min_similarity": float(memory.get("tier2_min_similarity", 0.86)),
+                "floor": float(memory.get("tier2_floor", 0.75)),
             }
     except Exception:
         pass
-    return {"timeout_ms": 300, "top_k": 5, "min_similarity": 0.86}
+    return {"timeout_ms": 300, "top_k": 5, "floor": 0.75}
 
 
 def _tier2_line(row) -> str:
@@ -155,7 +155,7 @@ def _split_tier2_queries(query: str) -> list[str]:
     """Whole message + up to 3 first sentences (fragments under 3 words out).
 
     A two-intent turn dilutes to one vector: each intent's facts can fall
-    under the 0.86 floor. One sentence stays one vector — exactly the old
+    under the floor. One sentence stays one vector — exactly the old
     behaviour. Sentences split on `.`, `?`, `!` and newlines.
     """
     import re
@@ -231,7 +231,10 @@ async def _load_tier2_facts(
             *vectors, user_id, session_id, cfg["top_k"],
         )
         top_sim = max((float(r["similarity"]) for r in rows), default=None)
-        hits = [r for r in rows if float(r["similarity"]) >= cfg["min_similarity"]]
+        # Xếp hạng: top-K theo điểm, chỉ giữ fact có điểm ≥ floor (V0: K=5,
+        # floor=0.75 — floor thấp chỉ cắt đuôi rác rõ rệt, synthesizer bỏ qua
+        # fact lệch như tiêu chí nhóm f ở benchmark).
+        hits = [r for r in rows if float(r["similarity"]) >= cfg["floor"]]
         if not hits:
             return [], top_sim, None, embed_ms
         labels = sorted({r["project"] for r in hits if r.get("project")})

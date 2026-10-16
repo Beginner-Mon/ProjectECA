@@ -19,7 +19,7 @@ pytestmark = pytest.mark.unit
 
 _AT = datetime(2026, 10, 14, 12, 0, tzinfo=timezone.utc)
 
-_CFG = {"timeout_ms": 300, "top_k": 5, "min_similarity": 0.86}
+_CFG = {"timeout_ms": 300, "top_k": 5, "floor": 0.75}
 
 
 def _row(id="r1", fact="f", project=None, sim=0.9, said_at=_AT):
@@ -40,6 +40,12 @@ class _Pg:
         self.statements.append(" ".join(sql.split()))
         if "project = ANY" in sql:
             return self.mates
+        # Mô phỏng SQL LIMIT $top_k: chỉ top_k dòng đầu vào (đã xếp theo điểm).
+        if "GREATEST" in sql and args:
+            try:
+                return self.vector_rows[:int(args[-1])]
+            except (TypeError, ValueError):
+                pass
         return self.vector_rows
 
 
@@ -136,6 +142,37 @@ async def test_tier2_below_floor_returns_nothing_but_reports_top_sim():
 
 
 @pytest.mark.asyncio
+async def test_tier2_floor_boundary_keeps_at_floor_drops_below():
+    pg = _Pg(vector_rows=[_row("r1", "Vua du", sim=0.75),
+                          _row("r2", "Thieu mot chut", sim=0.74)])
+    with patch.object(mem, "get_pg_client", return_value=pg), \
+         patch("langgraph_agents.shared.get_embedding_service",
+               return_value=_embed()), \
+         patch.object(mem, "_tier2_config", return_value=dict(_CFG)):
+        lines, top_sim, skipped, _ms = await mem._load_tier2_facts(
+            "u-1", "s-now", "cai gi do")
+    assert len(lines) == 1 and "Vua du" in lines[0]
+    assert top_sim == 0.75 and skipped is None
+
+
+@pytest.mark.asyncio
+async def test_tier2_never_more_than_k_direct_hits():
+    cfg = {"timeout_ms": 300, "top_k": 2, "floor": 0.75}
+    pg = _Pg(vector_rows=[_row("r1", "Mot", sim=0.9),
+                          _row("r2", "Hai", sim=0.88),
+                          _row("r3", "Ba", sim=0.86)])
+    with patch.object(mem, "get_pg_client", return_value=pg), \
+         patch("langgraph_agents.shared.get_embedding_service",
+               return_value=_embed()), \
+         patch.object(mem, "_tier2_config", return_value=dict(cfg)):
+        lines, top_sim, skipped, _ms = await mem._load_tier2_facts(
+            "u-1", "s-now", "cai gi do")
+    # LIMIT 2 ở SQL nên chỉ 2 dòng vào, không project nên không kéo theo.
+    assert lines == ["- [2026-10-14] Mot", "- [2026-10-14] Hai"]
+    assert top_sim == 0.9 and skipped is None
+
+
+@pytest.mark.asyncio
 async def test_tier2_embed_timeout_leaves_the_turn_running(caplog):
     import asyncio
     slow = MagicMock()
@@ -152,7 +189,7 @@ async def test_tier2_embed_timeout_leaves_the_turn_running(caplog):
          patch("langgraph_agents.shared.get_embedding_service", return_value=slow), \
          patch.object(mem, "_tier2_config",
                       return_value={"timeout_ms": 5, "top_k": 5,
-                                    "min_similarity": 0.86}):
+                                    "floor": 0.75}):
         with caplog.at_level(logging.DEBUG):
             lines, top_sim, skipped, _ms = await mem._load_tier2_facts(
                 "u-1", "s-now", "dau goi")

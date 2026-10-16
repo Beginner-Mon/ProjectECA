@@ -20,10 +20,12 @@ langgraph:
     # VVA_LTM=1|0 overrides this.
     ltm_enabled: false
     # Tier-2 recall: embed this turn's query (milliseconds), take this many
-    # rows, keep what scores at or above this cosine similarity.
+    # rows by similarity rank, keep what scores at or above this floor.
+    # V0 probe (16/10/2026, Tri): K=5, floor=0.75 — floor thấp chỉ cắt đuôi
+    # rác rõ rệt, synthesizer bỏ qua fact lệch (tiêu chí nhóm f ở benchmark).
     tier2_embed_timeout_ms: 300
     tier2_top_k: 5
-    tier2_min_similarity: 0.86
+    tier2_floor: 0.75
     # Tier promotion thresholds (memory-v2 tiers): a candidate fact goes
     # active after seen in this many conversations, a repeated instruction
     # becomes a standing tier-1 instruction after this many — unless every

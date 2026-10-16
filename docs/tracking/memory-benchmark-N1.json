@@ -1,0 +1,662 @@
+{
+ "label": "N1",
+ "model": "qwen/qwen3.8-27b via Groq",
+ "stats": {
+  "groups": {
+   "n": {
+    "passed": 4,
+    "total": 4,
+    "invalid": 0,
+    "rate": 1.0
+   }
+  },
+  "overall": {
+   "passed": 4,
+   "scored": 4,
+   "invalid": 0
+  },
+  "memory_node_ms": {
+   "n": 4,
+   "p50": 1565,
+   "p95": 6333
+  },
+  "retrieval_top_sim": {
+   "b_e_max": null,
+   "b_e_values": [],
+   "f_values": []
+  },
+  "background_per_turn": {
+   "llm_calls": 0.0,
+   "tokens": 0.0
+  },
+  "turn_tokens_avg": 1185.0,
+  "per_1000_turns": {
+   "background_tokens": 0,
+   "turn_tokens": 1185000
+  }
+ },
+ "scenarios": [
+  {
+   "scenario": "n_trust",
+   "user_id": "9ca8ae13-dd07-5eb9-b265-6941beaab0b5",
+   "sessions": [
+    "90b7905e-36f6-5a11-abae-5fea3dc58f2b",
+    "5a9d0d43-3e14-5496-a14d-54698d1e5fa7",
+    "676bb7b5-8217-58d1-8eab-c128444d67a8",
+    "1302ace9-8327-5db0-8106-d3406eeaad6b",
+    "bed12825-f0b4-5636-b0f9-d8e6ab8c782d"
+   ],
+   "seed_turns": 1,
+   "turns": [
+    {
+     "query": "what am I preferred to be called?",
+     "session_id": "5a9d0d43-3e14-5496-a14d-54698d1e5fa7",
+     "locale": "en",
+     "status": 200,
+     "error": null,
+     "answer": "Mon. You told me that just this morning. I remember.",
+     "done": {
+      "request_id": "9243aadc-9567-4e21-a676-99b177e19842",
+      "total_tokens": 1103,
+      "required_outputs": []
+     },
+     "t_to_done_s": 14.18,
+     "t_housekeep_s": 0.0,
+     "t_total_s": 14.18,
+     "logs": [
+      {
+       "message": "node_complete",
+       "created": 1792143921.8835173,
+       "node": "memory",
+       "request_id": "9243aadc-9567-4e21-a676-99b177e19842",
+       "elapsed_ms": 6333,
+       "user_instructions_count": 0,
+       "user_facts_count": 1,
+       "tier2_top_similarity": 0.8111227750778198,
+       "tier2_embed_ms": 18,
+       "tier2_skipped": null,
+       "summary_chunks_count": 0,
+       "summary_present": false,
+       "recent_raw_count": 0
+      },
+      {
+       "message": "node_complete",
+       "created": 1792143923.5925345,
+       "node": "planner",
+       "request_id": "9243aadc-9567-4e21-a676-99b177e19842",
+       "elapsed_ms": 1707,
+       "tags": [],
+       "needs_retrieval": false,
+       "needs_clarification": false,
+       "cache_hit_tokens": null,
+       "cache_miss_tokens": null,
+       "llm_fallback_used": false
+      },
+      {
+       "message": "node_complete",
+       "created": 1792143924.0485299,
+       "node": "synthesizer",
+       "request_id": "9243aadc-9567-4e21-a676-99b177e19842",
+       "elapsed_ms": 455,
+       "tokens": 1103,
+       "mode": "chat",
+       "output_chars": 52,
+       "streamed": true,
+       "cache_hit_tokens": null,
+       "cache_miss_tokens": null,
+       "llm_fallback_used": false,
+       "prompt_blocks": {
+        "persona": 2372,
+        "body_state": 0,
+        "about_you": 0,
+        "user_instructions": 0,
+        "user_facts": 293,
+        "session_summary": 0,
+        "task": 928,
+        "evidence": 0,
+        "history": 0,
+        "voice_card": 696
+       },
+       "input_tokens": 1089,
+       "output_tokens": 14
+      },
+      {
+       "message": "chat_complete",
+       "created": 1792143929.7152846,
+       "elapsed_ms": 14178,
+       "total_tokens": 1103,
+       "required_outputs": []
+      }
+     ]
+    },
+    {
+     "query": "tôi thích được gọi là gì?",
+     "session_id": "676bb7b5-8217-58d1-8eab-c128444d67a8",
+     "locale": "vi",
+     "status": 200,
+     "error": null,
+     "answer": "Bạn muốn mình gọi bạn là Mon, đúng không?",
+     "done": {
+      "request_id": "3d3e43cb-c5fd-4aea-843a-ebaea669eeca",
+      "total_tokens": 1137,
+      "required_outputs": []
+     },
+     "t_to_done_s": 8.72,
+     "t_housekeep_s": 0.0,
+     "t_total_s": 8.72,
+     "logs": [
+      {
+       "message": "node_complete",
+       "created": 1792143991.2860975,
+       "node": "memory",
+       "request_id": "3d3e43cb-c5fd-4aea-843a-ebaea669eeca",
+       "elapsed_ms": 1565,
+       "user_instructions_count": 0,
+       "user_facts_count": 1,
+       "tier2_top_similarity": 0.8448260426521301,
+       "tier2_embed_ms": 16,
+       "tier2_skipped": null,
+       "summary_chunks_count": 0,
+       "summary_present": false,
+       "recent_raw_count": 0
+      },
+      {
+       "message": "node_complete",
+       "created": 1792143992.151207,
+       "node": "planner",
+       "request_id": "3d3e43cb-c5fd-4aea-843a-ebaea669eeca",
+       "elapsed_ms": 864,
+       "tags": [],
+       "needs_retrieval": false,
+       "needs_clarification": false,
+       "cache_hit_tokens": null,
+       "cache_miss_tokens": null,
+       "llm_fallback_used": false
+      },
+      {
+       "message": "node_complete",
+       "created": 1792143992.8401246,
+       "node": "synthesizer",
+       "request_id": "3d3e43cb-c5fd-4aea-843a-ebaea669eeca",
+       "elapsed_ms": 687,
+       "tokens": 1137,
+       "mode": "chat",
+       "output_chars": 41,
+       "streamed": true,
+       "cache_hit_tokens": null,
+       "cache_miss_tokens": null,
+       "llm_fallback_used": false,
+       "prompt_blocks": {
+        "persona": 2326,
+        "body_state": 0,
+        "about_you": 0,
+        "user_instructions": 0,
+        "user_facts": 293,
+        "session_summary": 0,
+        "task": 920,
+        "evidence": 0,
+        "history": 0,
+        "voice_card": 663
+       },
+       "input_tokens": 1125,
+       "output_tokens": 12
+      },
+      {
+       "message": "chat_complete",
+       "created": 1792143998.4327924,
+       "elapsed_ms": 8713,
+       "total_tokens": 1137,
+       "required_outputs": []
+      }
+     ]
+    },
+    {
+     "query": "who am I?",
+     "session_id": "1302ace9-8327-5db0-8106-d3406eeaad6b",
+     "locale": "en",
+     "status": 200,
+     "error": null,
+     "answer": "You are Mon. That is the name you told me today.",
+     "done": {
+      "request_id": "caa6d492-3ab7-41f6-94ab-0857dfa93088",
+      "total_tokens": 1241,
+      "required_outputs": []
+     },
+     "t_to_done_s": 10.34,
+     "t_housekeep_s": 0.0,
+     "t_total_s": 10.34,
+     "logs": [
+      {
+       "message": "node_complete",
+       "created": 1792144060.012171,
+       "node": "memory",
+       "request_id": "caa6d492-3ab7-41f6-94ab-0857dfa93088",
+       "elapsed_ms": 1574,
+       "user_instructions_count": 0,
+       "user_facts_count": 1,
+       "tier2_top_similarity": 0.8391577005386353,
+       "tier2_embed_ms": 14,
+       "tier2_skipped": null,
+       "summary_chunks_count": 0,
+       "summary_present": false,
+       "recent_raw_count": 0
+      },
+      {
+       "message": "node_complete",
+       "created": 1792144060.880322,
+       "node": "planner",
+       "request_id": "caa6d492-3ab7-41f6-94ab-0857dfa93088",
+       "elapsed_ms": 867,
+       "tags": [],
+       "needs_retrieval": true,
+       "needs_clarification": false,
+       "cache_hit_tokens": null,
+       "cache_miss_tokens": null,
+       "llm_fallback_used": false
+      },
+      {
+       "message": "node_complete",
+       "created": 1792144061.3677533,
+       "node": "retriever_agent",
+       "request_id": "caa6d492-3ab7-41f6-94ab-0857dfa93088",
+       "elapsed_ms": 485,
+       "tokens": 697,
+       "tool_calls": 1,
+       "tool_names": [
+        "recall_self"
+       ],
+       "cache_hit_tokens": null,
+       "cache_miss_tokens": null
+      },
+      {
+       "message": "node_complete",
+       "created": 1792144063.4461546,
+       "node": "synthesizer",
+       "request_id": "caa6d492-3ab7-41f6-94ab-0857dfa93088",
+       "elapsed_ms": 454,
+       "tokens": 1241,
+       "mode": "chat",
+       "output_chars": 48,
+       "streamed": true,
+       "cache_hit_tokens": null,
+       "cache_miss_tokens": null,
+       "llm_fallback_used": false,
+       "prompt_blocks": {
+        "persona": 2372,
+        "body_state": 0,
+        "about_you": 627,
+        "user_instructions": 0,
+        "user_facts": 293,
+        "session_summary": 0,
+        "task": 904,
+        "evidence": 0,
+        "history": 0,
+        "voice_card": 696
+       },
+       "input_tokens": 1227,
+       "output_tokens": 14
+      },
+      {
+       "message": "chat_complete",
+       "created": 1792144068.7702475,
+       "elapsed_ms": 10334,
+       "total_tokens": 1241,
+       "required_outputs": []
+      }
+     ]
+    },
+    {
+     "query": "do you know my name?",
+     "session_id": "bed12825-f0b4-5636-b0f9-d8e6ab8c782d",
+     "locale": "en",
+     "status": 200,
+     "error": null,
+     "answer": "Yes, you are Mon.",
+     "done": {
+      "request_id": "9a908ea3-e6df-466c-b85b-b8d35187acb1",
+      "total_tokens": 1259,
+      "required_outputs": []
+     },
+     "t_to_done_s": 9.63,
+     "t_housekeep_s": 0.0,
+     "t_total_s": 9.63,
+     "logs": [
+      {
+       "message": "node_complete",
+       "created": 1792144130.089121,
+       "node": "memory",
+       "request_id": "9a908ea3-e6df-466c-b85b-b8d35187acb1",
+       "elapsed_ms": 1314,
+       "user_instructions_count": 0,
+       "user_facts_count": 1,
+       "tier2_top_similarity": 0.8291028636159234,
+       "tier2_embed_ms": 14,
+       "tier2_skipped": null,
+       "summary_chunks_count": 0,
+       "summary_present": false,
+       "recent_raw_count": 0
+      },
+      {
+       "message": "node_complete",
+       "created": 1792144130.8910196,
+       "node": "planner",
+       "request_id": "9a908ea3-e6df-466c-b85b-b8d35187acb1",
+       "elapsed_ms": 801,
+       "tags": [],
+       "needs_retrieval": true,
+       "needs_clarification": false,
+       "cache_hit_tokens": null,
+       "cache_miss_tokens": null,
+       "llm_fallback_used": false
+      },
+      {
+       "message": "node_complete",
+       "created": 1792144131.3170178,
+       "node": "retriever_agent",
+       "request_id": "9a908ea3-e6df-466c-b85b-b8d35187acb1",
+       "elapsed_ms": 424,
+       "tokens": 692,
+       "tool_calls": 1,
+       "tool_names": [
+        "recall_self"
+       ],
+       "cache_hit_tokens": null,
+       "cache_miss_tokens": null
+      },
+      {
+       "message": "node_complete",
+       "created": 1792144133.0447907,
+       "node": "synthesizer",
+       "request_id": "9a908ea3-e6df-466c-b85b-b8d35187acb1",
+       "elapsed_ms": 401,
+       "tokens": 1259,
+       "mode": "chat",
+       "output_chars": 17,
+       "streamed": true,
+       "cache_hit_tokens": null,
+       "cache_miss_tokens": null,
+       "llm_fallback_used": false,
+       "prompt_blocks": {
+        "persona": 2372,
+        "body_state": 0,
+        "about_you": 696,
+        "user_instructions": 0,
+        "user_facts": 293,
+        "session_summary": 0,
+        "task": 915,
+        "evidence": 0,
+        "history": 0,
+        "voice_card": 696
+       },
+       "input_tokens": 1252,
+       "output_tokens": 7
+      },
+      {
+       "message": "chat_complete",
+       "created": 1792144138.4014733,
+       "elapsed_ms": 9628,
+       "total_tokens": 1259,
+       "required_outputs": []
+      }
+     ]
+    }
+   ],
+   "probes": [
+    {
+     "group": "n",
+     "ask": "what am I preferred to be called?",
+     "where": "new",
+     "session_id": "5a9d0d43-3e14-5496-a14d-54698d1e5fa7",
+     "tier2_top_similarity": 0.8111227750778198,
+     "tier2_embed_ms": 18,
+     "tier2_skipped": null,
+     "user_facts_count": 1,
+     "user_instructions_count": 0,
+     "expect_any": [],
+     "expect_all": [
+      [
+       "mon"
+      ]
+     ],
+     "expect_tools": [],
+     "forbid_mode": null,
+     "forbid": [
+      "can't confirm",
+      "cannot confirm",
+      "can't verify",
+      "this device",
+      "someone else",
+      "might not be you",
+      "may not be you"
+     ],
+     "answer": "Mon. You told me that just this morning. I remember.",
+     "answer_source": "stream",
+     "request_id": "9243aadc-9567-4e21-a676-99b177e19842",
+     "error": null,
+     "attempt": 1,
+     "invalid": [],
+     "passed": true,
+     "hit": [],
+     "leak": [],
+     "all_hit": [
+      "mon"
+     ],
+     "all_miss": [],
+     "tool_names": [],
+     "synth_mode": "chat",
+     "tools_missing": [],
+     "mode_hit": false,
+     "retrieval_top_sim": 0.8111227750778198,
+     "retrieval_src": "tier2",
+     "memory_ms": 6333,
+     "t_to_done_s": 14.18,
+     "t_housekeep_s": 0.0,
+     "total_tokens": 1103,
+     "background": {
+      "llm_calls": 0,
+      "tokens": 0,
+      "elapsed_ms": 0
+     }
+    },
+    {
+     "group": "n",
+     "ask": "tôi thích được gọi là gì?",
+     "where": "new",
+     "session_id": "676bb7b5-8217-58d1-8eab-c128444d67a8",
+     "tier2_top_similarity": 0.8448260426521301,
+     "tier2_embed_ms": 16,
+     "tier2_skipped": null,
+     "user_facts_count": 1,
+     "user_instructions_count": 0,
+     "expect_any": [],
+     "expect_all": [
+      [
+       "mon"
+      ]
+     ],
+     "expect_tools": [],
+     "forbid_mode": null,
+     "forbid": [
+      "không chắc",
+      "người khác",
+      "thiết bị này",
+      "không xác nhận"
+     ],
+     "answer": "Bạn muốn mình gọi bạn là Mon, đúng không?",
+     "answer_source": "stream",
+     "request_id": "3d3e43cb-c5fd-4aea-843a-ebaea669eeca",
+     "error": null,
+     "attempt": 1,
+     "invalid": [],
+     "passed": true,
+     "hit": [],
+     "leak": [],
+     "all_hit": [
+      "mon"
+     ],
+     "all_miss": [],
+     "tool_names": [],
+     "synth_mode": "chat",
+     "tools_missing": [],
+     "mode_hit": false,
+     "retrieval_top_sim": 0.8448260426521301,
+     "retrieval_src": "tier2",
+     "memory_ms": 1565,
+     "t_to_done_s": 8.72,
+     "t_housekeep_s": 0.0,
+     "total_tokens": 1137,
+     "background": {
+      "llm_calls": 0,
+      "tokens": 0,
+      "elapsed_ms": 0
+     }
+    },
+    {
+     "group": "n",
+     "ask": "who am I?",
+     "where": "new",
+     "session_id": "1302ace9-8327-5db0-8106-d3406eeaad6b",
+     "tier2_top_similarity": 0.8391577005386353,
+     "tier2_embed_ms": 14,
+     "tier2_skipped": null,
+     "user_facts_count": 1,
+     "user_instructions_count": 0,
+     "expect_any": [],
+     "expect_all": [
+      [
+       "mon"
+      ]
+     ],
+     "expect_tools": [],
+     "forbid_mode": null,
+     "forbid": [
+      "can't confirm",
+      "cannot confirm",
+      "can't verify",
+      "this device",
+      "someone else",
+      "might not be you",
+      "may not be you"
+     ],
+     "answer": "You are Mon. That is the name you told me today.",
+     "answer_source": "stream",
+     "request_id": "caa6d492-3ab7-41f6-94ab-0857dfa93088",
+     "error": null,
+     "attempt": 1,
+     "invalid": [],
+     "passed": true,
+     "hit": [],
+     "leak": [],
+     "all_hit": [
+      "mon"
+     ],
+     "all_miss": [],
+     "tool_names": [
+      "recall_self"
+     ],
+     "synth_mode": "chat",
+     "tools_missing": [],
+     "mode_hit": false,
+     "retrieval_top_sim": 0.8391577005386353,
+     "retrieval_src": "tier2",
+     "memory_ms": 1574,
+     "t_to_done_s": 10.34,
+     "t_housekeep_s": 0.0,
+     "total_tokens": 1241,
+     "background": {
+      "llm_calls": 0,
+      "tokens": 0,
+      "elapsed_ms": 0
+     }
+    },
+    {
+     "group": "n",
+     "ask": "do you know my name?",
+     "where": "new",
+     "session_id": "bed12825-f0b4-5636-b0f9-d8e6ab8c782d",
+     "tier2_top_similarity": 0.8291028636159234,
+     "tier2_embed_ms": 14,
+     "tier2_skipped": null,
+     "user_facts_count": 1,
+     "user_instructions_count": 0,
+     "expect_any": [],
+     "expect_all": [
+      [
+       "mon"
+      ]
+     ],
+     "expect_tools": [],
+     "forbid_mode": null,
+     "forbid": [
+      "can't confirm",
+      "cannot confirm",
+      "can't verify",
+      "this device",
+      "someone else",
+      "might not be you",
+      "may not be you"
+     ],
+     "answer": "Yes, you are Mon.",
+     "answer_source": "stream",
+     "request_id": "9a908ea3-e6df-466c-b85b-b8d35187acb1",
+     "error": null,
+     "attempt": 1,
+     "invalid": [],
+     "passed": true,
+     "hit": [],
+     "leak": [],
+     "all_hit": [
+      "mon"
+     ],
+     "all_miss": [],
+     "tool_names": [
+      "recall_self"
+     ],
+     "synth_mode": "chat",
+     "tools_missing": [],
+     "mode_hit": false,
+     "retrieval_top_sim": 0.8291028636159234,
+     "retrieval_src": "tier2",
+     "memory_ms": 1314,
+     "t_to_done_s": 9.63,
+     "t_housekeep_s": 0.0,
+     "total_tokens": 1259,
+     "background": {
+      "llm_calls": 0,
+      "tokens": 0,
+      "elapsed_ms": 0
+     }
+    }
+   ],
+   "seed_llm_calls": 1
+  }
+ ],
+ "runs": [
+  {
+   "started_at": "2026-10-16T16:42:46+07:00",
+   "phase": "seed",
+   "only": [
+    "n_trust"
+   ],
+   "retry_invalid": false,
+   "key_label": "llm=deepseek",
+   "llm_calls": 1,
+   "turns": 0,
+   "probes": 0,
+   "quota_stops": []
+  },
+  {
+   "started_at": "2026-10-16T16:44:50+07:00",
+   "phase": "probes",
+   "only": [
+    "n_trust"
+   ],
+   "retry_invalid": false,
+   "key_label": "llm=deepseek",
+   "llm_calls": 10,
+   "turns": 4,
+   "probes": 4,
+   "quota_stops": []
+  }
+ ]
+}

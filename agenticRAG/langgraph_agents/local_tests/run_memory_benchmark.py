@@ -683,6 +683,7 @@ def probes_label(label: str, spec: dict, only: set[str], collector: Collector,
     with TestClient(app) as client:
         # Lifespan re-creates the root handlers, so attach only after it ran.
         logging.getLogger().addHandler(collector)
+        paced = False
         try:
             for sc in spec["scenarios"]:
                 if only and sc["id"] not in only:
@@ -733,6 +734,14 @@ def probes_label(label: str, spec: dict, only: set[str], collector: Collector,
                     else:
                         sess = probe_session(label, sid, pi, 1)
                         rec["sessions"].append(sess)
+                    if paced:
+                        # Nhịp 60s như mọi lần chạy trước (giới hạn Groq 8000
+                        # token/phút): trước đây mỗi process probes chỉ mang 1
+                        # probe chat nên nhịp nằm giữa các process; n_trust mang
+                        # 4 probe trong một process nên nhịp nằm ở đây.
+                        import time as _time
+                        _time.sleep(60)
+                    paced = True
                     prec = run_probe(client, owner_dsn, uid, sess, probe,
                                      collector, attempt=1)
                     turn_data = prec.pop("turn")
@@ -781,7 +790,8 @@ def retry_label(label: str, spec: dict, only: set[str], collector: Collector,
                         continue
                     probe = next((p for p in sc["probes"]
                                   if p["group"] == prec["group"]
-                                  and p.get("where") == prec.get("where")), None)
+                                  and p.get("where") == prec.get("where")
+                                  and p.get("ask") == prec.get("ask")), None)
                     if probe is None:
                         continue
                     if prec.get("where") == "last":

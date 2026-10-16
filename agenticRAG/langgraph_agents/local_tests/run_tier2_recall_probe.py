@@ -34,11 +34,10 @@ if str(AGENTIC_ROOT) not in sys.path:
     sys.path.insert(0, str(AGENTIC_ROOT))
 
 import yaml  # noqa: E402
+import numpy as np  # noqa: E402
 
 
 def cosine(a: list[float], b: list[float]) -> float:
-    import numpy as np
-
     va, vb = np.array(a), np.array(b)
     denom = float(np.linalg.norm(va) * np.linalg.norm(vb))
     if denom == 0:

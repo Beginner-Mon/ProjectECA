@@ -1,0 +1,696 @@
+{
+ "label": "N0",
+ "model": "qwen/qwen3.8-27b via Groq",
+ "stats": {
+  "groups": {
+   "n": {
+    "passed": 3,
+    "total": 4,
+    "invalid": 0,
+    "rate": 0.75
+   }
+  },
+  "overall": {
+   "passed": 3,
+   "scored": 4,
+   "invalid": 0
+  },
+  "memory_node_ms": {
+   "n": 4,
+   "p50": 1633,
+   "p95": 6185
+  },
+  "retrieval_top_sim": {
+   "b_e_max": null,
+   "b_e_values": [],
+   "f_values": []
+  },
+  "background_per_turn": {
+   "llm_calls": 0.0,
+   "tokens": 0.0
+  },
+  "turn_tokens_avg": 1280.8,
+  "per_1000_turns": {
+   "background_tokens": 0,
+   "turn_tokens": 1280750
+  }
+ },
+ "scenarios": [
+  {
+   "scenario": "n_trust",
+   "user_id": "a1347533-7819-5d9f-af23-a5397148280f",
+   "sessions": [
+    "7efb5029-3e26-5cd2-a3bb-ab7c69d02f37",
+    "c317dbce-7f99-5942-9afb-42552f384b34",
+    "0764b2fd-1616-5394-9b8f-a32f7dd4255e",
+    "ff1a6864-0424-5fd4-a0b0-c20f620932fc",
+    "7535319e-9f76-565b-9a5b-761bf6c40b00"
+   ],
+   "seed_turns": 1,
+   "turns": [
+    {
+     "query": "what am I preferred to be called?",
+     "session_id": "c317dbce-7f99-5942-9afb-42552f384b34",
+     "locale": "en",
+     "status": 200,
+     "error": null,
+     "answer": "You asked to be called Mon. I remember that from our earlier chat. How's your day going, Mon?",
+     "done": {
+      "request_id": "ce8bb44c-0cde-41a1-af06-f3d102ba617b",
+      "total_tokens": 1231,
+      "required_outputs": []
+     },
+     "t_to_done_s": 18.89,
+     "t_housekeep_s": 0.0,
+     "t_total_s": 18.89,
+     "logs": [
+      {
+       "message": "node_complete",
+       "created": 1792143506.1898952,
+       "node": "memory",
+       "request_id": "ce8bb44c-0cde-41a1-af06-f3d102ba617b",
+       "elapsed_ms": 6185,
+       "user_instructions_count": 0,
+       "user_facts_count": 0,
+       "tier2_top_similarity": 0.8111227750778198,
+       "tier2_embed_ms": 17,
+       "tier2_skipped": null,
+       "summary_chunks_count": 0,
+       "summary_present": false,
+       "recent_raw_count": 0
+      },
+      {
+       "message": "node_complete",
+       "created": 1792143507.1297183,
+       "node": "planner",
+       "request_id": "ce8bb44c-0cde-41a1-af06-f3d102ba617b",
+       "elapsed_ms": 937,
+       "tags": [],
+       "needs_retrieval": true,
+       "needs_clarification": false,
+       "cache_hit_tokens": null,
+       "cache_miss_tokens": null,
+       "llm_fallback_used": false
+      },
+      {
+       "message": "node_complete",
+       "created": 1792143507.5556417,
+       "node": "retriever_agent",
+       "request_id": "ce8bb44c-0cde-41a1-af06-f3d102ba617b",
+       "elapsed_ms": 425,
+       "tokens": 776,
+       "tool_calls": 1,
+       "tool_names": [
+        "resume_last_session"
+       ],
+       "cache_hit_tokens": null,
+       "cache_miss_tokens": null
+      },
+      {
+       "message": "node_complete",
+       "created": 1792143513.2677774,
+       "node": "synthesizer",
+       "request_id": "ce8bb44c-0cde-41a1-af06-f3d102ba617b",
+       "elapsed_ms": 908,
+       "tokens": 1231,
+       "mode": "synthesize",
+       "output_chars": 93,
+       "streamed": true,
+       "cache_hit_tokens": null,
+       "cache_miss_tokens": null,
+       "llm_fallback_used": false,
+       "prompt_blocks": {
+        "persona": 2848,
+        "body_state": 0,
+        "about_you": 0,
+        "user_instructions": 0,
+        "user_facts": 0,
+        "session_summary": 0,
+        "task": 1293,
+        "evidence": 135,
+        "history": 0,
+        "voice_card": 770
+       },
+       "input_tokens": 1207,
+       "output_tokens": 24
+      },
+      {
+       "message": "chat_complete",
+       "created": 1792143518.879599,
+       "elapsed_ms": 18886,
+       "total_tokens": 1231,
+       "required_outputs": []
+      }
+     ]
+    },
+    {
+     "query": "tôi thích được gọi là gì?",
+     "session_id": "0764b2fd-1616-5394-9b8f-a32f7dd4255e",
+     "locale": "vi",
+     "status": 200,
+     "error": null,
+     "answer": "Bạn yêu cầu mình gọi bạn là Mon. Mình nhớ từ cuộc trò chuyện trước đó của chúng ta.\n\nNgày của bạn hôm nay thế nào, Mon?",
+     "done": {
+      "request_id": "d0baad5e-b5dc-485e-a786-3a8caca27e1f",
+      "total_tokens": 1359,
+      "required_outputs": []
+     },
+     "t_to_done_s": 15.97,
+     "t_housekeep_s": 0.0,
+     "t_total_s": 15.97,
+     "logs": [
+      {
+       "message": "node_complete",
+       "created": 1792143580.5431714,
+       "node": "memory",
+       "request_id": "d0baad5e-b5dc-485e-a786-3a8caca27e1f",
+       "elapsed_ms": 1655,
+       "user_instructions_count": 0,
+       "user_facts_count": 0,
+       "tier2_top_similarity": 0.8448260426521301,
+       "tier2_embed_ms": 17,
+       "tier2_skipped": null,
+       "summary_chunks_count": 0,
+       "summary_present": false,
+       "recent_raw_count": 0
+      },
+      {
+       "message": "node_complete",
+       "created": 1792143581.0964682,
+       "node": "planner",
+       "request_id": "d0baad5e-b5dc-485e-a786-3a8caca27e1f",
+       "elapsed_ms": 552,
+       "tags": [],
+       "needs_retrieval": true,
+       "needs_clarification": false,
+       "cache_hit_tokens": null,
+       "cache_miss_tokens": null,
+       "llm_fallback_used": false
+      },
+      {
+       "message": "node_complete",
+       "created": 1792143581.814236,
+       "node": "retriever_agent",
+       "request_id": "d0baad5e-b5dc-485e-a786-3a8caca27e1f",
+       "elapsed_ms": 716,
+       "tokens": 772,
+       "tool_calls": 1,
+       "tool_names": [
+        "resume_last_session"
+       ],
+       "cache_hit_tokens": null,
+       "cache_miss_tokens": null
+      },
+      {
+       "message": "node_complete",
+       "created": 1792143589.5116773,
+       "node": "synthesizer",
+       "request_id": "d0baad5e-b5dc-485e-a786-3a8caca27e1f",
+       "elapsed_ms": 763,
+       "tokens": 1359,
+       "mode": "synthesize",
+       "output_chars": 119,
+       "streamed": true,
+       "cache_hit_tokens": null,
+       "cache_miss_tokens": null,
+       "llm_fallback_used": false,
+       "prompt_blocks": {
+        "persona": 2802,
+        "body_state": 0,
+        "about_you": 0,
+        "user_instructions": 0,
+        "user_facts": 0,
+        "session_summary": 0,
+        "task": 1592,
+        "evidence": 442,
+        "history": 0,
+        "voice_card": 717
+       },
+       "input_tokens": 1326,
+       "output_tokens": 33
+      },
+      {
+       "message": "chat_complete",
+       "created": 1792143594.8548777,
+       "elapsed_ms": 15969,
+       "total_tokens": 1359,
+       "required_outputs": []
+      }
+     ]
+    },
+    {
+     "query": "who am I?",
+     "session_id": "ff1a6864-0424-5fd4-a0b0-c20f620932fc",
+     "locale": "en",
+     "status": 200,
+     "error": null,
+     "answer": "You are Mon. That is what you asked to be called in our last conversation. I remember it.",
+     "done": {
+      "request_id": "32d7a591-95b3-42ba-aaff-e8d6f353447b",
+      "total_tokens": 1311,
+      "required_outputs": []
+     },
+     "t_to_done_s": 17.01,
+     "t_housekeep_s": 0.0,
+     "t_total_s": 17.01,
+     "logs": [
+      {
+       "message": "node_complete",
+       "created": 1792143656.4911156,
+       "node": "memory",
+       "request_id": "32d7a591-95b3-42ba-aaff-e8d6f353447b",
+       "elapsed_ms": 1633,
+       "user_instructions_count": 0,
+       "user_facts_count": 0,
+       "tier2_top_similarity": 0.8391577005386353,
+       "tier2_embed_ms": 16,
+       "tier2_skipped": null,
+       "summary_chunks_count": 0,
+       "summary_present": false,
+       "recent_raw_count": 0
+      },
+      {
+       "message": "node_complete",
+       "created": 1792143657.245374,
+       "node": "planner",
+       "request_id": "32d7a591-95b3-42ba-aaff-e8d6f353447b",
+       "elapsed_ms": 751,
+       "tags": [],
+       "needs_retrieval": true,
+       "needs_clarification": false,
+       "cache_hit_tokens": null,
+       "cache_miss_tokens": null,
+       "llm_fallback_used": false
+      },
+      {
+       "message": "node_complete",
+       "created": 1792143657.6133769,
+       "node": "retriever_agent",
+       "request_id": "32d7a591-95b3-42ba-aaff-e8d6f353447b",
+       "elapsed_ms": 367,
+       "tokens": 760,
+       "tool_calls": 1,
+       "tool_names": [
+        "resume_last_session"
+       ],
+       "cache_hit_tokens": null,
+       "cache_miss_tokens": null
+      },
+      {
+       "message": "node_complete",
+       "created": 1792143666.2358904,
+       "node": "synthesizer",
+       "request_id": "32d7a591-95b3-42ba-aaff-e8d6f353447b",
+       "elapsed_ms": 908,
+       "tokens": 1311,
+       "mode": "synthesize",
+       "output_chars": 89,
+       "streamed": true,
+       "cache_hit_tokens": null,
+       "cache_miss_tokens": null,
+       "llm_fallback_used": false,
+       "prompt_blocks": {
+        "persona": 2848,
+        "body_state": 0,
+        "about_you": 0,
+        "user_instructions": 0,
+        "user_facts": 0,
+        "session_summary": 0,
+        "task": 1584,
+        "evidence": 450,
+        "history": 0,
+        "voice_card": 770
+       },
+       "input_tokens": 1289,
+       "output_tokens": 22
+      },
+      {
+       "message": "chat_complete",
+       "created": 1792143671.8628962,
+       "elapsed_ms": 17005,
+       "total_tokens": 1311,
+       "required_outputs": []
+      }
+     ]
+    },
+    {
+     "query": "do you know my name?",
+     "session_id": "7535319e-9f76-565b-9a5b-761bf6c40b00",
+     "locale": "en",
+     "status": 200,
+     "error": null,
+     "answer": "No. I can only see what you type here. I don't have access to your profile or any outside data. If you want me to know it, you have to tell me. Otherwise, I’m just talking to the person on the other side of the screen.",
+     "done": {
+      "request_id": "0c9ac510-2fc9-461d-9ad2-b22a80d01cd6",
+      "total_tokens": 1222,
+      "required_outputs": []
+     },
+     "t_to_done_s": 11.53,
+     "t_housekeep_s": 0.0,
+     "t_total_s": 11.53,
+     "logs": [
+      {
+       "message": "node_complete",
+       "created": 1792143733.4604943,
+       "node": "memory",
+       "request_id": "0c9ac510-2fc9-461d-9ad2-b22a80d01cd6",
+       "elapsed_ms": 1593,
+       "user_instructions_count": 0,
+       "user_facts_count": 0,
+       "tier2_top_similarity": 0.8291028636159234,
+       "tier2_embed_ms": 14,
+       "tier2_skipped": null,
+       "summary_chunks_count": 0,
+       "summary_present": false,
+       "recent_raw_count": 0
+      },
+      {
+       "message": "node_complete",
+       "created": 1792143734.0593944,
+       "node": "planner",
+       "request_id": "0c9ac510-2fc9-461d-9ad2-b22a80d01cd6",
+       "elapsed_ms": 597,
+       "tags": [],
+       "needs_retrieval": true,
+       "needs_clarification": false,
+       "cache_hit_tokens": null,
+       "cache_miss_tokens": null,
+       "llm_fallback_used": false
+      },
+      {
+       "message": "node_complete",
+       "created": 1792143735.3465629,
+       "node": "retriever_agent",
+       "request_id": "0c9ac510-2fc9-461d-9ad2-b22a80d01cd6",
+       "elapsed_ms": 1286,
+       "tokens": 780,
+       "tool_calls": 1,
+       "tool_names": [
+        "recall_self"
+       ],
+       "cache_hit_tokens": null,
+       "cache_miss_tokens": null
+      },
+      {
+       "message": "node_complete",
+       "created": 1792143737.728078,
+       "node": "synthesizer",
+       "request_id": "0c9ac510-2fc9-461d-9ad2-b22a80d01cd6",
+       "elapsed_ms": 731,
+       "tokens": 1222,
+       "mode": "chat",
+       "output_chars": 218,
+       "streamed": true,
+       "cache_hit_tokens": null,
+       "cache_miss_tokens": null,
+       "llm_fallback_used": false,
+       "prompt_blocks": {
+        "persona": 2372,
+        "body_state": 0,
+        "about_you": 696,
+        "user_instructions": 0,
+        "user_facts": 0,
+        "session_summary": 0,
+        "task": 915,
+        "evidence": 0,
+        "history": 0,
+        "voice_card": 696
+       },
+       "input_tokens": 1166,
+       "output_tokens": 56
+      },
+      {
+       "message": "chat_complete",
+       "created": 1792143743.3946998,
+       "elapsed_ms": 11529,
+       "total_tokens": 1222,
+       "required_outputs": []
+      }
+     ]
+    }
+   ],
+   "probes": [
+    {
+     "group": "n",
+     "ask": "what am I preferred to be called?",
+     "where": "new",
+     "session_id": "c317dbce-7f99-5942-9afb-42552f384b34",
+     "tier2_top_similarity": 0.8111227750778198,
+     "tier2_embed_ms": 17,
+     "tier2_skipped": null,
+     "user_facts_count": 0,
+     "user_instructions_count": 0,
+     "expect_any": [],
+     "expect_all": [
+      [
+       "mon"
+      ]
+     ],
+     "expect_tools": [],
+     "forbid_mode": null,
+     "forbid": [
+      "can't confirm",
+      "cannot confirm",
+      "can't verify",
+      "this device",
+      "someone else",
+      "might not be you",
+      "may not be you"
+     ],
+     "answer": "You asked to be called Mon. I remember that from our earlier chat. How's your day going, Mon?",
+     "answer_source": "stream",
+     "request_id": "ce8bb44c-0cde-41a1-af06-f3d102ba617b",
+     "error": null,
+     "attempt": 1,
+     "invalid": [],
+     "passed": true,
+     "hit": [],
+     "leak": [],
+     "all_hit": [
+      "mon"
+     ],
+     "all_miss": [],
+     "tool_names": [
+      "resume_last_session"
+     ],
+     "synth_mode": "synthesize",
+     "tools_missing": [],
+     "mode_hit": false,
+     "retrieval_top_sim": 0.8111227750778198,
+     "retrieval_src": "tier2",
+     "memory_ms": 6185,
+     "t_to_done_s": 18.89,
+     "t_housekeep_s": 0.0,
+     "total_tokens": 1231,
+     "background": {
+      "llm_calls": 0,
+      "tokens": 0,
+      "elapsed_ms": 0
+     }
+    },
+    {
+     "group": "n",
+     "ask": "tôi thích được gọi là gì?",
+     "where": "new",
+     "session_id": "0764b2fd-1616-5394-9b8f-a32f7dd4255e",
+     "tier2_top_similarity": 0.8448260426521301,
+     "tier2_embed_ms": 17,
+     "tier2_skipped": null,
+     "user_facts_count": 0,
+     "user_instructions_count": 0,
+     "expect_any": [],
+     "expect_all": [
+      [
+       "mon"
+      ]
+     ],
+     "expect_tools": [],
+     "forbid_mode": null,
+     "forbid": [
+      "không chắc",
+      "người khác",
+      "thiết bị này",
+      "không xác nhận"
+     ],
+     "answer": "Bạn yêu cầu mình gọi bạn là Mon. Mình nhớ từ cuộc trò chuyện trước đó của chúng ta.\n\nNgày của bạn hôm nay thế nào, Mon?",
+     "answer_source": "stream",
+     "request_id": "d0baad5e-b5dc-485e-a786-3a8caca27e1f",
+     "error": null,
+     "attempt": 1,
+     "invalid": [],
+     "passed": true,
+     "hit": [],
+     "leak": [],
+     "all_hit": [
+      "mon"
+     ],
+     "all_miss": [],
+     "tool_names": [
+      "resume_last_session"
+     ],
+     "synth_mode": "synthesize",
+     "tools_missing": [],
+     "mode_hit": false,
+     "retrieval_top_sim": 0.8448260426521301,
+     "retrieval_src": "tier2",
+     "memory_ms": 1655,
+     "t_to_done_s": 15.97,
+     "t_housekeep_s": 0.0,
+     "total_tokens": 1359,
+     "background": {
+      "llm_calls": 0,
+      "tokens": 0,
+      "elapsed_ms": 0
+     }
+    },
+    {
+     "group": "n",
+     "ask": "who am I?",
+     "where": "new",
+     "session_id": "ff1a6864-0424-5fd4-a0b0-c20f620932fc",
+     "tier2_top_similarity": 0.8391577005386353,
+     "tier2_embed_ms": 16,
+     "tier2_skipped": null,
+     "user_facts_count": 0,
+     "user_instructions_count": 0,
+     "expect_any": [],
+     "expect_all": [
+      [
+       "mon"
+      ]
+     ],
+     "expect_tools": [],
+     "forbid_mode": null,
+     "forbid": [
+      "can't confirm",
+      "cannot confirm",
+      "can't verify",
+      "this device",
+      "someone else",
+      "might not be you",
+      "may not be you"
+     ],
+     "answer": "You are Mon. That is what you asked to be called in our last conversation. I remember it.",
+     "answer_source": "stream",
+     "request_id": "32d7a591-95b3-42ba-aaff-e8d6f353447b",
+     "error": null,
+     "attempt": 1,
+     "invalid": [],
+     "passed": true,
+     "hit": [],
+     "leak": [],
+     "all_hit": [
+      "mon"
+     ],
+     "all_miss": [],
+     "tool_names": [
+      "resume_last_session"
+     ],
+     "synth_mode": "synthesize",
+     "tools_missing": [],
+     "mode_hit": false,
+     "retrieval_top_sim": 0.8391577005386353,
+     "retrieval_src": "tier2",
+     "memory_ms": 1633,
+     "t_to_done_s": 17.01,
+     "t_housekeep_s": 0.0,
+     "total_tokens": 1311,
+     "background": {
+      "llm_calls": 0,
+      "tokens": 0,
+      "elapsed_ms": 0
+     }
+    },
+    {
+     "group": "n",
+     "ask": "do you know my name?",
+     "where": "new",
+     "session_id": "7535319e-9f76-565b-9a5b-761bf6c40b00",
+     "tier2_top_similarity": 0.8291028636159234,
+     "tier2_embed_ms": 14,
+     "tier2_skipped": null,
+     "user_facts_count": 0,
+     "user_instructions_count": 0,
+     "expect_any": [],
+     "expect_all": [
+      [
+       "mon"
+      ]
+     ],
+     "expect_tools": [],
+     "forbid_mode": null,
+     "forbid": [
+      "can't confirm",
+      "cannot confirm",
+      "can't verify",
+      "this device",
+      "someone else",
+      "might not be you",
+      "may not be you"
+     ],
+     "answer": "No. I can only see what you type here. I don't have access to your profile or any outside data. If you want me to know it, you have to tell me. Otherwise, I’m just talking to the person on the other side of the screen.",
+     "answer_source": "stream",
+     "request_id": "0c9ac510-2fc9-461d-9ad2-b22a80d01cd6",
+     "error": null,
+     "attempt": 1,
+     "invalid": [],
+     "passed": false,
+     "hit": [],
+     "leak": [],
+     "all_hit": [],
+     "all_miss": [
+      [
+       "mon"
+      ]
+     ],
+     "tool_names": [
+      "recall_self"
+     ],
+     "synth_mode": "chat",
+     "tools_missing": [],
+     "mode_hit": false,
+     "retrieval_top_sim": 0.8291028636159234,
+     "retrieval_src": "tier2",
+     "memory_ms": 1593,
+     "t_to_done_s": 11.53,
+     "t_housekeep_s": 0.0,
+     "total_tokens": 1222,
+     "background": {
+      "llm_calls": 0,
+      "tokens": 0,
+      "elapsed_ms": 0
+     }
+    }
+   ],
+   "seed_llm_calls": 1
+  }
+ ],
+ "runs": [
+  {
+   "started_at": "2026-10-16T16:35:29+07:00",
+   "phase": "seed",
+   "only": [
+    "n_trust"
+   ],
+   "retry_invalid": false,
+   "key_label": "llm=deepseek",
+   "llm_calls": 1,
+   "turns": 0,
+   "probes": 0,
+   "quota_stops": []
+  },
+  {
+   "started_at": "2026-10-16T16:37:55+07:00",
+   "phase": "probes",
+   "only": [
+    "n_trust"
+   ],
+   "retry_invalid": false,
+   "key_label": "llm=deepseek",
+   "llm_calls": 12,
+   "turns": 4,
+   "probes": 4,
+   "quota_stops": []
+  }
+ ]
+}

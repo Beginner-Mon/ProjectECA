@@ -8,11 +8,11 @@ import pytest
 from langchain_core.messages import ToolMessage
 
 from langgraph_agents.nodes.synthesizer import (
+    _CLARIFY_TASK,
     _REFUSE_TASK,
     _build_about_you,
     _build_body_state_note,
     _build_tag_instructions,
-    _check_tool_ambiguous,
     _extract_tool_results,
     _has_tool_results,
 )
@@ -99,11 +99,10 @@ def test_unknown_tool_gets_generic_title():
     assert "[From another source]" in ev
 
 
-def test_ambiguity_ignores_non_evidence():
-    assert _check_tool_ambiguous(
-        [_tm("generate_motion", {"ambiguous": True})]) is False
-    assert _check_tool_ambiguous(
-        [_tm("kb_search", {"ambiguous": True})]) is True
+def test_clarify_task_is_narrow_not_whole_turn():
+    """Như _REFUSE_TASK: chỉ hỏi phần thiếu, phần còn lại của lượt vẫn trả lời."""
+    assert "that part only" not in _CLARIFY_TASK
+    assert "anything else in the turn you can still answer" in _CLARIFY_TASK
 
 
 # ── T4: khối trạng thái cơ thể ──────────────────────────────────────────

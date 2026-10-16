@@ -56,8 +56,12 @@ def _item(header: str, *parts: str) -> EvidenceItem:
 
 
 def _resumed_items(data, header: str) -> list[EvidenceItem]:
-    """resume_last_session: the conversation as readable text, then (when the
-    two newest were close in time) the others it could have meant."""
+    """resume_last_session: the newest conversation as readable text, then (when
+    the two newest were close in time) the others the user could have meant.
+
+    The tool always returns the newest conversation normally; the candidates
+    are there so the answer can name which one it used in one sentence.
+    """
     if not isinstance(data, dict) or not data.get("found"):
         return []
     lines = []
@@ -70,8 +74,9 @@ def _resumed_items(data, header: str) -> list[EvidenceItem]:
     if data.get("ambiguous") and candidates:
         listed = [f"- {_when(c.get('updated_at', ''))}: {c.get('preview', '')}"
                   for c in candidates]
-        items.append(_item(header, "Several recent conversations could be the one "
-                           "meant:", *listed))
+        items.append(_item(header, "Using the most recent conversation; "
+                           "if the user meant a different one, "
+                           "they can say which:", *listed))
     return items
 
 

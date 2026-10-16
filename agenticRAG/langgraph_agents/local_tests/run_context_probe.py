@@ -444,8 +444,8 @@ async def _run_probe(
                     similarity_top1, top)
 
     # Dựng lại ToolMessage THẬT để _derive_mode chạy đúng (_has_tool_results
-    # và _check_tool_ambiguous đều isinstance-check ToolMessage; dict giả
-    # luôn cho False và mode đo được sẽ sai).
+    # isinstance-check ToolMessage; dict giả luôn cho False và mode đo được
+    # sẽ sai).
     from langchain_core.messages import ToolMessage as _TM
 
     merged = {"required_outputs": planner_out.get("required_outputs", []),

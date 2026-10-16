@@ -11,8 +11,8 @@ Decisions encoded:
         synthesizer does NOT receive motion flag
 
 Mode derivation (D29 — derive, don't store):
-  needs_clarification OR tool ambiguous → CLARIFY
-  clinical tag + all tools empty (no-source)  → REFUSE
+   needs_clarification (planner only — tool ambiguous never forces it) → CLARIFY
+   clinical tag + all tools empty (no-source)  → REFUSE
   Has ToolMessage non-empty                   → SYNTHESIZE
   No tools + no tags                          → CHAT
 """
@@ -185,7 +185,8 @@ The user's query needs clarification before you can give a useful answer.
 {tool_results}
 
 Instructions:
-- Ask for the specific missing information
+- Ask for the specific missing information. Ask only about that part —
+  anything else in the turn you can still answer.
 - Explain briefly WHY you need it
 - Keep concise (1-3 sentences)
 - If tool results contain candidates (multiple matching past conversations/articles), list 2-3 briefly for the user to choose
@@ -276,19 +277,6 @@ def _evidence_summary(messages: list) -> list[dict]:
                 entry["top_similarity"] = top
             summary.append(entry)
     return summary
-
-
-def _check_tool_ambiguous(messages: list) -> bool:
-    """Check if any tool returned ambiguity metadata (D22: dynamic clarify)."""
-    import json
-    for m in _evidence_messages(messages):
-        try:
-            data = json.loads(str(m.content))
-            if isinstance(data, dict) and data.get("ambiguous"):
-                return True
-        except (json.JSONDecodeError, TypeError):
-            pass
-    return False
 
 
 def _build_avatar_switch_note(
@@ -503,13 +491,19 @@ def _derive_mode(state: AgentState) -> str:
     """Derive synthesizer mode from state signals.
 
     Returns one of: 'clarify', 'refuse', 'synthesize', 'chat'
+
+    Clarify comes ONLY from the planner (needs_clarification). A tool's
+    ambiguity flag never forces the whole turn into clarify: the newest
+    conversation is answered normally, with candidates listed for the user
+    to pick from (16/10/2026 — the flag used to eat the exercise half of a
+    two-intent turn).
     """
     needs_clarification = state.get("needs_clarification", False)
     required_outputs = state.get("required_outputs", [])
     messages = state.get("messages", [])
 
-    # 1. CLARIFY: static (planner-detected) or dynamic (tool ambiguous)
-    if needs_clarification or _check_tool_ambiguous(messages):
+    # 1. CLARIFY: planner-detected only
+    if needs_clarification:
         return "clarify"
 
     has_results = _has_tool_results(messages)

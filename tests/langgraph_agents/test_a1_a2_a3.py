@@ -550,30 +550,37 @@ async def test_a1_resume_beyond_24h_no_ambiguous():
 
 
 @pytest.mark.unit
-def test_a1_derive_mode_clarify_when_tool_ambiguous():
-    """synthesizer._derive_mode → 'clarify' when ToolMessage contains ambiguous: true."""
+def test_a1_tool_ambiguous_never_forces_clarify():
+    """Tool ambiguous mà planner không đòi hỏi lại → mode khác 'clarify'.
+
+    Một tool kéo cả lượt sang chế độ hỏi lại đã làm mất phần bài tập của câu gộp
+    (16/10/2026). Mode clarify chỉ khi planner trả needs_clarification.
+    """
     from langgraph_agents.nodes.synthesizer import _derive_mode
     from langchain_core.messages import ToolMessage
 
     ambiguous_result = json.dumps({
         "found": True,
         "ambiguous": True,
-        "results": [{"summary_text": "...", "session_id": "s1", "similarity": 0.9}],
-        "candidates": [{"summary_text": "...", "session_id": "s1"}],
+        "summary_chunks": ["talked about squats"],
+        "recent_messages": [{"role": "user", "content": "hello again"}],
+        "candidates": [{"preview": "...", "session_id": "s1"}],
     })
 
     state = {
         "needs_clarification": False,
         "required_outputs": [],
         "messages": [
-            ToolMessage(content=ambiguous_result, tool_call_id="call-1", name="memory_search"),
+            ToolMessage(content=ambiguous_result, tool_call_id="call-1",
+                        name="resume_last_session"),
         ],
     }
 
     mode = _derive_mode(state)
-    assert mode == "clarify", (
-        f"Expected 'clarify' when ToolMessage contains ambiguous=true, got '{mode}'"
+    assert mode != "clarify", (
+        f"Tool ambiguous must not force clarify, got '{mode}'"
     )
+    assert mode == "synthesize"
 
 
 @pytest.mark.unit

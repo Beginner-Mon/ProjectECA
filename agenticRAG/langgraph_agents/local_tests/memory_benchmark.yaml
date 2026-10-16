@@ -173,7 +173,7 @@ scenarios:
 
 # Nhóm g–j: chỉ cho B (đọc thẳng user_memory, không chat). Mỗi nhóm 1 mục kiểm.
 - id: instr_general_g
-  only_labels: [B, B2, B3]
+  only_labels: [B, B2, B3, B4]
   conversations:
     - turns:
         - user: "Từ giờ hãy trả lời tôi ngắn gọn thôi."
@@ -192,7 +192,7 @@ scenarios:
         - {fact_contains: "ngắn gọn", kind: instruction, tier: 1, status: active}
 
 - id: instr_project_g
-  only_labels: [B, B2, B3]
+  only_labels: [B, B2, B3, B4]
   conversations:
     - turns:
         - user: "Cho project A thì ưu tiên serverless nhé."
@@ -212,7 +212,7 @@ scenarios:
            status: active, project: "A"}
 
 - id: safe_once_h
-  only_labels: [B, B2, B3]
+  only_labels: [B, B2, B3, B4]
   conversations:
     - turns:
         - user: "Đừng gợi ý bài tập cho lưng của tôi."
@@ -225,7 +225,7 @@ scenarios:
         - {fact_contains: "lưng", tier: 1, status: active}
 
 - id: name_churn_i
-  only_labels: [B, B2, B3]
+  only_labels: [B, B2, B3, B4]
   conversations:
     - turns:
         - user: "Gọi tôi là Tri."
@@ -244,7 +244,7 @@ scenarios:
         - {fact_contains: "Long", status: candidate, tier: 2}
 
 - id: forget_j
-  only_labels: [B, B2, B3]
+  only_labels: [B, B2, B3, B4]
   conversations:
     - turns:
         - user: "Tôi thích bơi lội mỗi sáng."
@@ -258,7 +258,7 @@ scenarios:
       assert_rows:
         - {fact_contains: "bơi lội", valid: false}
 - id: forget_all_j
-  only_labels: [B, B2, B3]
+  only_labels: [B, B2, B3, B4]
   conversations:
     - turns:
         - user: "Tôi làm y tá ca đêm."
@@ -272,12 +272,12 @@ scenarios:
       assert_rows:
         - {fact_contains: "y tá", valid: false}
 
-# Nhóm m: câu gộp hai ý + cổng clarify (chỉ cho M0/M1, chạy /chat thật).
-# m_name/m_food kiểm cả hai ý có trong câu trả lời và kb_search được gọi;
-# m_ambig dựng hai hội thoại gần nhau để resume_last_session gắn ambiguous,
-# kiểm mode không phải clarify.
+# Nhóm m: câu gộp hai ý + cổng clarify (chỉ cho M0/M1/M2 và B4, chạy /chat thật).
+# m_name/m_food kiểm cả hai ý có trong câu trả lời và kb_search được gọi.
+# (m_ambig đã xoá 16/10/2026 cùng resume_last_session: nó tồn tại chỉ để thử
+# chế độ hỏi lại do tool đó gây ra.)
 - id: m_name
-  only_labels: [M0, M1, M2]
+  only_labels: [M0, M1, M2, B4]
   conversations:
     - turns:
         - user: "Tên tôi là Tri, gọi tôi là Mon nhé."
@@ -295,7 +295,7 @@ scenarios:
       forbid: []
 
 - id: m_food
-  only_labels: [M0, M1, M2]
+  only_labels: [M0, M1, M2, B4]
   conversations:
     - turns:
         - user: "Món ăn yêu thích của tôi là phở."
@@ -311,20 +311,40 @@ scenarios:
       expect_tools: ["kb_search"]
       forbid: []
 
-- id: m_ambig
-  only_labels: [M0, M1, M2]
+- id: n_trust
+  only_labels: [N0, N1]
   conversations:
     - turns:
-        - user: "Hôm trước tôi hỏi về bài giãn vai, bạn nhắc lại giúp tôi được không?"
-          assistant: "Nhớ rồi, bài giãn vai gồm nghiêng đầu giữ 20 giây mỗi bên và xoay vai 10 vòng."
-    - turns:
-        - user: "Hôm qua tôi hỏi về bài tập lưng, giờ sao rồi?"
-          assistant: "Nhớ rồi, bài lưng gồm cat-cow 10 lần và bird-dog mỗi bên 8 lần."
+        - user: "Tên tôi là Tri, gọi tôi là Mon nhé."
+          assistant: "Rõ rồi Mon, tôi sẽ gọi bạn là Mon."
   probes:
-    - group: m
-      ask: "hôm trước mình nói gì nhỉ? và cho tôi bài giãn cơ cổ"
+    - group: n
+      ask: "what am I preferred to be called?"
+      where: new
+      locale: en
+      expect_any: []
+      expect_all: [["mon"]]
+      forbid: ["can't confirm", "cannot confirm", "can't verify", "this device",
+               "someone else", "might not be you", "may not be you"]
+    - group: n
+      ask: "tôi thích được gọi là gì?"
       where: new
       expect_any: []
-      expect_all: [["co"]]
-      forbid_mode: "clarify"
-      forbid: []
+      expect_all: [["mon"]]
+      forbid: ["không chắc", "người khác", "thiết bị này", "không xác nhận"]
+    - group: n
+      ask: "who am I?"
+      where: new
+      locale: en
+      expect_any: []
+      expect_all: [["mon"]]
+      forbid: ["can't confirm", "cannot confirm", "can't verify", "this device",
+               "someone else", "might not be you", "may not be you"]
+    - group: n
+      ask: "do you know my name?"
+      where: new
+      locale: en
+      expect_any: []
+      expect_all: [["mon"]]
+      forbid: ["can't confirm", "cannot confirm", "can't verify", "this device",
+               "someone else", "might not be you", "may not be you"]

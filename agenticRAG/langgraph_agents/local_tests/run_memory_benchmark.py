@@ -940,18 +940,23 @@ def render_md(label: str, report: dict, stats: dict) -> str:
 
 
 def _is_b_label(label: str) -> bool:
-    return label in ("B", "B2", "B3")
+    return label in ("B", "B2", "B3", "B4")
 
 
 def _is_m_label(label: str) -> bool:
     return label in ("M0", "M1", "M2")
 
 
+def _is_n_label(label: str) -> bool:
+    return label in ("N0", "N1")
+
+
 def validate_spec(spec: dict, label: str) -> list[str]:
     """Offline checks for --dry-run (no DB, no LLM). Returns error strings.
 
-    Groups g–j only exist for labels B/B2/B3 (they read tier rows directly).
-    Group m only exists for labels M0/M1/M2 (multi-intent + clarify-gate probes).
+    Groups g–j only exist for labels B/B2/B3/B4 (they read tier rows directly).
+    Group m only exists for labels M0/M1/M2 (3 probes) and B4 (m_name/m_food).
+    Group n (trust) only exists for labels N0/N1 (4 probes).
     """
     errors: list[str] = []
     seen: set[str] = set()
@@ -974,7 +979,7 @@ def validate_spec(spec: dict, label: str) -> list[str]:
                 errors.append(f"{sid}: probe without ask")
         for check in sc.get("db_probes", []):
             groups[check.get("group", "?")] = groups.get(check.get("group", "?"), 0) + 1
-    if not _is_m_label(label):
+    if not _is_m_label(label) and not _is_n_label(label):
         for g in ("a", "b", "c", "d", "e", "f"):
             if groups.get(g, 0) != 1:
                 errors.append(f"group {g}: want exactly 1 probe, have {groups.get(g, 0)}")
@@ -990,8 +995,17 @@ def validate_spec(spec: dict, label: str) -> list[str]:
     if _is_m_label(label):
         if m_have != 3:
             errors.append(f"group m: want exactly 3 probes, have {m_have}")
+    elif label == "B4":
+        if m_have != 2:
+            errors.append(f"group m: want exactly 2 probes for B4, have {m_have}")
     elif m_have:
         errors.append(f"group m: M-only, must not run for {label}")
+    n_have = groups.get("n", 0)
+    if _is_n_label(label):
+        if n_have != 4:
+            errors.append(f"group n: want exactly 4 probes, have {n_have}")
+    elif n_have:
+        errors.append(f"group n: N-only, must not run for {label}")
     return errors
 
 

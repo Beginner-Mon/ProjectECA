@@ -1,0 +1,641 @@
+{
+ "label": "M0",
+ "model": "qwen/qwen3.8-27b via Groq",
+ "stats": {
+  "groups": {
+   "m": {
+    "passed": 1,
+    "total": 3,
+    "invalid": 0,
+    "rate": 0.333
+   }
+  },
+  "overall": {
+   "passed": 1,
+   "scored": 3,
+   "invalid": 0
+  },
+  "memory_node_ms": {
+   "n": 3,
+   "p50": 6890,
+   "p95": 7018
+  },
+  "retrieval_top_sim": {
+   "b_e_max": null,
+   "b_e_values": [],
+   "f_values": []
+  },
+  "background_per_turn": {
+   "llm_calls": 0.0,
+   "tokens": 0.0
+  },
+  "turn_tokens_avg": 2412.0,
+  "per_1000_turns": {
+   "background_tokens": 0,
+   "turn_tokens": 2412000
+  }
+ },
+ "scenarios": [
+  {
+   "scenario": "m_name",
+   "user_id": "a399369d-9208-528f-ae22-639c93ec5d8d",
+   "sessions": [
+    "116b1737-0ab3-5e59-a392-5d66931c52b7",
+    "e460e634-858e-5efa-bc8d-f87289cdf8b8"
+   ],
+   "seed_turns": 2,
+   "turns": [
+    {
+     "query": "who am I? tôi bị đau lưng, gợi ý vài bài tập giúp tôi",
+     "session_id": "e460e634-858e-5efa-bc8d-f87289cdf8b8",
+     "locale": "vi",
+     "status": 200,
+     "error": null,
+     "answer": "Mon của mình đây. Nhưng mình là AI, không phải người thật.\n\nVề đau lưng, NHS khuyên bạn nên tiếp tục hoạt động nhẹ, không nằm bất động (NHS). Nếu đau tăng, dừng ngay và gặp bác sĩ (NHS).\n\nMình gợi ý 2 bài trong thư viện ECA:\n1. **Back extension**: Nằm trên ghế 45 độ, chân cố định. Gập người xuống rồi nâng lên. Không tạ: 15-20 lần mỗi hiệp (ECA).\n2. **TBS Back Extension**: Tương tự, tập trung vào lưng dưới, cơ mông và gân kheo (ECA).\n\n**Chống chỉ định (Dừng ngay và đi khám nếu có):**\n- Đau, tê, yếu hoặc mất cảm giác ở cả hai chân.\n- Mất cảm giác quanh vùng sinh dục hoặc hậu môn.\n- Thay đổi chức năng bàng quang hoặc ruột (khó tiểu, vô tình tiểu/đại tiện).\n- Đau ngực, hoặc đau sau tai nạn nghiêm trọng (NHS).\n\nNếu bạn có các dấu hiệu này, **gọi 115 hoặc đến bệnh viện ngay**. Không tự lái xe.\n\nBạn đang đau ở vùng nào và đau từ khi nào?\n\n*Nguồn: thư viện bài tập của ECA — Back extension, TBS Back Extension; hướng dẫn sức khỏe của NHS.*\n\n*Đây là gợi ý, không thay thế khám lâm sàng.*",
+     "done": {
+      "request_id": "9c22f7d3-55ab-4f9e-8461-a9632b3d7715",
+      "total_tokens": 2718,
+      "required_outputs": [
+       "scope_disclaimer",
+       "contraindication",
+       "evidence_citation"
+      ]
+     },
+     "t_to_done_s": 20.55,
+     "t_housekeep_s": 0.0,
+     "t_total_s": 20.55,
+     "logs": [
+      {
+       "message": "node_complete",
+       "created": 1792116521.673752,
+       "node": "memory",
+       "request_id": "9c22f7d3-55ab-4f9e-8461-a9632b3d7715",
+       "elapsed_ms": 7018,
+       "user_instructions_count": 0,
+       "user_facts_count": 0,
+       "tier2_top_similarity": null,
+       "tier2_embed_ms": null,
+       "tier2_skipped": "embed_timeout",
+       "summary_chunks_count": 0,
+       "summary_present": false,
+       "recent_raw_count": 0
+      },
+      {
+       "message": "node_complete",
+       "created": 1792116522.6403067,
+       "node": "planner",
+       "request_id": "9c22f7d3-55ab-4f9e-8461-a9632b3d7715",
+       "elapsed_ms": 965,
+       "tags": [
+        "scope_disclaimer",
+        "contraindication",
+        "evidence_citation"
+       ],
+       "needs_retrieval": true,
+       "needs_clarification": false,
+       "cache_hit_tokens": null,
+       "cache_miss_tokens": null,
+       "llm_fallback_used": false
+      },
+      {
+       "message": "node_complete",
+       "created": 1792116523.2675161,
+       "node": "retriever_agent",
+       "request_id": "9c22f7d3-55ab-4f9e-8461-a9632b3d7715",
+       "elapsed_ms": 625,
+       "tokens": 898,
+       "tool_calls": 3,
+       "tool_names": [
+        "kb_search",
+        "kb_search",
+        "resume_last_session"
+       ],
+       "cache_hit_tokens": null,
+       "cache_miss_tokens": null
+      },
+      {
+       "message": "node_complete",
+       "created": 1792116529.0769887,
+       "node": "synthesizer",
+       "request_id": "9c22f7d3-55ab-4f9e-8461-a9632b3d7715",
+       "elapsed_ms": 982,
+       "tokens": 2718,
+       "mode": "synthesize",
+       "output_chars": 842,
+       "streamed": true,
+       "cache_hit_tokens": null,
+       "cache_miss_tokens": null,
+       "llm_fallback_used": false,
+       "prompt_blocks": {
+        "persona": 2802,
+        "body_state": 0,
+        "about_you": 0,
+        "user_instructions": 0,
+        "user_facts": 0,
+        "session_summary": 0,
+        "task": 6357,
+        "evidence": 4962,
+        "history": 0,
+        "voice_card": 717
+       },
+       "input_tokens": 2455,
+       "output_tokens": 263
+      },
+      {
+       "message": "chat_complete",
+       "created": 1792116535.192825,
+       "elapsed_ms": 20549,
+       "total_tokens": 2718,
+       "required_outputs": [
+        "scope_disclaimer",
+        "contraindication",
+        "evidence_citation"
+       ]
+      }
+     ]
+    }
+   ],
+   "probes": [
+    {
+     "group": "m",
+     "ask": "who am I? tôi bị đau lưng, gợi ý vài bài tập giúp tôi",
+     "where": "new",
+     "session_id": "e460e634-858e-5efa-bc8d-f87289cdf8b8",
+     "expect_any": [],
+     "expect_all": [
+      [
+       "mon"
+      ],
+      [
+       "lung"
+      ]
+     ],
+     "expect_tools": [
+      "kb_search"
+     ],
+     "forbid_mode": "clarify",
+     "forbid": [],
+     "answer": "Mon của mình đây. Nhưng mình là AI, không phải người thật.\n\nVề đau lưng, NHS khuyên bạn nên tiếp tục hoạt động nhẹ, không nằm bất động (NHS). Nếu đau tăng, dừng ngay và gặp bác sĩ (NHS).\n\nMình gợi ý 2 bài trong thư viện ECA:\n1. **Back extension**: Nằm trên ghế 45 độ, chân cố định. Gập người xuống rồi nâng lên. Không tạ: 15-20 lần mỗi hiệp (ECA).\n2. **TBS Back Extension**: Tương tự, tập trung vào lưng dưới, cơ mông và gân kheo (ECA).\n\n**Chống chỉ định (Dừng ngay và đi khám nếu có):**\n- Đau, tê, yếu hoặc mất cảm giác ở cả hai chân.\n- Mất cảm giác quanh vùng sinh dục hoặc hậu môn.\n- Thay đổi chức năng bàng quang hoặc ruột (khó tiểu, vô tình tiểu/đại tiện).\n- Đau ngực, hoặc đau sau tai nạn nghiêm trọng (NHS).\n\nNếu bạn có các dấu hiệu này, **gọi 115 hoặc đến bệnh viện ngay**. Không tự lái xe.\n\nBạn đang đau ở vùng nào và đau từ khi nào?\n\n*Nguồn: thư viện bài tập của ECA — Back extension, TBS Back Extension; hướng dẫn sức khỏe của NHS.*\n\n*Đây là gợi ý, không thay thế khám lâm sàng.*",
+     "answer_source": "stream",
+     "request_id": "9c22f7d3-55ab-4f9e-8461-a9632b3d7715",
+     "error": null,
+     "attempt": 1,
+     "invalid": [],
+     "passed": true,
+     "hit": [],
+     "leak": [],
+     "all_hit": [
+      "mon",
+      "lung"
+     ],
+     "all_miss": [],
+     "tool_names": [
+      "kb_search",
+      "resume_last_session"
+     ],
+     "synth_mode": "synthesize",
+     "tools_missing": [],
+     "mode_hit": false,
+     "retrieval_top_sim": null,
+     "retrieval_src": "memory_search",
+     "memory_ms": 7018,
+     "t_to_done_s": 20.55,
+     "t_housekeep_s": 0.0,
+     "total_tokens": 2718,
+     "background": {
+      "llm_calls": 0,
+      "tokens": 0,
+      "elapsed_ms": 0
+     }
+    }
+   ],
+   "seed_llm_calls": 1
+  },
+  {
+   "scenario": "m_food",
+   "user_id": "cb373c58-b65e-5826-aa02-e8ab814843bb",
+   "sessions": [
+    "c5b28eca-ccb6-51d5-8648-d68fd2cabae0",
+    "00ecae23-ce60-584d-8a19-a1bcb40bed16"
+   ],
+   "seed_turns": 2,
+   "turns": [
+    {
+     "query": "Món ăn yêu thích của tôi là gì? Với lại gối tôi đau khi lên cầu thang thì nên tập gì?",
+     "session_id": "00ecae23-ce60-584d-8a19-a1bcb40bed16",
+     "locale": "vi",
+     "status": 200,
+     "error": null,
+     "answer": "Mình không biết món ăn yêu thích của bạn là gì. Bạn chưa từng kể cho mình nghe.\n\nVề việc đau gối khi lên cầu thang: mình không phải bác sĩ, không chẩn đoán được nguyên nhân. Bạn cần gặp chuyên gia y tế để kiểm tra kỹ.\n\nNếu bạn vẫn muốn tập để hỗ trợ cơ bắp đùi và mông (theo hướng dẫn của NHS và thư viện ECA), đây là bài tập nhẹ:\n\n**Mini-squats (NHS)**\n*   **Cách làm:**\n    1.  Đứng chân rộng bằng hông, tay tựa vào lưng ghế vững chắc, không có bánh xe.\n    2.  Cong gối từ từ xuống mức thoải mái, giữ lưng thẳng, hướng gối về phía trước (quá ngón chân cái).\n    3.  Đứng dậy, siết mông.\n*   **Lượng:** Lặp lại 5 lần.\n*   **Dừng ngay nếu:** Cảm thấy đau tăng, mất thăng bằng hoặc gối bị \"lỏng\".\n\n**Hip marching (NHS)**\n*   **Cách làm:**\n    1.  Ngồi thẳng, không tựa lưng ghế, nắm mép ghế.\n    2.  Nhấc chân trái lên với gối cong ở mức thoải mái, đặt chân xuống có kiểm soát.\n    3.  Đổi chân phải.\n*   **Lượng:** 5 lần mỗi chân.\n*   **Dừng ngay nếu:** Đau lan ra hoặc mất thăng bằng.\n\n**Contraindication (Chống chỉ định):**\n*   Không tập nếu bạn có chấn thương gối cấp tính, viêm khớp nặng đang bùng phát, hoặc bác sĩ đã cấm vận động.\n*   **Luôn dừng lại ngay lập tức nếu:** Đau tăng lên, sưng nóng, hoặc cảm giác gối bị kẹt/không ổn định.\n\nMẹo từ NHS: Chọn ghế vững, quần áo thoải mái, uống nước. Tập 2 lần mỗi tuần, tăng dần từ từ.\n\nHãy đi khám trước khi tập thêm.\n\n*Nguồn: hướng dẫn sức khỏe của NHS.*\n\n*Đây là gợi ý, không thay thế khám lâm sàng.*",
+     "done": {
+      "request_id": "058d04d5-03cc-462f-9879-8ac692b6162a",
+      "total_tokens": 2632,
+      "required_outputs": [
+       "scope_disclaimer",
+       "contraindication",
+       "evidence_citation"
+      ]
+     },
+     "t_to_done_s": 17.63,
+     "t_housekeep_s": 0.0,
+     "t_total_s": 17.63,
+     "logs": [
+      {
+       "message": "node_complete",
+       "created": 1792116629.819402,
+       "node": "memory",
+       "request_id": "058d04d5-03cc-462f-9879-8ac692b6162a",
+       "elapsed_ms": 6840,
+       "user_instructions_count": 1,
+       "user_facts_count": 0,
+       "tier2_top_similarity": null,
+       "tier2_embed_ms": null,
+       "tier2_skipped": "embed_timeout",
+       "summary_chunks_count": 0,
+       "summary_present": false,
+       "recent_raw_count": 0
+      },
+      {
+       "message": "node_complete",
+       "created": 1792116630.9040465,
+       "node": "planner",
+       "request_id": "058d04d5-03cc-462f-9879-8ac692b6162a",
+       "elapsed_ms": 1084,
+       "tags": [
+        "scope_disclaimer",
+        "contraindication",
+        "evidence_citation"
+       ],
+       "needs_retrieval": true,
+       "needs_clarification": false,
+       "cache_hit_tokens": null,
+       "cache_miss_tokens": null,
+       "llm_fallback_used": false
+      },
+      {
+       "message": "node_complete",
+       "created": 1792116631.4899507,
+       "node": "retriever_agent",
+       "request_id": "058d04d5-03cc-462f-9879-8ac692b6162a",
+       "elapsed_ms": 584,
+       "tokens": 895,
+       "tool_calls": 2,
+       "tool_names": [
+        "recall_self",
+        "kb_search"
+       ],
+       "cache_hit_tokens": null,
+       "cache_miss_tokens": null
+      },
+      {
+       "message": "node_complete",
+       "created": 1792116634.5215774,
+       "node": "synthesizer",
+       "request_id": "058d04d5-03cc-462f-9879-8ac692b6162a",
+       "elapsed_ms": 1310,
+       "tokens": 2632,
+       "mode": "synthesize",
+       "output_chars": 1369,
+       "streamed": true,
+       "cache_hit_tokens": null,
+       "cache_miss_tokens": null,
+       "llm_fallback_used": false,
+       "prompt_blocks": {
+        "persona": 2802,
+        "body_state": 0,
+        "about_you": 696,
+        "user_instructions": 203,
+        "user_facts": 0,
+        "session_summary": 0,
+        "task": 4489,
+        "evidence": 3062,
+        "history": 0,
+        "voice_card": 717
+       },
+       "input_tokens": 2202,
+       "output_tokens": 430
+      },
+      {
+       "message": "chat_complete",
+       "created": 1792116640.5904412,
+       "elapsed_ms": 17624,
+       "total_tokens": 2632,
+       "required_outputs": [
+        "scope_disclaimer",
+        "contraindication",
+        "evidence_citation"
+       ]
+      }
+     ]
+    }
+   ],
+   "probes": [
+    {
+     "group": "m",
+     "ask": "Món ăn yêu thích của tôi là gì? Với lại gối tôi đau khi lên cầu thang thì nên tập gì?",
+     "where": "new",
+     "session_id": "00ecae23-ce60-584d-8a19-a1bcb40bed16",
+     "expect_any": [],
+     "expect_all": [
+      [
+       "pho"
+      ],
+      [
+       "goi"
+      ]
+     ],
+     "expect_tools": [
+      "kb_search"
+     ],
+     "forbid_mode": null,
+     "forbid": [],
+     "answer": "Mình không biết món ăn yêu thích của bạn là gì. Bạn chưa từng kể cho mình nghe.\n\nVề việc đau gối khi lên cầu thang: mình không phải bác sĩ, không chẩn đoán được nguyên nhân. Bạn cần gặp chuyên gia y tế để kiểm tra kỹ.\n\nNếu bạn vẫn muốn tập để hỗ trợ cơ bắp đùi và mông (theo hướng dẫn của NHS và thư viện ECA), đây là bài tập nhẹ:\n\n**Mini-squats (NHS)**\n*   **Cách làm:**\n    1.  Đứng chân rộng bằng hông, tay tựa vào lưng ghế vững chắc, không có bánh xe.\n    2.  Cong gối từ từ xuống mức thoải mái, giữ lưng thẳng, hướng gối về phía trước (quá ngón chân cái).\n    3.  Đứng dậy, siết mông.\n*   **Lượng:** Lặp lại 5 lần.\n*   **Dừng ngay nếu:** Cảm thấy đau tăng, mất thăng bằng hoặc gối bị \"lỏng\".\n\n**Hip marching (NHS)**\n*   **Cách làm:**\n    1.  Ngồi thẳng, không tựa lưng ghế, nắm mép ghế.\n    2.  Nhấc chân trái lên với gối cong ở mức thoải mái, đặt chân xuống có kiểm soát.\n    3.  Đổi chân phải.\n*   **Lượng:** 5 lần mỗi chân.\n*   **Dừng ngay nếu:** Đau lan ra hoặc mất thăng bằng.\n\n**Contraindication (Chống chỉ định):**\n*   Không tập nếu bạn có chấn thương gối cấp tính, viêm khớp nặng đang bùng phát, hoặc bác sĩ đã cấm vận động.\n*   **Luôn dừng lại ngay lập tức nếu:** Đau tăng lên, sưng nóng, hoặc cảm giác gối bị kẹt/không ổn định.\n\nMẹo từ NHS: Chọn ghế vững, quần áo thoải mái, uống nước. Tập 2 lần mỗi tuần, tăng dần từ từ.\n\nHãy đi khám trước khi tập thêm.\n\n*Nguồn: hướng dẫn sức khỏe của NHS.*\n\n*Đây là gợi ý, không thay thế khám lâm sàng.*",
+     "answer_source": "stream",
+     "request_id": "058d04d5-03cc-462f-9879-8ac692b6162a",
+     "error": null,
+     "attempt": 1,
+     "invalid": [],
+     "passed": false,
+     "hit": [],
+     "leak": [],
+     "all_hit": [
+      "goi"
+     ],
+     "all_miss": [
+      [
+       "pho"
+      ]
+     ],
+     "tool_names": [
+      "recall_self",
+      "kb_search"
+     ],
+     "synth_mode": "synthesize",
+     "tools_missing": [],
+     "mode_hit": false,
+     "retrieval_top_sim": null,
+     "retrieval_src": "memory_search",
+     "memory_ms": 6840,
+     "t_to_done_s": 17.63,
+     "t_housekeep_s": 0.0,
+     "total_tokens": 2632,
+     "background": {
+      "llm_calls": 0,
+      "tokens": 0,
+      "elapsed_ms": 0
+     }
+    }
+   ],
+   "seed_llm_calls": 1
+  },
+  {
+   "scenario": "m_ambig",
+   "user_id": "0cd5a553-060d-5bd6-abce-759c99df5b91",
+   "sessions": [
+    "c7da0423-fa6f-5924-a7e5-c4bff0d5a6ae",
+    "107f88b9-8503-5f46-bbc2-eb0b70d18d83",
+    "9fe85d6c-24f9-52bb-b646-c70f172b5ea2"
+   ],
+   "seed_turns": 2,
+   "turns": [
+    {
+     "query": "hôm trước mình nói gì nhỉ? và cho tôi bài giãn cơ cổ",
+     "session_id": "9fe85d6c-24f9-52bb-b646-c70f172b5ea2",
+     "locale": "vi",
+     "status": 200,
+     "error": null,
+     "answer": "Mình nhớ hai cuộc trò chuyện gần đây: một về bài tập lưng và một về giãn vai. Bạn muốn nhắc lại cái nào?\n\nĐể chọn bài giãn cổ phù hợp, mình cần biết: bạn đang bị căng cứng hay có cảm giác đau nhói, tê tay?\n\n*Đây là gợi ý, không thay thế khám lâm sàng.*",
+     "done": {
+      "request_id": "258fee5d-86f0-4bfb-8cd7-b0bd205dd36b",
+      "total_tokens": 1886,
+      "required_outputs": [
+       "scope_disclaimer",
+       "contraindication",
+       "evidence_citation"
+      ]
+     },
+     "t_to_done_s": 22.77,
+     "t_housekeep_s": 0.0,
+     "t_total_s": 22.77,
+     "logs": [
+      {
+       "message": "node_complete",
+       "created": 1792116759.8667617,
+       "node": "memory",
+       "request_id": "258fee5d-86f0-4bfb-8cd7-b0bd205dd36b",
+       "elapsed_ms": 6890,
+       "user_instructions_count": 0,
+       "user_facts_count": 0,
+       "tier2_top_similarity": null,
+       "tier2_embed_ms": null,
+       "tier2_skipped": "embed_timeout",
+       "summary_chunks_count": 0,
+       "summary_present": false,
+       "recent_raw_count": 0
+      },
+      {
+       "message": "node_complete",
+       "created": 1792116760.7986195,
+       "node": "planner",
+       "request_id": "258fee5d-86f0-4bfb-8cd7-b0bd205dd36b",
+       "elapsed_ms": 930,
+       "tags": [
+        "scope_disclaimer",
+        "contraindication",
+        "evidence_citation"
+       ],
+       "needs_retrieval": true,
+       "needs_clarification": false,
+       "cache_hit_tokens": null,
+       "cache_miss_tokens": null,
+       "llm_fallback_used": false
+      },
+      {
+       "message": "node_complete",
+       "created": 1792116761.3412209,
+       "node": "retriever_agent",
+       "request_id": "258fee5d-86f0-4bfb-8cd7-b0bd205dd36b",
+       "elapsed_ms": 541,
+       "tokens": 836,
+       "tool_calls": 2,
+       "tool_names": [
+        "resume_last_session",
+        "kb_search"
+       ],
+       "cache_hit_tokens": null,
+       "cache_miss_tokens": null
+      },
+      {
+       "message": "node_complete",
+       "created": 1792116769.5435896,
+       "node": "synthesizer",
+       "request_id": "258fee5d-86f0-4bfb-8cd7-b0bd205dd36b",
+       "elapsed_ms": 524,
+       "tokens": 1886,
+       "mode": "clarify",
+       "output_chars": 205,
+       "streamed": true,
+       "cache_hit_tokens": null,
+       "cache_miss_tokens": null,
+       "llm_fallback_used": false,
+       "prompt_blocks": {
+        "persona": 2724,
+        "body_state": 0,
+        "about_you": 0,
+        "user_instructions": 0,
+        "user_facts": 0,
+        "session_summary": 0,
+        "task": 3680,
+        "evidence": 2452,
+        "history": 0,
+        "voice_card": 697
+       },
+       "input_tokens": 1828,
+       "output_tokens": 58
+      },
+      {
+       "message": "chat_complete",
+       "created": 1792116775.7316499,
+       "elapsed_ms": 22767,
+       "total_tokens": 1886,
+       "required_outputs": [
+        "scope_disclaimer",
+        "contraindication",
+        "evidence_citation"
+       ]
+      }
+     ]
+    }
+   ],
+   "probes": [
+    {
+     "group": "m",
+     "ask": "hôm trước mình nói gì nhỉ? và cho tôi bài giãn cơ cổ",
+     "where": "new",
+     "session_id": "9fe85d6c-24f9-52bb-b646-c70f172b5ea2",
+     "expect_any": [],
+     "expect_all": [
+      [
+       "co"
+      ]
+     ],
+     "expect_tools": [],
+     "forbid_mode": "clarify",
+     "forbid": [],
+     "answer": "Mình nhớ hai cuộc trò chuyện gần đây: một về bài tập lưng và một về giãn vai. Bạn muốn nhắc lại cái nào?\n\nĐể chọn bài giãn cổ phù hợp, mình cần biết: bạn đang bị căng cứng hay có cảm giác đau nhói, tê tay?\n\n*Đây là gợi ý, không thay thế khám lâm sàng.*",
+     "answer_source": "stream",
+     "request_id": "258fee5d-86f0-4bfb-8cd7-b0bd205dd36b",
+     "error": null,
+     "attempt": 1,
+     "invalid": [],
+     "passed": false,
+     "hit": [],
+     "leak": [],
+     "all_hit": [
+      "co"
+     ],
+     "all_miss": [],
+     "tool_names": [
+      "resume_last_session",
+      "kb_search"
+     ],
+     "synth_mode": "clarify",
+     "tools_missing": [],
+     "mode_hit": true,
+     "retrieval_top_sim": null,
+     "retrieval_src": "memory_search",
+     "memory_ms": 6890,
+     "t_to_done_s": 22.77,
+     "t_housekeep_s": 0.0,
+     "total_tokens": 1886,
+     "background": {
+      "llm_calls": 0,
+      "tokens": 0,
+      "elapsed_ms": 0
+     }
+    }
+   ],
+   "seed_llm_calls": 2
+  }
+ ],
+ "runs": [
+  {
+   "started_at": "2026-10-16T09:02:13+07:00",
+   "phase": "seed",
+   "only": [
+    "m_name"
+   ],
+   "retry_invalid": false,
+   "key_label": "llm=groq-qwen3.8-27b",
+   "llm_calls": 1,
+   "turns": 0,
+   "probes": 0,
+   "quota_stops": []
+  },
+  {
+   "started_at": "2026-10-16T09:04:14+07:00",
+   "phase": "seed",
+   "only": [
+    "m_food"
+   ],
+   "retry_invalid": false,
+   "key_label": "llm=groq-qwen3.8-27b",
+   "llm_calls": 1,
+   "turns": 0,
+   "probes": 0,
+   "quota_stops": []
+  },
+  {
+   "started_at": "2026-10-16T09:06:12+07:00",
+   "phase": "seed",
+   "only": [
+    "m_ambig"
+   ],
+   "retry_invalid": false,
+   "key_label": "llm=groq-qwen3.8-27b",
+   "llm_calls": 2,
+   "turns": 0,
+   "probes": 0,
+   "quota_stops": []
+  },
+  {
+   "started_at": "2026-10-16T09:08:16+07:00",
+   "phase": "probes",
+   "only": [
+    "m_name"
+   ],
+   "retry_invalid": false,
+   "key_label": "llm=groq-qwen3.8-27b",
+   "llm_calls": 3,
+   "turns": 1,
+   "probes": 1,
+   "quota_stops": []
+  },
+  {
+   "started_at": "2026-10-16T09:10:03+07:00",
+   "phase": "probes",
+   "only": [
+    "m_food"
+   ],
+   "retry_invalid": false,
+   "key_label": "llm=groq-qwen3.8-27b",
+   "llm_calls": 3,
+   "turns": 2,
+   "probes": 2,
+   "quota_stops": []
+  },
+  {
+   "started_at": "2026-10-16T09:12:14+07:00",
+   "phase": "probes",
+   "only": [
+    "m_ambig"
+   ],
+   "retry_invalid": false,
+   "key_label": "llm=groq-qwen3.8-27b",
+   "llm_calls": 3,
+   "turns": 3,
+   "probes": 3,
+   "quota_stops": []
+  }
+ ]
+}

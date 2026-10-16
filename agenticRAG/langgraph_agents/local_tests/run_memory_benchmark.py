@@ -215,12 +215,59 @@ def chat_turn(client, session_id: str, query: str, locale: str,
             "logs": collector.records[mark:]}
 
 
-def score_probe(answer: str, expect_any: list[str], forbid: list[str]) -> dict:
+def score_probe(answer: str, expect_any: list[str], forbid: list[str],
+                  expect_all: list[list[str]] | None = None) -> dict:
     folded = fold(answer)
     hit = [p for p in (expect_any or []) if fold(p) in folded]
     leak = [p for p in (forbid or []) if fold(p) in folded]
-    passed = (not expect_any or bool(hit)) and not leak
-    return {"passed": passed, "hit": hit, "leak": leak}
+    all_groups = expect_all or []
+    all_hit = []
+    all_miss = []
+    for group in all_groups:
+        opts = list(group or [])
+        found = [p for p in opts if fold(p) in folded]
+        if found:
+            all_hit.append(found[0])
+        else:
+            all_miss.append(opts)
+    passed = (not expect_any or bool(hit)) and not leak and not all_miss
+    return {"passed": passed, "hit": hit, "leak": leak,
+            "all_hit": all_hit, "all_miss": all_miss}
+
+
+def turn_tool_names(logs: list[dict]) -> list[str]:
+    """Tool names the retriever_agent actually called this turn (all rounds)."""
+    names: list[str] = []
+    for r in logs:
+        if r.get("message") == "node_complete" and r.get("node") == "retriever_agent":
+            for n in r.get("tool_names") or []:
+                if n not in names:
+                    names.append(n)
+    return names
+
+
+def turn_synth_mode(logs: list[dict]) -> str | None:
+    """Mode the synthesizer derived this turn (None when it never ran)."""
+    for r in reversed(logs):
+        if r.get("message") == "node_complete" and r.get("node") == "synthesizer":
+            return r.get("mode")
+    return None
+
+
+def check_tools_mode(logs: list[dict], expect_tools: list[str] | None,
+                     forbid_mode: str | list[str] | None) -> dict:
+    """expect_tools: every listed tool must appear in retriever tool_names.
+    forbid_mode: synthesizer mode must not equal any listed mode."""
+    tools = turn_tool_names(logs)
+    mode = turn_synth_mode(logs)
+    want = list(expect_tools or [])
+    missing = [t for t in want if t not in tools]
+    banned = ([forbid_mode] if isinstance(forbid_mode, str)
+              else list(forbid_mode or []))
+    mode_hit = mode is not None and mode in banned
+    return {"tool_names": tools, "synth_mode": mode,
+            "tools_missing": missing, "mode_hit": mode_hit,
+            "passed": not missing and not mode_hit}
 
 
 def find_invalid(turn: dict, logs: list[dict]) -> list[str]:
@@ -533,21 +580,35 @@ def run_probe(client, owner_dsn: str, uid: str, sess: str, probe: dict,
     if not (answer or "").strip() and not turn.get("error") and not invalid:
         answer = asyncio.run(read_last_answer(owner_dsn, sess))
         source = "persisted"
-    verdict = {"passed": False, "hit": [], "leak": []}
+    verdict = {"passed": False, "hit": [], "leak": [],
+               "all_hit": [], "all_miss": []}
+    gate = {"tool_names": [], "synth_mode": None,
+            "tools_missing": [], "mode_hit": False, "passed": True}
     if not invalid:
         verdict = score_probe(answer, probe.get("expect_any") or [],
-                              probe.get("forbid") or [])
+                              probe.get("forbid") or [],
+                              probe.get("expect_all"))
+        gate = check_tools_mode(turn["logs"], probe.get("expect_tools"),
+                                probe.get("forbid_mode"))
     top_sim, top_src = retrieval_top(turn["logs"])
     return {
         "group": probe["group"], "ask": probe["ask"],
         "where": probe.get("where", "new"), "session_id": sess,
         "expect_any": probe.get("expect_any") or [],
+        "expect_all": probe.get("expect_all") or [],
+        "expect_tools": probe.get("expect_tools") or [],
+        "forbid_mode": probe.get("forbid_mode"),
         "forbid": probe.get("forbid") or [],
         "answer": answer, "answer_source": source, "request_id": request_id,
         "error": turn["error"], "attempt": attempt,
         "invalid": invalid, "passed": (not invalid) and verdict["passed"]
-        and turn["error"] is None,
+        and gate["passed"] and turn["error"] is None,
         "hit": verdict["hit"], "leak": verdict["leak"],
+        "all_hit": verdict.get("all_hit", []),
+        "all_miss": verdict.get("all_miss", []),
+        "tool_names": gate["tool_names"], "synth_mode": gate["synth_mode"],
+        "tools_missing": gate["tools_missing"],
+        "mode_hit": gate["mode_hit"],
         "retrieval_top_sim": top_sim, "retrieval_src": top_src,
         "memory_ms": (node_ms(turn["logs"], "memory") or [None])[0],
         "t_to_done_s": turn["t_to_done_s"],
@@ -598,11 +659,18 @@ def probes_label(label: str, spec: dict, only: set[str], collector: Collector,
                             prec = {"group": probe["group"], "ask": probe["ask"],
                                     "where": "last", "session_id": None,
                                     "expect_any": probe.get("expect_any") or [],
+                                    "expect_all": probe.get("expect_all") or [],
+                                    "expect_tools": probe.get("expect_tools") or [],
+                                    "forbid_mode": probe.get("forbid_mode"),
                                     "forbid": probe.get("forbid") or [],
                                     "answer": "", "answer_source": "none",
                                     "request_id": None, "error": None, "attempt": 1,
                                     "invalid": ["no_session_for_last"], "passed": False,
-                                    "hit": [], "leak": [], "retrieval_top_sim": None,
+                                    "hit": [], "leak": [], "all_hit": [],
+                                    "all_miss": [],
+                                    "tool_names": [], "synth_mode": None,
+                                    "tools_missing": [], "mode_hit": False,
+                                    "retrieval_top_sim": None,
                                     "retrieval_src": "none", "memory_ms": None,
                                     "t_to_done_s": None, "t_housekeep_s": None,
                                     "total_tokens": None,
@@ -784,11 +852,18 @@ def render_md(label: str, report: dict, stats: dict) -> str:
             L.append("")
             L.append(f"- where: {p.get('where')}, session: {p.get('session_id')}, "
                      f"attempt: {p.get('attempt', 1)}, expect: {p['expect_any']}, "
-                     f"forbid: {p['forbid']}")
-            L.append(f"- hit: {p['hit']}, leak: {p['leak']}, error: {p['error']}, "
+                     f"expect_all: {p.get('expect_all', [])}, "
+                     f"expect_tools: {p.get('expect_tools', [])}, "
+                     f"forbid: {p['forbid']}, forbid_mode: {p.get('forbid_mode')}")
+            L.append(f"- hit: {p['hit']}, all_hit: {p.get('all_hit', [])}, "
+                     f"all_miss: {p.get('all_miss', [])}, leak: {p['leak']}, "
+                     f"error: {p['error']}, "
                      f"invalid: {p.get('invalid')}, answer_source: {p.get('answer_source')}, "
                      f"request_id: {p.get('request_id')}")
-            L.append(f"- retrieval: {p['retrieval_src']}={p['retrieval_top_sim']}, "
+            L.append(f"- mode: {p.get('synth_mode')}, tools: {p.get('tool_names', [])}, "
+                     f"tools_missing: {p.get('tools_missing', [])}, "
+                     f"mode_hit: {p.get('mode_hit')}, "
+                     f"retrieval: {p['retrieval_src']}={p['retrieval_top_sim']}, "
                      f"memory_ms={p['memory_ms']}, to_done={p['t_to_done_s']}s, "
                      f"housekeep={p['t_housekeep_s']}s, "
                      f"total_tokens={p['total_tokens']}, bg={p['background']}")
@@ -806,10 +881,19 @@ def render_md(label: str, report: dict, stats: dict) -> str:
     return "\n".join(L) + "\n"
 
 
+def _is_b_label(label: str) -> bool:
+    return label in ("B", "B2")
+
+
+def _is_m_label(label: str) -> bool:
+    return label in ("M0", "M1")
+
+
 def validate_spec(spec: dict, label: str) -> list[str]:
     """Offline checks for --dry-run (no DB, no LLM). Returns error strings.
 
-    Groups g–j only exist for label B (they read tier rows directly).
+    Groups g–j only exist for label B/B2 (they read tier rows directly).
+    Group m only exists for labels M0/M1 (multi-intent + clarify-gate probes).
     """
     errors: list[str] = []
     seen: set[str] = set()
@@ -832,17 +916,24 @@ def validate_spec(spec: dict, label: str) -> list[str]:
                 errors.append(f"{sid}: probe without ask")
         for check in sc.get("db_probes", []):
             groups[check.get("group", "?")] = groups.get(check.get("group", "?"), 0) + 1
-    for g in ("a", "b", "c", "d", "e", "f"):
-        if groups.get(g, 0) != 1:
-            errors.append(f"group {g}: want exactly 1 probe, have {groups.get(g, 0)}")
+    if not _is_m_label(label):
+        for g in ("a", "b", "c", "d", "e", "f"):
+            if groups.get(g, 0) != 1:
+                errors.append(f"group {g}: want exactly 1 probe, have {groups.get(g, 0)}")
     for g in ("g", "h", "i", "j"):
         want = 2 if (g == "g" or g == "j") else 1
         have = groups.get(g, 0)
-        if label == "B":
+        if _is_b_label(label):
             if have != want:
                 errors.append(f"group {g}: want exactly {want}, have {have}")
         elif have:
             errors.append(f"group {g}: B-only, must not run for {label}")
+    m_have = groups.get("m", 0)
+    if _is_m_label(label):
+        if m_have != 3:
+            errors.append(f"group m: want exactly 3 probes, have {m_have}")
+    elif m_have:
+        errors.append(f"group m: M-only, must not run for {label}")
     return errors
 
 

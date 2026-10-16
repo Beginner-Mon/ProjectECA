@@ -1,4 +1,4 @@
-"""Retrieval tools — M.2 + M.6 (kb_search + resume_last_session).
+"""Retrieval tools — M.2 (kb_search).
 
 M.4 schema targets:
   - kb_search → kb_embeddings table (public KB, FK documents)
@@ -13,7 +13,6 @@ from __future__ import annotations
 
 import asyncio
 import time
-from typing import Optional
 
 from langchain_core.runnables import RunnableConfig
 from langchain_core.tools import tool
@@ -67,15 +66,6 @@ def _kb_min_similarity() -> float | None:
 def _self_min_similarity() -> float | None:
     """Ngưỡng riêng cho recall_self (plan T8e). None = không lọc."""
     return _retrieval_threshold("self_min_similarity")
-
-
-def _to_uuid(value: str) -> str:
-    """Coerce user-supplied string into a deterministic UUID."""
-    import uuid
-    try:
-        return str(uuid.UUID(value))
-    except (ValueError, TypeError):
-        return str(uuid.uuid5(uuid.NAMESPACE_DNS, str(value)))
 
 
 # ═══════════════════════════════════════════════════════════════════════════
@@ -160,135 +150,6 @@ async def kb_search(query: str, top_k: int = 5) -> list[dict]:
     except Exception as exc:
         # D23: error → raise so retriever can retry
         logger.error("kb_search_error", extra={"query": query[:80], "error": str(exc)})
-        raise
-
-
-# ═══════════════════════════════════════════════════════════════════════════
-# resume_last_session — tool riêng cho "tiếp tục session vừa rồi" (M.6)
-# ═══════════════════════════════════════════════════════════════════════════
-
-@tool(description=(
-    "Load the user's most recent earlier session. Use when the user wants "
-    "to continue where they left off, rather than recall one fact."
-))
-async def resume_last_session(
-    since_days: Optional[int] = None,
-    config: RunnableConfig = None,
-) -> dict:
-    """Resume the most recent past session for this user.
-
-    Use for: "tiếp tục", "làm tiếp bài hôm trước", "quay lại bài tập".
-    Returns summaries + recent messages from the most recent session
-    (excluding current session). No vector search needed — recency-based.
-
-    Args:
-        since_days: Optional time window (e.g. 1 for "hôm qua", 7 for "tuần trước").
-
-    Returns:
-        {found: true, session_id, summary_chunks, recent_messages}
-        OR {found: false}
-    """
-    # Scope injected from runtime config — LLM does NOT see these
-    user_id = _to_uuid(config["configurable"]["user_id"])
-    current_session_id = config["configurable"]["session_id"]
-
-    try:
-        pg = get_pg_client()
-        await pg.connect()
-
-        # Step 1: Find top 2 most recent sessions for ambiguity check (A1)
-        base_sql = """
-            SELECT session_id, title, updated_at
-            FROM conversations
-            WHERE user_id = $1
-              AND session_id != $2
-        """
-        params = [user_id, current_session_id]
-        if since_days is not None and since_days > 0:
-            base_sql += " AND updated_at >= now() - ($3 || ' days')::interval"
-            params.append(str(since_days))
-
-        top2 = await pg.fetch(
-            base_sql + " ORDER BY updated_at DESC LIMIT 2", *params,
-        )
-
-        if not top2:
-            return {"found": False}
-
-        target_session = str(top2[0]["session_id"])
-
-        # Ambiguity check (A1): ≥2 sessions + top-2 gap < 24h
-        is_ambiguous = False
-        candidates = []
-        if len(top2) >= 2:
-            gap_seconds = (
-                top2[0]["updated_at"] - top2[1]["updated_at"]
-            ).total_seconds()
-            if gap_seconds < 86400:  # 24 hours
-                is_ambiguous = True
-                for t in top2[:3]:
-                    # Get first user message as preview
-                    preview_row = await pg.fetchrow(
-                        "SELECT content FROM messages WHERE session_id = $1 AND role = 'user' ORDER BY seq_id LIMIT 1",
-                        t["session_id"],
-                    )
-                    preview = (preview_row["content"][:80] + "...") if preview_row else "(empty)"
-                    candidates.append({
-                        "session_id": str(t["session_id"]),
-                        "preview": preview,
-                        "updated_at": t["updated_at"].isoformat(),
-                    })
-
-        # Step 2: Load the rolling summary (0 or 1 item, kept as a list)
-        summary_row = await pg.fetchrow(
-            """
-            SELECT stm_summary, stm_up_to_seq FROM conversations
-            WHERE session_id = $1
-            """,
-            target_session,
-        )
-        summary_chunks = (
-            [summary_row["stm_summary"]]
-            if summary_row and summary_row["stm_summary"] else []
-        )
-
-        # Step 3: Load the 10 latest messages the summary does not cover yet
-        last_seq = summary_row["stm_up_to_seq"] if summary_row else 0
-        msg_rows = await pg.fetch(
-            """
-            SELECT role, content, seq_id
-            FROM messages
-            WHERE session_id = $1 AND seq_id > $2
-            ORDER BY seq_id DESC
-            LIMIT 10
-            """,
-            target_session,
-            last_seq,
-        )
-        recent_messages = [
-            {"role": r["role"], "content": r["content"]} for r in reversed(msg_rows)
-        ]
-
-        logger.info("resume_last_session_done", extra={
-            "target_session": target_session,
-            "summary_chunks": len(summary_chunks),
-            "recent_messages": len(recent_messages),
-        })
-
-        result = {
-            "found": True,
-            "session_id": target_session,
-            "summary_chunks": summary_chunks,
-            "recent_messages": recent_messages,
-        }
-        if is_ambiguous:
-            result["ambiguous"] = True
-            result["candidates"] = candidates
-
-        return result
-
-    except Exception as exc:
-        logger.error("resume_last_session_error", extra={"error": str(exc)})
         raise
 
 

@@ -369,8 +369,8 @@ async def _run_probe(
 
     state = {"messages": list(history), "errors": [],
              "retry_count": 0, "total_tokens": 0}
-    # session_id phải là UUID (tool resume_last_session bind trực tiếp vào
-    # cột uuid) — uuid5 deterministic để chạy lại vẫn cùng phiên probe.
+    # session_id phải là UUID (cột conversations.session_id là uuid) —
+    # uuid5 deterministic để chạy lại vẫn cùng phiên probe.
     session_uuid = str(uuid.uuid5(uuid.NAMESPACE_DNS,
                                   f"probe-{label}-{probe['id']}"))
     config = {"configurable": {
@@ -863,8 +863,8 @@ async def amain(args: argparse.Namespace) -> int:
     load_env()
     # JSON log ra stderr để đo prompt_blocks / input_tokens (T11).
     configure_root_logger()
-    # Tool memory_search/resume_last_session chạy trong pg.transaction(),
-    # cần app.user_id đã bind (như api/main.py bind từ Bearer token).
+    # Tool pgvector chạy trong pg.transaction(), cần app.user_id đã bind
+    # (như api/main.py bind từ Bearer token).
     # Không bind = RLS từ chối đúng như tài liệu trong db/postgres.py.
     from langgraph_agents.db.postgres import bind_request_user
 

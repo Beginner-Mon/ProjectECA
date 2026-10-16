@@ -222,7 +222,7 @@ class TestP3WebSearchPrompt:
             required_outputs="test",
             resolved_query="thời tiết hôm nay",
         )
-        for name in ("kb_search", "memory_search", "resume_last_session",
+        for name in ("kb_search",
                      "youtube_transcript", "recall_self", "search_medical"):
             assert name not in prompt, f"tool {name!r} leaked into prompt (web off)"
 
@@ -236,7 +236,7 @@ class TestP3WebSearchPrompt:
             required_outputs="test",
             resolved_query="thời tiết hôm nay",
         )
-        for name in ("kb_search", "memory_search", "resume_last_session",
+        for name in ("kb_search",
                      "youtube_transcript", "recall_self", "search_medical"):
             assert name not in prompt, f"tool {name!r} leaked into prompt (web on)"
 

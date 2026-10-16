@@ -26,8 +26,6 @@ def _tm(name: str, payload) -> ToolMessage:
 
 _KB = [{"content": "Cat-cow for back pain.", "similarity": 0.9,
         "source_type": "exercise_db", "document_title": "Back", "chunk_index": 0}]
-_MEM = {"found": True, "summary_chunks": ["talked about squats"],
-        "recent_messages": [{"role": "user", "content": "hello again"}]}
 _WEB = [{"title": "Back pain guide", "url": "https://x.example", "content": "..."}]
 _MOTION = {"state": "queued", "job_id": "j1", "prompt": "squat"}
 
@@ -42,12 +40,6 @@ def test_motion_message_absent_from_evidence():
 
 def test_motion_only_means_no_tool_results():
     assert _has_tool_results([_tm("generate_motion", _MOTION)]) is False
-
-
-def test_memory_result_titled_by_source_not_library():
-    ev = _extract_tool_results([_tm("resume_last_session", _MEM)])
-    assert "your earlier conversations" in ev
-    assert "library" not in ev.lower()
 
 
 def test_kb_and_web_have_distinct_titles():

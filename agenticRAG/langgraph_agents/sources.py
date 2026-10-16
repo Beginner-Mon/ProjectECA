@@ -28,12 +28,6 @@ TOOL_SOURCES: dict[str, Source] = {
         stage_key="stage_searching",
         is_evidence=True,
     ),
-    "resume_last_session": Source(
-        id="memory",
-        label="your earlier conversations with this same user",
-        stage_key="stage_recalling",
-        is_evidence=True,
-    ),
     "search_medical": Source(
         id="web",
         label="the web",

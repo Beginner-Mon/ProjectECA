@@ -357,12 +357,12 @@ def test_retriever_stage_sources_library(api_client, monkeypatch):
 
 
 @pytest.mark.unit
-def test_retriever_stage_sources_memory_deduped_ordered(api_client, monkeypatch):
+def test_retriever_stage_sources_deduped_ordered(api_client, monkeypatch):
     client, _, mock_graph = api_client
     stages = _stage_data(api_client, mock_graph,
-                         ["resume_last_session", "kb_search", "resume_last_session"])
+                         ["kb_search", "search_medical", "kb_search"])
     ret = next(s for s in stages if s.get("node") == "retriever_agent")
-    assert ret["sources"] == ["memory", "library"]
+    assert ret["sources"] == ["library", "web"]
 
 
 @pytest.mark.unit

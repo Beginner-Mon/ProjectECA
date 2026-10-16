@@ -44,64 +44,18 @@ def evidence_messages(messages: list) -> list:
     return out
 
 
-def _when(date: str, title: str | None = None) -> str:
-    """Date and title, as `2026-10-12 — Knee talk`; either alone; empty when neither is known."""
-    day = str(date or "")[:10]
-    return f"{day} — {title}" if day and title else (day or title or "")
-
-
-def _item(header: str, *parts: str) -> EvidenceItem:
-    text = "\n".join(p for p in parts if p)
-    return EvidenceItem(header=header, text=text, cite_key=None, title="")
-
-
-def _resumed_items(data, header: str) -> list[EvidenceItem]:
-    """resume_last_session: the newest conversation as readable text, then (when
-    the two newest were close in time) the others the user could have meant.
-
-    The tool always returns the newest conversation normally; the candidates
-    are there so the answer can name which one it used in one sentence.
-    """
-    if not isinstance(data, dict) or not data.get("found"):
-        return []
-    lines = []
-    for m in data.get("recent_messages") or []:
-        if isinstance(m, dict) and m.get("content"):
-            lines.append(f"{'User' if m.get('role') == 'user' else 'You'}: {m['content']}")
-    items = [_item(header, _when(data.get("updated_at", ""), data.get("title")),
-                   *[str(c) for c in data.get("summary_chunks") or []], *lines)]
-    candidates = [c for c in data.get("candidates") or [] if isinstance(c, dict)]
-    if data.get("ambiguous") and candidates:
-        listed = [f"- {_when(c.get('updated_at', ''))}: {c.get('preview', '')}"
-                  for c in candidates]
-        items.append(_item(header, "Using the most recent conversation; "
-                           "if the user meant a different one, "
-                           "they can say which:", *listed))
-    return items
-
-
-def _memory_items(data, header: str) -> list[EvidenceItem]:
-    """Readable items for the resume tool's result.
-
-    Never raw JSON: the answering model would repeat our key names and ids.
-    """
-    return _resumed_items(data, header)
-
-
 def _message_items(m: ToolMessage) -> list[EvidenceItem]:
     name = m.name or ""
     src = source_for_tool(name)
     header = "[From another source]" if src is None else f"[From {src.label}]"
     cite_key = src.id if src is not None and src.id in _CITABLE_SOURCE_IDS else None
     whole = [EvidenceItem(header=header, text=str(m.content), cite_key=cite_key, title="")]
-    if name not in ("kb_search", "resume_last_session"):
+    if name != "kb_search":
         return whole
     try:
         data = json.loads(str(m.content))
     except (json.JSONDecodeError, TypeError):
         return whole
-    if name != "kb_search":
-        return _memory_items(data, header)
     if not isinstance(data, list) or not data:
         return whole
     items = []

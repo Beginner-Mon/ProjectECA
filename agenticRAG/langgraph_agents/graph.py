@@ -10,7 +10,7 @@ Nodes (8 total):
   memory          — assemble context (M.5)
   planner         — 3-axis intent (M.1)
   retriever_agent — self-choose tools, parallel tool calls (M.2)
-  tools           — ToolNode (kb_search, search_medical, resume_last_session)
+  tools           — ToolNode (kb_search, search_medical)
   kimodo          — Kimodo MCP motion gen (D26)
   synthesizer     — universal responder (M.3b)
   grader          — tag-driven quality check (M.3)

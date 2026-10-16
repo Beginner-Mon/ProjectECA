@@ -135,98 +135,14 @@ def test_retriever_prompt_without_user_message_still_shows_the_request():
     assert _RESOLVED in prompt
 
 
-# ── Memory evidence ──────────────────────────────────────────────────────
-
-_RESUME = {
-    "found": True, "session_id": _SID_1,
-    "summary_chunks": ["They planned a trip to Da Nang and talked about knee pain."],
-    "recent_messages": [
-        {"role": "user", "content": "my knee hurts after stairs"},
-        {"role": "assistant", "content": "Try slow step-downs."},
-    ],
-}
-_RESUME_NO_SUMMARY = {**_RESUME, "summary_chunks": []}
-_RESUME_AMBIGUOUS = {
-    **_RESUME, "ambiguous": True,
-    "candidates": [
-        {"session_id": _SID_1, "preview": "my knee hurts after stairs...",
-         "updated_at": "2026-10-12T09:30:00+00:00"},
-        {"session_id": _SID_2, "preview": "what should I eat before a run...",
-         "updated_at": "2026-10-12T20:00:00+00:00"},
-    ],
-}
-_SHAPES = {
-    "resume": ("resume_last_session", _RESUME,
-               ["Da Nang", "my knee hurts after stairs", "slow step-downs"]),
-    "resume_no_summary": ("resume_last_session", _RESUME_NO_SUMMARY,
-                          ["my knee hurts after stairs", "slow step-downs"]),
-    "resume_ambiguous": ("resume_last_session", _RESUME_AMBIGUOUS,
-                         ["my knee hurts after stairs", "what should I eat before a run"]),
-}
-
-
-@pytest.mark.parametrize("shape", list(_SHAPES))
-def test_memory_evidence_is_plain_text(shape):
-    name, payload, expected = _SHAPES[shape]
-    items = evidence_items([_tm(name, payload)])
-    assert items
-    text = render_evidence(items)
-    assert "session" not in text.lower()
-    assert not _UUID.search(text)
-    assert "{" not in text and "}" not in text
-    for key in ("summary_chunks", "recent_messages", "candidates", "summary_text",
-                "session_id", "similarity", "ambiguous", "created_at", "found"):
-        assert key not in text
-    for fragment in expected:
-        assert fragment in text
-
-
-def test_resume_renders_date_summaries_and_chat_lines():
-    payload = {**_RESUME, "title": "Knee talk", "updated_at": "2026-10-12T09:30:00+00:00"}
-    text = render_evidence(evidence_items([_tm("resume_last_session", payload)]))
-    assert "2026-10-12" in text and "Knee talk" in text
-    assert "User: my knee hurts after stairs" in text
-    assert "You: Try slow step-downs." in text
-
-
-def test_ambiguous_resume_lists_each_candidate_with_its_date():
-    text = render_evidence(evidence_items([_tm("resume_last_session", _RESUME_AMBIGUOUS)]))
-    assert "2026-10-12" in text
-    assert "what should I eat before a run" in text
-
-
-def test_memory_items_keep_the_source_label():
-    items = evidence_items([_tm("resume_last_session", _RESUME)])
-    assert all(i.header == "[From your earlier conversations with this same user]" for i in items)
-
+# ── KB evidence caps ─────────────────────────────────────────────────────
+# NOTE (16/10/2026): resume_last_session is gone — the memory-evidence plain-text
+# tests pinning it were deleted with it. What remains is the KB budget behaviour.
 
 def test_per_item_cap_and_total_budget_still_apply():
-    long_chat = {**_RESUME, "summary_chunks": [],
-                 "recent_messages": [{"role": "user", "content": "x" * 5000}]}
-    items = evidence_items([_tm("resume_last_session", long_chat)])
-    assert all(len(i.text) <= EVIDENCE_PER_MESSAGE_CAP for i in items)
-
     many = [{"content": f"topic {n} " + "y" * 1400, "similarity": 0.5,
              "source_type": "exercise_db", "document_title": f"Doc {n}",
              "chunk_index": n} for n in range(40)]
     items = evidence_items([_tm("kb_search", many)])
     assert 1 < len(items) < 40
     assert sum(len(i.text) for i in items) <= budget_chars("evidence") + EVIDENCE_PER_MESSAGE_CAP
-
-
-def test_memory_error_and_empty_results_are_not_rendered():
-    assert evidence_items([_tm("resume_last_session", {"found": False})]) == []
-    assert evidence_items([_tm("resume_last_session", {"error": "db down"})]) == []
-
-
-@pytest.mark.asyncio
-@pytest.mark.parametrize("shape", list(_SHAPES))
-async def test_nothing_the_synthesizer_sends_says_session(shape):
-    name, payload, _ = _SHAPES[shape]
-    msgs = await _run_synthesizer(
-        {"messages": [_tm(name, payload)], "required_outputs": [],
-         "needs_clarification": False},
-        {"query": "yo what have we talked before you remember ?"})
-    sent = "\n".join(str(m.content) for m in msgs)
-    assert "session" not in sent.lower()
-    assert not _UUID.search(sent)

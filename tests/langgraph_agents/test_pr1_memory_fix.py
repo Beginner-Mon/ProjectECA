@@ -36,32 +36,22 @@ def _make_config(user_id="test-user-a", session_id=None):
 
 
 # ═══════════════════════════════════════════════════════════════════════════
-# LLM tool schema (config params hidden)
-# ═══════════════════════════════════════════════════════════════════════════
-
-@pytest.mark.unit
-def test_resume_last_session_schema_hides_user_id():
-    """resume_last_session tool schema must NOT expose user_id/config to LLM."""
-    from langgraph_agents.tools.pgvector_tool import resume_last_session
-    schema = resume_last_session.tool_call_schema
-    from pydantic import BaseModel
-    assert isinstance(schema, type) and issubclass(schema, BaseModel)
-    fields = schema.model_fields
-    assert "since_days" in fields, "since_days must be visible to LLM"
-    assert "user_id" not in fields, "user_id must NOT be in LLM schema"
-    assert "current_session_id" not in fields, "current_session_id must NOT be in LLM schema"
-    assert "config" not in fields, "config must NOT be in LLM schema (RunnableConfig is hidden)"
-
-
-# ═══════════════════════════════════════════════════════════════════════════
-# Retriever tool list: memory_search is gone, resume stays
+# Retriever tool list: memory_search and resume_last_session are gone
 # ═══════════════════════════════════════════════════════════════════════════
 
 @pytest.mark.unit
 def test_memory_search_gone_from_retriever_tools():
-    """memory_search must NOT be in RETRIEVER_BASE_TOOLS; resume stays."""
+    """memory_search must NOT be in RETRIEVER_BASE_TOOLS; resume is gone too."""
     from langgraph_agents.nodes.retriever_agent import RETRIEVER_BASE_TOOLS
     tool_names = {t.name for t in RETRIEVER_BASE_TOOLS}
     assert "memory_search" not in tool_names, "memory_search was removed in step 5"
-    assert "resume_last_session" in tool_names, "resume_last_session must be in RETRIEVER_BASE_TOOLS"
+    assert "resume_last_session" not in tool_names, "resume_last_session was removed (16/10/2026)"
     assert "kb_search" in tool_names
+
+
+@pytest.mark.unit
+def test_resume_gone_from_tools_init_export():
+    """tools/__init__.py must not export resume_last_session."""
+    import langgraph_agents.tools as tools_pkg
+    assert "resume_last_session" not in tools_pkg.__all__
+    assert not hasattr(tools_pkg, "resume_last_session")

@@ -2,7 +2,6 @@
 
 Decisions encoded:
   D2b:   Retriever tự chọn kb/web/memory — planner only says WHAT
-  D16:   kb_search + resume_last_session gọi SONG SONG
   D20:   NO memory_context input (retrieval ≠ personalize)
   D21:   resolved_query keeps tool-selection cues
   D23:   Empty {found:[]} ≠ error {error}
@@ -38,21 +37,19 @@ logger = get_logger("langgraph.retriever")
 # In-process tools
 from langgraph_agents.tools.pgvector_tool import (
     kb_search as _kb_search,
-    resume_last_session as _resume_last_session,
     youtube_transcript as _youtube_transcript,
     recall_self as _recall_self,
 )
 from langgraph_agents.nodes._persona_loader import _persona_has_sheet
 
-RETRIEVER_BASE_TOOLS = [_kb_search, _resume_last_session,
+RETRIEVER_BASE_TOOLS = [_kb_search,
                         _youtube_transcript, _recall_self]
 
 
 async def _build_tools(web_search_enabled: bool = True,
                        persona_id: str = "anne") -> list:
-    """Assemble tool list: kb_search + resume_last_session + MCP tools.
+    """Assemble tool list: kb_search + MCP tools.
 
-    resume_last_session always available.
     web_search (search_medical) is filtered by user toggle (D27).
     recall_self is offered only when this turn's character has a sheet.md
     (plan T8e) — without facts about itself the tool has nothing to return.

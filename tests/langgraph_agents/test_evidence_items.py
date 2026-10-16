@@ -23,13 +23,11 @@ _KB = [
     {"content": "Stay active.", "similarity": 0.8,
      "source_type": "nhs_uk", "document_title": "NHS — Back pain", "chunk_index": 0},
 ]
-_MEM = {"found": True, "summary_chunks": ["talked about squats"],
-        "recent_messages": [{"role": "user", "content": "hello again"}]}
 _WEB = [{"title": "Guide", "url": "https://x.example", "content": "..."}]
 
 
 def test_render_matches_extract_tool_results():
-    msgs = [_tm("kb_search", _KB), _tm("resume_last_session", _MEM),
+    msgs = [_tm("kb_search", _KB),
             _tm("search_medical", _WEB)]
     assert render_evidence(evidence_items(msgs)) == _extract_tool_results(msgs)
 
@@ -41,10 +39,10 @@ def test_kb_items_carry_title_and_cite_key():
     assert items[0].header == "[From ECA's exercise library: Elbow plank]"
 
 
-def test_memory_has_no_cite_key_and_web_has_one():
-    items = evidence_items([_tm("resume_last_session", _MEM),
+def test_kb_and_web_cite_keys():
+    items = evidence_items([_tm("kb_search", _KB),
                             _tm("search_medical", _WEB)])
-    assert [i.cite_key for i in items] == [None, "web"]
+    assert [i.cite_key for i in items] == ["exercise_db", "nhs_uk", "web"]
 
 
 def test_motion_and_self_are_not_evidence():
@@ -60,7 +58,7 @@ def test_named_items_matches_title_case_insensitively():
 
 
 def test_named_items_never_returns_untitled_items():
-    items = evidence_items([_tm("resume_last_session", _MEM)])
+    items = evidence_items([_tm("search_medical", _WEB)])
     assert named_items(items, "anything at all") == []
 
 

@@ -448,106 +448,9 @@ async def test_a2_delete_covered_message_resets_the_rolling_summary():
 # ═══════════════════════════════════════════════════════════════════════════
 # A1 — clarify động (unit)
 # ═══════════════════════════════════════════════════════════════════════════
-
-@pytest.mark.unit
-@pytest.mark.asyncio
-async def test_a1_resume_within_24h_returns_ambiguous():
-    """resume_last_session: 2 sessions with gap < 24h → ambiguous=true + ≤3 candidates."""
-    from langgraph_agents.tools.pgvector_tool import resume_last_session
-
-    from datetime import datetime, timezone, timedelta
-    now = datetime.now(timezone.utc)
-
-    session_a = str(uuid.uuid4())
-    session_b = str(uuid.uuid4())
-
-    mock_pg = AsyncMock()
-    mock_pg.connect = AsyncMock()
-
-    # top2 sessions: updated_at gap = 1 hour (< 24h → ambiguous)
-    mock_top2 = [
-        MagicMock(**{
-            "__getitem__": lambda self, k: {
-                "session_id": session_a,
-                "title": "Session A",
-                "updated_at": now - timedelta(hours=1),
-            }[k]
-        }),
-        MagicMock(**{
-            "__getitem__": lambda self, k: {
-                "session_id": session_b,
-                "title": "Session B",
-                "updated_at": now - timedelta(hours=2),
-            }[k]
-        }),
-    ]
-    # Patch __len__ so len(top2) >= 2
-    mock_top2_list = [
-        {"session_id": session_a, "title": "Session A", "updated_at": now - timedelta(hours=1)},
-        {"session_id": session_b, "title": "Session B", "updated_at": now - timedelta(hours=2)},
-    ]
-
-    # fetchrow serves the rolling-summary head and the preview messages
-    async def fetchrow_side(query, *args):
-        if "stm_summary" in query:
-            return {"stm_summary": "Dau vai duoc khuyen xoay vai.",
-                    "stm_up_to_seq": 4}
-        return {"content": "Xin chào, tôi bị đau vai."}
-
-    mock_pg.fetch = AsyncMock(side_effect=[
-        mock_top2_list,       # top2 sessions query
-        [],                   # recent messages
-    ])
-    mock_pg.fetchrow = AsyncMock(side_effect=fetchrow_side)
-
-    config = _make_config(user_id="user-a", session_id=str(uuid.uuid4()))
-
-    with patch("langgraph_agents.tools.pgvector_tool.get_pg_client", return_value=mock_pg):
-        result = await resume_last_session.ainvoke({}, config)
-
-    assert result["found"] is True
-    assert result.get("ambiguous") is True, (
-        f"Expected ambiguous=True for sessions with 1h gap, got: {result}"
-    )
-    candidates = result.get("candidates", [])
-    assert 1 <= len(candidates) <= 3, f"Expected 1-3 candidates, got {len(candidates)}"
-
-
-@pytest.mark.unit
-@pytest.mark.asyncio
-async def test_a1_resume_beyond_24h_no_ambiguous():
-    """resume_last_session: 2 sessions with gap > 3 days → no ambiguous key."""
-    from langgraph_agents.tools.pgvector_tool import resume_last_session
-
-    from datetime import datetime, timezone, timedelta
-    now = datetime.now(timezone.utc)
-
-    session_a = str(uuid.uuid4())
-    session_b = str(uuid.uuid4())
-
-    mock_top2_list = [
-        {"session_id": session_a, "title": "Session A", "updated_at": now - timedelta(days=1)},
-        {"session_id": session_b, "title": "Session B", "updated_at": now - timedelta(days=4)},
-    ]
-
-    mock_pg = AsyncMock()
-    mock_pg.connect = AsyncMock()
-    mock_pg.fetch = AsyncMock(side_effect=[
-        mock_top2_list,  # top2 query
-        [],              # recent messages
-    ])
-    mock_pg.fetchrow = AsyncMock(return_value=None)
-
-    config = _make_config(user_id="user-a", session_id=str(uuid.uuid4()))
-
-    with patch("langgraph_agents.tools.pgvector_tool.get_pg_client", return_value=mock_pg):
-        result = await resume_last_session.ainvoke({}, config)
-
-    assert result["found"] is True
-    assert "ambiguous" not in result, (
-        f"Expected no ambiguous key for 3-day gap, got: {result}"
-    )
-
+# NOTE (16/10/2026): resume_last_session is gone — the two tests pinning its
+# 24h ambiguity window were deleted with it. What remains is the synthesizer
+# invariant: no tool flag ever forces the whole turn into clarify.
 
 @pytest.mark.unit
 def test_a1_tool_ambiguous_never_forces_clarify():
@@ -572,7 +475,7 @@ def test_a1_tool_ambiguous_never_forces_clarify():
         "required_outputs": [],
         "messages": [
             ToolMessage(content=ambiguous_result, tool_call_id="call-1",
-                        name="resume_last_session"),
+                        name="kb_search"),
         ],
     }
 
@@ -598,7 +501,7 @@ def test_a1_derive_mode_not_clarify_when_no_ambiguous():
         "needs_clarification": False,
         "required_outputs": ["exercise_protocol"],
         "messages": [
-            ToolMessage(content=normal_result, tool_call_id="call-1", name="memory_search"),
+            ToolMessage(content=normal_result, tool_call_id="call-1", name="kb_search"),
         ],
     }
 

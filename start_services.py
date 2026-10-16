@@ -183,6 +183,14 @@ def _stm_backend_configured() -> bool:
 if not _stm_backend_configured():
     SERVICES["backend"]["env"] = {"STM_BACKEND": "none"}
 
+# The embedding model loads lazily (~6s on CPU); the first turn's tier-2
+# recall times out while it loads (tier2_skipped: embed_timeout, seen in M0).
+# Warm it at start-up like the agent image already does (EMBEDDING_WARMUP=1
+# in agenticRAG/Dockerfile): api/main.py runs the warm-up in a thread, so a
+# turn that needs no search never waits for it. Turns arriving while the
+# model is still loading may still skip tier 2; staging measures that window.
+SERVICES["backend"].setdefault("env", {})["EMBEDDING_WARMUP"] = "1"
+
 # Order matters: backend first, then frontend, then tts.
 # `docker` and `test-ui` are both absent from DEFAULT_ORDER on purpose — both
 # are opt-in via `--only <name>`. See their entries above for why.

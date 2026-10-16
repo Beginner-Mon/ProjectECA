@@ -465,3 +465,26 @@ async def test_synthesizer_prompt_carries_about_you():
     assert "## About you" in prompt
     assert "Short hair." in prompt
     assert "Never say you looked it up" in prompt
+
+
+# ── Khối user_facts mang ngày hôm nay ────────────────────────────────
+
+def test_user_facts_block_carries_today_date():
+    from datetime import datetime, timezone
+
+    from langgraph_agents.nodes.synthesizer import _build_user_facts
+
+    block = _build_user_facts(["- [2026-10-14] Prefers to be called Mon"])
+    today = datetime.now(timezone.utc).date().isoformat()
+    assert f"Today is {today}." in block
+    # Ngay dưới tiêu đề khối, trước lời dẫn.
+    title_idx = block.index("## What this user told you in earlier conversations")
+    date_idx = block.index(f"Today is {today}.")
+    lead_idx = block.index("The user said these themselves")
+    assert title_idx < date_idx < lead_idx
+
+
+def test_user_facts_block_empty_without_facts():
+    from langgraph_agents.nodes.synthesizer import _build_user_facts
+
+    assert _build_user_facts([]) == ""

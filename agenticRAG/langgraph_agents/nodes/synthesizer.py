@@ -446,13 +446,17 @@ def _build_user_facts(facts: list[str]) -> str:
 
     Each line carries the date it was said. Capped by whole lines, last ones
     first to go. Empty when there are none, so a user with none keeps the
-    exact prompt they had before.
+    exact prompt they had before. The fact dates are read against the
+    `Today is ...` line right under the title (UTC at runtime) — without it
+    the model once read `[2026-10-14]` as "last year".
     """
     content = render_user_facts(facts)
     if not content:
         return ""
+    today = datetime.now(timezone.utc).date().isoformat()
     return (
         "\n\n## What this user told you in earlier conversations\n"
+        f"Today is {today}.\n"
         "The user said these themselves; treat them as true. Each line has "
         "its date: a newer line replaces an older one, and today's message "
         "replaces both. Use the ones that bear on this message.\n"

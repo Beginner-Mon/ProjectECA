@@ -47,8 +47,11 @@ def _embed(vec=None, error=None):
     svc = MagicMock()
     if error is not None:
         svc.aembed_query = AsyncMock(side_effect=error)
+        svc.aembed_queries = AsyncMock(side_effect=error)
     else:
         svc.aembed_query = AsyncMock(return_value=vec or [0.1] * 8)
+        svc.aembed_queries = AsyncMock(
+            side_effect=lambda qs: [[0.1] * 8 for _ in qs])
     return svc
 
 
@@ -142,6 +145,7 @@ async def test_tier2_embed_timeout_leaves_the_turn_running(caplog):
         return [0.1]
 
     slow.aembed_query = hang
+    slow.aembed_queries = hang
     pg = AsyncMock()
     pg.connect = AsyncMock()
     with patch.object(mem, "get_pg_client", return_value=pg), \
@@ -161,6 +165,64 @@ async def test_tier2_without_a_query_is_skipped():
     with patch.object(mem, "_tier2_config", return_value=dict(_CFG)):
         assert await mem._load_tier2_facts("u-1", "s-now", None) == (
             [], None, "no_query", None)
+
+
+@pytest.mark.asyncio
+async def test_tier2_single_sentence_embeds_one_vector():
+    """Tin nhắn một câu → đúng một vector, hành vi y như cũ."""
+    svc = _embed()
+    pg = _Pg(vector_rows=[_row("r1", "Thich pho", sim=0.92)])
+    with patch.object(mem, "get_pg_client", return_value=pg), \
+         patch("langgraph_agents.shared.get_embedding_service",
+               return_value=svc), \
+         patch.object(mem, "_tier2_config", return_value=dict(_CFG)):
+        lines, top_sim, skipped, _ms = await mem._load_tier2_facts(
+            "u-1", "s-now", "toi thich an pho")
+    assert svc.aembed_queries.await_count == 1
+    (qs,), _ = svc.aembed_queries.call_args
+    assert qs == ["toi thich an pho"]
+    assert lines == ["- [2026-10-14] Thich pho"]
+    assert top_sim == 0.92 and skipped is None
+
+
+@pytest.mark.asyncio
+async def test_tier2_compound_message_embeds_whole_plus_first_sentences():
+    """Câu gộp → cả tin nhắn + tối đa 3 câu đầu, gửi một lô duy nhất."""
+    svc = _embed()
+    pg = _Pg(vector_rows=[_row("r1", "Thich pho", sim=0.9)])
+    query = ("Ten toi la Mon. Toi thich an pho. "
+             "Goi toi dau khi leo cau thang. Vai toi moi khi gio tay cao")
+    with patch.object(mem, "get_pg_client", return_value=pg), \
+         patch("langgraph_agents.shared.get_embedding_service",
+               return_value=svc), \
+         patch.object(mem, "_tier2_config", return_value=dict(_CFG)):
+        lines, _top, _skipped, _ms = await mem._load_tier2_facts(
+            "u-1", "s-now", query)
+    assert svc.aembed_queries.await_count == 1
+    (qs,), _ = svc.aembed_queries.call_args
+    assert qs[0] == query
+    assert qs[1:] == ["Ten toi la Mon", "Toi thich an pho",
+                      "Goi toi dau khi leo cau thang"]
+    assert len(qs) == 4
+    assert lines == ["- [2026-10-14] Thich pho"]
+
+
+@pytest.mark.asyncio
+async def test_tier2_similarity_is_the_max_across_vectors():
+    """Điểm mỗi fact là giá trị lớn nhất giữa các vector (GREATEST)."""
+    pg = _Pg(vector_rows=[_row("r1", "Thich pho", sim=0.9)])
+    with patch.object(mem, "get_pg_client", return_value=pg), \
+         patch("langgraph_agents.shared.get_embedding_service",
+               return_value=_embed()), \
+         patch.object(mem, "_tier2_config", return_value=dict(_CFG)):
+        await mem._load_tier2_facts(
+            "u-1", "s-now", "Ten toi la Mon. Toi thich an pho")
+    sql = pg.statements[0]
+    assert "GREATEST" in sql
+    # Whole message + 2 sentences = 3 vectors, one distance term each;
+    # ORDER BY reuses the similarity alias instead of repeating them.
+    assert sql.count("embedding <=>") == 3
+    assert "ORDER BY similarity DESC" in sql
 
 
 @pytest.mark.asyncio

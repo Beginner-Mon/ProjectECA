@@ -151,6 +151,29 @@ def _tier2_line(row) -> str:
     return f"- [{day}] {label}{row['fact_text']}"
 
 
+def _split_tier2_queries(query: str) -> list[str]:
+    """Whole message + up to 3 first sentences (fragments under 3 words out).
+
+    A two-intent turn dilutes to one vector: each intent's facts can fall
+    under the 0.86 floor. One sentence stays one vector — exactly the old
+    behaviour. Sentences split on `.`, `?`, `!` and newlines.
+    """
+    import re
+    fragments = [
+        p.strip()
+        for line in (query or "").splitlines()
+        for p in re.split(r"[.?!]+", line)
+    ]
+    sentences = [p for p in fragments if p and len(p.split()) >= 3][:3]
+    if len(sentences) <= 1:
+        return [query]
+    queries = [query]
+    for s in sentences:
+        if s not in queries:
+            queries.append(s)
+    return queries[:4]
+
+
 async def _load_tier2_facts(
     user_id: str, session_id: str, query: str | None,
 ) -> tuple[list[str], float | None, str | None, int | None]:
@@ -169,10 +192,11 @@ async def _load_tier2_facts(
     cfg = _tier2_config()
     if not query:
         return [], None, "no_query", None
+    queries = _split_tier2_queries(query)
     t0 = time.perf_counter()
     try:
-        vector = await asyncio.wait_for(
-            get_embedding_service().aembed_query(query),
+        vectors = await asyncio.wait_for(
+            get_embedding_service().aembed_queries(queries),
             timeout=cfg["timeout_ms"] / 1000,
         )
     except asyncio.TimeoutError:
@@ -186,19 +210,25 @@ async def _load_tier2_facts(
     try:
         pg = get_pg_client()
         await pg.connect()
+        # Each fact scores the MAX across vectors (GREATEST, after the old
+        # turn_index search): the whole message plus each sentence fragment.
+        sim_terms = ", ".join(
+            f"1 - (embedding <=> ${i + 1})" for i in range(len(vectors))
+        )
+        user_p, sess_p, topk_p = len(vectors) + 1, len(vectors) + 2, len(vectors) + 3
         rows = await pg.fetch(
-            """
+            f"""
             SELECT id, fact_text, project, said_at,
-                   1 - (embedding <=> $1) AS similarity
+                   GREATEST({sim_terms}) AS similarity
             FROM user_memory
-            WHERE user_id = $2 AND valid = true
+            WHERE user_id = ${user_p} AND valid = true
               AND tier = 2 AND status = 'active'
               AND embedding IS NOT NULL
-              AND last_seen_session_id IS DISTINCT FROM $3::uuid
-            ORDER BY embedding <=> $1
-            LIMIT $4
+              AND last_seen_session_id IS DISTINCT FROM ${sess_p}::uuid
+            ORDER BY similarity DESC
+            LIMIT ${topk_p}
             """,
-            vector, user_id, session_id, cfg["top_k"],
+            *vectors, user_id, session_id, cfg["top_k"],
         )
         top_sim = max((float(r["similarity"]) for r in rows), default=None)
         hits = [r for r in rows if float(r["similarity"]) >= cfg["min_similarity"]]

@@ -1,0 +1,641 @@
+{
+ "label": "M1",
+ "model": "qwen/qwen3.8-27b via Groq",
+ "stats": {
+  "groups": {
+   "m": {
+    "passed": 2,
+    "total": 3,
+    "invalid": 0,
+    "rate": 0.667
+   }
+  },
+  "overall": {
+   "passed": 2,
+   "scored": 3,
+   "invalid": 0
+  },
+  "memory_node_ms": {
+   "n": 3,
+   "p50": 6924,
+   "p95": 7020
+  },
+  "retrieval_top_sim": {
+   "b_e_max": null,
+   "b_e_values": [],
+   "f_values": []
+  },
+  "background_per_turn": {
+   "llm_calls": 0.0,
+   "tokens": 0.0
+  },
+  "turn_tokens_avg": 2591.3,
+  "per_1000_turns": {
+   "background_tokens": 0,
+   "turn_tokens": 2591333
+  }
+ },
+ "scenarios": [
+  {
+   "scenario": "m_name",
+   "user_id": "517af35f-a063-544a-8fa1-8f2930557b46",
+   "sessions": [
+    "d92d2e68-73ef-55f5-9833-c5e4eba9b88b",
+    "3d2aa860-521a-5fc6-ba17-6b446011ca6d"
+   ],
+   "seed_turns": 2,
+   "turns": [
+    {
+     "query": "who am I? tôi bị đau lưng, gợi ý vài bài tập giúp tôi",
+     "session_id": "3d2aa860-521a-5fc6-ba17-6b446011ca6d",
+     "locale": "vi",
+     "status": 200,
+     "error": null,
+     "answer": "Bạn là Mon. Đau lưng thì mình có vài gợi ý trong thư viện ECA, nhưng trước hết cần loại trừ các dấu hiệu nguy hiểm.\n\n**Nếu bạn có bất kỳ triệu chứng nào sau đây, hãy gọi 999 hoặc đến cấp cứu ngay (NHS):**\n*   Đau, tê, yếu hoặc mất cảm giác ở cả hai chân\n*   Mất cảm giác quanh vùng sinh dục hoặc hậu môn\n*   Thay đổi chức năng bàng quang hoặc ruột (khó đi tiểu, tiểu không kiểm soát)\n*   Đau ngực\n*   Đau bắt đầu sau tai nạn nghiêm trọng\n\nNếu không có các dấu hiệu trên, đây là các bài tập trong thư viện ECA cho vùng lưng dưới:\n\n**1. Back Extension (và các biến thể TBS Back Extension, Hyperextension - Gethin Variation)**\n*   **Mô tả:** Tập sức mạnh cho lưng dưới, cơ mông và hamstring. Thường thực hiện trên ghế nghiêng 45 độ, chân được cố định.\n*   **Tần suất/Rep:**\n    *   Không tạ: 15-20 reps hoặc nhiều hơn (ECA's exercise library).\n    *   Có tạ: 8-12 reps mỗi set (ECA's exercise library).\n*   **Lưu ý an toàn:** **Dừng lại ngay nếu cơn đau trở nên tồi tệ hơn và đi khám bác sĩ để được tư vấn (NHS).**\n\n**Chống chỉ định (Contraindication):**\n*   Không tập nếu bạn có các dấu hiệu nguy hiểm cấp tính đã liệt kê ở trên.\n*   Nếu cơn đau lưng dữ dội hoặc không giảm sau vài tuần, cần gặp bác sĩ để được chỉ định phương pháp điều trị phù hợp như vật lý trị liệu, thủ thuật hoặc phẫu thuật (NHS).\n\nNgoài tập luyện, NHS khuyến cáo bạn nên:\n*   Tiếp tục các hoạt động hàng ngày, tránh nằm bất động lâu.\n*   Dùng túi đá chườm (bọc khăn) để giảm đau và sưng, hoặc chườm ấm để giảm co cứng cơ.\n*   Thăm hỏi dược sĩ hoặc bác sĩ về việc dùng thuốc giảm đau chống viêm như ibuprofen (không tự ý dùng paracetamol đơn độc cho đau lưng).\n\nBạn muốn bắt đầu với bài nào trước?\n\n*Nguồn: thư viện bài tập của ECA — Back extension, TBS Back Extension, Hyperextension - Gethin Variation; hướng dẫn sức khỏe của NHS.*\n\n*Đây là gợi ý, không thay thế khám lâm sàng.*",
+     "done": {
+      "request_id": "d737eff8-0020-4776-9e3b-51b4e7f71d06",
+      "total_tokens": 2943,
+      "required_outputs": [
+       "scope_disclaimer",
+       "contraindication",
+       "evidence_citation"
+      ]
+     },
+     "t_to_done_s": 21.24,
+     "t_housekeep_s": 0.0,
+     "t_total_s": 21.24,
+     "logs": [
+      {
+       "message": "node_complete",
+       "created": 1792118436.5782168,
+       "node": "memory",
+       "request_id": "d737eff8-0020-4776-9e3b-51b4e7f71d06",
+       "elapsed_ms": 6910,
+       "user_instructions_count": 0,
+       "user_facts_count": 0,
+       "tier2_top_similarity": null,
+       "tier2_embed_ms": null,
+       "tier2_skipped": "embed_timeout",
+       "summary_chunks_count": 0,
+       "summary_present": false,
+       "recent_raw_count": 0
+      },
+      {
+       "message": "node_complete",
+       "created": 1792118437.4687932,
+       "node": "planner",
+       "request_id": "d737eff8-0020-4776-9e3b-51b4e7f71d06",
+       "elapsed_ms": 889,
+       "tags": [
+        "scope_disclaimer",
+        "contraindication",
+        "evidence_citation"
+       ],
+       "needs_retrieval": true,
+       "needs_clarification": false,
+       "cache_hit_tokens": null,
+       "cache_miss_tokens": null,
+       "llm_fallback_used": false
+      },
+      {
+       "message": "node_complete",
+       "created": 1792118438.1226907,
+       "node": "retriever_agent",
+       "request_id": "d737eff8-0020-4776-9e3b-51b4e7f71d06",
+       "elapsed_ms": 653,
+       "tokens": 898,
+       "tool_calls": 3,
+       "tool_names": [
+        "kb_search",
+        "kb_search",
+        "resume_last_session"
+       ],
+       "cache_hit_tokens": null,
+       "cache_miss_tokens": null
+      },
+      {
+       "message": "node_complete",
+       "created": 1792118444.5081153,
+       "node": "synthesizer",
+       "request_id": "d737eff8-0020-4776-9e3b-51b4e7f71d06",
+       "elapsed_ms": 1460,
+       "tokens": 2943,
+       "mode": "synthesize",
+       "output_chars": 1667,
+       "streamed": true,
+       "cache_hit_tokens": null,
+       "cache_miss_tokens": null,
+       "llm_fallback_used": false,
+       "prompt_blocks": {
+        "persona": 2802,
+        "body_state": 0,
+        "about_you": 0,
+        "user_instructions": 0,
+        "user_facts": 0,
+        "session_summary": 0,
+        "task": 6362,
+        "evidence": 4967,
+        "history": 0,
+        "voice_card": 717
+       },
+       "input_tokens": 2456,
+       "output_tokens": 487
+      },
+      {
+       "message": "chat_complete",
+       "created": 1792118450.894655,
+       "elapsed_ms": 21239,
+       "total_tokens": 2943,
+       "required_outputs": [
+        "scope_disclaimer",
+        "contraindication",
+        "evidence_citation"
+       ]
+      }
+     ]
+    }
+   ],
+   "probes": [
+    {
+     "group": "m",
+     "ask": "who am I? tôi bị đau lưng, gợi ý vài bài tập giúp tôi",
+     "where": "new",
+     "session_id": "3d2aa860-521a-5fc6-ba17-6b446011ca6d",
+     "expect_any": [],
+     "expect_all": [
+      [
+       "mon"
+      ],
+      [
+       "lung"
+      ]
+     ],
+     "expect_tools": [
+      "kb_search"
+     ],
+     "forbid_mode": "clarify",
+     "forbid": [],
+     "answer": "Bạn là Mon. Đau lưng thì mình có vài gợi ý trong thư viện ECA, nhưng trước hết cần loại trừ các dấu hiệu nguy hiểm.\n\n**Nếu bạn có bất kỳ triệu chứng nào sau đây, hãy gọi 999 hoặc đến cấp cứu ngay (NHS):**\n*   Đau, tê, yếu hoặc mất cảm giác ở cả hai chân\n*   Mất cảm giác quanh vùng sinh dục hoặc hậu môn\n*   Thay đổi chức năng bàng quang hoặc ruột (khó đi tiểu, tiểu không kiểm soát)\n*   Đau ngực\n*   Đau bắt đầu sau tai nạn nghiêm trọng\n\nNếu không có các dấu hiệu trên, đây là các bài tập trong thư viện ECA cho vùng lưng dưới:\n\n**1. Back Extension (và các biến thể TBS Back Extension, Hyperextension - Gethin Variation)**\n*   **Mô tả:** Tập sức mạnh cho lưng dưới, cơ mông và hamstring. Thường thực hiện trên ghế nghiêng 45 độ, chân được cố định.\n*   **Tần suất/Rep:**\n    *   Không tạ: 15-20 reps hoặc nhiều hơn (ECA's exercise library).\n    *   Có tạ: 8-12 reps mỗi set (ECA's exercise library).\n*   **Lưu ý an toàn:** **Dừng lại ngay nếu cơn đau trở nên tồi tệ hơn và đi khám bác sĩ để được tư vấn (NHS).**\n\n**Chống chỉ định (Contraindication):**\n*   Không tập nếu bạn có các dấu hiệu nguy hiểm cấp tính đã liệt kê ở trên.\n*   Nếu cơn đau lưng dữ dội hoặc không giảm sau vài tuần, cần gặp bác sĩ để được chỉ định phương pháp điều trị phù hợp như vật lý trị liệu, thủ thuật hoặc phẫu thuật (NHS).\n\nNgoài tập luyện, NHS khuyến cáo bạn nên:\n*   Tiếp tục các hoạt động hàng ngày, tránh nằm bất động lâu.\n*   Dùng túi đá chườm (bọc khăn) để giảm đau và sưng, hoặc chườm ấm để giảm co cứng cơ.\n*   Thăm hỏi dược sĩ hoặc bác sĩ về việc dùng thuốc giảm đau chống viêm như ibuprofen (không tự ý dùng paracetamol đơn độc cho đau lưng).\n\nBạn muốn bắt đầu với bài nào trước?\n\n*Nguồn: thư viện bài tập của ECA — Back extension, TBS Back Extension, Hyperextension - Gethin Variation; hướng dẫn sức khỏe của NHS.*\n\n*Đây là gợi ý, không thay thế khám lâm sàng.*",
+     "answer_source": "stream",
+     "request_id": "d737eff8-0020-4776-9e3b-51b4e7f71d06",
+     "error": null,
+     "attempt": 1,
+     "invalid": [],
+     "passed": true,
+     "hit": [],
+     "leak": [],
+     "all_hit": [
+      "mon",
+      "lung"
+     ],
+     "all_miss": [],
+     "tool_names": [
+      "kb_search",
+      "resume_last_session"
+     ],
+     "synth_mode": "synthesize",
+     "tools_missing": [],
+     "mode_hit": false,
+     "retrieval_top_sim": null,
+     "retrieval_src": "memory_search",
+     "memory_ms": 6910,
+     "t_to_done_s": 21.24,
+     "t_housekeep_s": 0.0,
+     "total_tokens": 2943,
+     "background": {
+      "llm_calls": 0,
+      "tokens": 0,
+      "elapsed_ms": 0
+     }
+    }
+   ],
+   "seed_llm_calls": 1
+  },
+  {
+   "scenario": "m_food",
+   "user_id": "f4b0de94-1cb0-562c-928a-e1d26686c176",
+   "sessions": [
+    "77a09894-f59f-57fb-abf5-8d2e23da4a76",
+    "ce1a39f9-8606-5ee1-b0c5-156f88975499"
+   ],
+   "seed_turns": 2,
+   "turns": [
+    {
+     "query": "Món ăn yêu thích của tôi là gì? Với lại gối tôi đau khi lên cầu thang thì nên tập gì?",
+     "session_id": "ce1a39f9-8606-5ee1-b0c5-156f88975499",
+     "locale": "vi",
+     "status": 200,
+     "error": null,
+     "answer": "Mình không biết món ăn yêu thích của bạn là gì. Đây là thông tin cá nhân nên mình không nắm được.\n\nVề việc gối đau khi leo cầu thang, thư viện ECA có bài **Step-up with knee raise** (Bước lên, nâng đầu gối). Bài này nhắm vào cơ đùi trước, mông và gân sau, giúp tăng lực mở hông và ổn định khớp gối.\n\n**Cách thực hiện:**\n1. Đứng trước một bậc cầu thang hoặc khối vững chắc.\n2. Bước một chân lên, đẩy gối chân kia lên cao nhất có thể.\n3. Hạ chân xuống một cách có kiểm soát.\n\n**Lưu ý an toàn:**\n- **Dừng ngay nếu thấy đau nhói hoặc khó chịu tăng lên ở vùng gối.**\n- Giữ lưng thẳng và đầu gối hướng về phía trước.\n\nNgoài ra, trang NHS có gợi ý bài **Mini-squats** (Ngồi xổm nhẹ) để tăng sức mạnh cơ tứ đầu đùi, hỗ trợ khớp gối:\n1. Đặt tay lên lưng ghế để giữ thăng bằng.\n2. Chân mở rộng bằng hông, từ từ gập gối đến mức thoải mái.\n3. Đứng dậy, siết chặt cơ mông.\n4. Lặp lại 5 lần.\n\n**Chống chỉ định:**\n- **Không tập nếu bạn đang có chấn thương cấp tính, viêm khớp nặng hoặc bác sĩ đã hạn chế các động tác chịu lực lên gối.**\n- **Nếu cơn đau lan xuống cẳng chân hoặc gây tê bì, hãy đi khám ngay thay vì tập luyện.**\n\nBạn nên bắt đầu với cường độ thấp và tăng dần. Nếu đau không giảm sau vài ngày, hãy gặp bác sĩ để được chẩn đoán chính xác.\n\n*Nguồn: thư viện bài tập của ECA — Step-up with knee raise; hướng dẫn sức khỏe của NHS.*\n\n*Đây là gợi ý, không thay thế khám lâm sàng.*",
+     "done": {
+      "request_id": "9da4e23d-7aa6-4598-9893-28ceba77ad36",
+      "total_tokens": 2578,
+      "required_outputs": [
+       "scope_disclaimer",
+       "contraindication",
+       "evidence_citation"
+      ]
+     },
+     "t_to_done_s": 17.49,
+     "t_housekeep_s": 0.0,
+     "t_total_s": 17.49,
+     "logs": [
+      {
+       "message": "node_complete",
+       "created": 1792118543.3141174,
+       "node": "memory",
+       "request_id": "9da4e23d-7aa6-4598-9893-28ceba77ad36",
+       "elapsed_ms": 6924,
+       "user_instructions_count": 1,
+       "user_facts_count": 0,
+       "tier2_top_similarity": null,
+       "tier2_embed_ms": null,
+       "tier2_skipped": "embed_timeout",
+       "summary_chunks_count": 0,
+       "summary_present": false,
+       "recent_raw_count": 0
+      },
+      {
+       "message": "node_complete",
+       "created": 1792118544.2857563,
+       "node": "planner",
+       "request_id": "9da4e23d-7aa6-4598-9893-28ceba77ad36",
+       "elapsed_ms": 970,
+       "tags": [
+        "scope_disclaimer",
+        "contraindication",
+        "evidence_citation"
+       ],
+       "needs_retrieval": true,
+       "needs_clarification": false,
+       "cache_hit_tokens": null,
+       "cache_miss_tokens": null,
+       "llm_fallback_used": false
+      },
+      {
+       "message": "node_complete",
+       "created": 1792118544.854365,
+       "node": "retriever_agent",
+       "request_id": "9da4e23d-7aa6-4598-9893-28ceba77ad36",
+       "elapsed_ms": 567,
+       "tokens": 895,
+       "tool_calls": 2,
+       "tool_names": [
+        "recall_self",
+        "kb_search"
+       ],
+       "cache_hit_tokens": null,
+       "cache_miss_tokens": null
+      },
+      {
+       "message": "node_complete",
+       "created": 1792118547.6987548,
+       "node": "synthesizer",
+       "request_id": "9da4e23d-7aa6-4598-9893-28ceba77ad36",
+       "elapsed_ms": 1166,
+       "tokens": 2578,
+       "mode": "synthesize",
+       "output_chars": 1236,
+       "streamed": true,
+       "cache_hit_tokens": null,
+       "cache_miss_tokens": null,
+       "llm_fallback_used": false,
+       "prompt_blocks": {
+        "persona": 2802,
+        "body_state": 0,
+        "about_you": 696,
+        "user_instructions": 256,
+        "user_facts": 0,
+        "session_summary": 0,
+        "task": 4489,
+        "evidence": 3062,
+        "history": 0,
+        "voice_card": 717
+       },
+       "input_tokens": 2215,
+       "output_tokens": 363
+      },
+      {
+       "message": "chat_complete",
+       "created": 1792118553.8567314,
+       "elapsed_ms": 17479,
+       "total_tokens": 2578,
+       "required_outputs": [
+        "scope_disclaimer",
+        "contraindication",
+        "evidence_citation"
+       ]
+      }
+     ]
+    }
+   ],
+   "probes": [
+    {
+     "group": "m",
+     "ask": "Món ăn yêu thích của tôi là gì? Với lại gối tôi đau khi lên cầu thang thì nên tập gì?",
+     "where": "new",
+     "session_id": "ce1a39f9-8606-5ee1-b0c5-156f88975499",
+     "expect_any": [],
+     "expect_all": [
+      [
+       "pho"
+      ],
+      [
+       "goi"
+      ]
+     ],
+     "expect_tools": [
+      "kb_search"
+     ],
+     "forbid_mode": null,
+     "forbid": [],
+     "answer": "Mình không biết món ăn yêu thích của bạn là gì. Đây là thông tin cá nhân nên mình không nắm được.\n\nVề việc gối đau khi leo cầu thang, thư viện ECA có bài **Step-up with knee raise** (Bước lên, nâng đầu gối). Bài này nhắm vào cơ đùi trước, mông và gân sau, giúp tăng lực mở hông và ổn định khớp gối.\n\n**Cách thực hiện:**\n1. Đứng trước một bậc cầu thang hoặc khối vững chắc.\n2. Bước một chân lên, đẩy gối chân kia lên cao nhất có thể.\n3. Hạ chân xuống một cách có kiểm soát.\n\n**Lưu ý an toàn:**\n- **Dừng ngay nếu thấy đau nhói hoặc khó chịu tăng lên ở vùng gối.**\n- Giữ lưng thẳng và đầu gối hướng về phía trước.\n\nNgoài ra, trang NHS có gợi ý bài **Mini-squats** (Ngồi xổm nhẹ) để tăng sức mạnh cơ tứ đầu đùi, hỗ trợ khớp gối:\n1. Đặt tay lên lưng ghế để giữ thăng bằng.\n2. Chân mở rộng bằng hông, từ từ gập gối đến mức thoải mái.\n3. Đứng dậy, siết chặt cơ mông.\n4. Lặp lại 5 lần.\n\n**Chống chỉ định:**\n- **Không tập nếu bạn đang có chấn thương cấp tính, viêm khớp nặng hoặc bác sĩ đã hạn chế các động tác chịu lực lên gối.**\n- **Nếu cơn đau lan xuống cẳng chân hoặc gây tê bì, hãy đi khám ngay thay vì tập luyện.**\n\nBạn nên bắt đầu với cường độ thấp và tăng dần. Nếu đau không giảm sau vài ngày, hãy gặp bác sĩ để được chẩn đoán chính xác.\n\n*Nguồn: thư viện bài tập của ECA — Step-up with knee raise; hướng dẫn sức khỏe của NHS.*\n\n*Đây là gợi ý, không thay thế khám lâm sàng.*",
+     "answer_source": "stream",
+     "request_id": "9da4e23d-7aa6-4598-9893-28ceba77ad36",
+     "error": null,
+     "attempt": 1,
+     "invalid": [],
+     "passed": false,
+     "hit": [],
+     "leak": [],
+     "all_hit": [
+      "goi"
+     ],
+     "all_miss": [
+      [
+       "pho"
+      ]
+     ],
+     "tool_names": [
+      "recall_self",
+      "kb_search"
+     ],
+     "synth_mode": "synthesize",
+     "tools_missing": [],
+     "mode_hit": false,
+     "retrieval_top_sim": null,
+     "retrieval_src": "memory_search",
+     "memory_ms": 6924,
+     "t_to_done_s": 17.49,
+     "t_housekeep_s": 0.0,
+     "total_tokens": 2578,
+     "background": {
+      "llm_calls": 0,
+      "tokens": 0,
+      "elapsed_ms": 0
+     }
+    }
+   ],
+   "seed_llm_calls": 1
+  },
+  {
+   "scenario": "m_ambig",
+   "user_id": "d8c0d232-88b2-53ff-9c45-9d1606eab544",
+   "sessions": [
+    "4946f0b9-1bf8-5343-a959-70c362941d6b",
+    "94e22a30-093f-57bd-8bc5-0c20a150bd9f",
+    "8a2b0509-042f-5ddc-b88e-9bd4de645370"
+   ],
+   "seed_turns": 2,
+   "turns": [
+    {
+     "query": "hôm trước mình nói gì nhỉ? và cho tôi bài giãn cơ cổ",
+     "session_id": "8a2b0509-042f-5ddc-b88e-9bd4de645370",
+     "locale": "vi",
+     "status": 200,
+     "error": null,
+     "answer": "Hôm trước bạn hỏi bài tập lưng, mình nhắc lại cat-cow 10 lần và bird-dog mỗi bên 8 lần.\n\nVề giãn cơ cổ, thư viện ECA có bài **Neck-SMR** (cấp độ trung bình, chỉ dùng cơ thể). Dưới đây là 2 bài bổ trợ từ nguồn NHS (nhs.uk):\n\n**1. Xoay cổ (Neck rotation) - NHS**\n*   Ngồi thẳng, vai thả lỏng, nhìn thẳng.\n*   Xoay đầu chậm rãi về phía vai trái đến mức thoải mái. Giữ 5 giây.\n*   Về vị trí ban đầu. Lặp lại sang bên phải.\n*   Làm 3 lần xoay mỗi bên.\n*   **Dừng ngay nếu bạn thấy chóng mặt, tê bì tay hoặc đau nhói.**\n\n**2. Kéo giãn cổ (Neck stretch) - NHS**\n*   Ngồi thẳng, nhìn thẳng. Dùng tay phải giữ vai trái cố định xuống sàn.\n*   Chậm rãi nghiêng đầu sang phải, giữ vai trái không nhấc lên.\n*   Giữ 5 giây. Lặp lại sang bên kia.\n*   Làm 3 lần mỗi bên.\n*   **Dừng ngay nếu bạn cảm thấy đau dữ dội hoặc mất thăng bằng.**\n\n**Chống chỉ định (Contraindications):**\nBạn **KHÔNG NÊN** thực hiện các bài tập này nếu bạn đang bị chấn thương cổ cấp tính, gãy xương, viêm khớp nặng hoặc có tiền sử trượt đốt sống cổ. Nếu có bất kỳ tình trạng nào trong số này, hãy tham vấn bác sĩ trước.\n\nBạn thử làm set xoay cổ trước nhé, nhẹ nhàng thôi.\n\n*Nguồn: thư viện bài tập của ECA — Neck-SMR; hướng dẫn sức khỏe của NHS.*\n\n*Đây là gợi ý, không thay thế khám lâm sàng.*",
+     "done": {
+      "request_id": "e8618963-51c6-43ea-8a2f-5f3b073256cf",
+      "total_tokens": 2253,
+      "required_outputs": [
+       "scope_disclaimer",
+       "contraindication",
+       "evidence_citation"
+      ]
+     },
+     "t_to_done_s": 23.83,
+     "t_housekeep_s": 0.0,
+     "t_total_s": 23.83,
+     "logs": [
+      {
+       "message": "node_complete",
+       "created": 1792118669.730356,
+       "node": "memory",
+       "request_id": "e8618963-51c6-43ea-8a2f-5f3b073256cf",
+       "elapsed_ms": 7020,
+       "user_instructions_count": 0,
+       "user_facts_count": 0,
+       "tier2_top_similarity": null,
+       "tier2_embed_ms": null,
+       "tier2_skipped": "embed_timeout",
+       "summary_chunks_count": 0,
+       "summary_present": false,
+       "recent_raw_count": 0
+      },
+      {
+       "message": "node_complete",
+       "created": 1792118670.7681642,
+       "node": "planner",
+       "request_id": "e8618963-51c6-43ea-8a2f-5f3b073256cf",
+       "elapsed_ms": 1035,
+       "tags": [
+        "scope_disclaimer",
+        "contraindication",
+        "evidence_citation"
+       ],
+       "needs_retrieval": true,
+       "needs_clarification": false,
+       "cache_hit_tokens": null,
+       "cache_miss_tokens": null,
+       "llm_fallback_used": false
+      },
+      {
+       "message": "node_complete",
+       "created": 1792118671.2386954,
+       "node": "retriever_agent",
+       "request_id": "e8618963-51c6-43ea-8a2f-5f3b073256cf",
+       "elapsed_ms": 469,
+       "tokens": 836,
+       "tool_calls": 2,
+       "tool_names": [
+        "resume_last_session",
+        "kb_search"
+       ],
+       "cache_hit_tokens": null,
+       "cache_miss_tokens": null
+      },
+      {
+       "message": "node_complete",
+       "created": 1792118680.3542287,
+       "node": "synthesizer",
+       "request_id": "e8618963-51c6-43ea-8a2f-5f3b073256cf",
+       "elapsed_ms": 1122,
+       "tokens": 2253,
+       "mode": "synthesize",
+       "output_chars": 1130,
+       "streamed": true,
+       "cache_hit_tokens": null,
+       "cache_miss_tokens": null,
+       "llm_fallback_used": false,
+       "prompt_blocks": {
+        "persona": 2802,
+        "body_state": 0,
+        "about_you": 0,
+        "user_instructions": 0,
+        "user_facts": 0,
+        "session_summary": 0,
+        "task": 3894,
+        "evidence": 2500,
+        "history": 0,
+        "voice_card": 717
+       },
+       "input_tokens": 1895,
+       "output_tokens": 358
+      },
+      {
+       "message": "chat_complete",
+       "created": 1792118686.5225751,
+       "elapsed_ms": 23824,
+       "total_tokens": 2253,
+       "required_outputs": [
+        "scope_disclaimer",
+        "contraindication",
+        "evidence_citation"
+       ]
+      }
+     ]
+    }
+   ],
+   "probes": [
+    {
+     "group": "m",
+     "ask": "hôm trước mình nói gì nhỉ? và cho tôi bài giãn cơ cổ",
+     "where": "new",
+     "session_id": "8a2b0509-042f-5ddc-b88e-9bd4de645370",
+     "expect_any": [],
+     "expect_all": [
+      [
+       "co"
+      ]
+     ],
+     "expect_tools": [],
+     "forbid_mode": "clarify",
+     "forbid": [],
+     "answer": "Hôm trước bạn hỏi bài tập lưng, mình nhắc lại cat-cow 10 lần và bird-dog mỗi bên 8 lần.\n\nVề giãn cơ cổ, thư viện ECA có bài **Neck-SMR** (cấp độ trung bình, chỉ dùng cơ thể). Dưới đây là 2 bài bổ trợ từ nguồn NHS (nhs.uk):\n\n**1. Xoay cổ (Neck rotation) - NHS**\n*   Ngồi thẳng, vai thả lỏng, nhìn thẳng.\n*   Xoay đầu chậm rãi về phía vai trái đến mức thoải mái. Giữ 5 giây.\n*   Về vị trí ban đầu. Lặp lại sang bên phải.\n*   Làm 3 lần xoay mỗi bên.\n*   **Dừng ngay nếu bạn thấy chóng mặt, tê bì tay hoặc đau nhói.**\n\n**2. Kéo giãn cổ (Neck stretch) - NHS**\n*   Ngồi thẳng, nhìn thẳng. Dùng tay phải giữ vai trái cố định xuống sàn.\n*   Chậm rãi nghiêng đầu sang phải, giữ vai trái không nhấc lên.\n*   Giữ 5 giây. Lặp lại sang bên kia.\n*   Làm 3 lần mỗi bên.\n*   **Dừng ngay nếu bạn cảm thấy đau dữ dội hoặc mất thăng bằng.**\n\n**Chống chỉ định (Contraindications):**\nBạn **KHÔNG NÊN** thực hiện các bài tập này nếu bạn đang bị chấn thương cổ cấp tính, gãy xương, viêm khớp nặng hoặc có tiền sử trượt đốt sống cổ. Nếu có bất kỳ tình trạng nào trong số này, hãy tham vấn bác sĩ trước.\n\nBạn thử làm set xoay cổ trước nhé, nhẹ nhàng thôi.\n\n*Nguồn: thư viện bài tập của ECA — Neck-SMR; hướng dẫn sức khỏe của NHS.*\n\n*Đây là gợi ý, không thay thế khám lâm sàng.*",
+     "answer_source": "stream",
+     "request_id": "e8618963-51c6-43ea-8a2f-5f3b073256cf",
+     "error": null,
+     "attempt": 1,
+     "invalid": [],
+     "passed": true,
+     "hit": [],
+     "leak": [],
+     "all_hit": [
+      "co"
+     ],
+     "all_miss": [],
+     "tool_names": [
+      "resume_last_session",
+      "kb_search"
+     ],
+     "synth_mode": "synthesize",
+     "tools_missing": [],
+     "mode_hit": false,
+     "retrieval_top_sim": null,
+     "retrieval_src": "memory_search",
+     "memory_ms": 7020,
+     "t_to_done_s": 23.83,
+     "t_housekeep_s": 0.0,
+     "total_tokens": 2253,
+     "background": {
+      "llm_calls": 0,
+      "tokens": 0,
+      "elapsed_ms": 0
+     }
+    }
+   ],
+   "seed_llm_calls": 2
+  }
+ ],
+ "runs": [
+  {
+   "started_at": "2026-10-16T09:33:51+07:00",
+   "phase": "seed",
+   "only": [
+    "m_name"
+   ],
+   "retry_invalid": false,
+   "key_label": "llm=groq-qwen3.8-27b",
+   "llm_calls": 1,
+   "turns": 0,
+   "probes": 0,
+   "quota_stops": []
+  },
+  {
+   "started_at": "2026-10-16T09:35:57+07:00",
+   "phase": "seed",
+   "only": [
+    "m_food"
+   ],
+   "retry_invalid": false,
+   "key_label": "llm=groq-qwen3.8-27b",
+   "llm_calls": 1,
+   "turns": 0,
+   "probes": 0,
+   "quota_stops": []
+  },
+  {
+   "started_at": "2026-10-16T09:38:08+07:00",
+   "phase": "seed",
+   "only": [
+    "m_ambig"
+   ],
+   "retry_invalid": false,
+   "key_label": "llm=groq-qwen3.8-27b",
+   "llm_calls": 2,
+   "turns": 0,
+   "probes": 0,
+   "quota_stops": []
+  },
+  {
+   "started_at": "2026-10-16T09:40:09+07:00",
+   "phase": "probes",
+   "only": [
+    "m_name"
+   ],
+   "retry_invalid": false,
+   "key_label": "llm=groq-qwen3.8-27b",
+   "llm_calls": 3,
+   "turns": 1,
+   "probes": 1,
+   "quota_stops": []
+  },
+  {
+   "started_at": "2026-10-16T09:41:57+07:00",
+   "phase": "probes",
+   "only": [
+    "m_food"
+   ],
+   "retry_invalid": false,
+   "key_label": "llm=groq-qwen3.8-27b",
+   "llm_calls": 3,
+   "turns": 2,
+   "probes": 2,
+   "quota_stops": []
+  },
+  {
+   "started_at": "2026-10-16T09:44:03+07:00",
+   "phase": "probes",
+   "only": [
+    "m_ambig"
+   ],
+   "retry_invalid": false,
+   "key_label": "llm=groq-qwen3.8-27b",
+   "llm_calls": 3,
+   "turns": 3,
+   "probes": 3,
+   "quota_stops": []
+  }
+ ]
+}

@@ -976,6 +976,14 @@ def main(argv: list[str]) -> int:
         print(json.dumps({"errors": [], "estimate": estimate_calls(spec, only, args.label),
                           "only": sorted(only) or "all"}, ensure_ascii=False, indent=1))
         return 0
+    try:
+        sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+    except Exception:
+        pass
+    try:
+        sys.stderr.reconfigure(encoding="utf-8", errors="replace")
+    except Exception:
+        pass
     check_not_prod()
     from langgraph_agents.shared.logging import configure_root_logger
 

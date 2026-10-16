@@ -1,0 +1,2830 @@
+{
+ "label": "V0",
+ "facts": 30,
+ "probes": 77,
+ "correct": 63,
+ "noise": 14,
+ "recall_at": {
+  "1": {
+   "hit": 47,
+   "total": 63,
+   "rate": 0.746
+  },
+  "2": {
+   "hit": 51,
+   "total": 63,
+   "rate": 0.8095
+  },
+  "3": {
+   "hit": 54,
+   "total": 63,
+   "rate": 0.8571
+  },
+  "5": {
+   "hit": 56,
+   "total": 63,
+   "rate": 0.8889
+  }
+ },
+ "noise_maxes": [
+  0.7241,
+  0.7306,
+  0.7664,
+  0.787,
+  0.7997,
+  0.8038,
+  0.8075,
+  0.8143,
+  0.8144,
+  0.8206,
+  0.8282,
+  0.8283,
+  0.8313,
+  0.8343
+ ],
+ "noise_p95": 0.8343,
+ "chosen_k": null,
+ "tier2_floor": 0.84,
+ "below_floor": [
+  {
+   "id": "q_name_01",
+   "ask": "brother do you know my name?",
+   "expect": "f_name",
+   "score": 0.7833,
+   "rank": 1
+  },
+  {
+   "id": "q_name_02",
+   "ask": "then who am I?",
+   "expect": "f_name",
+   "score": 0.7864,
+   "rank": 12
+  },
+  {
+   "id": "q_name_03",
+   "ask": "who am I?",
+   "expect": "f_name",
+   "score": 0.7788,
+   "rank": 5
+  },
+  {
+   "id": "q_name_04",
+   "ask": "do you know my name?",
+   "expect": "f_name",
+   "score": 0.7992,
+   "rank": 7
+  },
+  {
+   "id": "q_name_05",
+   "ask": "tên tôi là gì?",
+   "expect": "f_name",
+   "score": 0.8022,
+   "rank": 1
+  },
+  {
+   "id": "q_name_06",
+   "ask": "tôi tên gì?",
+   "expect": "f_name",
+   "score": 0.8135,
+   "rank": 1
+  },
+  {
+   "id": "q_name_08",
+   "ask": "tôi thích được gọi là gì?",
+   "expect": "f_name",
+   "score": 0.8333,
+   "rank": 1
+  },
+  {
+   "id": "q_name_09",
+   "ask": "gọi tôi là gì?",
+   "expect": "f_name",
+   "score": 0.8192,
+   "rank": 1
+  },
+  {
+   "id": "q_name_10",
+   "ask": "nhắc lại tên tôi xem nào?",
+   "expect": "f_name",
+   "score": 0.8042,
+   "rank": 14
+  },
+  {
+   "id": "q_food_03",
+   "ask": "what is my favorite food?",
+   "expect": "f_pho",
+   "score": 0.8252,
+   "rank": 3
+  },
+  {
+   "id": "q_food_04",
+   "ask": "do you remember what I like to eat?",
+   "expect": "f_pho",
+   "score": 0.8355,
+   "rank": 1
+  },
+  {
+   "id": "q_food_09",
+   "ask": "what noodles do I like and what worries me?",
+   "expect": "f_noodles",
+   "score": 0.8322,
+   "rank": 1
+  },
+  {
+   "id": "q_health_02",
+   "ask": "what week of knee rehab am I in?",
+   "expect": "f_knee_rehab",
+   "score": 0.8089,
+   "rank": 3
+  },
+  {
+   "id": "q_health_03",
+   "ask": "where do I hurt when I sit long?",
+   "expect": "f_back_pain",
+   "score": 0.8262,
+   "rank": 1
+  },
+  {
+   "id": "q_health_04",
+   "ask": "tôi bị đau ở đâu?",
+   "expect": "f_back_pain",
+   "score": 0.8141,
+   "rank": 9
+  },
+  {
+   "id": "q_health_06",
+   "ask": "which shoulder hurts when I lift my arm?",
+   "expect": "f_shoulder",
+   "score": 0.7989,
+   "rank": 2
+  },
+  {
+   "id": "q_health_08",
+   "ask": "what is my running goal?",
+   "expect": "f_run_goal",
+   "score": 0.803,
+   "rank": 1
+  },
+  {
+   "id": "q_health_11",
+   "ask": "When did I have my left knee surgery?",
+   "expect": "f_knee_surgery",
+   "score": 0.811,
+   "rank": 1
+  },
+  {
+   "id": "q_health_12",
+   "ask": "tôi mổ gối khi nào?",
+   "expect": "f_knee_surgery",
+   "score": 0.8348,
+   "rank": 1
+  },
+  {
+   "id": "q_health_14",
+   "ask": "how do I ice my swollen knee?",
+   "expect": "f_ice",
+   "score": 0.818,
+   "rank": 1
+  },
+  {
+   "id": "q_health_15",
+   "ask": "tôi có dị ứng gì không?",
+   "expect": "f_latex",
+   "score": 0.8288,
+   "rank": 1
+  },
+  {
+   "id": "q_health_16",
+   "ask": "what am I allergic to?",
+   "expect": "f_latex",
+   "score": 0.824,
+   "rank": 1
+  },
+  {
+   "id": "q_sport_02",
+   "ask": "tôi chơi cầu lông mấy lần một tuần?",
+   "expect": "f_badminton",
+   "score": 0.8016,
+   "rank": 11
+  },
+  {
+   "id": "q_sport_05",
+   "ask": "how many squats per set for my sore knee?",
+   "expect": "f_squat",
+   "score": 0.8361,
+   "rank": 1
+  },
+  {
+   "id": "q_proj_01",
+   "ask": "Cho project A thì ưu tiên gì?",
+   "expect": "f_proj_serverless",
+   "score": 0.8291,
+   "rank": 1
+  },
+  {
+   "id": "q_proj_02",
+   "ask": "what does project A prioritize?",
+   "expect": "f_proj_serverless",
+   "score": 0.7737,
+   "rank": 1
+  },
+  {
+   "id": "q_proj_03",
+   "ask": "deadline của project A là khi nào?",
+   "expect": "f_proj_deadline",
+   "score": 0.8384,
+   "rank": 1
+  },
+  {
+   "id": "q_proj_06",
+   "ask": "what is my job now?",
+   "expect": "f_job",
+   "score": 0.8307,
+   "rank": 1
+  },
+  {
+   "id": "q_style_02",
+   "ask": "should your answers be long or short for me?",
+   "expect": "f_short_reply",
+   "score": 0.8122,
+   "rank": 1
+  },
+  {
+   "id": "q_style_04",
+   "ask": "do I prefer morning or evening workouts?",
+   "expect": "f_morning_exercise",
+   "score": 0.8167,
+   "rank": 1
+  },
+  {
+   "id": "q_multi_01",
+   "ask": "who am I? tôi bị đau lưng, gợi ý vài bài tập giúp tôi",
+   "expect": "f_name",
+   "score": 0.8071,
+   "rank": 28
+  },
+  {
+   "id": "q_multi_03",
+   "ask": "tôi tên gì và sáng tôi uống gì?",
+   "expect": "f_name",
+   "score": 0.8039,
+   "rank": 11
+  },
+  {
+   "id": "q_multi_04",
+   "ask": "what is my running goal and how often do I play badminton?",
+   "expect": "f_run_goal",
+   "score": 0.7863,
+   "rank": 5
+  }
+ ],
+ "below_floor_rate": 0.5238,
+ "stop_and_report": true,
+ "results": [
+  {
+   "id": "q_name_01",
+   "ask": "brother do you know my name?",
+   "expect": "f_name",
+   "queries": [
+    "brother do you know my name?"
+   ],
+   "rank": 1,
+   "expect_score": 0.7833,
+   "top": [
+    {
+     "id": "f_name",
+     "score": 0.7833
+    },
+    {
+     "id": "f_knee_surgery",
+     "score": 0.783
+    },
+    {
+     "id": "f_vietnamese",
+     "score": 0.7827
+    },
+    {
+     "id": "f_coffee",
+     "score": 0.7781
+    },
+    {
+     "id": "f_chay",
+     "score": 0.7779
+    }
+   ],
+   "noise_max": null
+  },
+  {
+   "id": "q_name_02",
+   "ask": "then who am I?",
+   "expect": "f_name",
+   "queries": [
+    "then who am I?"
+   ],
+   "rank": 12,
+   "expect_score": 0.7864,
+   "top": [
+    {
+     "id": "f_latex",
+     "score": 0.8269
+    },
+    {
+     "id": "f_job",
+     "score": 0.8097
+    },
+    {
+     "id": "f_city",
+     "score": 0.8046
+    },
+    {
+     "id": "f_proj_serverless",
+     "score": 0.7992
+    },
+    {
+     "id": "f_vietnamese",
+     "score": 0.7921
+    }
+   ],
+   "noise_max": null
+  },
+  {
+   "id": "q_name_03",
+   "ask": "who am I?",
+   "expect": "f_name",
+   "queries": [
+    "who am I?"
+   ],
+   "rank": 5,
+   "expect_score": 0.7788,
+   "top": [
+    {
+     "id": "f_latex",
+     "score": 0.8109
+    },
+    {
+     "id": "f_proj_serverless",
+     "score": 0.7865
+    },
+    {
+     "id": "f_job",
+     "score": 0.786
+    },
+    {
+     "id": "f_city",
+     "score": 0.7852
+    },
+    {
+     "id": "f_name",
+     "score": 0.7788
+    }
+   ],
+   "noise_max": null
+  },
+  {
+   "id": "q_name_04",
+   "ask": "do you know my name?",
+   "expect": "f_name",
+   "queries": [
+    "do you know my name?"
+   ],
+   "rank": 7,
+   "expect_score": 0.7992,
+   "top": [
+    {
+     "id": "f_latex",
+     "score": 0.8127
+    },
+    {
+     "id": "f_vietnamese",
+     "score": 0.8124
+    },
+    {
+     "id": "f_chay",
+     "score": 0.8089
+    },
+    {
+     "id": "f_short_reply",
+     "score": 0.8037
+    },
+    {
+     "id": "f_knee_surgery",
+     "score": 0.8033
+    }
+   ],
+   "noise_max": null
+  },
+  {
+   "id": "q_name_05",
+   "ask": "tên tôi là gì?",
+   "expect": "f_name",
+   "queries": [
+    "tên tôi là gì?"
+   ],
+   "rank": 1,
+   "expect_score": 0.8022,
+   "top": [
+    {
+     "id": "f_name",
+     "score": 0.8022
+    },
+    {
+     "id": "f_noodles",
+     "score": 0.8008
+    },
+    {
+     "id": "f_vietnamese",
+     "score": 0.7928
+    },
+    {
+     "id": "f_dog",
+     "score": 0.7874
+    },
+    {
+     "id": "f_city",
+     "score": 0.785
+    }
+   ],
+   "noise_max": null
+  },
+  {
+   "id": "q_name_06",
+   "ask": "tôi tên gì?",
+   "expect": "f_name",
+   "queries": [
+    "tôi tên gì?"
+   ],
+   "rank": 1,
+   "expect_score": 0.8135,
+   "top": [
+    {
+     "id": "f_name",
+     "score": 0.8135
+    },
+    {
+     "id": "f_noodles",
+     "score": 0.8093
+    },
+    {
+     "id": "f_vietnamese",
+     "score": 0.8026
+    },
+    {
+     "id": "f_dog",
+     "score": 0.7983
+    },
+    {
+     "id": "f_city",
+     "score": 0.7947
+    }
+   ],
+   "noise_max": null
+  },
+  {
+   "id": "q_name_07",
+   "ask": "then what am I preferred to be called?",
+   "expect": "f_name",
+   "queries": [
+    "then what am I preferred to be called?"
+   ],
+   "rank": 1,
+   "expect_score": 0.8713,
+   "top": [
+    {
+     "id": "f_name",
+     "score": 0.8713
+    },
+    {
+     "id": "f_latex",
+     "score": 0.8207
+    },
+    {
+     "id": "f_proj_serverless",
+     "score": 0.8158
+    },
+    {
+     "id": "f_vietnamese",
+     "score": 0.8149
+    },
+    {
+     "id": "f_proj_postgres",
+     "score": 0.813
+    }
+   ],
+   "noise_max": null
+  },
+  {
+   "id": "q_name_08",
+   "ask": "tôi thích được gọi là gì?",
+   "expect": "f_name",
+   "queries": [
+    "tôi thích được gọi là gì?"
+   ],
+   "rank": 1,
+   "expect_score": 0.8333,
+   "top": [
+    {
+     "id": "f_name",
+     "score": 0.8333
+    },
+    {
+     "id": "f_noodles",
+     "score": 0.8242
+    },
+    {
+     "id": "f_morning_exercise",
+     "score": 0.8131
+    },
+    {
+     "id": "f_pho",
+     "score": 0.809
+    },
+    {
+     "id": "f_vietnamese",
+     "score": 0.8031
+    }
+   ],
+   "noise_max": null
+  },
+  {
+   "id": "q_name_09",
+   "ask": "gọi tôi là gì?",
+   "expect": "f_name",
+   "queries": [
+    "gọi tôi là gì?"
+   ],
+   "rank": 1,
+   "expect_score": 0.8192,
+   "top": [
+    {
+     "id": "f_name",
+     "score": 0.8192
+    },
+    {
+     "id": "f_vietnamese",
+     "score": 0.7991
+    },
+    {
+     "id": "f_noodles",
+     "score": 0.7983
+    },
+    {
+     "id": "f_knee_surgery",
+     "score": 0.7929
+    },
+    {
+     "id": "f_latex",
+     "score": 0.7917
+    }
+   ],
+   "noise_max": null
+  },
+  {
+   "id": "q_name_10",
+   "ask": "nhắc lại tên tôi xem nào?",
+   "expect": "f_name",
+   "queries": [
+    "nhắc lại tên tôi xem nào?"
+   ],
+   "rank": 14,
+   "expect_score": 0.8042,
+   "top": [
+    {
+     "id": "f_vietnamese",
+     "score": 0.8341
+    },
+    {
+     "id": "f_short_reply",
+     "score": 0.8237
+    },
+    {
+     "id": "f_knee_surgery",
+     "score": 0.8232
+    },
+    {
+     "id": "f_latex",
+     "score": 0.8227
+    },
+    {
+     "id": "f_dog",
+     "score": 0.8159
+    }
+   ],
+   "noise_max": null
+  },
+  {
+   "id": "q_food_01",
+   "ask": "Món ăn yêu thích của tôi là gì?",
+   "expect": "f_pho",
+   "queries": [
+    "Món ăn yêu thích của tôi là gì?"
+   ],
+   "rank": 2,
+   "expect_score": 0.8468,
+   "top": [
+    {
+     "id": "f_noodles",
+     "score": 0.8528
+    },
+    {
+     "id": "f_pho",
+     "score": 0.8468
+    },
+    {
+     "id": "f_chay",
+     "score": 0.8264
+    },
+    {
+     "id": "f_morning_exercise",
+     "score": 0.8077
+    },
+    {
+     "id": "f_coffee",
+     "score": 0.8059
+    }
+   ],
+   "noise_max": null
+  },
+  {
+   "id": "q_food_02",
+   "ask": "tôi thích ăn gì?",
+   "expect": "f_pho",
+   "queries": [
+    "tôi thích ăn gì?"
+   ],
+   "rank": 2,
+   "expect_score": 0.8768,
+   "top": [
+    {
+     "id": "f_noodles",
+     "score": 0.8802
+    },
+    {
+     "id": "f_pho",
+     "score": 0.8768
+    },
+    {
+     "id": "f_morning_exercise",
+     "score": 0.8461
+    },
+    {
+     "id": "f_chay",
+     "score": 0.8449
+    },
+    {
+     "id": "f_water",
+     "score": 0.832
+    }
+   ],
+   "noise_max": null
+  },
+  {
+   "id": "q_food_03",
+   "ask": "what is my favorite food?",
+   "expect": "f_pho",
+   "queries": [
+    "what is my favorite food?"
+   ],
+   "rank": 3,
+   "expect_score": 0.8252,
+   "top": [
+    {
+     "id": "f_chay",
+     "score": 0.8303
+    },
+    {
+     "id": "f_noodles",
+     "score": 0.8299
+    },
+    {
+     "id": "f_pho",
+     "score": 0.8252
+    },
+    {
+     "id": "f_coffee",
+     "score": 0.8122
+    },
+    {
+     "id": "f_name",
+     "score": 0.8062
+    }
+   ],
+   "noise_max": null
+  },
+  {
+   "id": "q_food_04",
+   "ask": "do you remember what I like to eat?",
+   "expect": "f_pho",
+   "queries": [
+    "do you remember what I like to eat?"
+   ],
+   "rank": 1,
+   "expect_score": 0.8355,
+   "top": [
+    {
+     "id": "f_pho",
+     "score": 0.8355
+    },
+    {
+     "id": "f_noodles",
+     "score": 0.8316
+    },
+    {
+     "id": "f_chay",
+     "score": 0.8299
+    },
+    {
+     "id": "f_morning_exercise",
+     "score": 0.8118
+    },
+    {
+     "id": "f_coffee",
+     "score": 0.8115
+    }
+   ],
+   "noise_max": null
+  },
+  {
+   "id": "q_food_05",
+   "ask": "sáng tôi thường uống gì?",
+   "expect": "f_coffee",
+   "queries": [
+    "sáng tôi thường uống gì?"
+   ],
+   "rank": 1,
+   "expect_score": 0.8597,
+   "top": [
+    {
+     "id": "f_coffee",
+     "score": 0.8597
+    },
+    {
+     "id": "f_morning_exercise",
+     "score": 0.8386
+    },
+    {
+     "id": "f_swim",
+     "score": 0.8385
+    },
+    {
+     "id": "f_chay",
+     "score": 0.8299
+    },
+    {
+     "id": "f_noodles",
+     "score": 0.8281
+    }
+   ],
+   "noise_max": null
+  },
+  {
+   "id": "q_food_06",
+   "ask": "what do I drink every morning?",
+   "expect": "f_coffee",
+   "queries": [
+    "what do I drink every morning?"
+   ],
+   "rank": 1,
+   "expect_score": 0.8543,
+   "top": [
+    {
+     "id": "f_coffee",
+     "score": 0.8543
+    },
+    {
+     "id": "f_water",
+     "score": 0.848
+    },
+    {
+     "id": "f_swim",
+     "score": 0.8368
+    },
+    {
+     "id": "f_chay",
+     "score": 0.828
+    },
+    {
+     "id": "f_sleep",
+     "score": 0.8186
+    }
+   ],
+   "noise_max": null
+  },
+  {
+   "id": "q_food_07",
+   "ask": "ngày rằm tôi ăn gì?",
+   "expect": "f_chay",
+   "queries": [
+    "ngày rằm tôi ăn gì?"
+   ],
+   "rank": 1,
+   "expect_score": 0.8972,
+   "top": [
+    {
+     "id": "f_chay",
+     "score": 0.8972
+    },
+    {
+     "id": "f_pho",
+     "score": 0.8351
+    },
+    {
+     "id": "f_noodles",
+     "score": 0.8329
+    },
+    {
+     "id": "f_coffee",
+     "score": 0.8288
+    },
+    {
+     "id": "f_water",
+     "score": 0.8238
+    }
+   ],
+   "noise_max": null
+  },
+  {
+   "id": "q_food_08",
+   "ask": "tôi ăn mì thì lo điều gì?",
+   "expect": "f_noodles",
+   "queries": [
+    "tôi ăn mì thì lo điều gì?"
+   ],
+   "rank": 1,
+   "expect_score": 0.8592,
+   "top": [
+    {
+     "id": "f_noodles",
+     "score": 0.8592
+    },
+    {
+     "id": "f_pho",
+     "score": 0.8269
+    },
+    {
+     "id": "f_chay",
+     "score": 0.8185
+    },
+    {
+     "id": "f_vietnamese",
+     "score": 0.8088
+    },
+    {
+     "id": "f_water",
+     "score": 0.8049
+    }
+   ],
+   "noise_max": null
+  },
+  {
+   "id": "q_food_09",
+   "ask": "what noodles do I like and what worries me?",
+   "expect": "f_noodles",
+   "queries": [
+    "what noodles do I like and what worries me?"
+   ],
+   "rank": 1,
+   "expect_score": 0.8322,
+   "top": [
+    {
+     "id": "f_noodles",
+     "score": 0.8322
+    },
+    {
+     "id": "f_pho",
+     "score": 0.8054
+    },
+    {
+     "id": "f_coffee",
+     "score": 0.8048
+    },
+    {
+     "id": "f_chay",
+     "score": 0.8004
+    },
+    {
+     "id": "f_knee_surgery",
+     "score": 0.7994
+    }
+   ],
+   "noise_max": null
+  },
+  {
+   "id": "q_health_01",
+   "ask": "gối tôi đang tập tới tuần mấy rồi?",
+   "expect": "f_knee_rehab",
+   "queries": [
+    "gối tôi đang tập tới tuần mấy rồi?"
+   ],
+   "rank": 1,
+   "expect_score": 0.8837,
+   "top": [
+    {
+     "id": "f_knee_rehab",
+     "score": 0.8837
+    },
+    {
+     "id": "f_sleep",
+     "score": 0.8714
+    },
+    {
+     "id": "f_walk",
+     "score": 0.8686
+    },
+    {
+     "id": "f_squat",
+     "score": 0.8617
+    },
+    {
+     "id": "f_knee_surgery",
+     "score": 0.8604
+    }
+   ],
+   "noise_max": null
+  },
+  {
+   "id": "q_health_02",
+   "ask": "what week of knee rehab am I in?",
+   "expect": "f_knee_rehab",
+   "queries": [
+    "what week of knee rehab am I in?"
+   ],
+   "rank": 3,
+   "expect_score": 0.8089,
+   "top": [
+    {
+     "id": "f_knee_surgery",
+     "score": 0.8169
+    },
+    {
+     "id": "f_sleep",
+     "score": 0.8094
+    },
+    {
+     "id": "f_knee_rehab",
+     "score": 0.8089
+    },
+    {
+     "id": "f_squat",
+     "score": 0.8048
+    },
+    {
+     "id": "f_walk",
+     "score": 0.799
+    }
+   ],
+   "noise_max": null
+  },
+  {
+   "id": "q_health_03",
+   "ask": "where do I hurt when I sit long?",
+   "expect": "f_back_pain",
+   "queries": [
+    "where do I hurt when I sit long?"
+   ],
+   "rank": 1,
+   "expect_score": 0.8262,
+   "top": [
+    {
+     "id": "f_back_pain",
+     "score": 0.8262
+    },
+    {
+     "id": "f_shoulder",
+     "score": 0.8064
+    },
+    {
+     "id": "f_squat",
+     "score": 0.8061
+    },
+    {
+     "id": "f_sleep",
+     "score": 0.7987
+    },
+    {
+     "id": "f_ice",
+     "score": 0.796
+    }
+   ],
+   "noise_max": null
+  },
+  {
+   "id": "q_health_04",
+   "ask": "tôi bị đau ở đâu?",
+   "expect": "f_back_pain",
+   "queries": [
+    "tôi bị đau ở đâu?"
+   ],
+   "rank": 9,
+   "expect_score": 0.8141,
+   "top": [
+    {
+     "id": "f_shoulder",
+     "score": 0.8578
+    },
+    {
+     "id": "f_city",
+     "score": 0.8318
+    },
+    {
+     "id": "f_squat",
+     "score": 0.8291
+    },
+    {
+     "id": "f_noodles",
+     "score": 0.8199
+    },
+    {
+     "id": "f_ice",
+     "score": 0.8188
+    }
+   ],
+   "noise_max": null
+  },
+  {
+   "id": "q_health_05",
+   "ask": "vai nào của tôi đau khi giơ cao?",
+   "expect": "f_shoulder",
+   "queries": [
+    "vai nào của tôi đau khi giơ cao?"
+   ],
+   "rank": 1,
+   "expect_score": 0.9111,
+   "top": [
+    {
+     "id": "f_shoulder",
+     "score": 0.9111
+    },
+    {
+     "id": "f_squat",
+     "score": 0.8317
+    },
+    {
+     "id": "f_back_pain",
+     "score": 0.8247
+    },
+    {
+     "id": "f_ice",
+     "score": 0.8236
+    },
+    {
+     "id": "f_knee_surgery",
+     "score": 0.8172
+    }
+   ],
+   "noise_max": null
+  },
+  {
+   "id": "q_health_06",
+   "ask": "which shoulder hurts when I lift my arm?",
+   "expect": "f_shoulder",
+   "queries": [
+    "which shoulder hurts when I lift my arm?"
+   ],
+   "rank": 2,
+   "expect_score": 0.7989,
+   "top": [
+    {
+     "id": "f_back_pain",
+     "score": 0.8252
+    },
+    {
+     "id": "f_shoulder",
+     "score": 0.7989
+    },
+    {
+     "id": "f_knee_surgery",
+     "score": 0.7986
+    },
+    {
+     "id": "f_squat",
+     "score": 0.7955
+    },
+    {
+     "id": "f_ice",
+     "score": 0.7902
+    }
+   ],
+   "noise_max": null
+  },
+  {
+   "id": "q_health_07",
+   "ask": "mục tiêu chạy của tôi là gì?",
+   "expect": "f_run_goal",
+   "queries": [
+    "mục tiêu chạy của tôi là gì?"
+   ],
+   "rank": 1,
+   "expect_score": 0.8623,
+   "top": [
+    {
+     "id": "f_run_goal",
+     "score": 0.8623
+    },
+    {
+     "id": "f_walk",
+     "score": 0.8023
+    },
+    {
+     "id": "f_noodles",
+     "score": 0.7986
+    },
+    {
+     "id": "f_knee_surgery",
+     "score": 0.7978
+    },
+    {
+     "id": "f_morning_exercise",
+     "score": 0.7915
+    }
+   ],
+   "noise_max": null
+  },
+  {
+   "id": "q_health_08",
+   "ask": "what is my running goal?",
+   "expect": "f_run_goal",
+   "queries": [
+    "what is my running goal?"
+   ],
+   "rank": 1,
+   "expect_score": 0.803,
+   "top": [
+    {
+     "id": "f_run_goal",
+     "score": 0.803
+    },
+    {
+     "id": "f_knee_surgery",
+     "score": 0.7804
+    },
+    {
+     "id": "f_walk",
+     "score": 0.7784
+    },
+    {
+     "id": "f_plank",
+     "score": 0.7762
+    },
+    {
+     "id": "f_latex",
+     "score": 0.7724
+    }
+   ],
+   "noise_max": null
+  },
+  {
+   "id": "q_health_09",
+   "ask": "tôi ngủ mấy tiếng mỗi đêm?",
+   "expect": "f_sleep",
+   "queries": [
+    "tôi ngủ mấy tiếng mỗi đêm?"
+   ],
+   "rank": 1,
+   "expect_score": 0.8855,
+   "top": [
+    {
+     "id": "f_sleep",
+     "score": 0.8855
+    },
+    {
+     "id": "f_ice",
+     "score": 0.8462
+    },
+    {
+     "id": "f_coffee",
+     "score": 0.8394
+    },
+    {
+     "id": "f_swim",
+     "score": 0.8331
+    },
+    {
+     "id": "f_walk",
+     "score": 0.8325
+    }
+   ],
+   "noise_max": null
+  },
+  {
+   "id": "q_health_10",
+   "ask": "how much do I sleep at night?",
+   "expect": "f_sleep",
+   "queries": [
+    "how much do I sleep at night?"
+   ],
+   "rank": 1,
+   "expect_score": 0.8618,
+   "top": [
+    {
+     "id": "f_sleep",
+     "score": 0.8618
+    },
+    {
+     "id": "f_ice",
+     "score": 0.8466
+    },
+    {
+     "id": "f_coffee",
+     "score": 0.8442
+    },
+    {
+     "id": "f_knee_surgery",
+     "score": 0.8267
+    },
+    {
+     "id": "f_plank",
+     "score": 0.8261
+    }
+   ],
+   "noise_max": null
+  },
+  {
+   "id": "q_health_11",
+   "ask": "When did I have my left knee surgery?",
+   "expect": "f_knee_surgery",
+   "queries": [
+    "When did I have my left knee surgery?"
+   ],
+   "rank": 1,
+   "expect_score": 0.811,
+   "top": [
+    {
+     "id": "f_knee_surgery",
+     "score": 0.811
+    },
+    {
+     "id": "f_latex",
+     "score": 0.7986
+    },
+    {
+     "id": "f_knee_rehab",
+     "score": 0.7915
+    },
+    {
+     "id": "f_sleep",
+     "score": 0.7895
+    },
+    {
+     "id": "f_squat",
+     "score": 0.7887
+    }
+   ],
+   "noise_max": null
+  },
+  {
+   "id": "q_health_12",
+   "ask": "tôi mổ gối khi nào?",
+   "expect": "f_knee_surgery",
+   "queries": [
+    "tôi mổ gối khi nào?"
+   ],
+   "rank": 1,
+   "expect_score": 0.8348,
+   "top": [
+    {
+     "id": "f_knee_surgery",
+     "score": 0.8348
+    },
+    {
+     "id": "f_squat",
+     "score": 0.8212
+    },
+    {
+     "id": "f_sleep",
+     "score": 0.8206
+    },
+    {
+     "id": "f_walk",
+     "score": 0.8153
+    },
+    {
+     "id": "f_ice",
+     "score": 0.815
+    }
+   ],
+   "noise_max": null
+  },
+  {
+   "id": "q_health_13",
+   "ask": "gối sưng thì tôi chườm thế nào?",
+   "expect": "f_ice",
+   "queries": [
+    "gối sưng thì tôi chườm thế nào?"
+   ],
+   "rank": 1,
+   "expect_score": 0.9006,
+   "top": [
+    {
+     "id": "f_ice",
+     "score": 0.9006
+    },
+    {
+     "id": "f_squat",
+     "score": 0.8752
+    },
+    {
+     "id": "f_sleep",
+     "score": 0.8586
+    },
+    {
+     "id": "f_walk",
+     "score": 0.8525
+    },
+    {
+     "id": "f_knee_surgery",
+     "score": 0.8519
+    }
+   ],
+   "noise_max": null
+  },
+  {
+   "id": "q_health_14",
+   "ask": "how do I ice my swollen knee?",
+   "expect": "f_ice",
+   "queries": [
+    "how do I ice my swollen knee?"
+   ],
+   "rank": 1,
+   "expect_score": 0.818,
+   "top": [
+    {
+     "id": "f_ice",
+     "score": 0.818
+    },
+    {
+     "id": "f_squat",
+     "score": 0.8134
+    },
+    {
+     "id": "f_heel_slide",
+     "score": 0.8053
+    },
+    {
+     "id": "f_knee_surgery",
+     "score": 0.8
+    },
+    {
+     "id": "f_latex",
+     "score": 0.7951
+    }
+   ],
+   "noise_max": null
+  },
+  {
+   "id": "q_health_15",
+   "ask": "tôi có dị ứng gì không?",
+   "expect": "f_latex",
+   "queries": [
+    "tôi có dị ứng gì không?"
+   ],
+   "rank": 1,
+   "expect_score": 0.8288,
+   "top": [
+    {
+     "id": "f_latex",
+     "score": 0.8288
+    },
+    {
+     "id": "f_noodles",
+     "score": 0.821
+    },
+    {
+     "id": "f_shoulder",
+     "score": 0.8052
+    },
+    {
+     "id": "f_city",
+     "score": 0.8045
+    },
+    {
+     "id": "f_pho",
+     "score": 0.8016
+    }
+   ],
+   "noise_max": null
+  },
+  {
+   "id": "q_health_16",
+   "ask": "what am I allergic to?",
+   "expect": "f_latex",
+   "queries": [
+    "what am I allergic to?"
+   ],
+   "rank": 1,
+   "expect_score": 0.824,
+   "top": [
+    {
+     "id": "f_latex",
+     "score": 0.824
+    },
+    {
+     "id": "f_noodles",
+     "score": 0.803
+    },
+    {
+     "id": "f_back_pain",
+     "score": 0.8001
+    },
+    {
+     "id": "f_shoulder",
+     "score": 0.7949
+    },
+    {
+     "id": "f_knee_surgery",
+     "score": 0.792
+    }
+   ],
+   "noise_max": null
+  },
+  {
+   "id": "q_sport_01",
+   "ask": "how often do I play badminton?",
+   "expect": "f_badminton",
+   "queries": [
+    "how often do I play badminton?"
+   ],
+   "rank": 1,
+   "expect_score": 0.8759,
+   "top": [
+    {
+     "id": "f_badminton",
+     "score": 0.8759
+    },
+    {
+     "id": "f_heel_slide",
+     "score": 0.8073
+    },
+    {
+     "id": "f_plank",
+     "score": 0.7987
+    },
+    {
+     "id": "f_swim",
+     "score": 0.7905
+    },
+    {
+     "id": "f_walk",
+     "score": 0.7889
+    }
+   ],
+   "noise_max": null
+  },
+  {
+   "id": "q_sport_02",
+   "ask": "tôi chơi cầu lông mấy lần một tuần?",
+   "expect": "f_badminton",
+   "queries": [
+    "tôi chơi cầu lông mấy lần một tuần?"
+   ],
+   "rank": 11,
+   "expect_score": 0.8016,
+   "top": [
+    {
+     "id": "f_heel_slide",
+     "score": 0.83
+    },
+    {
+     "id": "f_walk",
+     "score": 0.8202
+    },
+    {
+     "id": "f_ice",
+     "score": 0.8173
+    },
+    {
+     "id": "f_knee_rehab",
+     "score": 0.8167
+    },
+    {
+     "id": "f_squat",
+     "score": 0.8165
+    }
+   ],
+   "noise_max": null
+  },
+  {
+   "id": "q_sport_03",
+   "ask": "sáng tôi thích bơi thế nào?",
+   "expect": "f_swim",
+   "queries": [
+    "sáng tôi thích bơi thế nào?"
+   ],
+   "rank": 1,
+   "expect_score": 0.89,
+   "top": [
+    {
+     "id": "f_swim",
+     "score": 0.89
+    },
+    {
+     "id": "f_morning_exercise",
+     "score": 0.881
+    },
+    {
+     "id": "f_coffee",
+     "score": 0.8419
+    },
+    {
+     "id": "f_noodles",
+     "score": 0.833
+    },
+    {
+     "id": "f_walk",
+     "score": 0.8292
+    }
+   ],
+   "noise_max": null
+  },
+  {
+   "id": "q_sport_04",
+   "ask": "bài squat cho gối đau của tôi tập mấy lần?",
+   "expect": "f_squat",
+   "queries": [
+    "bài squat cho gối đau của tôi tập mấy lần?"
+   ],
+   "rank": 1,
+   "expect_score": 0.9015,
+   "top": [
+    {
+     "id": "f_squat",
+     "score": 0.9015
+    },
+    {
+     "id": "f_walk",
+     "score": 0.8595
+    },
+    {
+     "id": "f_ice",
+     "score": 0.8581
+    },
+    {
+     "id": "f_heel_slide",
+     "score": 0.8535
+    },
+    {
+     "id": "f_knee_rehab",
+     "score": 0.8485
+    }
+   ],
+   "noise_max": null
+  },
+  {
+   "id": "q_sport_05",
+   "ask": "how many squats per set for my sore knee?",
+   "expect": "f_squat",
+   "queries": [
+    "how many squats per set for my sore knee?"
+   ],
+   "rank": 1,
+   "expect_score": 0.8361,
+   "top": [
+    {
+     "id": "f_squat",
+     "score": 0.8361
+    },
+    {
+     "id": "f_heel_slide",
+     "score": 0.8105
+    },
+    {
+     "id": "f_ice",
+     "score": 0.7999
+    },
+    {
+     "id": "f_walk",
+     "score": 0.7994
+    },
+    {
+     "id": "f_knee_surgery",
+     "score": 0.7955
+    }
+   ],
+   "noise_max": null
+  },
+  {
+   "id": "q_sport_06",
+   "ask": "mỗi ngày tôi đi bộ bao lâu?",
+   "expect": "f_walk",
+   "queries": [
+    "mỗi ngày tôi đi bộ bao lâu?"
+   ],
+   "rank": 1,
+   "expect_score": 0.8864,
+   "top": [
+    {
+     "id": "f_walk",
+     "score": 0.8864
+    },
+    {
+     "id": "f_swim",
+     "score": 0.8448
+    },
+    {
+     "id": "f_water",
+     "score": 0.8407
+    },
+    {
+     "id": "f_sleep",
+     "score": 0.8399
+    },
+    {
+     "id": "f_heel_slide",
+     "score": 0.8386
+    }
+   ],
+   "noise_max": null
+  },
+  {
+   "id": "q_sport_07",
+   "ask": "bài heel-slide của tôi tập thế nào?",
+   "expect": "f_heel_slide",
+   "queries": [
+    "bài heel-slide của tôi tập thế nào?"
+   ],
+   "rank": 1,
+   "expect_score": 0.88,
+   "top": [
+    {
+     "id": "f_heel_slide",
+     "score": 0.88
+    },
+    {
+     "id": "f_latex",
+     "score": 0.8215
+    },
+    {
+     "id": "f_ice",
+     "score": 0.815
+    },
+    {
+     "id": "f_walk",
+     "score": 0.8102
+    },
+    {
+     "id": "f_plank",
+     "score": 0.8077
+    }
+   ],
+   "noise_max": null
+  },
+  {
+   "id": "q_sport_08",
+   "ask": "bài plank của tôi giữ bao lâu?",
+   "expect": "f_plank",
+   "queries": [
+    "bài plank của tôi giữ bao lâu?"
+   ],
+   "rank": 1,
+   "expect_score": 0.8485,
+   "top": [
+    {
+     "id": "f_plank",
+     "score": 0.8485
+    },
+    {
+     "id": "f_ice",
+     "score": 0.8261
+    },
+    {
+     "id": "f_sleep",
+     "score": 0.8211
+    },
+    {
+     "id": "f_knee_rehab",
+     "score": 0.8153
+    },
+    {
+     "id": "f_latex",
+     "score": 0.8123
+    }
+   ],
+   "noise_max": null
+  },
+  {
+   "id": "q_proj_01",
+   "ask": "Cho project A thì ưu tiên gì?",
+   "expect": "f_proj_serverless",
+   "queries": [
+    "Cho project A thì ưu tiên gì?"
+   ],
+   "rank": 1,
+   "expect_score": 0.8291,
+   "top": [
+    {
+     "id": "f_proj_serverless",
+     "score": 0.8291
+    },
+    {
+     "id": "f_proj_postgres",
+     "score": 0.8151
+    },
+    {
+     "id": "f_knee_surgery",
+     "score": 0.8076
+    },
+    {
+     "id": "f_proj_deadline",
+     "score": 0.8055
+    },
+    {
+     "id": "f_vietnamese",
+     "score": 0.7997
+    }
+   ],
+   "noise_max": null
+  },
+  {
+   "id": "q_proj_02",
+   "ask": "what does project A prioritize?",
+   "expect": "f_proj_serverless",
+   "queries": [
+    "what does project A prioritize?"
+   ],
+   "rank": 1,
+   "expect_score": 0.7737,
+   "top": [
+    {
+     "id": "f_proj_serverless",
+     "score": 0.7737
+    },
+    {
+     "id": "f_proj_postgres",
+     "score": 0.7686
+    },
+    {
+     "id": "f_knee_surgery",
+     "score": 0.7542
+    },
+    {
+     "id": "f_plank",
+     "score": 0.752
+    },
+    {
+     "id": "f_name",
+     "score": 0.7513
+    }
+   ],
+   "noise_max": null
+  },
+  {
+   "id": "q_proj_03",
+   "ask": "deadline của project A là khi nào?",
+   "expect": "f_proj_deadline",
+   "queries": [
+    "deadline của project A là khi nào?"
+   ],
+   "rank": 1,
+   "expect_score": 0.8384,
+   "top": [
+    {
+     "id": "f_proj_deadline",
+     "score": 0.8384
+    },
+    {
+     "id": "f_knee_surgery",
+     "score": 0.8064
+    },
+    {
+     "id": "f_proj_postgres",
+     "score": 0.7998
+    },
+    {
+     "id": "f_job",
+     "score": 0.7939
+    },
+    {
+     "id": "f_latex",
+     "score": 0.7903
+    }
+   ],
+   "noise_max": null
+  },
+  {
+   "id": "q_proj_04",
+   "ask": "project B dùng database gì?",
+   "expect": "f_proj_postgres",
+   "queries": [
+    "project B dùng database gì?"
+   ],
+   "rank": 1,
+   "expect_score": 0.858,
+   "top": [
+    {
+     "id": "f_proj_postgres",
+     "score": 0.858
+    },
+    {
+     "id": "f_proj_serverless",
+     "score": 0.7918
+    },
+    {
+     "id": "f_latex",
+     "score": 0.7892
+    },
+    {
+     "id": "f_city",
+     "score": 0.7887
+    },
+    {
+     "id": "f_morning_exercise",
+     "score": 0.7847
+    }
+   ],
+   "noise_max": null
+  },
+  {
+   "id": "q_proj_05",
+   "ask": "hiện giờ tôi làm nghề gì?",
+   "expect": "f_job",
+   "queries": [
+    "hiện giờ tôi làm nghề gì?"
+   ],
+   "rank": 1,
+   "expect_score": 0.8784,
+   "top": [
+    {
+     "id": "f_job",
+     "score": 0.8784
+    },
+    {
+     "id": "f_city",
+     "score": 0.8276
+    },
+    {
+     "id": "f_morning_exercise",
+     "score": 0.8148
+    },
+    {
+     "id": "f_knee_surgery",
+     "score": 0.812
+    },
+    {
+     "id": "f_swim",
+     "score": 0.8107
+    }
+   ],
+   "noise_max": null
+  },
+  {
+   "id": "q_proj_06",
+   "ask": "what is my job now?",
+   "expect": "f_job",
+   "queries": [
+    "what is my job now?"
+   ],
+   "rank": 1,
+   "expect_score": 0.8307,
+   "top": [
+    {
+     "id": "f_job",
+     "score": 0.8307
+    },
+    {
+     "id": "f_latex",
+     "score": 0.7942
+    },
+    {
+     "id": "f_proj_serverless",
+     "score": 0.7899
+    },
+    {
+     "id": "f_knee_surgery",
+     "score": 0.7888
+    },
+    {
+     "id": "f_proj_postgres",
+     "score": 0.7824
+    }
+   ],
+   "noise_max": null
+  },
+  {
+   "id": "q_style_01",
+   "ask": "tôi muốn bạn trả lời thế nào?",
+   "expect": "f_short_reply",
+   "queries": [
+    "tôi muốn bạn trả lời thế nào?"
+   ],
+   "rank": 2,
+   "expect_score": 0.8474,
+   "top": [
+    {
+     "id": "f_vietnamese",
+     "score": 0.8973
+    },
+    {
+     "id": "f_short_reply",
+     "score": 0.8474
+    },
+    {
+     "id": "f_latex",
+     "score": 0.8242
+    },
+    {
+     "id": "f_morning_exercise",
+     "score": 0.8154
+    },
+    {
+     "id": "f_noodles",
+     "score": 0.815
+    }
+   ],
+   "noise_max": null
+  },
+  {
+   "id": "q_style_02",
+   "ask": "should your answers be long or short for me?",
+   "expect": "f_short_reply",
+   "queries": [
+    "should your answers be long or short for me?"
+   ],
+   "rank": 1,
+   "expect_score": 0.8122,
+   "top": [
+    {
+     "id": "f_short_reply",
+     "score": 0.8122
+    },
+    {
+     "id": "f_vietnamese",
+     "score": 0.8019
+    },
+    {
+     "id": "f_latex",
+     "score": 0.7953
+    },
+    {
+     "id": "f_name",
+     "score": 0.7848
+    },
+    {
+     "id": "f_proj_postgres",
+     "score": 0.7845
+    }
+   ],
+   "noise_max": null
+  },
+  {
+   "id": "q_style_03",
+   "ask": "tôi thích tập lúc nào trong ngày?",
+   "expect": "f_morning_exercise",
+   "queries": [
+    "tôi thích tập lúc nào trong ngày?"
+   ],
+   "rank": 1,
+   "expect_score": 0.8846,
+   "top": [
+    {
+     "id": "f_morning_exercise",
+     "score": 0.8846
+    },
+    {
+     "id": "f_evening_exercise",
+     "score": 0.8584
+    },
+    {
+     "id": "f_swim",
+     "score": 0.8519
+    },
+    {
+     "id": "f_heel_slide",
+     "score": 0.8418
+    },
+    {
+     "id": "f_walk",
+     "score": 0.8408
+    }
+   ],
+   "noise_max": null
+  },
+  {
+   "id": "q_style_04",
+   "ask": "do I prefer morning or evening workouts?",
+   "expect": "f_morning_exercise",
+   "queries": [
+    "do I prefer morning or evening workouts?"
+   ],
+   "rank": 1,
+   "expect_score": 0.8167,
+   "top": [
+    {
+     "id": "f_morning_exercise",
+     "score": 0.8167
+    },
+    {
+     "id": "f_swim",
+     "score": 0.8036
+    },
+    {
+     "id": "f_evening_exercise",
+     "score": 0.794
+    },
+    {
+     "id": "f_name",
+     "score": 0.7929
+    },
+    {
+     "id": "f_heel_slide",
+     "score": 0.7903
+    }
+   ],
+   "noise_max": null
+  },
+  {
+   "id": "q_style_05",
+   "ask": "tối tôi tập lúc mấy giờ?",
+   "expect": "f_evening_exercise",
+   "queries": [
+    "tối tôi tập lúc mấy giờ?"
+   ],
+   "rank": 1,
+   "expect_score": 0.8732,
+   "top": [
+    {
+     "id": "f_evening_exercise",
+     "score": 0.8732
+    },
+    {
+     "id": "f_morning_exercise",
+     "score": 0.8526
+    },
+    {
+     "id": "f_swim",
+     "score": 0.8393
+    },
+    {
+     "id": "f_knee_rehab",
+     "score": 0.8372
+    },
+    {
+     "id": "f_sleep",
+     "score": 0.835
+    }
+   ],
+   "noise_max": null
+  },
+  {
+   "id": "q_style_06",
+   "ask": "tôi muốn nghe trả lời bằng tiếng gì?",
+   "expect": "f_vietnamese",
+   "queries": [
+    "tôi muốn nghe trả lời bằng tiếng gì?"
+   ],
+   "rank": 1,
+   "expect_score": 0.8987,
+   "top": [
+    {
+     "id": "f_vietnamese",
+     "score": 0.8987
+    },
+    {
+     "id": "f_short_reply",
+     "score": 0.8268
+    },
+    {
+     "id": "f_sleep",
+     "score": 0.8104
+    },
+    {
+     "id": "f_latex",
+     "score": 0.8063
+    },
+    {
+     "id": "f_morning_exercise",
+     "score": 0.8059
+    }
+   ],
+   "noise_max": null
+  },
+  {
+   "id": "q_life_01",
+   "ask": "tôi sống ở đâu?",
+   "expect": "f_city",
+   "queries": [
+    "tôi sống ở đâu?"
+   ],
+   "rank": 1,
+   "expect_score": 0.8774,
+   "top": [
+    {
+     "id": "f_city",
+     "score": 0.8774
+    },
+    {
+     "id": "f_vietnamese",
+     "score": 0.8117
+    },
+    {
+     "id": "f_noodles",
+     "score": 0.8097
+    },
+    {
+     "id": "f_pho",
+     "score": 0.7946
+    },
+    {
+     "id": "f_job",
+     "score": 0.7923
+    }
+   ],
+   "noise_max": null
+  },
+  {
+   "id": "q_life_02",
+   "ask": "where do I live?",
+   "expect": "f_city",
+   "queries": [
+    "where do I live?"
+   ],
+   "rank": 1,
+   "expect_score": 0.8588,
+   "top": [
+    {
+     "id": "f_city",
+     "score": 0.8588
+    },
+    {
+     "id": "f_latex",
+     "score": 0.8107
+    },
+    {
+     "id": "f_vietnamese",
+     "score": 0.8075
+    },
+    {
+     "id": "f_proj_serverless",
+     "score": 0.7964
+    },
+    {
+     "id": "f_proj_postgres",
+     "score": 0.7918
+    }
+   ],
+   "noise_max": null
+  },
+  {
+   "id": "q_life_03",
+   "ask": "con chó của tôi tên gì?",
+   "expect": "f_dog",
+   "queries": [
+    "con chó của tôi tên gì?"
+   ],
+   "rank": 1,
+   "expect_score": 0.882,
+   "top": [
+    {
+     "id": "f_dog",
+     "score": 0.882
+    },
+    {
+     "id": "f_knee_surgery",
+     "score": 0.795
+    },
+    {
+     "id": "f_city",
+     "score": 0.7938
+    },
+    {
+     "id": "f_noodles",
+     "score": 0.7921
+    },
+    {
+     "id": "f_vietnamese",
+     "score": 0.7903
+    }
+   ],
+   "noise_max": null
+  },
+  {
+   "id": "q_life_04",
+   "ask": "mỗi ngày tôi uống bao nhiêu nước?",
+   "expect": "f_water",
+   "queries": [
+    "mỗi ngày tôi uống bao nhiêu nước?"
+   ],
+   "rank": 1,
+   "expect_score": 0.8974,
+   "top": [
+    {
+     "id": "f_water",
+     "score": 0.8974
+    },
+    {
+     "id": "f_swim",
+     "score": 0.8426
+    },
+    {
+     "id": "f_walk",
+     "score": 0.8401
+    },
+    {
+     "id": "f_coffee",
+     "score": 0.8367
+    },
+    {
+     "id": "f_ice",
+     "score": 0.8326
+    }
+   ],
+   "noise_max": null
+  },
+  {
+   "id": "q_multi_01",
+   "ask": "who am I? tôi bị đau lưng, gợi ý vài bài tập giúp tôi",
+   "expect": "f_name",
+   "queries": [
+    "who am I? tôi bị đau lưng, gợi ý vài bài tập giúp tôi",
+    "who am I",
+    "tôi bị đau lưng, gợi ý vài bài tập giúp tôi"
+   ],
+   "rank": 28,
+   "expect_score": 0.8071,
+   "top": [
+    {
+     "id": "f_knee_rehab",
+     "score": 0.8735
+    },
+    {
+     "id": "f_squat",
+     "score": 0.8686
+    },
+    {
+     "id": "f_walk",
+     "score": 0.8597
+    },
+    {
+     "id": "f_sleep",
+     "score": 0.8549
+    },
+    {
+     "id": "f_shoulder",
+     "score": 0.8543
+    }
+   ],
+   "noise_max": null
+  },
+  {
+   "id": "q_multi_02",
+   "ask": "Món ăn yêu thích của tôi là gì? Với lại gối tôi đau khi lên cầu thang thì nên tập gì?",
+   "expect": "f_pho",
+   "queries": [
+    "Món ăn yêu thích của tôi là gì? Với lại gối tôi đau khi lên cầu thang thì nên tập gì?",
+    "Món ăn yêu thích của tôi là gì",
+    "Với lại gối tôi đau khi lên cầu thang thì nên tập gì"
+   ],
+   "rank": 3,
+   "expect_score": 0.8628,
+   "top": [
+    {
+     "id": "f_noodles",
+     "score": 0.8692
+    },
+    {
+     "id": "f_squat",
+     "score": 0.8682
+    },
+    {
+     "id": "f_pho",
+     "score": 0.8628
+    },
+    {
+     "id": "f_walk",
+     "score": 0.8613
+    },
+    {
+     "id": "f_sleep",
+     "score": 0.8562
+    }
+   ],
+   "noise_max": null
+  },
+  {
+   "id": "q_multi_03",
+   "ask": "tôi tên gì và sáng tôi uống gì?",
+   "expect": "f_name",
+   "queries": [
+    "tôi tên gì và sáng tôi uống gì?"
+   ],
+   "rank": 11,
+   "expect_score": 0.8039,
+   "top": [
+    {
+     "id": "f_coffee",
+     "score": 0.8377
+    },
+    {
+     "id": "f_morning_exercise",
+     "score": 0.8305
+    },
+    {
+     "id": "f_swim",
+     "score": 0.8304
+    },
+    {
+     "id": "f_noodles",
+     "score": 0.83
+    },
+    {
+     "id": "f_chay",
+     "score": 0.8191
+    }
+   ],
+   "noise_max": null
+  },
+  {
+   "id": "q_multi_04",
+   "ask": "what is my running goal and how often do I play badminton?",
+   "expect": "f_run_goal",
+   "queries": [
+    "what is my running goal and how often do I play badminton?"
+   ],
+   "rank": 5,
+   "expect_score": 0.7863,
+   "top": [
+    {
+     "id": "f_badminton",
+     "score": 0.8433
+    },
+    {
+     "id": "f_plank",
+     "score": 0.795
+    },
+    {
+     "id": "f_heel_slide",
+     "score": 0.7909
+    },
+    {
+     "id": "f_walk",
+     "score": 0.7889
+    },
+    {
+     "id": "f_run_goal",
+     "score": 0.7863
+    }
+   ],
+   "noise_max": null
+  },
+  {
+   "id": "q_noise_01",
+   "ask": "Thủ đô của Pháp là thành phố nào?",
+   "expect": null,
+   "queries": [
+    "Thủ đô của Pháp là thành phố nào?"
+   ],
+   "rank": null,
+   "expect_score": null,
+   "top": [
+    {
+     "id": "f_city",
+     "score": 0.7664
+    },
+    {
+     "id": "f_vietnamese",
+     "score": 0.747
+    },
+    {
+     "id": "f_heel_slide",
+     "score": 0.7375
+    },
+    {
+     "id": "f_ice",
+     "score": 0.7344
+    },
+    {
+     "id": "f_swim",
+     "score": 0.7323
+    }
+   ],
+   "noise_max": 0.7664
+  },
+  {
+   "id": "q_noise_02",
+   "ask": "thời tiết hôm nay thế nào?",
+   "expect": null,
+   "queries": [
+    "thời tiết hôm nay thế nào?"
+   ],
+   "rank": null,
+   "expect_score": null,
+   "top": [
+    {
+     "id": "f_chay",
+     "score": 0.8313
+    },
+    {
+     "id": "f_ice",
+     "score": 0.8309
+    },
+    {
+     "id": "f_morning_exercise",
+     "score": 0.8302
+    },
+    {
+     "id": "f_swim",
+     "score": 0.8273
+    },
+    {
+     "id": "f_job",
+     "score": 0.8269
+    }
+   ],
+   "noise_max": 0.8313
+  },
+  {
+   "id": "q_noise_03",
+   "ask": "What is the capital of France?",
+   "expect": null,
+   "queries": [
+    "What is the capital of France?"
+   ],
+   "rank": null,
+   "expect_score": null,
+   "top": [
+    {
+     "id": "f_coffee",
+     "score": 0.7306
+    },
+    {
+     "id": "f_knee_surgery",
+     "score": 0.7299
+    },
+    {
+     "id": "f_latex",
+     "score": 0.7288
+    },
+    {
+     "id": "f_vietnamese",
+     "score": 0.7232
+    },
+    {
+     "id": "f_proj_postgres",
+     "score": 0.7228
+    }
+   ],
+   "noise_max": 0.7306
+  },
+  {
+   "id": "q_noise_04",
+   "ask": "giải thích thuyết tương đối hẹp?",
+   "expect": null,
+   "queries": [
+    "giải thích thuyết tương đối hẹp?"
+   ],
+   "rank": null,
+   "expect_score": null,
+   "top": [
+    {
+     "id": "f_short_reply",
+     "score": 0.8283
+    },
+    {
+     "id": "f_latex",
+     "score": 0.8138
+    },
+    {
+     "id": "f_vietnamese",
+     "score": 0.8104
+    },
+    {
+     "id": "f_pho",
+     "score": 0.7947
+    },
+    {
+     "id": "f_knee_surgery",
+     "score": 0.7932
+    }
+   ],
+   "noise_max": 0.8283
+  },
+  {
+   "id": "q_noise_05",
+   "ask": "giá vàng hôm nay bao nhiêu?",
+   "expect": null,
+   "queries": [
+    "giá vàng hôm nay bao nhiêu?"
+   ],
+   "rank": null,
+   "expect_score": null,
+   "top": [
+    {
+     "id": "f_dog",
+     "score": 0.8343
+    },
+    {
+     "id": "f_knee_surgery",
+     "score": 0.7982
+    },
+    {
+     "id": "f_chay",
+     "score": 0.7973
+    },
+    {
+     "id": "f_proj_deadline",
+     "score": 0.7964
+    },
+    {
+     "id": "f_ice",
+     "score": 0.7916
+    }
+   ],
+   "noise_max": 0.8343
+  },
+  {
+   "id": "q_noise_06",
+   "ask": "who won the World Cup in 2018?",
+   "expect": null,
+   "queries": [
+    "who won the World Cup in 2018?"
+   ],
+   "rank": null,
+   "expect_score": null,
+   "top": [
+    {
+     "id": "f_proj_deadline",
+     "score": 0.7241
+    },
+    {
+     "id": "f_latex",
+     "score": 0.7143
+    },
+    {
+     "id": "f_proj_serverless",
+     "score": 0.7023
+    },
+    {
+     "id": "f_knee_surgery",
+     "score": 0.7016
+    },
+    {
+     "id": "f_vietnamese",
+     "score": 0.7006
+    }
+   ],
+   "noise_max": 0.7241
+  },
+  {
+   "id": "q_noise_07",
+   "ask": "cách đổi mật khẩu wifi?",
+   "expect": null,
+   "queries": [
+    "cách đổi mật khẩu wifi?"
+   ],
+   "rank": null,
+   "expect_score": null,
+   "top": [
+    {
+     "id": "f_vietnamese",
+     "score": 0.8038
+    },
+    {
+     "id": "f_city",
+     "score": 0.7971
+    },
+    {
+     "id": "f_knee_surgery",
+     "score": 0.7945
+    },
+    {
+     "id": "f_latex",
+     "score": 0.794
+    },
+    {
+     "id": "f_sleep",
+     "score": 0.7921
+    }
+   ],
+   "noise_max": 0.8038
+  },
+  {
+   "id": "q_noise_08",
+   "ask": "cách làm bánh mì pate tại nhà?",
+   "expect": null,
+   "queries": [
+    "cách làm bánh mì pate tại nhà?"
+   ],
+   "rank": null,
+   "expect_score": null,
+   "top": [
+    {
+     "id": "f_chay",
+     "score": 0.8143
+    },
+    {
+     "id": "f_noodles",
+     "score": 0.8127
+    },
+    {
+     "id": "f_coffee",
+     "score": 0.8087
+    },
+    {
+     "id": "f_ice",
+     "score": 0.8078
+    },
+    {
+     "id": "f_water",
+     "score": 0.8031
+    }
+   ],
+   "noise_max": 0.8143
+  },
+  {
+   "id": "q_noise_09",
+   "ask": "tell me a joke about robots",
+   "expect": null,
+   "queries": [
+    "tell me a joke about robots"
+   ],
+   "rank": null,
+   "expect_score": null,
+   "top": [
+    {
+     "id": "f_latex",
+     "score": 0.787
+    },
+    {
+     "id": "f_back_pain",
+     "score": 0.7865
+    },
+    {
+     "id": "f_name",
+     "score": 0.7787
+    },
+    {
+     "id": "f_proj_serverless",
+     "score": 0.7771
+    },
+    {
+     "id": "f_plank",
+     "score": 0.7734
+    }
+   ],
+   "noise_max": 0.787
+  },
+  {
+   "id": "q_noise_10",
+   "ask": "chứng khoán hôm nay tăng hay giảm?",
+   "expect": null,
+   "queries": [
+    "chứng khoán hôm nay tăng hay giảm?"
+   ],
+   "rank": null,
+   "expect_score": null,
+   "top": [
+    {
+     "id": "f_knee_surgery",
+     "score": 0.8206
+    },
+    {
+     "id": "f_proj_deadline",
+     "score": 0.8084
+    },
+    {
+     "id": "f_knee_rehab",
+     "score": 0.8063
+    },
+    {
+     "id": "f_swim",
+     "score": 0.8033
+    },
+    {
+     "id": "f_morning_exercise",
+     "score": 0.8014
+    }
+   ],
+   "noise_max": 0.8206
+  },
+  {
+   "id": "q_noise_11",
+   "ask": "how do I fix a leaking faucet?",
+   "expect": null,
+   "queries": [
+    "how do I fix a leaking faucet?"
+   ],
+   "rank": null,
+   "expect_score": null,
+   "top": [
+    {
+     "id": "f_latex",
+     "score": 0.7997
+    },
+    {
+     "id": "f_ice",
+     "score": 0.7805
+    },
+    {
+     "id": "f_plank",
+     "score": 0.779
+    },
+    {
+     "id": "f_knee_surgery",
+     "score": 0.7785
+    },
+    {
+     "id": "f_squat",
+     "score": 0.7783
+    }
+   ],
+   "noise_max": 0.7997
+  },
+  {
+   "id": "q_noise_12",
+   "ask": "phim nào hay cuối tuần này?",
+   "expect": null,
+   "queries": [
+    "phim nào hay cuối tuần này?"
+   ],
+   "rank": null,
+   "expect_score": null,
+   "top": [
+    {
+     "id": "f_knee_rehab",
+     "score": 0.8282
+    },
+    {
+     "id": "f_proj_deadline",
+     "score": 0.8241
+    },
+    {
+     "id": "f_chay",
+     "score": 0.8149
+    },
+    {
+     "id": "f_evening_exercise",
+     "score": 0.8146
+    },
+    {
+     "id": "f_morning_exercise",
+     "score": 0.8131
+    }
+   ],
+   "noise_max": 0.8282
+  },
+  {
+   "id": "q_noise_13",
+   "ask": "tốc độ ánh sáng là bao nhiêu?",
+   "expect": null,
+   "queries": [
+    "tốc độ ánh sáng là bao nhiêu?"
+   ],
+   "rank": null,
+   "expect_score": null,
+   "top": [
+    {
+     "id": "f_morning_exercise",
+     "score": 0.8075
+    },
+    {
+     "id": "f_run_goal",
+     "score": 0.8042
+    },
+    {
+     "id": "f_plank",
+     "score": 0.8035
+    },
+    {
+     "id": "f_swim",
+     "score": 0.7994
+    },
+    {
+     "id": "f_ice",
+     "score": 0.7983
+    }
+   ],
+   "noise_max": 0.8075
+  },
+  {
+   "id": "q_noise_14",
+   "ask": "dạy tôi chơi cờ vua từ đầu?",
+   "expect": null,
+   "queries": [
+    "dạy tôi chơi cờ vua từ đầu?"
+   ],
+   "rank": null,
+   "expect_score": null,
+   "top": [
+    {
+     "id": "f_job",
+     "score": 0.8144
+    },
+    {
+     "id": "f_heel_slide",
+     "score": 0.8016
+    },
+    {
+     "id": "f_latex",
+     "score": 0.7979
+    },
+    {
+     "id": "f_vietnamese",
+     "score": 0.7966
+    },
+    {
+     "id": "f_shoulder",
+     "score": 0.7939
+    }
+   ],
+   "noise_max": 0.8144
+  }
+ ]
+}

@@ -73,3 +73,8 @@ class AgentState(TypedDict):
 
     # ── Error tracking (append-only) ───────────────────────────────────
     errors: Annotated[list[dict], operator.add]
+
+    # SCRUM-45: photo keys sent with the turn (validated in /chat), and what the
+    # vision node read from them. Both absent on a turn without photos.
+    image_keys: list[str]
+    image_context: list[dict]

@@ -88,3 +88,22 @@ def test_crud_lambda_may_only_put_under_images():
         "Effect": "Allow",
         "Resource": "arn:aws:s3:::vva-user-uploads-244203483654/images/*",
     }]
+
+
+def test_agent_may_only_read_chat_photos():
+    """SCRUM-45 part 2: the vision node reads images/ and nothing else."""
+    from test_agent_speechllm_env import _agent_template  # sibling module, same dir
+    template = _agent_template()
+    (fn,) = template.find_resources("AWS::Lambda::Function").values()
+    assert fn["Properties"]["Environment"]["Variables"]["UPLOADS_BUCKET"] == \
+        uploads_bucket_name("244203483654")
+    s3_statements = [
+        s for p in template.find_resources("AWS::IAM::Policy").values()
+        for s in p["Properties"]["PolicyDocument"]["Statement"]
+        if any(str(a).startswith("s3:") for a in
+               (s["Action"] if isinstance(s["Action"], list) else [s["Action"]]))
+    ]
+    assert {"Action": "s3:GetObject", "Effect": "Allow",
+            "Resource": "arn:aws:s3:::vva-user-uploads-244203483654/images/*"} in s3_statements
+    assert not [s for s in s3_statements if "vva-user-uploads" in str(s["Resource"])
+                and s["Action"] != "s3:GetObject"]

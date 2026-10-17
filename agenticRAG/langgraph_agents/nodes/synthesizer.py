@@ -52,6 +52,7 @@ from langgraph_agents.nodes._persona_loader import (
     persona_name,
 )
 from langgraph_agents.shared.logging import get_logger
+from langgraph_agents.nodes.vision import build_photo_note
 
 logger = get_logger("langgraph.synthesizer")
 
@@ -646,7 +647,8 @@ async def synthesizer_node(state: AgentState, config: RunnableConfig) -> dict:
     body_note = _build_body_state_note(state.get("messages", []))
     app_note = _build_app_state_note(config["configurable"].get("speaks_aloud"))
     about_you = _build_about_you(state.get("messages", []))
-    middle_blocks = [b for b in (body_note, app_note, about_you) if b]
+    photo_note = build_photo_note(state.get("image_context"))
+    middle_blocks = [b for b in (body_note, app_note, about_you, photo_note) if b]
     middle = ("\n\n".join(middle_blocks) + "\n\n") if middle_blocks else ""
     system = f"{persona_system}\n\n---\n\n{middle}{task_system}"
 

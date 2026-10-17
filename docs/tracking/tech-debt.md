@@ -1,7 +1,8 @@
 # Tech Debt & Pending Tasks
 
 > Checklist các việc đã biết nhưng CHƯA làm. Cập nhật khi đóng/ mở item.
-> Last update: 2026-10-03 (K — nợ sau đợt agent-context: hồ sơ Anne, grader, emotion tag, ba nhân vật chưa chuyển đổi).
+> Last update: 2026-10-17 (K — nợ sau Memory v2: tầng 2, cổng planner, lỗi stream khi LLM lỗi, DeepSeek treo, privacy nháp).
+> Trước đó: 2026-10-03 (K — nợ sau đợt agent-context: hồ sơ Anne, grader, emotion tag, ba nhân vật chưa chuyển đổi).
 > Trước đó: 2026-09-12 (K — nợ TTS streaming: 2s cuối lượt N chấp nhận, `anne_en.wav` nhỏ tiếng, 422, iOS, int8).
 > Trước đó: 2026-08-21 (K — DELETE account hoãn theo quyết định Owner; xem mục "Chờ quyết định").
 > Trước đó: 2026-08-16 (K — Track 2 Lambda catalog: rate limit, concurrency, latency, migration).
@@ -373,6 +374,55 @@ Nguồn: `docs/worklogs/01-10-2026.md`, `02-10-2026.md`, `02-10-2026-round3.md`,
       lượt local); chưa tách nguyên nhân là suy nghĩ ngầm hay prompt dài.
 - [ ] 🟡 **Nhãn nhiều nguồn được nối thành một dòng**; bong bóng trên đầu nhân vật
       (`ThinkingBubble`, `whitespace-nowrap`) có thể dài trên màn hình hẹp.
+
+### Memory v2 — nợ ghi 17/10 (nhánh `feature/memory-v2`, chưa ship)
+
+> Số liệu: `docs/tracking/tier2-direction-V1.md`, `memory-benchmark-B4.md`, `memory-benchmark-N1.md`;
+> worklogs 14→17/10 `*-memory-v2.md`. Tri chốt 17/10: ghi nợ, đi tiếp staging.
+
+- [ ] 🔴 **Câu chữ chính sách quyền riêng tư là bản nháp** —
+  `ECA_UI/frontend/src/legal/privacy.vi.md`/`privacy.en.md` (2 loại ghi chú, ngày, ứng viên 60
+  ngày, 2 cách xoá). Tri + Nguyen phải duyệt trước khi lên prod.
+- [ ] 🔴 **Báo Nguyen** — `memory_search`, bảng `summaries` (code không còn đọc/ghi),
+  `resume_last_session` đã bị bỏ; `housekeep` viết lại. Đó là code của Nguyen (`db1fce2`,
+  `0a15a2e`) và `feature/langgraph-rewrite` là nhánh dùng chung.
+- [ ] 🟠 **Hỏi tên trượt 3/10** — fact "Prefers to be called Mon" ở tầng 2; e5-small cho "then
+  who am I?" hạng 12, "nhắc lại tên tôi xem nào?" hạng 14. Đề xuất (chờ Tri): cách xưng hô
+  (category `style`) lên tầng 1 ngay khi user nói rõ, tên mới ghi đè tên cũ.
+- [ ] 🟠 **Planner mở cổng tra cứu cả khi trí nhớ đã đủ** — 10/10 câu ký ức có
+  `needs_retrieval=true` (cả khi planner thấy fact). Retriever chạy thêm 2–5 s, gọi
+  `recall_self`, hiện "Let me think back…" (`stage_recalling`). Hướng sửa: luật cổng của planner
+  (ghi chú của user đã trả lời được thì không tra cứu); phải đo độ trễ trước.
+- [ ] 🟠 **Tầng 2 kéo fact nhiễu vào prompt** — e5-small: điểm câu đúng và câu nhiễu chồng lấn
+  0.72–0.91 (khớp mặt chữ, vd "giá vàng" ↔ "chó tên Vàng" 0.834). Top-5 + floor 0.75
+  (`e3a8c3ea`): 12/14 câu nhiễu kéo fact vào prompt (~4 dòng). Chưa thấy câu trả lời dùng nhầm
+  (B4 nhóm f). Đã thử và loại: e5-base (tên 4/10, chậm 3×, +246 MB), planner chọn fact (nhiễu
+  4/5, +393 ms, không bỏ được retriever). Theo dõi khi có dữ liệu thật.
+- [ ] 🟠 **Khi LLM lỗi, user không nhận được chữ nào** — đường lỗi của synthesizer
+  (`nodes/synthesizer.py` ~860-884) và `nodes/error_handler.py:56` trả `final_answer` mà không
+  phát `token`; sự kiện `done` (`api/main.py` ~923) không mang nội dung. Có thể đang có trên
+  prod.
+- [ ] 🟠 **Lời gọi DeepSeek treo ~15 phút** — 15/10 (DeepSeek sự cố) lời gọi role `memory`
+  (timeout 15 s) treo đúng ~900 s rồi mới lỗi; stream giữ kết nối nên timeout đọc không bắt
+  được. Cần giới hạn thời gian cứng (`asyncio.wait_for`) quanh lời gọi LLM.
+- [ ] 🟠 **Benchmark memory chưa chạy trên model prod** — A/B/B2/B3/B4/N chạy Groq
+  `qwen/qwen3.8-27b`, mỗi nhóm 1 probe. Chạy lại trên DeepSeek ở staging. Fact đôi khi ghi bằng
+  tiếng Anh cho user Việt (qwen) — kiểm lại trên DeepSeek.
+- [ ] 🟠 **`db/gdpr.py::delete_message` bỏ qua RLS** — dùng `pg._pool.acquire()` trực tiếp,
+  không set `app.user_id`. Có từ trước.
+- [ ] 🟡 **Mật khẩu / mã bí mật user gõ vào chat** — extractor không ghi vào LTM, nhưng vẫn nằm
+  trong `messages` và log `chat_start` (`query[:120]`).
+- [ ] 🟡 **Đoạn dán dài bị bỏ âm thầm** — extractor drop `too_long`, user không biết.
+- [ ] 🟡 **Dọn ứng viên quá hạn / dòng đã ẩn chỉ chạy khi user chat** — cần job quét định kỳ
+  (plan deploy).
+- [ ] 🟡 **Xoá bảng `summaries`** — code không còn dùng; giữ để quay lui, xoá bằng migration
+  sau khi prod ổn.
+- [ ] 🟡 **Tool nhắc lịch theo dõi** — Tri muốn làm plan riêng, không thuộc LTM.
+- [ ] 🟡 **Prod có dùng chung key DeepSeek với `.env` local (đuôi `4853`)?** — 14/10 key local
+  hết tiền; chưa kiểm được prod (quyền đọc cấu hình `vva-agent` bị chặn). Fallback Gemini trên
+  prod là gói miễn phí 20 lời gọi/ngày/key.
+- [ ] ⚪ **Dọn worktree** `D:\Swin documents\VVA-benchA` (cố định ở `15fcb77b`, dùng cho
+  benchmark A).
 
 ## 🟡 Nên làm
 

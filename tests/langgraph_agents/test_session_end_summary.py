@@ -53,12 +53,16 @@ async def test_current_session_long_summary_runs_inline_not_as_a_task():
     pg = MagicMock()
     pg.connect = AsyncMock()
     pg.fetchval = AsyncMock(return_value=0)
-    pg.fetch = AsyncMock(return_value=[{"token_count": 11000, "content": "x"}])
+    # Three long messages: only the newest fits the window, 1–2 fell out.
+    pg.fetch = AsyncMock(return_value=[
+        {"seq_id": i, "role": r, "content": "x" * 3200}
+        for i, r in ((1, "user"), (2, "assistant"), (3, "user"))])
     with patch.object(summ, "get_pg_client", return_value=pg), \
+         patch("langgraph_agents.nodes.memory.history_budget", return_value=1000), \
          patch.object(summ, "_run_summarize", new=AsyncMock()) as run, \
          patch("asyncio.create_task") as create_task:
         await summ.maybe_summarize("s-current")
-    run.assert_awaited_once_with("s-current", 0)
+    run.assert_awaited_once_with("s-current", 0, up_to_seq=2)
     create_task.assert_not_called()
 
 

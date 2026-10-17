@@ -1,7 +1,11 @@
 """Background summarizer — M.5 (chunk-based, frozen, CAS idempotent).
 
 Decisions encoded:
-  D13:  Single threshold = 10k tokens; recent-raw window = chunk_size
+  D13 (changed 17/10): the current session is summarised as its messages fall
+        out of the memory node's recent-raw window (20 messages / history
+        budget), once ~500 tokens of them have piled up — not at 10k tokens.
+        With a 1k-token window, the 10k rule left everything between 1k and 10k
+        in no prompt at all.
   M.5:  Summary chunk-based, trigger by TOKEN cumulative, runs BACKGROUND,
         frozen on write (never re-compressed), CAS idempotent
   M.7:  Summary chunks = STATIC prefix → prompt cache works (append-only)
@@ -12,7 +16,13 @@ a container once the response ends, and a task left running after it resumed
 on a closed connection (12/10: 26 failed triggers, 5 summaries since 01/09):
   - the user has moved on: another session of theirs has ≥ 2 unsummarised
     turns → summarise it (long-term memory, read back by memory_search);
-  - the current session passed 10k tokens since its last summary (D13).
+  - in the current session, messages that fell out of the recent-raw window
+    reached _COMPACT_MIN_TOKENS since the last summary (D13, 17/10).
+
+Every summary ends on a message boundary (`covers_up_to_seq`), never inside
+one, and the next one starts at the message after it. It also never ends on a
+user question: the answer is taken along, even if that answer is still in the
+window (shown twice for a while, never lost).
 
 Edge A (M.5): summarize fail → retry 1× → still fail → log WARNING, leave.
 Hard cap: memory node uses existing token budget to prevent unbounded growth.
@@ -33,7 +43,9 @@ logger = get_logger("langgraph.summarizer")
 # Strong references to fire-and-forget summarizer tasks (same pattern as TTS)
 _pending_summarizer_tasks: set = set()
 
-_SUMMARY_THRESHOLD = 10_000   # D13: single threshold
+# Out-of-window tokens that make a summary worth an LLM call. Smaller means
+# less forgotten between summaries but more, shorter chunks in every prompt.
+_COMPACT_MIN_TOKENS = 500
 _MAX_RETRY = 1                # Edge A: retry once
 
 
@@ -42,8 +54,24 @@ def _token_estimate(text: str) -> int:
     return len(text) // 4
 
 
+def _window_start(rows: list) -> int:
+    """Index of the first of `rows` the memory node still shows as raw history.
+
+    Same rule as memory._load_recent_raw: the last _RECENT_RAW_MAX messages,
+    then newest first while they fit in history_budget(), whole messages only.
+    `rows` are the messages after the last summary, oldest first; anything the
+    window holds that is older than them is already summarised, and being older
+    it cannot change which of them fit.
+    """
+    from langgraph_agents.nodes.memory import (
+        _RECENT_RAW_MAX, _select_recent_raw, history_budget,
+    )
+    tail = [{"role": r["role"], "content": r["content"] or ""} for r in rows[-_RECENT_RAW_MAX:]]
+    return len(rows) - len(_select_recent_raw(tail, history_budget()))
+
+
 async def maybe_summarize(session_id: str) -> None:
-    """Summarise the current session if it passed the threshold (D13).
+    """Summarise what of the current session has fallen out of the window (D13).
 
     Called from housekeep. Never raises — all errors logged.
     """
@@ -59,22 +87,22 @@ async def maybe_summarize(session_id: str) -> None:
             session_id,
         )
 
-        # Count uncached token budget since last summary
         rows = await pg.fetch(
-            """SELECT token_count, content FROM messages
+            """SELECT seq_id, role, content FROM messages
                WHERE session_id = $1 AND seq_id > $2
                ORDER BY seq_id""",
             session_id, last_chunk or 0,
         )
-
-        total_tokens = 0
-        for r in rows:
-            total_tokens += r["token_count"] or _token_estimate(r["content"] or "")
-
-        if total_tokens < _SUMMARY_THRESHOLD:
+        start = _window_start(rows)
+        outside = rows[:start]
+        # Same estimate the window uses, so "fell out" and "piled up" agree.
+        if sum(_token_estimate(r["content"] or "") for r in outside) < _COMPACT_MIN_TOKENS:
             return
 
-        await _run_summarize(session_id, last_chunk or 0)
+        end = start - 1
+        if rows[end]["role"] == "user" and end + 1 < len(rows):
+            end += 1
+        await _run_summarize(session_id, last_chunk or 0, up_to_seq=rows[end]["seq_id"])
 
     except Exception as exc:
         logger.warning("summarizer_trigger_failed", extra={
@@ -193,8 +221,8 @@ async def _summarize_messages(rows: list, session_id: str) -> str | None:
     return summary_text
 
 
-async def _run_summarize(session_id: str, from_seq: int) -> None:
-    """Summarize messages in (from_seq, new_covers_up_to_seq]."""
+async def _run_summarize(session_id: str, from_seq: int, up_to_seq: int | None = None) -> None:
+    """Summarize messages in (from_seq, up_to_seq], or up to the latest if None."""
     t0 = time.perf_counter()
 
     try:
@@ -202,13 +230,22 @@ async def _run_summarize(session_id: str, from_seq: int) -> None:
         await pg.connect()
 
         # Load messages not yet covered
-        rows = await pg.fetch(
-            """SELECT seq_id, role, content, token_count
-               FROM messages
-               WHERE session_id = $1 AND seq_id > $2
-               ORDER BY seq_id""",
-            session_id, from_seq,
-        )
+        if up_to_seq is None:
+            rows = await pg.fetch(
+                """SELECT seq_id, role, content, token_count
+                   FROM messages
+                   WHERE session_id = $1 AND seq_id > $2
+                   ORDER BY seq_id""",
+                session_id, from_seq,
+            )
+        else:
+            rows = await pg.fetch(
+                """SELECT seq_id, role, content, token_count
+                   FROM messages
+                   WHERE session_id = $1 AND seq_id > $2 AND seq_id <= $3
+                   ORDER BY seq_id""",
+                session_id, from_seq, up_to_seq,
+            )
 
         if not rows:
             return

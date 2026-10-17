@@ -46,6 +46,11 @@ class ChatRequest(BaseModel):
 
     llm: Optional[LLMChoice] = None
 
+    # SCRUM-45: photos already uploaded through POST /me/uploads. /chat checks
+    # every key is one that route could have issued to this user before the
+    # vision node reads it.
+    image_keys: list[str] = Field(default_factory=list, max_length=3)
+
 
 class ChatResponse(BaseModel):
     request_id: str

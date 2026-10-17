@@ -58,6 +58,7 @@ from aws_cdk import (
 from constructs import Construct
 
 from infra.origins import resolve as resolve_origins
+from infra.uploads_stack import uploads_bucket_name
 
 _REPOSITORY_NAME = "vva-agent"
 
@@ -328,6 +329,9 @@ class AgentStack(Stack):
             "VVA_PG_DSN_PARAM": dsn_param,
             "DEEPSEEK_API_KEY_PARAM": deepseek_param,
             "GEMINI_API_KEYS_PARAM": gemini_param,
+            # VvaUploadsStack, by name (no export): the vision node reads the
+            # photos a turn carries (SCRUM-45).
+            "UPLOADS_BUCKET": uploads_bucket_name(self.account),
             "AUTH_PROVIDER": "cognito",
             "COGNITO_REGION": cognito_region,
             "COGNITO_USER_POOL_ID": self.cognito_pool_id,
@@ -422,6 +426,14 @@ class AgentStack(Stack):
             # reserve here.
             description="LangGraph agent — /chat, SSE over API Gateway response streaming",
         )
+
+        # ── IAM: read chat photos (SCRUM-45) ────────────────────────────
+        # Read-only, images/ only. /chat checks a key belongs to the caller
+        # before the vision node asks for it; this caps what any bug can read.
+        self.fn.add_to_role_policy(iam.PolicyStatement(
+            actions=["s3:GetObject"],
+            resources=[f"arn:aws:s3:::{uploads_bucket_name(self.account)}/images/*"],
+        ))
 
         # ── IAM: read the DSN and the LLM keys ──────────────────────────
 

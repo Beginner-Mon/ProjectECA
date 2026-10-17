@@ -287,7 +287,14 @@ async def planner_node(state: AgentState, config: RunnableConfig) -> dict:
         f"treat them as true):\n{instructions}" if instructions else ""
     )
 
-    user_msg = query + context_hint + instructions_hint + facts_hint
+    # SCRUM-45: what the user's photos show, read by the vision node. A visible
+    # sign here (swelling, bruising…) is a cue for red_flag_screen, as if the
+    # user had written it.
+    from langgraph_agents.nodes.vision import photo_lines
+    photos = photo_lines(state.get("image_context"))
+    photo_hint = ("\n\nThe user attached photos:\n" + "\n".join(photos)) if photos else ""
+
+    user_msg = query + photo_hint + context_hint + instructions_hint + facts_hint
 
     prompt_msgs = [
         ("system", _PLANNER_SYSTEM_PROMPT),

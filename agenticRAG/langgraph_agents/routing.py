@@ -27,9 +27,11 @@ def check_errors(state: AgentState) -> str:
 # ── After memory ──────────────────────────────────────────────────────────
 
 def route_after_memory(state: AgentState) -> str:
-    """Memory → planner (always, unless CRITICAL error)."""
+    """Memory → vision (turn has photos) | planner, unless CRITICAL error."""
     if check_errors(state) == "error_handler":
         return "error_handler"
+    if state.get("image_keys"):
+        return "vision"
     return "planner"
 
 

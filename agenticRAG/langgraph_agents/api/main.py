@@ -103,7 +103,7 @@ _health_redis: aioredis.Redis | None = None
 
 # Node names that emit stage events (Phase 6.9: conversation node removed)
 _STAGE_NODES = {
-    "memory", "planner", "retriever_agent", "synthesizer",
+    "memory", "vision", "planner", "retriever_agent", "synthesizer",
     "grader", "error_handler",
 }
 
@@ -339,7 +339,17 @@ def create_app() -> FastAPI:
             raise HTTPException(503, "Graph not loaded yet")
         request_id = str(uuid.uuid4())
 
+        # Photos (SCRUM-45): only keys POST /me/uploads could have issued to this
+        # user. Checked before anything reads S3, so one user cannot point the
+        # vision node at another's upload.
+        from langgraph_agents.api.routes_uploads import key_belongs_to
+        foreign = [k for k in req.image_keys if not key_belongs_to(uid, k, "image")]
+        if foreign:
+            raise HTTPException(400, "image_keys must be your own uploads")
+
         state = {"messages": [], "errors": [], "retry_count": 0, "total_tokens": 0}
+        if req.image_keys:
+            state["image_keys"] = list(req.image_keys)
         # Whose sheet this turn may read (plan T8b). Bound here — next to the
         # config, not in auth — because the character comes from the request
         # (catalog-validated persona_id), not from the token.

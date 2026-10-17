@@ -217,19 +217,23 @@ def _resolve_api_key() -> str | None:
     return _secret_from_ssm(param) if param else None
 
 
-def _resolve_first_gemini_key() -> str | None:
-    """Return the first key from comma-separated GEMINI_API_KEYS, or None.
+def gemini_api_keys() -> list[str]:
+    """Every key in comma-separated GEMINI_API_KEYS, in order.
 
     Falls back to GEMINI_API_KEYS_PARAM (SSM SecureString) holding the same
     comma-separated shape, so the deployed path stores one parameter rather than
-    one per key.
+    one per key. The vision node rotates through them on quota errors.
     """
     raw = os.getenv("GEMINI_API_KEYS", "")
     if not raw:
         param = os.getenv("GEMINI_API_KEYS_PARAM")
         raw = (_secret_from_ssm(param) or "") if param else ""
+    return [k.strip() for k in raw.split(",") if k.strip()]
 
-    keys = [k.strip() for k in raw.split(",") if k.strip()]
+
+def _resolve_first_gemini_key() -> str | None:
+    """Return the first key from comma-separated GEMINI_API_KEYS, or None."""
+    keys = gemini_api_keys()
     return keys[0] if keys else None
 
 

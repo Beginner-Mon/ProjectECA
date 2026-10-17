@@ -85,6 +85,10 @@ class _Store:
     billed per GB ingested and would turn a degraded cache into a bill.
     """
 
+    # False only for NullStore: callers can skip work whose only purpose is to
+    # fill a cache (the /chat warm-up read), instead of doing it for nothing.
+    caches = True
+
     def __init__(self) -> None:
         self._reported: set[str] = set()
 
@@ -117,7 +121,12 @@ class NullStore(_Store):
     decision non-blocking: the agent runs correctly with no cache at all, just
     with an extra PostgreSQL read per turn, so the cache can be chosen after
     measuring rather than before.
+
+    Production runs this (decided 17/10, no Redis): the memory node reads the
+    recent messages straight from PostgreSQL, median 76 ms on prod.
     """
+
+    caches = False
 
     async def get(self, session_id: str) -> Optional[list[dict]]:
         return None

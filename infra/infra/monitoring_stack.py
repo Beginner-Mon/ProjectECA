@@ -55,6 +55,11 @@ DASHBOARD_NAME = "vva-lambdas"
 ALERT_TOPIC_NAME = "vva-alerts"
 JUDGE_ALARM_NAME = "vva-grader-judge-failed"
 JUDGE_FAILURES_PER_HOUR = 3
+# No Redis (17/10): the memory node reads recent messages from Neon. p50 76 ms,
+# p90 123 ms on prod (15/09–17/10). Past this, revisit: skip queries, pooler,
+# then a cache — see docs/plans/reupdate-plan.md D35.
+MEMORY_ALARM_NAME = "vva-memory-node-slow"
+MEMORY_P90_MS = 300
 
 # function_name values set in agent_stack.py, crud_api_stack.py,
 # character_stack.py and speechllm_stack.py. The warmers are left out: they
@@ -121,6 +126,7 @@ class MonitoringStack(Stack):
             )
 
         self._judge_alarm()
+        self._memory_alarm()
 
     def _judge_alarm(self) -> None:
         """grader_judge_failed → metric → alarm → topic, plus one dashboard row."""
@@ -175,3 +181,50 @@ class MonitoringStack(Stack):
                 width=8,
             ),
         )
+
+    def _memory_alarm(self) -> None:
+        """Memory node latency → metric → alarm on the same topic, plus a dashboard row.
+
+        The trigger for revisiting the no-Redis decision: two hours out of three
+        with a p90 above MEMORY_P90_MS. Low traffic means few samples per hour,
+        hence two of three rather than one.
+        """
+        agent_logs = "/aws/lambda/vva-agent"
+        logs.MetricFilter(
+            self, "MemoryLatencyFilter",
+            log_group=logs.LogGroup.from_log_group_name(self, "AgentLogsMemory", agent_logs),
+            filter_pattern=logs.FilterPattern.all(
+                logs.FilterPattern.string_value("$.msg", "=", "node_complete"),
+                logs.FilterPattern.string_value("$.node", "=", "memory"),
+            ),
+            metric_namespace="VVA/Memory",
+            metric_name="NodeElapsedMs",
+            metric_value="$.elapsed_ms",
+        )
+        p90 = cw.Metric(
+            namespace="VVA/Memory",
+            metric_name="NodeElapsedMs",
+            statistic="p90",
+            period=Duration.hours(1),
+        )
+        alarm = cw.Alarm(
+            self, "MemorySlowAlarm",
+            alarm_name=MEMORY_ALARM_NAME,
+            alarm_description=(
+                f"vva-agent memory node p90 above {MEMORY_P90_MS} ms in 2 of the last 3 hours. "
+                "It reads recent messages from Neon with no cache (decision 17/10); "
+                "see docs/plans/reupdate-plan.md D35 for what to do next."
+            ),
+            metric=p90,
+            threshold=MEMORY_P90_MS,
+            evaluation_periods=3,
+            datapoints_to_alarm=2,
+            comparison_operator=cw.ComparisonOperator.GREATER_THAN_THRESHOLD,
+            treat_missing_data=cw.TreatMissingData.NOT_BREACHING,
+        )
+        alarm.add_alarm_action(cw_actions.SnsAction(self.alert_topic))
+        self.dashboard.add_widgets(cw.AlarmWidget(
+            title=f"vva-agent: memory node p90 (alarm at {MEMORY_P90_MS} ms)",
+            alarm=alarm,
+            width=8,
+        ))

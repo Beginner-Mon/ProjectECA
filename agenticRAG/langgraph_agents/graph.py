@@ -26,6 +26,7 @@ from langgraph.prebuilt import ToolNode
 
 from langgraph_agents.state import AgentState
 from langgraph_agents.nodes.memory import memory_node
+from langgraph_agents.nodes.vision import vision_node
 from langgraph_agents.nodes.planner import planner_node
 from langgraph_agents.nodes.retriever_agent import retriever_agent_node, RETRIEVER_BASE_TOOLS
 from langgraph_agents.nodes.kimodo import kimodo_node
@@ -174,6 +175,7 @@ async def build_graph_async():
 
     # ── Nodes ─────────────────────────────────────────────────────────
     g.add_node("memory", memory_node)
+    g.add_node("vision", vision_node)
     g.add_node("planner", planner_node)
     g.add_node("retriever_agent", retriever_agent_node)
     g.add_node("tools", _make_guarded_tools_node(ToolNode(all_tools, handle_tool_errors=_tool_error_payload)))
@@ -189,9 +191,12 @@ async def build_graph_async():
 
     # memory → planner (or error_handler on CRITICAL)
     g.add_conditional_edges("memory", route_after_memory, {
+        "vision": "vision",
         "planner": "planner",
         "error_handler": "error_handler",
     })
+    # vision → planner: only on turns with photos (SCRUM-45). Never fails the turn.
+    g.add_edge("vision", "planner")
 
     # planner → retriever_agent | kimodo | synthesizer | error_handler
     g.add_conditional_edges("planner", route_after_planner, {

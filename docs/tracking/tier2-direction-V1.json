@@ -1,0 +1,2478 @@
+{
+ "label": "V1",
+ "facts": 30,
+ "probes": 77,
+ "a": {
+  "config": {
+   "timeout_ms": 300,
+   "top_k": 5,
+   "floor": 0.75
+  },
+  "correct_total": 63,
+  "correct_in_prompt": 56,
+  "correct_in_prompt_rate": 0.8889,
+  "noise_probes": 14,
+  "noise_with_any_fact": 12,
+  "noise_facts_total": 60,
+  "noise_facts_max": 6,
+  "name_in_prompt": 7,
+  "name_total": 10,
+  "rows": [
+   {
+    "id": "q_name_01",
+    "ask": "brother do you know my name?",
+    "expect": "f_name",
+    "rank_of_expect": 1,
+    "score_of_expect": 0.7833,
+    "selected": [
+     "f_name",
+     "f_knee_surgery",
+     "f_vietnamese",
+     "f_coffee",
+     "f_chay"
+    ],
+    "selected_lines": [
+     "- [2026-10-14] Prefers to be called Mon",
+     "- [2026-10-14] Mổ sụn chêm đầu gối trái tháng 5/2025",
+     "- [2026-10-14] Muốn được trả lời bằng tiếng Việt",
+     "- [2026-10-14] Uống cà phê đen mỗi sáng",
+     "- [2026-10-14] Ăn chay ngày rằm"
+    ],
+    "noise_selected_count": null
+   },
+   {
+    "id": "q_name_02",
+    "ask": "then who am I?",
+    "expect": "f_name",
+    "rank_of_expect": 12,
+    "score_of_expect": 0.7864,
+    "selected": [
+     "f_latex",
+     "f_job",
+     "f_city",
+     "f_proj_serverless",
+     "f_vietnamese",
+     "f_proj_deadline"
+    ],
+    "selected_lines": [
+     "- [2026-10-14] Dị ứng latex",
+     "- [2026-10-14] Hiện làm giáo viên",
+     "- [2026-10-14] Sống ở TP.HCM",
+     "- [2026-10-14] (A) Ưu tiên serverless",
+     "- [2026-10-14] Muốn được trả lời bằng tiếng Việt",
+     "- [2026-10-14] (A) Deadline cuối tháng 11"
+    ],
+    "noise_selected_count": null
+   },
+   {
+    "id": "q_name_03",
+    "ask": "who am I?",
+    "expect": "f_name",
+    "rank_of_expect": 5,
+    "score_of_expect": 0.7788,
+    "selected": [
+     "f_latex",
+     "f_proj_serverless",
+     "f_job",
+     "f_city",
+     "f_name",
+     "f_proj_deadline"
+    ],
+    "selected_lines": [
+     "- [2026-10-14] Dị ứng latex",
+     "- [2026-10-14] (A) Ưu tiên serverless",
+     "- [2026-10-14] Hiện làm giáo viên",
+     "- [2026-10-14] Sống ở TP.HCM",
+     "- [2026-10-14] Prefers to be called Mon",
+     "- [2026-10-14] (A) Deadline cuối tháng 11"
+    ],
+    "noise_selected_count": null
+   },
+   {
+    "id": "q_name_04",
+    "ask": "do you know my name?",
+    "expect": "f_name",
+    "rank_of_expect": 7,
+    "score_of_expect": 0.7992,
+    "selected": [
+     "f_latex",
+     "f_vietnamese",
+     "f_chay",
+     "f_short_reply",
+     "f_knee_surgery"
+    ],
+    "selected_lines": [
+     "- [2026-10-14] Dị ứng latex",
+     "- [2026-10-14] Muốn được trả lời bằng tiếng Việt",
+     "- [2026-10-14] Ăn chay ngày rằm",
+     "- [2026-10-14] Trả lời ngắn gọn thôi",
+     "- [2026-10-14] Mổ sụn chêm đầu gối trái tháng 5/2025"
+    ],
+    "noise_selected_count": null
+   },
+   {
+    "id": "q_name_05",
+    "ask": "tên tôi là gì?",
+    "expect": "f_name",
+    "rank_of_expect": 1,
+    "score_of_expect": 0.8022,
+    "selected": [
+     "f_name",
+     "f_noodles",
+     "f_vietnamese",
+     "f_dog",
+     "f_city"
+    ],
+    "selected_lines": [
+     "- [2026-10-14] Prefers to be called Mon",
+     "- [2026-10-14] Thích ăn mì nhưng sợ thiếu chất",
+     "- [2026-10-14] Muốn được trả lời bằng tiếng Việt",
+     "- [2026-10-14] Nuôi một con chó tên Vàng",
+     "- [2026-10-14] Sống ở TP.HCM"
+    ],
+    "noise_selected_count": null
+   },
+   {
+    "id": "q_name_06",
+    "ask": "tôi tên gì?",
+    "expect": "f_name",
+    "rank_of_expect": 1,
+    "score_of_expect": 0.8135,
+    "selected": [
+     "f_name",
+     "f_noodles",
+     "f_vietnamese",
+     "f_dog",
+     "f_city"
+    ],
+    "selected_lines": [
+     "- [2026-10-14] Prefers to be called Mon",
+     "- [2026-10-14] Thích ăn mì nhưng sợ thiếu chất",
+     "- [2026-10-14] Muốn được trả lời bằng tiếng Việt",
+     "- [2026-10-14] Nuôi một con chó tên Vàng",
+     "- [2026-10-14] Sống ở TP.HCM"
+    ],
+    "noise_selected_count": null
+   },
+   {
+    "id": "q_name_07",
+    "ask": "then what am I preferred to be called?",
+    "expect": "f_name",
+    "rank_of_expect": 1,
+    "score_of_expect": 0.8713,
+    "selected": [
+     "f_name",
+     "f_latex",
+     "f_proj_serverless",
+     "f_vietnamese",
+     "f_proj_postgres",
+     "f_proj_deadline"
+    ],
+    "selected_lines": [
+     "- [2026-10-14] Prefers to be called Mon",
+     "- [2026-10-14] Dị ứng latex",
+     "- [2026-10-14] (A) Ưu tiên serverless",
+     "- [2026-10-14] Muốn được trả lời bằng tiếng Việt",
+     "- [2026-10-14] (B) Dùng Postgres cho dữ liệu chính",
+     "- [2026-10-14] (A) Deadline cuối tháng 11"
+    ],
+    "noise_selected_count": null
+   },
+   {
+    "id": "q_name_08",
+    "ask": "tôi thích được gọi là gì?",
+    "expect": "f_name",
+    "rank_of_expect": 1,
+    "score_of_expect": 0.8333,
+    "selected": [
+     "f_name",
+     "f_noodles",
+     "f_morning_exercise",
+     "f_pho",
+     "f_vietnamese"
+    ],
+    "selected_lines": [
+     "- [2026-10-14] Prefers to be called Mon",
+     "- [2026-10-14] Thích ăn mì nhưng sợ thiếu chất",
+     "- [2026-10-14] Thích tập buổi sáng",
+     "- [2026-10-14] Thích ăn phở",
+     "- [2026-10-14] Muốn được trả lời bằng tiếng Việt"
+    ],
+    "noise_selected_count": null
+   },
+   {
+    "id": "q_name_09",
+    "ask": "gọi tôi là gì?",
+    "expect": "f_name",
+    "rank_of_expect": 1,
+    "score_of_expect": 0.8192,
+    "selected": [
+     "f_name",
+     "f_vietnamese",
+     "f_noodles",
+     "f_knee_surgery",
+     "f_latex"
+    ],
+    "selected_lines": [
+     "- [2026-10-14] Prefers to be called Mon",
+     "- [2026-10-14] Muốn được trả lời bằng tiếng Việt",
+     "- [2026-10-14] Thích ăn mì nhưng sợ thiếu chất",
+     "- [2026-10-14] Mổ sụn chêm đầu gối trái tháng 5/2025",
+     "- [2026-10-14] Dị ứng latex"
+    ],
+    "noise_selected_count": null
+   },
+   {
+    "id": "q_name_10",
+    "ask": "nhắc lại tên tôi xem nào?",
+    "expect": "f_name",
+    "rank_of_expect": 14,
+    "score_of_expect": 0.8042,
+    "selected": [
+     "f_vietnamese",
+     "f_short_reply",
+     "f_knee_surgery",
+     "f_latex",
+     "f_dog"
+    ],
+    "selected_lines": [
+     "- [2026-10-14] Muốn được trả lời bằng tiếng Việt",
+     "- [2026-10-14] Trả lời ngắn gọn thôi",
+     "- [2026-10-14] Mổ sụn chêm đầu gối trái tháng 5/2025",
+     "- [2026-10-14] Dị ứng latex",
+     "- [2026-10-14] Nuôi một con chó tên Vàng"
+    ],
+    "noise_selected_count": null
+   },
+   {
+    "id": "q_food_01",
+    "ask": "Món ăn yêu thích của tôi là gì?",
+    "expect": "f_pho",
+    "rank_of_expect": 2,
+    "score_of_expect": 0.8468,
+    "selected": [
+     "f_noodles",
+     "f_pho",
+     "f_chay",
+     "f_morning_exercise",
+     "f_coffee"
+    ],
+    "selected_lines": [
+     "- [2026-10-14] Thích ăn mì nhưng sợ thiếu chất",
+     "- [2026-10-14] Thích ăn phở",
+     "- [2026-10-14] Ăn chay ngày rằm",
+     "- [2026-10-14] Thích tập buổi sáng",
+     "- [2026-10-14] Uống cà phê đen mỗi sáng"
+    ],
+    "noise_selected_count": null
+   },
+   {
+    "id": "q_food_02",
+    "ask": "tôi thích ăn gì?",
+    "expect": "f_pho",
+    "rank_of_expect": 2,
+    "score_of_expect": 0.8768,
+    "selected": [
+     "f_noodles",
+     "f_pho",
+     "f_morning_exercise",
+     "f_chay",
+     "f_water"
+    ],
+    "selected_lines": [
+     "- [2026-10-14] Thích ăn mì nhưng sợ thiếu chất",
+     "- [2026-10-14] Thích ăn phở",
+     "- [2026-10-14] Thích tập buổi sáng",
+     "- [2026-10-14] Ăn chay ngày rằm",
+     "- [2026-10-14] Uống 2 lít nước mỗi ngày"
+    ],
+    "noise_selected_count": null
+   },
+   {
+    "id": "q_food_03",
+    "ask": "what is my favorite food?",
+    "expect": "f_pho",
+    "rank_of_expect": 3,
+    "score_of_expect": 0.8252,
+    "selected": [
+     "f_chay",
+     "f_noodles",
+     "f_pho",
+     "f_coffee",
+     "f_name"
+    ],
+    "selected_lines": [
+     "- [2026-10-14] Ăn chay ngày rằm",
+     "- [2026-10-14] Thích ăn mì nhưng sợ thiếu chất",
+     "- [2026-10-14] Thích ăn phở",
+     "- [2026-10-14] Uống cà phê đen mỗi sáng",
+     "- [2026-10-14] Prefers to be called Mon"
+    ],
+    "noise_selected_count": null
+   },
+   {
+    "id": "q_food_04",
+    "ask": "do you remember what I like to eat?",
+    "expect": "f_pho",
+    "rank_of_expect": 1,
+    "score_of_expect": 0.8355,
+    "selected": [
+     "f_pho",
+     "f_noodles",
+     "f_chay",
+     "f_morning_exercise",
+     "f_coffee"
+    ],
+    "selected_lines": [
+     "- [2026-10-14] Thích ăn phở",
+     "- [2026-10-14] Thích ăn mì nhưng sợ thiếu chất",
+     "- [2026-10-14] Ăn chay ngày rằm",
+     "- [2026-10-14] Thích tập buổi sáng",
+     "- [2026-10-14] Uống cà phê đen mỗi sáng"
+    ],
+    "noise_selected_count": null
+   },
+   {
+    "id": "q_food_05",
+    "ask": "sáng tôi thường uống gì?",
+    "expect": "f_coffee",
+    "rank_of_expect": 1,
+    "score_of_expect": 0.8597,
+    "selected": [
+     "f_coffee",
+     "f_morning_exercise",
+     "f_swim",
+     "f_chay",
+     "f_noodles"
+    ],
+    "selected_lines": [
+     "- [2026-10-14] Uống cà phê đen mỗi sáng",
+     "- [2026-10-14] Thích tập buổi sáng",
+     "- [2026-10-14] Thích bơi lội mỗi sáng",
+     "- [2026-10-14] Ăn chay ngày rằm",
+     "- [2026-10-14] Thích ăn mì nhưng sợ thiếu chất"
+    ],
+    "noise_selected_count": null
+   },
+   {
+    "id": "q_food_06",
+    "ask": "what do I drink every morning?",
+    "expect": "f_coffee",
+    "rank_of_expect": 1,
+    "score_of_expect": 0.8543,
+    "selected": [
+     "f_coffee",
+     "f_water",
+     "f_swim",
+     "f_chay",
+     "f_sleep"
+    ],
+    "selected_lines": [
+     "- [2026-10-14] Uống cà phê đen mỗi sáng",
+     "- [2026-10-14] Uống 2 lít nước mỗi ngày",
+     "- [2026-10-14] Thích bơi lội mỗi sáng",
+     "- [2026-10-14] Ăn chay ngày rằm",
+     "- [2026-10-14] Ngủ 7 tiếng mỗi đêm để hồi phục gối"
+    ],
+    "noise_selected_count": null
+   },
+   {
+    "id": "q_food_07",
+    "ask": "ngày rằm tôi ăn gì?",
+    "expect": "f_chay",
+    "rank_of_expect": 1,
+    "score_of_expect": 0.8972,
+    "selected": [
+     "f_chay",
+     "f_pho",
+     "f_noodles",
+     "f_coffee",
+     "f_water"
+    ],
+    "selected_lines": [
+     "- [2026-10-14] Ăn chay ngày rằm",
+     "- [2026-10-14] Thích ăn phở",
+     "- [2026-10-14] Thích ăn mì nhưng sợ thiếu chất",
+     "- [2026-10-14] Uống cà phê đen mỗi sáng",
+     "- [2026-10-14] Uống 2 lít nước mỗi ngày"
+    ],
+    "noise_selected_count": null
+   },
+   {
+    "id": "q_food_08",
+    "ask": "tôi ăn mì thì lo điều gì?",
+    "expect": "f_noodles",
+    "rank_of_expect": 1,
+    "score_of_expect": 0.8592,
+    "selected": [
+     "f_noodles",
+     "f_pho",
+     "f_chay",
+     "f_vietnamese",
+     "f_water"
+    ],
+    "selected_lines": [
+     "- [2026-10-14] Thích ăn mì nhưng sợ thiếu chất",
+     "- [2026-10-14] Thích ăn phở",
+     "- [2026-10-14] Ăn chay ngày rằm",
+     "- [2026-10-14] Muốn được trả lời bằng tiếng Việt",
+     "- [2026-10-14] Uống 2 lít nước mỗi ngày"
+    ],
+    "noise_selected_count": null
+   },
+   {
+    "id": "q_food_09",
+    "ask": "what noodles do I like and what worries me?",
+    "expect": "f_noodles",
+    "rank_of_expect": 1,
+    "score_of_expect": 0.8322,
+    "selected": [
+     "f_noodles",
+     "f_pho",
+     "f_coffee",
+     "f_chay",
+     "f_knee_surgery"
+    ],
+    "selected_lines": [
+     "- [2026-10-14] Thích ăn mì nhưng sợ thiếu chất",
+     "- [2026-10-14] Thích ăn phở",
+     "- [2026-10-14] Uống cà phê đen mỗi sáng",
+     "- [2026-10-14] Ăn chay ngày rằm",
+     "- [2026-10-14] Mổ sụn chêm đầu gối trái tháng 5/2025"
+    ],
+    "noise_selected_count": null
+   },
+   {
+    "id": "q_health_01",
+    "ask": "gối tôi đang tập tới tuần mấy rồi?",
+    "expect": "f_knee_rehab",
+    "rank_of_expect": 1,
+    "score_of_expect": 0.8837,
+    "selected": [
+     "f_knee_rehab",
+     "f_sleep",
+     "f_walk",
+     "f_squat",
+     "f_knee_surgery"
+    ],
+    "selected_lines": [
+     "- [2026-10-14] Đang tập phục hồi gối tuần 6",
+     "- [2026-10-14] Ngủ 7 tiếng mỗi đêm để hồi phục gối",
+     "- [2026-10-14] Đi bộ 20 phút mỗi ngày cho khớp gối",
+     "- [2026-10-14] Squat nhẹ 8 lần mỗi đợt cho gối đau",
+     "- [2026-10-14] Mổ sụn chêm đầu gối trái tháng 5/2025"
+    ],
+    "noise_selected_count": null
+   },
+   {
+    "id": "q_health_02",
+    "ask": "what week of knee rehab am I in?",
+    "expect": "f_knee_rehab",
+    "rank_of_expect": 3,
+    "score_of_expect": 0.8089,
+    "selected": [
+     "f_knee_surgery",
+     "f_sleep",
+     "f_knee_rehab",
+     "f_squat",
+     "f_walk"
+    ],
+    "selected_lines": [
+     "- [2026-10-14] Mổ sụn chêm đầu gối trái tháng 5/2025",
+     "- [2026-10-14] Ngủ 7 tiếng mỗi đêm để hồi phục gối",
+     "- [2026-10-14] Đang tập phục hồi gối tuần 6",
+     "- [2026-10-14] Squat nhẹ 8 lần mỗi đợt cho gối đau",
+     "- [2026-10-14] Đi bộ 20 phút mỗi ngày cho khớp gối"
+    ],
+    "noise_selected_count": null
+   },
+   {
+    "id": "q_health_03",
+    "ask": "where do I hurt when I sit long?",
+    "expect": "f_back_pain",
+    "rank_of_expect": 1,
+    "score_of_expect": 0.8262,
+    "selected": [
+     "f_back_pain",
+     "f_shoulder",
+     "f_squat",
+     "f_sleep",
+     "f_ice"
+    ],
+    "selected_lines": [
+     "- [2026-10-14] Has back pain",
+     "- [2026-10-14] Vai phải đau khi giơ tay cao",
+     "- [2026-10-14] Squat nhẹ 8 lần mỗi đợt cho gối đau",
+     "- [2026-10-14] Ngủ 7 tiếng mỗi đêm để hồi phục gối",
+     "- [2026-10-14] Chườm đá 15 phút mỗi tối cho gối sưng"
+    ],
+    "noise_selected_count": null
+   },
+   {
+    "id": "q_health_04",
+    "ask": "tôi bị đau ở đâu?",
+    "expect": "f_back_pain",
+    "rank_of_expect": 9,
+    "score_of_expect": 0.8141,
+    "selected": [
+     "f_shoulder",
+     "f_city",
+     "f_squat",
+     "f_noodles",
+     "f_ice"
+    ],
+    "selected_lines": [
+     "- [2026-10-14] Vai phải đau khi giơ tay cao",
+     "- [2026-10-14] Sống ở TP.HCM",
+     "- [2026-10-14] Squat nhẹ 8 lần mỗi đợt cho gối đau",
+     "- [2026-10-14] Thích ăn mì nhưng sợ thiếu chất",
+     "- [2026-10-14] Chườm đá 15 phút mỗi tối cho gối sưng"
+    ],
+    "noise_selected_count": null
+   },
+   {
+    "id": "q_health_05",
+    "ask": "vai nào của tôi đau khi giơ cao?",
+    "expect": "f_shoulder",
+    "rank_of_expect": 1,
+    "score_of_expect": 0.9111,
+    "selected": [
+     "f_shoulder",
+     "f_squat",
+     "f_back_pain",
+     "f_ice",
+     "f_knee_surgery"
+    ],
+    "selected_lines": [
+     "- [2026-10-14] Vai phải đau khi giơ tay cao",
+     "- [2026-10-14] Squat nhẹ 8 lần mỗi đợt cho gối đau",
+     "- [2026-10-14] Has back pain",
+     "- [2026-10-14] Chườm đá 15 phút mỗi tối cho gối sưng",
+     "- [2026-10-14] Mổ sụn chêm đầu gối trái tháng 5/2025"
+    ],
+    "noise_selected_count": null
+   },
+   {
+    "id": "q_health_06",
+    "ask": "which shoulder hurts when I lift my arm?",
+    "expect": "f_shoulder",
+    "rank_of_expect": 2,
+    "score_of_expect": 0.7989,
+    "selected": [
+     "f_back_pain",
+     "f_shoulder",
+     "f_knee_surgery",
+     "f_squat",
+     "f_ice"
+    ],
+    "selected_lines": [
+     "- [2026-10-14] Has back pain",
+     "- [2026-10-14] Vai phải đau khi giơ tay cao",
+     "- [2026-10-14] Mổ sụn chêm đầu gối trái tháng 5/2025",
+     "- [2026-10-14] Squat nhẹ 8 lần mỗi đợt cho gối đau",
+     "- [2026-10-14] Chườm đá 15 phút mỗi tối cho gối sưng"
+    ],
+    "noise_selected_count": null
+   },
+   {
+    "id": "q_health_07",
+    "ask": "mục tiêu chạy của tôi là gì?",
+    "expect": "f_run_goal",
+    "rank_of_expect": 1,
+    "score_of_expect": 0.8623,
+    "selected": [
+     "f_run_goal",
+     "f_walk",
+     "f_noodles",
+     "f_knee_surgery",
+     "f_morning_exercise"
+    ],
+    "selected_lines": [
+     "- [2026-10-14] Mục tiêu chạy 5km mùa xuân",
+     "- [2026-10-14] Đi bộ 20 phút mỗi ngày cho khớp gối",
+     "- [2026-10-14] Thích ăn mì nhưng sợ thiếu chất",
+     "- [2026-10-14] Mổ sụn chêm đầu gối trái tháng 5/2025",
+     "- [2026-10-14] Thích tập buổi sáng"
+    ],
+    "noise_selected_count": null
+   },
+   {
+    "id": "q_health_08",
+    "ask": "what is my running goal?",
+    "expect": "f_run_goal",
+    "rank_of_expect": 1,
+    "score_of_expect": 0.803,
+    "selected": [
+     "f_run_goal",
+     "f_knee_surgery",
+     "f_walk",
+     "f_plank",
+     "f_latex"
+    ],
+    "selected_lines": [
+     "- [2026-10-14] Mục tiêu chạy 5km mùa xuân",
+     "- [2026-10-14] Mổ sụn chêm đầu gối trái tháng 5/2025",
+     "- [2026-10-14] Đi bộ 20 phút mỗi ngày cho khớp gối",
+     "- [2026-10-14] Plank gối chạm sàn 20 giây mỗi đợt",
+     "- [2026-10-14] Dị ứng latex"
+    ],
+    "noise_selected_count": null
+   },
+   {
+    "id": "q_health_09",
+    "ask": "tôi ngủ mấy tiếng mỗi đêm?",
+    "expect": "f_sleep",
+    "rank_of_expect": 1,
+    "score_of_expect": 0.8855,
+    "selected": [
+     "f_sleep",
+     "f_ice",
+     "f_coffee",
+     "f_swim",
+     "f_walk"
+    ],
+    "selected_lines": [
+     "- [2026-10-14] Ngủ 7 tiếng mỗi đêm để hồi phục gối",
+     "- [2026-10-14] Chườm đá 15 phút mỗi tối cho gối sưng",
+     "- [2026-10-14] Uống cà phê đen mỗi sáng",
+     "- [2026-10-14] Thích bơi lội mỗi sáng",
+     "- [2026-10-14] Đi bộ 20 phút mỗi ngày cho khớp gối"
+    ],
+    "noise_selected_count": null
+   },
+   {
+    "id": "q_health_10",
+    "ask": "how much do I sleep at night?",
+    "expect": "f_sleep",
+    "rank_of_expect": 1,
+    "score_of_expect": 0.8618,
+    "selected": [
+     "f_sleep",
+     "f_ice",
+     "f_coffee",
+     "f_knee_surgery",
+     "f_plank"
+    ],
+    "selected_lines": [
+     "- [2026-10-14] Ngủ 7 tiếng mỗi đêm để hồi phục gối",
+     "- [2026-10-14] Chườm đá 15 phút mỗi tối cho gối sưng",
+     "- [2026-10-14] Uống cà phê đen mỗi sáng",
+     "- [2026-10-14] Mổ sụn chêm đầu gối trái tháng 5/2025",
+     "- [2026-10-14] Plank gối chạm sàn 20 giây mỗi đợt"
+    ],
+    "noise_selected_count": null
+   },
+   {
+    "id": "q_health_11",
+    "ask": "When did I have my left knee surgery?",
+    "expect": "f_knee_surgery",
+    "rank_of_expect": 1,
+    "score_of_expect": 0.811,
+    "selected": [
+     "f_knee_surgery",
+     "f_latex",
+     "f_knee_rehab",
+     "f_sleep",
+     "f_squat"
+    ],
+    "selected_lines": [
+     "- [2026-10-14] Mổ sụn chêm đầu gối trái tháng 5/2025",
+     "- [2026-10-14] Dị ứng latex",
+     "- [2026-10-14] Đang tập phục hồi gối tuần 6",
+     "- [2026-10-14] Ngủ 7 tiếng mỗi đêm để hồi phục gối",
+     "- [2026-10-14] Squat nhẹ 8 lần mỗi đợt cho gối đau"
+    ],
+    "noise_selected_count": null
+   },
+   {
+    "id": "q_health_12",
+    "ask": "tôi mổ gối khi nào?",
+    "expect": "f_knee_surgery",
+    "rank_of_expect": 1,
+    "score_of_expect": 0.8348,
+    "selected": [
+     "f_knee_surgery",
+     "f_squat",
+     "f_sleep",
+     "f_walk",
+     "f_ice"
+    ],
+    "selected_lines": [
+     "- [2026-10-14] Mổ sụn chêm đầu gối trái tháng 5/2025",
+     "- [2026-10-14] Squat nhẹ 8 lần mỗi đợt cho gối đau",
+     "- [2026-10-14] Ngủ 7 tiếng mỗi đêm để hồi phục gối",
+     "- [2026-10-14] Đi bộ 20 phút mỗi ngày cho khớp gối",
+     "- [2026-10-14] Chườm đá 15 phút mỗi tối cho gối sưng"
+    ],
+    "noise_selected_count": null
+   },
+   {
+    "id": "q_health_13",
+    "ask": "gối sưng thì tôi chườm thế nào?",
+    "expect": "f_ice",
+    "rank_of_expect": 1,
+    "score_of_expect": 0.9006,
+    "selected": [
+     "f_ice",
+     "f_squat",
+     "f_sleep",
+     "f_walk",
+     "f_knee_surgery"
+    ],
+    "selected_lines": [
+     "- [2026-10-14] Chườm đá 15 phút mỗi tối cho gối sưng",
+     "- [2026-10-14] Squat nhẹ 8 lần mỗi đợt cho gối đau",
+     "- [2026-10-14] Ngủ 7 tiếng mỗi đêm để hồi phục gối",
+     "- [2026-10-14] Đi bộ 20 phút mỗi ngày cho khớp gối",
+     "- [2026-10-14] Mổ sụn chêm đầu gối trái tháng 5/2025"
+    ],
+    "noise_selected_count": null
+   },
+   {
+    "id": "q_health_14",
+    "ask": "how do I ice my swollen knee?",
+    "expect": "f_ice",
+    "rank_of_expect": 1,
+    "score_of_expect": 0.818,
+    "selected": [
+     "f_ice",
+     "f_squat",
+     "f_heel_slide",
+     "f_knee_surgery",
+     "f_latex"
+    ],
+    "selected_lines": [
+     "- [2026-10-14] Chườm đá 15 phút mỗi tối cho gối sưng",
+     "- [2026-10-14] Squat nhẹ 8 lần mỗi đợt cho gối đau",
+     "- [2026-10-14] Tập heel-slide 10 lần mỗi đợt",
+     "- [2026-10-14] Mổ sụn chêm đầu gối trái tháng 5/2025",
+     "- [2026-10-14] Dị ứng latex"
+    ],
+    "noise_selected_count": null
+   },
+   {
+    "id": "q_health_15",
+    "ask": "tôi có dị ứng gì không?",
+    "expect": "f_latex",
+    "rank_of_expect": 1,
+    "score_of_expect": 0.8288,
+    "selected": [
+     "f_latex",
+     "f_noodles",
+     "f_shoulder",
+     "f_city",
+     "f_pho"
+    ],
+    "selected_lines": [
+     "- [2026-10-14] Dị ứng latex",
+     "- [2026-10-14] Thích ăn mì nhưng sợ thiếu chất",
+     "- [2026-10-14] Vai phải đau khi giơ tay cao",
+     "- [2026-10-14] Sống ở TP.HCM",
+     "- [2026-10-14] Thích ăn phở"
+    ],
+    "noise_selected_count": null
+   },
+   {
+    "id": "q_health_16",
+    "ask": "what am I allergic to?",
+    "expect": "f_latex",
+    "rank_of_expect": 1,
+    "score_of_expect": 0.824,
+    "selected": [
+     "f_latex",
+     "f_noodles",
+     "f_back_pain",
+     "f_shoulder",
+     "f_knee_surgery"
+    ],
+    "selected_lines": [
+     "- [2026-10-14] Dị ứng latex",
+     "- [2026-10-14] Thích ăn mì nhưng sợ thiếu chất",
+     "- [2026-10-14] Has back pain",
+     "- [2026-10-14] Vai phải đau khi giơ tay cao",
+     "- [2026-10-14] Mổ sụn chêm đầu gối trái tháng 5/2025"
+    ],
+    "noise_selected_count": null
+   },
+   {
+    "id": "q_sport_01",
+    "ask": "how often do I play badminton?",
+    "expect": "f_badminton",
+    "rank_of_expect": 1,
+    "score_of_expect": 0.8759,
+    "selected": [
+     "f_badminton",
+     "f_heel_slide",
+     "f_plank",
+     "f_swim",
+     "f_walk"
+    ],
+    "selected_lines": [
+     "- [2026-10-14] Plays badminton twice a week",
+     "- [2026-10-14] Tập heel-slide 10 lần mỗi đợt",
+     "- [2026-10-14] Plank gối chạm sàn 20 giây mỗi đợt",
+     "- [2026-10-14] Thích bơi lội mỗi sáng",
+     "- [2026-10-14] Đi bộ 20 phút mỗi ngày cho khớp gối"
+    ],
+    "noise_selected_count": null
+   },
+   {
+    "id": "q_sport_02",
+    "ask": "tôi chơi cầu lông mấy lần một tuần?",
+    "expect": "f_badminton",
+    "rank_of_expect": 11,
+    "score_of_expect": 0.8016,
+    "selected": [
+     "f_heel_slide",
+     "f_walk",
+     "f_ice",
+     "f_knee_rehab",
+     "f_squat"
+    ],
+    "selected_lines": [
+     "- [2026-10-14] Tập heel-slide 10 lần mỗi đợt",
+     "- [2026-10-14] Đi bộ 20 phút mỗi ngày cho khớp gối",
+     "- [2026-10-14] Chườm đá 15 phút mỗi tối cho gối sưng",
+     "- [2026-10-14] Đang tập phục hồi gối tuần 6",
+     "- [2026-10-14] Squat nhẹ 8 lần mỗi đợt cho gối đau"
+    ],
+    "noise_selected_count": null
+   },
+   {
+    "id": "q_sport_03",
+    "ask": "sáng tôi thích bơi thế nào?",
+    "expect": "f_swim",
+    "rank_of_expect": 1,
+    "score_of_expect": 0.89,
+    "selected": [
+     "f_swim",
+     "f_morning_exercise",
+     "f_coffee",
+     "f_noodles",
+     "f_walk"
+    ],
+    "selected_lines": [
+     "- [2026-10-14] Thích bơi lội mỗi sáng",
+     "- [2026-10-14] Thích tập buổi sáng",
+     "- [2026-10-14] Uống cà phê đen mỗi sáng",
+     "- [2026-10-14] Thích ăn mì nhưng sợ thiếu chất",
+     "- [2026-10-14] Đi bộ 20 phút mỗi ngày cho khớp gối"
+    ],
+    "noise_selected_count": null
+   },
+   {
+    "id": "q_sport_04",
+    "ask": "bài squat cho gối đau của tôi tập mấy lần?",
+    "expect": "f_squat",
+    "rank_of_expect": 1,
+    "score_of_expect": 0.9015,
+    "selected": [
+     "f_squat",
+     "f_walk",
+     "f_ice",
+     "f_heel_slide",
+     "f_knee_rehab"
+    ],
+    "selected_lines": [
+     "- [2026-10-14] Squat nhẹ 8 lần mỗi đợt cho gối đau",
+     "- [2026-10-14] Đi bộ 20 phút mỗi ngày cho khớp gối",
+     "- [2026-10-14] Chườm đá 15 phút mỗi tối cho gối sưng",
+     "- [2026-10-14] Tập heel-slide 10 lần mỗi đợt",
+     "- [2026-10-14] Đang tập phục hồi gối tuần 6"
+    ],
+    "noise_selected_count": null
+   },
+   {
+    "id": "q_sport_05",
+    "ask": "how many squats per set for my sore knee?",
+    "expect": "f_squat",
+    "rank_of_expect": 1,
+    "score_of_expect": 0.8361,
+    "selected": [
+     "f_squat",
+     "f_heel_slide",
+     "f_ice",
+     "f_walk",
+     "f_knee_surgery"
+    ],
+    "selected_lines": [
+     "- [2026-10-14] Squat nhẹ 8 lần mỗi đợt cho gối đau",
+     "- [2026-10-14] Tập heel-slide 10 lần mỗi đợt",
+     "- [2026-10-14] Chườm đá 15 phút mỗi tối cho gối sưng",
+     "- [2026-10-14] Đi bộ 20 phút mỗi ngày cho khớp gối",
+     "- [2026-10-14] Mổ sụn chêm đầu gối trái tháng 5/2025"
+    ],
+    "noise_selected_count": null
+   },
+   {
+    "id": "q_sport_06",
+    "ask": "mỗi ngày tôi đi bộ bao lâu?",
+    "expect": "f_walk",
+    "rank_of_expect": 1,
+    "score_of_expect": 0.8864,
+    "selected": [
+     "f_walk",
+     "f_swim",
+     "f_water",
+     "f_sleep",
+     "f_heel_slide"
+    ],
+    "selected_lines": [
+     "- [2026-10-14] Đi bộ 20 phút mỗi ngày cho khớp gối",
+     "- [2026-10-14] Thích bơi lội mỗi sáng",
+     "- [2026-10-14] Uống 2 lít nước mỗi ngày",
+     "- [2026-10-14] Ngủ 7 tiếng mỗi đêm để hồi phục gối",
+     "- [2026-10-14] Tập heel-slide 10 lần mỗi đợt"
+    ],
+    "noise_selected_count": null
+   },
+   {
+    "id": "q_sport_07",
+    "ask": "bài heel-slide của tôi tập thế nào?",
+    "expect": "f_heel_slide",
+    "rank_of_expect": 1,
+    "score_of_expect": 0.88,
+    "selected": [
+     "f_heel_slide",
+     "f_latex",
+     "f_ice",
+     "f_walk",
+     "f_plank"
+    ],
+    "selected_lines": [
+     "- [2026-10-14] Tập heel-slide 10 lần mỗi đợt",
+     "- [2026-10-14] Dị ứng latex",
+     "- [2026-10-14] Chườm đá 15 phút mỗi tối cho gối sưng",
+     "- [2026-10-14] Đi bộ 20 phút mỗi ngày cho khớp gối",
+     "- [2026-10-14] Plank gối chạm sàn 20 giây mỗi đợt"
+    ],
+    "noise_selected_count": null
+   },
+   {
+    "id": "q_sport_08",
+    "ask": "bài plank của tôi giữ bao lâu?",
+    "expect": "f_plank",
+    "rank_of_expect": 1,
+    "score_of_expect": 0.8485,
+    "selected": [
+     "f_plank",
+     "f_ice",
+     "f_sleep",
+     "f_knee_rehab",
+     "f_latex"
+    ],
+    "selected_lines": [
+     "- [2026-10-14] Plank gối chạm sàn 20 giây mỗi đợt",
+     "- [2026-10-14] Chườm đá 15 phút mỗi tối cho gối sưng",
+     "- [2026-10-14] Ngủ 7 tiếng mỗi đêm để hồi phục gối",
+     "- [2026-10-14] Đang tập phục hồi gối tuần 6",
+     "- [2026-10-14] Dị ứng latex"
+    ],
+    "noise_selected_count": null
+   },
+   {
+    "id": "q_proj_01",
+    "ask": "Cho project A thì ưu tiên gì?",
+    "expect": "f_proj_serverless",
+    "rank_of_expect": 1,
+    "score_of_expect": 0.8291,
+    "selected": [
+     "f_proj_serverless",
+     "f_proj_postgres",
+     "f_knee_surgery",
+     "f_proj_deadline",
+     "f_vietnamese"
+    ],
+    "selected_lines": [
+     "- [2026-10-14] (A) Ưu tiên serverless",
+     "- [2026-10-14] (B) Dùng Postgres cho dữ liệu chính",
+     "- [2026-10-14] Mổ sụn chêm đầu gối trái tháng 5/2025",
+     "- [2026-10-14] (A) Deadline cuối tháng 11",
+     "- [2026-10-14] Muốn được trả lời bằng tiếng Việt"
+    ],
+    "noise_selected_count": null
+   },
+   {
+    "id": "q_proj_02",
+    "ask": "what does project A prioritize?",
+    "expect": "f_proj_serverless",
+    "rank_of_expect": 1,
+    "score_of_expect": 0.7737,
+    "selected": [
+     "f_proj_serverless",
+     "f_proj_postgres",
+     "f_knee_surgery",
+     "f_plank",
+     "f_name",
+     "f_proj_deadline"
+    ],
+    "selected_lines": [
+     "- [2026-10-14] (A) Ưu tiên serverless",
+     "- [2026-10-14] (B) Dùng Postgres cho dữ liệu chính",
+     "- [2026-10-14] Mổ sụn chêm đầu gối trái tháng 5/2025",
+     "- [2026-10-14] Plank gối chạm sàn 20 giây mỗi đợt",
+     "- [2026-10-14] Prefers to be called Mon",
+     "- [2026-10-14] (A) Deadline cuối tháng 11"
+    ],
+    "noise_selected_count": null
+   },
+   {
+    "id": "q_proj_03",
+    "ask": "deadline của project A là khi nào?",
+    "expect": "f_proj_deadline",
+    "rank_of_expect": 1,
+    "score_of_expect": 0.8384,
+    "selected": [
+     "f_proj_deadline",
+     "f_knee_surgery",
+     "f_proj_postgres",
+     "f_job",
+     "f_latex",
+     "f_proj_serverless"
+    ],
+    "selected_lines": [
+     "- [2026-10-14] (A) Deadline cuối tháng 11",
+     "- [2026-10-14] Mổ sụn chêm đầu gối trái tháng 5/2025",
+     "- [2026-10-14] (B) Dùng Postgres cho dữ liệu chính",
+     "- [2026-10-14] Hiện làm giáo viên",
+     "- [2026-10-14] Dị ứng latex",
+     "- [2026-10-14] (A) Ưu tiên serverless"
+    ],
+    "noise_selected_count": null
+   },
+   {
+    "id": "q_proj_04",
+    "ask": "project B dùng database gì?",
+    "expect": "f_proj_postgres",
+    "rank_of_expect": 1,
+    "score_of_expect": 0.858,
+    "selected": [
+     "f_proj_postgres",
+     "f_proj_serverless",
+     "f_latex",
+     "f_city",
+     "f_morning_exercise",
+     "f_proj_deadline"
+    ],
+    "selected_lines": [
+     "- [2026-10-14] (B) Dùng Postgres cho dữ liệu chính",
+     "- [2026-10-14] (A) Ưu tiên serverless",
+     "- [2026-10-14] Dị ứng latex",
+     "- [2026-10-14] Sống ở TP.HCM",
+     "- [2026-10-14] Thích tập buổi sáng",
+     "- [2026-10-14] (A) Deadline cuối tháng 11"
+    ],
+    "noise_selected_count": null
+   },
+   {
+    "id": "q_proj_05",
+    "ask": "hiện giờ tôi làm nghề gì?",
+    "expect": "f_job",
+    "rank_of_expect": 1,
+    "score_of_expect": 0.8784,
+    "selected": [
+     "f_job",
+     "f_city",
+     "f_morning_exercise",
+     "f_knee_surgery",
+     "f_swim"
+    ],
+    "selected_lines": [
+     "- [2026-10-14] Hiện làm giáo viên",
+     "- [2026-10-14] Sống ở TP.HCM",
+     "- [2026-10-14] Thích tập buổi sáng",
+     "- [2026-10-14] Mổ sụn chêm đầu gối trái tháng 5/2025",
+     "- [2026-10-14] Thích bơi lội mỗi sáng"
+    ],
+    "noise_selected_count": null
+   },
+   {
+    "id": "q_proj_06",
+    "ask": "what is my job now?",
+    "expect": "f_job",
+    "rank_of_expect": 1,
+    "score_of_expect": 0.8307,
+    "selected": [
+     "f_job",
+     "f_latex",
+     "f_proj_serverless",
+     "f_knee_surgery",
+     "f_proj_postgres",
+     "f_proj_deadline"
+    ],
+    "selected_lines": [
+     "- [2026-10-14] Hiện làm giáo viên",
+     "- [2026-10-14] Dị ứng latex",
+     "- [2026-10-14] (A) Ưu tiên serverless",
+     "- [2026-10-14] Mổ sụn chêm đầu gối trái tháng 5/2025",
+     "- [2026-10-14] (B) Dùng Postgres cho dữ liệu chính",
+     "- [2026-10-14] (A) Deadline cuối tháng 11"
+    ],
+    "noise_selected_count": null
+   },
+   {
+    "id": "q_style_01",
+    "ask": "tôi muốn bạn trả lời thế nào?",
+    "expect": "f_short_reply",
+    "rank_of_expect": 2,
+    "score_of_expect": 0.8474,
+    "selected": [
+     "f_vietnamese",
+     "f_short_reply",
+     "f_latex",
+     "f_morning_exercise",
+     "f_noodles"
+    ],
+    "selected_lines": [
+     "- [2026-10-14] Muốn được trả lời bằng tiếng Việt",
+     "- [2026-10-14] Trả lời ngắn gọn thôi",
+     "- [2026-10-14] Dị ứng latex",
+     "- [2026-10-14] Thích tập buổi sáng",
+     "- [2026-10-14] Thích ăn mì nhưng sợ thiếu chất"
+    ],
+    "noise_selected_count": null
+   },
+   {
+    "id": "q_style_02",
+    "ask": "should your answers be long or short for me?",
+    "expect": "f_short_reply",
+    "rank_of_expect": 1,
+    "score_of_expect": 0.8122,
+    "selected": [
+     "f_short_reply",
+     "f_vietnamese",
+     "f_latex",
+     "f_name",
+     "f_proj_postgres"
+    ],
+    "selected_lines": [
+     "- [2026-10-14] Trả lời ngắn gọn thôi",
+     "- [2026-10-14] Muốn được trả lời bằng tiếng Việt",
+     "- [2026-10-14] Dị ứng latex",
+     "- [2026-10-14] Prefers to be called Mon",
+     "- [2026-10-14] (B) Dùng Postgres cho dữ liệu chính"
+    ],
+    "noise_selected_count": null
+   },
+   {
+    "id": "q_style_03",
+    "ask": "tôi thích tập lúc nào trong ngày?",
+    "expect": "f_morning_exercise",
+    "rank_of_expect": 1,
+    "score_of_expect": 0.8846,
+    "selected": [
+     "f_morning_exercise",
+     "f_evening_exercise",
+     "f_swim",
+     "f_heel_slide",
+     "f_walk"
+    ],
+    "selected_lines": [
+     "- [2026-10-14] Thích tập buổi sáng",
+     "- [2026-10-14] Tập buổi tối sau 8 giờ",
+     "- [2026-10-14] Thích bơi lội mỗi sáng",
+     "- [2026-10-14] Tập heel-slide 10 lần mỗi đợt",
+     "- [2026-10-14] Đi bộ 20 phút mỗi ngày cho khớp gối"
+    ],
+    "noise_selected_count": null
+   },
+   {
+    "id": "q_style_04",
+    "ask": "do I prefer morning or evening workouts?",
+    "expect": "f_morning_exercise",
+    "rank_of_expect": 1,
+    "score_of_expect": 0.8167,
+    "selected": [
+     "f_morning_exercise",
+     "f_swim",
+     "f_evening_exercise",
+     "f_name",
+     "f_heel_slide"
+    ],
+    "selected_lines": [
+     "- [2026-10-14] Thích tập buổi sáng",
+     "- [2026-10-14] Thích bơi lội mỗi sáng",
+     "- [2026-10-14] Tập buổi tối sau 8 giờ",
+     "- [2026-10-14] Prefers to be called Mon",
+     "- [2026-10-14] Tập heel-slide 10 lần mỗi đợt"
+    ],
+    "noise_selected_count": null
+   },
+   {
+    "id": "q_style_05",
+    "ask": "tối tôi tập lúc mấy giờ?",
+    "expect": "f_evening_exercise",
+    "rank_of_expect": 1,
+    "score_of_expect": 0.8732,
+    "selected": [
+     "f_evening_exercise",
+     "f_morning_exercise",
+     "f_swim",
+     "f_knee_rehab",
+     "f_sleep"
+    ],
+    "selected_lines": [
+     "- [2026-10-14] Tập buổi tối sau 8 giờ",
+     "- [2026-10-14] Thích tập buổi sáng",
+     "- [2026-10-14] Thích bơi lội mỗi sáng",
+     "- [2026-10-14] Đang tập phục hồi gối tuần 6",
+     "- [2026-10-14] Ngủ 7 tiếng mỗi đêm để hồi phục gối"
+    ],
+    "noise_selected_count": null
+   },
+   {
+    "id": "q_style_06",
+    "ask": "tôi muốn nghe trả lời bằng tiếng gì?",
+    "expect": "f_vietnamese",
+    "rank_of_expect": 1,
+    "score_of_expect": 0.8987,
+    "selected": [
+     "f_vietnamese",
+     "f_short_reply",
+     "f_sleep",
+     "f_latex",
+     "f_morning_exercise"
+    ],
+    "selected_lines": [
+     "- [2026-10-14] Muốn được trả lời bằng tiếng Việt",
+     "- [2026-10-14] Trả lời ngắn gọn thôi",
+     "- [2026-10-14] Ngủ 7 tiếng mỗi đêm để hồi phục gối",
+     "- [2026-10-14] Dị ứng latex",
+     "- [2026-10-14] Thích tập buổi sáng"
+    ],
+    "noise_selected_count": null
+   },
+   {
+    "id": "q_life_01",
+    "ask": "tôi sống ở đâu?",
+    "expect": "f_city",
+    "rank_of_expect": 1,
+    "score_of_expect": 0.8774,
+    "selected": [
+     "f_city",
+     "f_vietnamese",
+     "f_noodles",
+     "f_pho",
+     "f_job"
+    ],
+    "selected_lines": [
+     "- [2026-10-14] Sống ở TP.HCM",
+     "- [2026-10-14] Muốn được trả lời bằng tiếng Việt",
+     "- [2026-10-14] Thích ăn mì nhưng sợ thiếu chất",
+     "- [2026-10-14] Thích ăn phở",
+     "- [2026-10-14] Hiện làm giáo viên"
+    ],
+    "noise_selected_count": null
+   },
+   {
+    "id": "q_life_02",
+    "ask": "where do I live?",
+    "expect": "f_city",
+    "rank_of_expect": 1,
+    "score_of_expect": 0.8588,
+    "selected": [
+     "f_city",
+     "f_latex",
+     "f_vietnamese",
+     "f_proj_serverless",
+     "f_proj_postgres",
+     "f_proj_deadline"
+    ],
+    "selected_lines": [
+     "- [2026-10-14] Sống ở TP.HCM",
+     "- [2026-10-14] Dị ứng latex",
+     "- [2026-10-14] Muốn được trả lời bằng tiếng Việt",
+     "- [2026-10-14] (A) Ưu tiên serverless",
+     "- [2026-10-14] (B) Dùng Postgres cho dữ liệu chính",
+     "- [2026-10-14] (A) Deadline cuối tháng 11"
+    ],
+    "noise_selected_count": null
+   },
+   {
+    "id": "q_life_03",
+    "ask": "con chó của tôi tên gì?",
+    "expect": "f_dog",
+    "rank_of_expect": 1,
+    "score_of_expect": 0.882,
+    "selected": [
+     "f_dog",
+     "f_knee_surgery",
+     "f_city",
+     "f_noodles",
+     "f_vietnamese"
+    ],
+    "selected_lines": [
+     "- [2026-10-14] Nuôi một con chó tên Vàng",
+     "- [2026-10-14] Mổ sụn chêm đầu gối trái tháng 5/2025",
+     "- [2026-10-14] Sống ở TP.HCM",
+     "- [2026-10-14] Thích ăn mì nhưng sợ thiếu chất",
+     "- [2026-10-14] Muốn được trả lời bằng tiếng Việt"
+    ],
+    "noise_selected_count": null
+   },
+   {
+    "id": "q_life_04",
+    "ask": "mỗi ngày tôi uống bao nhiêu nước?",
+    "expect": "f_water",
+    "rank_of_expect": 1,
+    "score_of_expect": 0.8974,
+    "selected": [
+     "f_water",
+     "f_swim",
+     "f_walk",
+     "f_coffee",
+     "f_ice"
+    ],
+    "selected_lines": [
+     "- [2026-10-14] Uống 2 lít nước mỗi ngày",
+     "- [2026-10-14] Thích bơi lội mỗi sáng",
+     "- [2026-10-14] Đi bộ 20 phút mỗi ngày cho khớp gối",
+     "- [2026-10-14] Uống cà phê đen mỗi sáng",
+     "- [2026-10-14] Chườm đá 15 phút mỗi tối cho gối sưng"
+    ],
+    "noise_selected_count": null
+   },
+   {
+    "id": "q_multi_01",
+    "ask": "who am I? tôi bị đau lưng, gợi ý vài bài tập giúp tôi",
+    "expect": "f_name",
+    "rank_of_expect": 28,
+    "score_of_expect": 0.8071,
+    "selected": [
+     "f_knee_rehab",
+     "f_squat",
+     "f_walk",
+     "f_sleep",
+     "f_shoulder"
+    ],
+    "selected_lines": [
+     "- [2026-10-14] Đang tập phục hồi gối tuần 6",
+     "- [2026-10-14] Squat nhẹ 8 lần mỗi đợt cho gối đau",
+     "- [2026-10-14] Đi bộ 20 phút mỗi ngày cho khớp gối",
+     "- [2026-10-14] Ngủ 7 tiếng mỗi đêm để hồi phục gối",
+     "- [2026-10-14] Vai phải đau khi giơ tay cao"
+    ],
+    "noise_selected_count": null
+   },
+   {
+    "id": "q_multi_02",
+    "ask": "Món ăn yêu thích của tôi là gì? Với lại gối tôi đau khi lên cầu thang thì nên tập gì?",
+    "expect": "f_pho",
+    "rank_of_expect": 3,
+    "score_of_expect": 0.8628,
+    "selected": [
+     "f_noodles",
+     "f_squat",
+     "f_pho",
+     "f_walk",
+     "f_sleep"
+    ],
+    "selected_lines": [
+     "- [2026-10-14] Thích ăn mì nhưng sợ thiếu chất",
+     "- [2026-10-14] Squat nhẹ 8 lần mỗi đợt cho gối đau",
+     "- [2026-10-14] Thích ăn phở",
+     "- [2026-10-14] Đi bộ 20 phút mỗi ngày cho khớp gối",
+     "- [2026-10-14] Ngủ 7 tiếng mỗi đêm để hồi phục gối"
+    ],
+    "noise_selected_count": null
+   },
+   {
+    "id": "q_multi_03",
+    "ask": "tôi tên gì và sáng tôi uống gì?",
+    "expect": "f_name",
+    "rank_of_expect": 11,
+    "score_of_expect": 0.8039,
+    "selected": [
+     "f_coffee",
+     "f_morning_exercise",
+     "f_swim",
+     "f_noodles",
+     "f_chay"
+    ],
+    "selected_lines": [
+     "- [2026-10-14] Uống cà phê đen mỗi sáng",
+     "- [2026-10-14] Thích tập buổi sáng",
+     "- [2026-10-14] Thích bơi lội mỗi sáng",
+     "- [2026-10-14] Thích ăn mì nhưng sợ thiếu chất",
+     "- [2026-10-14] Ăn chay ngày rằm"
+    ],
+    "noise_selected_count": null
+   },
+   {
+    "id": "q_multi_04",
+    "ask": "what is my running goal and how often do I play badminton?",
+    "expect": "f_run_goal",
+    "rank_of_expect": 5,
+    "score_of_expect": 0.7863,
+    "selected": [
+     "f_badminton",
+     "f_plank",
+     "f_heel_slide",
+     "f_walk",
+     "f_run_goal"
+    ],
+    "selected_lines": [
+     "- [2026-10-14] Plays badminton twice a week",
+     "- [2026-10-14] Plank gối chạm sàn 20 giây mỗi đợt",
+     "- [2026-10-14] Tập heel-slide 10 lần mỗi đợt",
+     "- [2026-10-14] Đi bộ 20 phút mỗi ngày cho khớp gối",
+     "- [2026-10-14] Mục tiêu chạy 5km mùa xuân"
+    ],
+    "noise_selected_count": null
+   },
+   {
+    "id": "q_noise_01",
+    "ask": "Thủ đô của Pháp là thành phố nào?",
+    "expect": null,
+    "rank_of_expect": null,
+    "score_of_expect": null,
+    "selected": [
+     "f_city"
+    ],
+    "selected_lines": [
+     "- [2026-10-14] Sống ở TP.HCM"
+    ],
+    "noise_selected_count": 1
+   },
+   {
+    "id": "q_noise_02",
+    "ask": "thời tiết hôm nay thế nào?",
+    "expect": null,
+    "rank_of_expect": null,
+    "score_of_expect": null,
+    "selected": [
+     "f_chay",
+     "f_ice",
+     "f_morning_exercise",
+     "f_swim",
+     "f_job"
+    ],
+    "selected_lines": [
+     "- [2026-10-14] Ăn chay ngày rằm",
+     "- [2026-10-14] Chườm đá 15 phút mỗi tối cho gối sưng",
+     "- [2026-10-14] Thích tập buổi sáng",
+     "- [2026-10-14] Thích bơi lội mỗi sáng",
+     "- [2026-10-14] Hiện làm giáo viên"
+    ],
+    "noise_selected_count": 5
+   },
+   {
+    "id": "q_noise_03",
+    "ask": "What is the capital of France?",
+    "expect": null,
+    "rank_of_expect": null,
+    "score_of_expect": null,
+    "selected": [],
+    "selected_lines": [],
+    "noise_selected_count": 0
+   },
+   {
+    "id": "q_noise_04",
+    "ask": "giải thích thuyết tương đối hẹp?",
+    "expect": null,
+    "rank_of_expect": null,
+    "score_of_expect": null,
+    "selected": [
+     "f_short_reply",
+     "f_latex",
+     "f_vietnamese",
+     "f_pho",
+     "f_knee_surgery"
+    ],
+    "selected_lines": [
+     "- [2026-10-14] Trả lời ngắn gọn thôi",
+     "- [2026-10-14] Dị ứng latex",
+     "- [2026-10-14] Muốn được trả lời bằng tiếng Việt",
+     "- [2026-10-14] Thích ăn phở",
+     "- [2026-10-14] Mổ sụn chêm đầu gối trái tháng 5/2025"
+    ],
+    "noise_selected_count": 5
+   },
+   {
+    "id": "q_noise_05",
+    "ask": "giá vàng hôm nay bao nhiêu?",
+    "expect": null,
+    "rank_of_expect": null,
+    "score_of_expect": null,
+    "selected": [
+     "f_dog",
+     "f_knee_surgery",
+     "f_chay",
+     "f_proj_deadline",
+     "f_ice",
+     "f_proj_serverless"
+    ],
+    "selected_lines": [
+     "- [2026-10-14] Nuôi một con chó tên Vàng",
+     "- [2026-10-14] Mổ sụn chêm đầu gối trái tháng 5/2025",
+     "- [2026-10-14] Ăn chay ngày rằm",
+     "- [2026-10-14] (A) Deadline cuối tháng 11",
+     "- [2026-10-14] Chườm đá 15 phút mỗi tối cho gối sưng",
+     "- [2026-10-14] (A) Ưu tiên serverless"
+    ],
+    "noise_selected_count": 6
+   },
+   {
+    "id": "q_noise_06",
+    "ask": "who won the World Cup in 2018?",
+    "expect": null,
+    "rank_of_expect": null,
+    "score_of_expect": null,
+    "selected": [],
+    "selected_lines": [],
+    "noise_selected_count": 0
+   },
+   {
+    "id": "q_noise_07",
+    "ask": "cách đổi mật khẩu wifi?",
+    "expect": null,
+    "rank_of_expect": null,
+    "score_of_expect": null,
+    "selected": [
+     "f_vietnamese",
+     "f_city",
+     "f_knee_surgery",
+     "f_latex",
+     "f_sleep"
+    ],
+    "selected_lines": [
+     "- [2026-10-14] Muốn được trả lời bằng tiếng Việt",
+     "- [2026-10-14] Sống ở TP.HCM",
+     "- [2026-10-14] Mổ sụn chêm đầu gối trái tháng 5/2025",
+     "- [2026-10-14] Dị ứng latex",
+     "- [2026-10-14] Ngủ 7 tiếng mỗi đêm để hồi phục gối"
+    ],
+    "noise_selected_count": 5
+   },
+   {
+    "id": "q_noise_08",
+    "ask": "cách làm bánh mì pate tại nhà?",
+    "expect": null,
+    "rank_of_expect": null,
+    "score_of_expect": null,
+    "selected": [
+     "f_chay",
+     "f_noodles",
+     "f_coffee",
+     "f_ice",
+     "f_water"
+    ],
+    "selected_lines": [
+     "- [2026-10-14] Ăn chay ngày rằm",
+     "- [2026-10-14] Thích ăn mì nhưng sợ thiếu chất",
+     "- [2026-10-14] Uống cà phê đen mỗi sáng",
+     "- [2026-10-14] Chườm đá 15 phút mỗi tối cho gối sưng",
+     "- [2026-10-14] Uống 2 lít nước mỗi ngày"
+    ],
+    "noise_selected_count": 5
+   },
+   {
+    "id": "q_noise_09",
+    "ask": "tell me a joke about robots",
+    "expect": null,
+    "rank_of_expect": null,
+    "score_of_expect": null,
+    "selected": [
+     "f_latex",
+     "f_back_pain",
+     "f_name",
+     "f_proj_serverless",
+     "f_plank",
+     "f_proj_deadline"
+    ],
+    "selected_lines": [
+     "- [2026-10-14] Dị ứng latex",
+     "- [2026-10-14] Has back pain",
+     "- [2026-10-14] Prefers to be called Mon",
+     "- [2026-10-14] (A) Ưu tiên serverless",
+     "- [2026-10-14] Plank gối chạm sàn 20 giây mỗi đợt",
+     "- [2026-10-14] (A) Deadline cuối tháng 11"
+    ],
+    "noise_selected_count": 6
+   },
+   {
+    "id": "q_noise_10",
+    "ask": "chứng khoán hôm nay tăng hay giảm?",
+    "expect": null,
+    "rank_of_expect": null,
+    "score_of_expect": null,
+    "selected": [
+     "f_knee_surgery",
+     "f_proj_deadline",
+     "f_knee_rehab",
+     "f_swim",
+     "f_morning_exercise",
+     "f_proj_serverless"
+    ],
+    "selected_lines": [
+     "- [2026-10-14] Mổ sụn chêm đầu gối trái tháng 5/2025",
+     "- [2026-10-14] (A) Deadline cuối tháng 11",
+     "- [2026-10-14] Đang tập phục hồi gối tuần 6",
+     "- [2026-10-14] Thích bơi lội mỗi sáng",
+     "- [2026-10-14] Thích tập buổi sáng",
+     "- [2026-10-14] (A) Ưu tiên serverless"
+    ],
+    "noise_selected_count": 6
+   },
+   {
+    "id": "q_noise_11",
+    "ask": "how do I fix a leaking faucet?",
+    "expect": null,
+    "rank_of_expect": null,
+    "score_of_expect": null,
+    "selected": [
+     "f_latex",
+     "f_ice",
+     "f_plank",
+     "f_knee_surgery",
+     "f_squat"
+    ],
+    "selected_lines": [
+     "- [2026-10-14] Dị ứng latex",
+     "- [2026-10-14] Chườm đá 15 phút mỗi tối cho gối sưng",
+     "- [2026-10-14] Plank gối chạm sàn 20 giây mỗi đợt",
+     "- [2026-10-14] Mổ sụn chêm đầu gối trái tháng 5/2025",
+     "- [2026-10-14] Squat nhẹ 8 lần mỗi đợt cho gối đau"
+    ],
+    "noise_selected_count": 5
+   },
+   {
+    "id": "q_noise_12",
+    "ask": "phim nào hay cuối tuần này?",
+    "expect": null,
+    "rank_of_expect": null,
+    "score_of_expect": null,
+    "selected": [
+     "f_knee_rehab",
+     "f_proj_deadline",
+     "f_chay",
+     "f_evening_exercise",
+     "f_morning_exercise",
+     "f_proj_serverless"
+    ],
+    "selected_lines": [
+     "- [2026-10-14] Đang tập phục hồi gối tuần 6",
+     "- [2026-10-14] (A) Deadline cuối tháng 11",
+     "- [2026-10-14] Ăn chay ngày rằm",
+     "- [2026-10-14] Tập buổi tối sau 8 giờ",
+     "- [2026-10-14] Thích tập buổi sáng",
+     "- [2026-10-14] (A) Ưu tiên serverless"
+    ],
+    "noise_selected_count": 6
+   },
+   {
+    "id": "q_noise_13",
+    "ask": "tốc độ ánh sáng là bao nhiêu?",
+    "expect": null,
+    "rank_of_expect": null,
+    "score_of_expect": null,
+    "selected": [
+     "f_morning_exercise",
+     "f_run_goal",
+     "f_plank",
+     "f_swim",
+     "f_ice"
+    ],
+    "selected_lines": [
+     "- [2026-10-14] Thích tập buổi sáng",
+     "- [2026-10-14] Mục tiêu chạy 5km mùa xuân",
+     "- [2026-10-14] Plank gối chạm sàn 20 giây mỗi đợt",
+     "- [2026-10-14] Thích bơi lội mỗi sáng",
+     "- [2026-10-14] Chườm đá 15 phút mỗi tối cho gối sưng"
+    ],
+    "noise_selected_count": 5
+   },
+   {
+    "id": "q_noise_14",
+    "ask": "dạy tôi chơi cờ vua từ đầu?",
+    "expect": null,
+    "rank_of_expect": null,
+    "score_of_expect": null,
+    "selected": [
+     "f_job",
+     "f_heel_slide",
+     "f_latex",
+     "f_vietnamese",
+     "f_shoulder"
+    ],
+    "selected_lines": [
+     "- [2026-10-14] Hiện làm giáo viên",
+     "- [2026-10-14] Tập heel-slide 10 lần mỗi đợt",
+     "- [2026-10-14] Dị ứng latex",
+     "- [2026-10-14] Muốn được trả lời bằng tiếng Việt",
+     "- [2026-10-14] Vai phải đau khi giơ tay cao"
+    ],
+    "noise_selected_count": 5
+   }
+  ]
+ },
+ "rows_table": [
+  {
+   "hướng": "Hiện tại (top-5, floor 0.75)",
+   "tên vào prompt": "7/10",
+   "nhiễu kéo fact": "12/14",
+   "recall@30/430": 0.8095,
+   "planner ms/in": "1421.5 ms / 25723 in",
+   "RAM sau nạp": "744.5 MB",
+   "bỏ retriever": "0/10"
+  },
+  {
+   "hướng": "e5-base thay e5-small",
+   "tên vào prompt": "4/10",
+   "nhiễu kéo fact": "12/14",
+   "recall@30/430": 0.8413,
+   "planner ms/in": "0 / 0",
+   "RAM sau nạp": 990.4,
+   "bỏ retriever": "—"
+  },
+  {
+   "hướng": "Planner chọn trong 30 ứng viên",
+   "tên vào prompt": "6/6",
+   "nhiễu kéo fact": "4/5",
+   "recall@30/430": "—",
+   "planner ms/in": "+393 ms / +9698 in",
+   "RAM sau nạp": "0 (model sẵn có)",
+   "bỏ retriever": "0/10"
+  }
+ ],
+ "b": {
+  "small": {
+   "model": "intfloat/multilingual-e5-small",
+   "dim": 384,
+   "ram_before_mb": 37.0,
+   "ram_after_load_mb": 744.5,
+   "ram_delta_mb": 707.5,
+   "load_ms": 10238,
+   "embed_p50_ms": 10.34,
+   "recall": {
+    "1": {
+     "hit": 47,
+     "total": 63,
+     "rate": 0.746
+    },
+    "3": {
+     "hit": 54,
+     "total": 63,
+     "rate": 0.8571
+    },
+    "5": {
+     "hit": 56,
+     "total": 63,
+     "rate": 0.8889
+    },
+    "30": {
+     "hit": 63,
+     "total": 63,
+     "rate": 1.0
+    }
+   },
+   "recall430": {
+    "hit": 51,
+    "total": 63,
+    "rate": 0.8095
+   },
+   "noise_max": 0.8343,
+   "noise_p95": 0.8343,
+   "overlap": {
+    "noise_max": 0.8343,
+    "noise_p95": 0.8343,
+    "correct_min": 0.7737,
+    "correct_max": 0.9111,
+    "correct_below_noise_max": 29,
+    "correct_total": 63
+   },
+   "name_ranks": {
+    "q_name_01": 1,
+    "q_name_02": 12,
+    "q_name_03": 5,
+    "q_name_04": 7,
+    "q_name_05": 1,
+    "q_name_06": 1,
+    "q_name_07": 1,
+    "q_name_08": 1,
+    "q_name_09": 1,
+    "q_name_10": 14
+   },
+   "selection": {
+    "config": {
+     "timeout_ms": 300,
+     "top_k": 5,
+     "floor": 0.75
+    },
+    "name_in_prompt": 7,
+    "name_total": 10,
+    "noise_with_fact": 12,
+    "noise_total": 14
+   }
+  },
+  "base": {
+   "model": "intfloat/multilingual-e5-base",
+   "dim": 768,
+   "ram_before_mb": 37.0,
+   "ram_after_load_mb": 990.4,
+   "ram_delta_mb": 953.4,
+   "load_ms": 9933,
+   "embed_p50_ms": 29.61,
+   "recall": {
+    "1": {
+     "hit": 44,
+     "total": 63,
+     "rate": 0.6984
+    },
+    "3": {
+     "hit": 52,
+     "total": 63,
+     "rate": 0.8254
+    },
+    "5": {
+     "hit": 54,
+     "total": 63,
+     "rate": 0.8571
+    },
+    "30": {
+     "hit": 63,
+     "total": 63,
+     "rate": 1.0
+    }
+   },
+   "recall430": {
+    "hit": 53,
+    "total": 63,
+    "rate": 0.8413
+   },
+   "noise_max": 0.8298,
+   "noise_p95": 0.8298,
+   "overlap": {
+    "noise_max": 0.8298,
+    "noise_p95": 0.8298,
+    "correct_min": 0.7517,
+    "correct_max": 0.9092,
+    "correct_below_noise_max": 28,
+    "correct_total": 63
+   },
+   "name_ranks": {
+    "q_name_01": 11,
+    "q_name_02": 15,
+    "q_name_03": 16,
+    "q_name_04": 11,
+    "q_name_05": 8,
+    "q_name_06": 7,
+    "q_name_07": 1,
+    "q_name_08": 2,
+    "q_name_09": 3,
+    "q_name_10": 5
+   },
+   "selection": {
+    "config": {
+     "timeout_ms": 300,
+     "top_k": 5,
+     "floor": 0.75
+    },
+    "name_in_prompt": 4,
+    "name_total": 10,
+    "noise_with_fact": 12,
+    "noise_total": 14
+   },
+   "available": true
+  },
+  "noise_facts": 400
+ },
+ "c": {
+  "model": "deepseek-v4-flash",
+  "base_url": "https://api.deepseek.com",
+  "calls": 30,
+  "balance_before": {
+   "is_available": true,
+   "balance_infos": [
+    {
+     "currency": "USD",
+     "total_balance": "1.70",
+     "granted_balance": "0.00",
+     "topped_up_balance": "1.70"
+    }
+   ]
+  },
+  "balance_after": {
+   "is_available": true,
+   "balance_infos": [
+    {
+     "currency": "USD",
+     "total_balance": "1.69",
+     "granted_balance": "0.00",
+     "topped_up_balance": "1.69"
+    }
+   ]
+  },
+  "stopped": null,
+  "scored": 15,
+  "name_total": 6,
+  "name_recalled": 6,
+  "noise_total": 5,
+  "noise_with_ids": 4,
+  "recall": {
+   "hit": 10,
+   "total": 10,
+   "rate": 1.0
+  },
+  "precision_mean": 0.5917,
+  "needs_retrieval_false": {
+   "base": {
+    "count": 0,
+    "total": 10
+   },
+   "select": {
+    "count": 0,
+    "total": 10
+   }
+  },
+  "planner_ms": {
+   "base": {
+    "p50": 1421.5,
+    "p95": 3046.9,
+    "n": 15
+   },
+   "select": {
+    "p50": 1814.5,
+    "p95": 3123.2,
+    "n": 15
+   }
+  },
+  "tokens": {
+   "base": {
+    "input": 25723,
+    "output": 2601,
+    "cache_hit": 23040
+   },
+   "select": {
+    "input": 35421,
+    "output": 3799,
+    "cache_hit": 32640
+   }
+  },
+  "rows": [
+   {
+    "kind": "name",
+    "ask": "then who am I?",
+    "expect": "f_name",
+    "base": {
+     "ms": 1187.9,
+     "input_tokens": 1702,
+     "output_tokens": 93,
+     "cache_hit_tokens": 1536,
+     "plan": {
+      "required_outputs": [],
+      "resolved_query": "then who am I?",
+      "needs_retrieval": true,
+      "needs_clarification": false
+     }
+    },
+    "select": {
+     "ms": 1950.6,
+     "input_tokens": 2355,
+     "output_tokens": 282,
+     "cache_hit_tokens": 2176,
+     "plan": {
+      "required_outputs": [],
+      "resolved_query": "who am I?",
+      "needs_retrieval": true,
+      "needs_clarification": false,
+      "relevant_fact_ids": [
+       "f01",
+       "f20",
+       "f25",
+       "f26"
+      ]
+     }
+    }
+   },
+   {
+    "kind": "name",
+    "ask": "do you know my name?",
+    "expect": "f_name",
+    "base": {
+     "ms": 1243.4,
+     "input_tokens": 1700,
+     "output_tokens": 96,
+     "cache_hit_tokens": 1536,
+     "plan": {
+      "required_outputs": [],
+      "resolved_query": "do you know my name",
+      "needs_retrieval": true,
+      "needs_clarification": false
+     }
+    },
+    "select": {
+     "ms": 1121.0,
+     "input_tokens": 2356,
+     "output_tokens": 104,
+     "cache_hit_tokens": 2176,
+     "plan": {
+      "required_outputs": [],
+      "resolved_query": "do you know my name",
+      "needs_retrieval": true,
+      "needs_clarification": false,
+      "relevant_fact_ids": [
+       "f01"
+      ]
+     }
+    }
+   },
+   {
+    "kind": "name",
+    "ask": "nhắc lại tên tôi xem nào?",
+    "expect": "f_name",
+    "base": {
+     "ms": 1331.9,
+     "input_tokens": 1705,
+     "output_tokens": 99,
+     "cache_hit_tokens": 1536,
+     "plan": {
+      "required_outputs": [],
+      "resolved_query": "nhắc lại tên tôi",
+      "needs_retrieval": true,
+      "needs_clarification": false
+     }
+    },
+    "select": {
+     "ms": 904.0,
+     "input_tokens": 2361,
+     "output_tokens": 116,
+     "cache_hit_tokens": 2176,
+     "plan": {
+      "required_outputs": [],
+      "resolved_query": "nhắc lại tên tôi",
+      "needs_retrieval": true,
+      "needs_clarification": false,
+      "relevant_fact_ids": [
+       "f01"
+      ]
+     }
+    }
+   },
+   {
+    "kind": "name",
+    "ask": "who am I? tôi bị đau lưng, gợi ý vài bài tập giúp tôi",
+    "expect": "f_name",
+    "base": {
+     "ms": 2318.2,
+     "input_tokens": 1753,
+     "output_tokens": 312,
+     "cache_hit_tokens": 1536,
+     "plan": {
+      "required_outputs": [
+       "scope_disclaimer",
+       "contraindication",
+       "evidence_citation"
+      ],
+      "resolved_query": "Tôi là ai và gợi ý vài bài tập giúp giảm đau lưng",
+      "needs_retrieval": true,
+      "needs_clarification": false
+     }
+    },
+    "select": {
+     "ms": 2325.1,
+     "input_tokens": 2380,
+     "output_tokens": 386,
+     "cache_hit_tokens": 2176,
+     "plan": {
+      "required_outputs": [
+       "scope_disclaimer",
+       "contraindication",
+       "evidence_citation",
+       "exercise_protocol"
+      ],
+      "resolved_query": "Tôi là ai và gợi ý vài bài tập giúp giảm đau lưng",
+      "needs_retrieval": true,
+      "needs_clarification": false,
+      "relevant_fact_ids": [
+       "f01",
+       "f07",
+       "f21",
+       "f24"
+      ]
+     }
+    }
+   },
+   {
+    "kind": "name",
+    "ask": "who am I?",
+    "expect": "f_name",
+    "base": {
+     "ms": 1421.5,
+     "input_tokens": 1694,
+     "output_tokens": 110,
+     "cache_hit_tokens": 1536,
+     "plan": {
+      "required_outputs": [],
+      "resolved_query": "who am I?",
+      "needs_retrieval": true,
+      "needs_clarification": false
+     }
+    },
+    "select": {
+     "ms": 1905.2,
+     "input_tokens": 2354,
+     "output_tokens": 279,
+     "cache_hit_tokens": 2176,
+     "plan": {
+      "required_outputs": [],
+      "resolved_query": "who am I?",
+      "needs_retrieval": true,
+      "needs_clarification": false,
+      "relevant_fact_ids": [
+       "f01",
+       "f20",
+       "f25"
+      ]
+     }
+    }
+   },
+   {
+    "kind": "name",
+    "ask": "tên tôi là gì?",
+    "expect": "f_name",
+    "base": {
+     "ms": 995.8,
+     "input_tokens": 1695,
+     "output_tokens": 82,
+     "cache_hit_tokens": 1536,
+     "plan": {
+      "required_outputs": [],
+      "resolved_query": "tên tôi là gì?",
+      "needs_retrieval": true,
+      "needs_clarification": false
+     }
+    },
+    "select": {
+     "ms": 941.1,
+     "input_tokens": 2358,
+     "output_tokens": 85,
+     "cache_hit_tokens": 2176,
+     "plan": {
+      "required_outputs": [],
+      "resolved_query": "tên tôi là gì?",
+      "needs_retrieval": true,
+      "needs_clarification": false,
+      "relevant_fact_ids": [
+       "f01"
+      ]
+     }
+    }
+   },
+   {
+    "kind": "fact",
+    "ask": "tôi chơi cầu lông mấy lần một tuần?",
+    "expect": "f_badminton",
+    "base": {
+     "ms": 3046.9,
+     "input_tokens": 1744,
+     "output_tokens": 366,
+     "cache_hit_tokens": 1536,
+     "plan": {
+      "required_outputs": [],
+      "resolved_query": "tôi chơi cầu lông mấy lần một tuần?",
+      "needs_retrieval": true,
+      "needs_clarification": false
+     }
+    },
+    "select": {
+     "ms": 1506.2,
+     "input_tokens": 2367,
+     "output_tokens": 215,
+     "cache_hit_tokens": 2176,
+     "plan": {
+      "required_outputs": [],
+      "resolved_query": "tôi chơi cầu lông mấy lần một tuần?",
+      "needs_retrieval": true,
+      "needs_clarification": false,
+      "relevant_fact_ids": [
+       "f13"
+      ]
+     }
+    }
+   },
+   {
+    "kind": "fact",
+    "ask": "tôi bị đau ở đâu?",
+    "expect": "f_back_pain",
+    "base": {
+     "ms": 2193.1,
+     "input_tokens": 1721,
+     "output_tokens": 299,
+     "cache_hit_tokens": 1536,
+     "plan": {
+      "required_outputs": [],
+      "resolved_query": "tôi bị đau ở đâu?",
+      "needs_retrieval": true,
+      "needs_clarification": false
+     }
+    },
+    "select": {
+     "ms": 3123.2,
+     "input_tokens": 2360,
+     "output_tokens": 544,
+     "cache_hit_tokens": 2176,
+     "plan": {
+      "required_outputs": [],
+      "resolved_query": "tôi bị đau ở đâu?",
+      "needs_retrieval": true,
+      "needs_clarification": false,
+      "relevant_fact_ids": [
+       "f06",
+       "f07",
+       "f08",
+       "f11"
+      ]
+     }
+    }
+   },
+   {
+    "kind": "fact",
+    "ask": "what is my favorite food?",
+    "expect": "f_pho",
+    "base": {
+     "ms": 1249.0,
+     "input_tokens": 1694,
+     "output_tokens": 102,
+     "cache_hit_tokens": 1536,
+     "plan": {
+      "required_outputs": [],
+      "resolved_query": "what is my favorite food?",
+      "needs_retrieval": true,
+      "needs_clarification": false
+     }
+    },
+    "select": {
+     "ms": 1831.5,
+     "input_tokens": 2356,
+     "output_tokens": 229,
+     "cache_hit_tokens": 2176,
+     "plan": {
+      "required_outputs": [],
+      "resolved_query": "what is my favorite food?",
+      "needs_retrieval": true,
+      "needs_clarification": false,
+      "relevant_fact_ids": [
+       "f02",
+       "f04",
+       "f05"
+      ]
+     }
+    }
+   },
+   {
+    "kind": "fact",
+    "ask": "Cho project A thì ưu tiên gì?",
+    "expect": "f_proj_serverless",
+    "base": {
+     "ms": 1578.6,
+     "input_tokens": 1715,
+     "output_tokens": 193,
+     "cache_hit_tokens": 1536,
+     "plan": {
+      "required_outputs": [],
+      "resolved_query": "Ưu tiên cho project A là gì?",
+      "needs_retrieval": true,
+      "needs_clarification": false
+     }
+    },
+    "select": {
+     "ms": 2357.6,
+     "input_tokens": 2362,
+     "output_tokens": 272,
+     "cache_hit_tokens": 2176,
+     "plan": {
+      "required_outputs": [],
+      "resolved_query": "Với project A thì nên ưu tiên gì?",
+      "needs_retrieval": true,
+      "needs_clarification": false,
+      "relevant_fact_ids": [
+       "f17",
+       "f18"
+      ]
+     }
+    }
+   },
+   {
+    "kind": "noise",
+    "ask": "giá vàng hôm nay bao nhiêu?",
+    "expect": null,
+    "base": {
+     "ms": 1106.8,
+     "input_tokens": 1737,
+     "output_tokens": 111,
+     "cache_hit_tokens": 1536,
+     "plan": {
+      "required_outputs": [
+       "evidence_citation"
+      ],
+      "resolved_query": "giá vàng hôm nay bao nhiêu?",
+      "needs_retrieval": true,
+      "needs_clarification": false
+     }
+    },
+    "select": {
+     "ms": 1796.6,
+     "input_tokens": 2361,
+     "output_tokens": 264,
+     "cache_hit_tokens": 2176,
+     "plan": {
+      "required_outputs": [
+       "evidence_citation"
+      ],
+      "resolved_query": "giá vàng hôm nay bao nhiêu",
+      "needs_retrieval": true,
+      "needs_clarification": false,
+      "relevant_fact_ids": [
+       "f21",
+       "f24"
+      ]
+     }
+    }
+   },
+   {
+    "kind": "noise",
+    "ask": "thời tiết hôm nay thế nào?",
+    "expect": null,
+    "base": {
+     "ms": 1492.7,
+     "input_tokens": 1704,
+     "output_tokens": 182,
+     "cache_hit_tokens": 1536,
+     "plan": {
+      "required_outputs": [
+       "evidence_citation"
+      ],
+      "resolved_query": "thời tiết hôm nay thế nào?",
+      "needs_retrieval": true,
+      "needs_clarification": false
+     }
+    },
+    "select": {
+     "ms": 1618.8,
+     "input_tokens": 2361,
+     "output_tokens": 218,
+     "cache_hit_tokens": 2176,
+     "plan": {
+      "required_outputs": [
+       "evidence_citation"
+      ],
+      "resolved_query": "thời tiết hôm nay thế nào?",
+      "needs_retrieval": true,
+      "needs_clarification": false,
+      "relevant_fact_ids": [
+       "f25"
+      ]
+     }
+    }
+   },
+   {
+    "kind": "noise",
+    "ask": "giải thích thuyết tương đối hẹp?",
+    "expect": null,
+    "base": {
+     "ms": 1574.3,
+     "input_tokens": 1707,
+     "output_tokens": 226,
+     "cache_hit_tokens": 1536,
+     "plan": {
+      "required_outputs": [
+       "evidence_citation"
+      ],
+      "resolved_query": "giải thích thuyết tương đối hẹp",
+      "needs_retrieval": true,
+      "needs_clarification": false
+     }
+    },
+    "select": {
+     "ms": 2095.3,
+     "input_tokens": 2366,
+     "output_tokens": 307,
+     "cache_hit_tokens": 2176,
+     "plan": {
+      "required_outputs": [
+       "evidence_citation"
+      ],
+      "resolved_query": "giải thích thuyết tương đối hẹp",
+      "needs_retrieval": true,
+      "needs_clarification": false,
+      "relevant_fact_ids": [
+       "f24"
+      ]
+     }
+    }
+   },
+   {
+    "kind": "noise",
+    "ask": "phim nào hay cuối tuần này?",
+    "expect": null,
+    "base": {
+     "ms": 1610.8,
+     "input_tokens": 1719,
+     "output_tokens": 201,
+     "cache_hit_tokens": 1536,
+     "plan": {
+      "required_outputs": [
+       "evidence_citation"
+      ],
+      "resolved_query": "phim nào hay cuối tuần này",
+      "needs_retrieval": true,
+      "needs_clarification": false
+     }
+    },
+    "select": {
+     "ms": 1768.6,
+     "input_tokens": 2360,
+     "output_tokens": 260,
+     "cache_hit_tokens": 2176,
+     "plan": {
+      "required_outputs": [
+       "evidence_citation"
+      ],
+      "resolved_query": "phim nào hay cuối tuần này",
+      "needs_retrieval": true,
+      "needs_clarification": false,
+      "relevant_fact_ids": [
+       "f24",
+       "f25"
+      ]
+     }
+    }
+   },
+   {
+    "kind": "noise",
+    "ask": "chứng khoán hôm nay tăng hay giảm?",
+    "expect": null,
+    "base": {
+     "ms": 1289.3,
+     "input_tokens": 1733,
+     "output_tokens": 129,
+     "cache_hit_tokens": 1536,
+     "plan": {
+      "required_outputs": [
+       "evidence_citation"
+      ],
+      "resolved_query": "chứng khoán hôm nay tăng hay giảm?",
+      "needs_retrieval": true,
+      "needs_clarification": false
+     }
+    },
+    "select": {
+     "ms": 1814.5,
+     "input_tokens": 2364,
+     "output_tokens": 238,
+     "cache_hit_tokens": 2176,
+     "plan": {
+      "required_outputs": [
+       "evidence_citation"
+      ],
+      "resolved_query": "chứng khoán hôm nay tăng hay giảm?",
+      "needs_retrieval": true,
+      "needs_clarification": false,
+      "relevant_fact_ids": []
+     }
+    }
+   }
+  ]
+ }
+}

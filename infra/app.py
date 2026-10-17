@@ -44,6 +44,7 @@ from infra.speechllm_stack import SpeechllmStack
 from infra.rest_api_stack import RestApiStack
 from infra.kimodo_ecs_stack import KimodoEcsStack
 from infra.monitoring_stack import MonitoringStack
+from infra.uploads_stack import UploadsStack
 
 app = cdk.App()
 
@@ -94,6 +95,12 @@ asset_stack = AssetStack(app, "VvaAssetStack", env=env)
 #
 # Consequence: every synth now needs the package built.
 #     python infra/build_crud_api.py
+# ── User uploads (photos in chat, own PDFs) ─────────────────────────
+# Private bucket. Other stacks reach it by name (uploads_bucket_name), not by
+# export, so deploying it never blocks theirs.
+#     cdk deploy VvaUploadsStack [-c upload_image_retention_days=30]
+UploadsStack(app, "VvaUploadsStack", env=env)
+
 crud_api_stack = CrudApiStack(app, "VvaCrudApiStack", env=env)
 
 # ── Track 2: the LangGraph agent (container) ────────────────────────

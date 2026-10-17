@@ -31,6 +31,7 @@ from langgraph_agents.api.routes_crud import router as crud_router
 from langgraph_agents.api.routes_feedback import router as feedback_router
 from langgraph_agents.api.routes_llm import router as llm_router
 from langgraph_agents.api.routes_preferences import router as preferences_router
+from langgraph_agents.api.routes_uploads import router as uploads_router
 from langgraph_agents.shared import get_pg_client
 from langgraph_agents.shared.env import env_source
 from langgraph_agents.shared.logging import configure_root_logger, get_logger
@@ -98,6 +99,7 @@ def create_crud_app() -> FastAPI:
     application.include_router(preferences_router)
     application.include_router(feedback_router)
     application.include_router(llm_router)
+    application.include_router(uploads_router)
 
     @application.get("/health")
     async def health():

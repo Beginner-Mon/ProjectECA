@@ -280,6 +280,11 @@ class RestApiStack(Stack):
         # it is one small JSON document, nothing to stream. As with
         # /me/preferences above, the function could serve it without this
         # declaration, but the deployed API would answer 403.
+        # ── /me/uploads — authenticated ─────────────────────────────────
+        # Signs a presigned POST (api/routes_uploads.py); the file itself goes
+        # straight to S3, never through this gateway (10 MB payload cap).
+        me.add_resource("uploads").add_method("POST", crud, **authed)
+
         llm = self.api.root.add_resource("llm")
         llm.add_resource("config").add_method("GET", crud, **authed)
 

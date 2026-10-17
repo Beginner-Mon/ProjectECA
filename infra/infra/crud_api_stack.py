@@ -53,6 +53,7 @@ from aws_cdk import (
 from constructs import Construct
 
 from infra.origins import resolve as resolve_origins
+from infra.uploads_stack import uploads_bucket_name
 
 _INFRA_ROOT = Path(__file__).resolve().parents[1]
 _ZIP_PATH = _INFRA_ROOT / "build" / "crud_api.zip"
@@ -178,6 +179,9 @@ class CrudApiStack(Stack):
                 "COGNITO_USER_POOL_ID": cognito_pool_id,
                 "COGNITO_APP_CLIENT_ID": cognito_client_id,
                 "ALLOWED_ORIGINS": ",".join(allowed_origins),
+                # VvaUploadsStack, by name (no export): routes_uploads.py signs
+                # presigned POSTs for it.
+                "UPLOADS_BUCKET": uploads_bucket_name(self.account),
                 "LOG_LEVEL": "INFO",
                 # No cache, and no way to reach one: this function has neither a
                 # Redis nor a DynamoDB table. None of its routes touch short-term
@@ -230,6 +234,16 @@ class CrudApiStack(Stack):
             actions=["kms:Decrypt"],
             resources=[f"arn:aws:kms:{self.region}:{self.account}:key/*"],
             conditions={"StringEquals": {"kms:ViaService": f"ssm.{self.region}.amazonaws.com"}},
+        ))
+
+        # ── IAM: sign uploads into the user-uploads bucket ──────────────
+        #
+        # A presigned POST carries this role's authority, so the grant is the
+        # ceiling of what any upload can do: write under images/ and nothing
+        # else. Reads and deletes arrive with the parts that need them.
+        self.fn.add_to_role_policy(iam.PolicyStatement(
+            actions=["s3:PutObject"],
+            resources=[f"arn:aws:s3:::{uploads_bucket_name(self.account)}/images/*"],
         ))
 
         # ── No Function URL ─────────────────────────────────────────────

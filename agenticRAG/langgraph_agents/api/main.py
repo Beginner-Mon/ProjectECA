@@ -352,19 +352,23 @@ def create_app() -> FastAPI:
         # short-term memory behind. Trusting a cache whose row is gone would let
         # a deleted conversation keep talking, so a session with no rows gets its
         # STM key dropped rather than reused.
-        try:
-            recent = await load_session_messages(
-                user_id=uid, session_id=req.session_id, limit=6,
-            )
-            if recent and recent["messages"]:
-                if not await get_stm().get(req.session_id):
-                    await populate_stm_from_messages(req.session_id, recent["messages"])
-            else:
-                # No rows: either a brand-new session (nothing to drop) or one
-                # that was deleted while its STM survived.
-                await get_stm().delete(req.session_id)
-        except Exception as exc:
-            logger.warning("stm_warmup_failed", extra={"error": str(exc)})
+        #
+        # Skipped when there is no cache to warm (STM_BACKEND=none, production
+        # since 17/10): the read would cost a query per turn and fill nothing.
+        if get_stm().caches:
+            try:
+                recent = await load_session_messages(
+                    user_id=uid, session_id=req.session_id, limit=6,
+                )
+                if recent and recent["messages"]:
+                    if not await get_stm().get(req.session_id):
+                        await populate_stm_from_messages(req.session_id, recent["messages"])
+                else:
+                    # No rows: either a brand-new session (nothing to drop) or one
+                    # that was deleted while its STM survived.
+                    await get_stm().delete(req.session_id)
+            except Exception as exc:
+                logger.warning("stm_warmup_failed", extra={"error": str(exc)})
 
         # Photos (SCRUM-45): only keys POST /me/uploads could have issued to this
         # user. Checked before anything reads S3, so one user cannot point the

@@ -75,7 +75,7 @@ def test_dashboard_stays_under_50_metrics(template):
     metrics = sum(len(w["properties"].get("metrics", [])) for w in graphs)
     alarms = sum(len(w["properties"].get("annotations", {}).get("alarms", [])) for w in graphs)
     assert metrics == len(FUNCTION_NAMES) * 6
-    assert alarms == 1
+    assert alarms == 2          # LLM judge + memory node latency (17/10)
     assert metrics + alarms <= 50
 
 
@@ -84,7 +84,8 @@ def _resources(template: dict, type_: str) -> dict:
 
 
 def test_judge_failures_are_counted_from_the_agent_logs(template):
-    (f,) = _resources(template, "AWS::Logs::MetricFilter").values()
+    (f,) = [f for f in _resources(template, "AWS::Logs::MetricFilter").values()
+            if f["MetricTransformations"][0]["MetricNamespace"] == "VVA/Grader"]
     assert f["LogGroupName"] == "/aws/lambda/vva-agent"
     assert f["FilterPattern"] == '"grader_judge_failed"'
     (t,) = f["MetricTransformations"]
@@ -93,8 +94,8 @@ def test_judge_failures_are_counted_from_the_agent_logs(template):
 
 
 def test_three_judge_failures_in_an_hour_alert_the_topic(template):
-    (alarm,) = _resources(template, "AWS::CloudWatch::Alarm").values()
-    assert alarm["AlarmName"] == JUDGE_ALARM_NAME
+    (alarm,) = [a for a in _resources(template, "AWS::CloudWatch::Alarm").values()
+                if a["AlarmName"] == JUDGE_ALARM_NAME]
     assert (alarm["Namespace"], alarm["MetricName"]) == ("VVA/Grader", "JudgeFailed")
     assert (alarm["Statistic"], alarm["Period"], alarm["EvaluationPeriods"]) == ("Sum", 3600, 1)
     assert alarm["Threshold"] == 3

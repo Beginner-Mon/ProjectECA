@@ -16,9 +16,10 @@ langgraph:
     stm_session_ttl: 7200                 # 2h
     ltm_top_k: 5
     # Memory v2 tiers: after a turn, read what the user said and add, change or
-    # retire facts in user_memory. Off until migration 016 is live;
-    # VVA_LTM=1|0 overrides this.
-    ltm_enabled: false
+    # retire facts in user_memory. On by default (17/10/2026 demo; migration
+    # 016 live on prod). Turn it off with VVA_LTM=0 on the Lambda — the env
+    # wins over this file, no deploy needed.
+    ltm_enabled: true
     # Tier-2 recall: embed this turn's query (milliseconds), take this many
     # rows by similarity rank, keep what scores at or above this floor.
     # V0 probe (16/10/2026, Tri): K=5, floor=0.75 — floor thấp chỉ cắt đuôi

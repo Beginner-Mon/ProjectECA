@@ -42,6 +42,7 @@ if str(AGENTIC_ROOT) not in sys.path:
 
 import numpy as np  # noqa: E402
 import yaml  # noqa: E402
+from pydantic import BaseModel, Field  # noqa: E402
 
 SMALL = "intfloat/multilingual-e5-small"
 BASE = "intfloat/multilingual-e5-base"
@@ -401,8 +402,6 @@ needs, or [] when none of them is needed. Never invent an id."""
 
 
 def _select_schema():
-    from pydantic import BaseModel, Field
-
     class SelectPlanOutput(BaseModel):
         required_outputs: list[str] = Field(default_factory=list)
         resolved_query: str = ""

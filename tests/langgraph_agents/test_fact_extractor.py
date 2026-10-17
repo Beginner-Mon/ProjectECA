@@ -73,9 +73,10 @@ def test_policy_thresholds_default_to_the_plan_values():
         assert policy["promote_instruction_at"] == 3
 
 
-def test_the_shipped_yaml_has_extraction_off(monkeypatch):
+def test_the_shipped_yaml_has_extraction_on(monkeypatch):
+    """Demo default (17/10): extraction on; `VVA_LTM=0` on Lambda is the off switch."""
     monkeypatch.delenv("VVA_LTM", raising=False)
-    assert fe.enabled() is False
+    assert fe.enabled() is True
 
 
 # ── housekeep ─────────────────────────────────────────────────────────────────

@@ -393,6 +393,20 @@ Nguồn: `docs/worklogs/01-10-2026.md`, `02-10-2026.md`, `02-10-2026-round3.md`,
   `needs_retrieval=true` (cả khi planner thấy fact). Retriever chạy thêm 2–5 s, gọi
   `recall_self`, hiện "Let me think back…" (`stage_recalling`). Hướng sửa: luật cổng của planner
   (ghi chú của user đã trả lời được thì không tra cứu); phải đo độ trễ trước.
+- [ ] 🟠 **Hỏi lại tình trạng sức khoẻ của chính mình bị trả lời như xin chẩn đoán** — 17/10 local,
+  `request_id 1ba3a9f7…`: "do i have back pain?" → "No. I can't tell you that, and I won't guess. You
+  told me you have back pain…". Fact "Has back pain" (tầng 1) CÓ trong prompt và được dùng, nhưng câu
+  mở đầu đọc như "không biết". Ba lực đẩy: lời dẫn tầng 1 "Health notes are the user's own account,
+  not a diagnosis" (`nodes/synthesizer.py` `_build_user_instructions`); planner gắn `scope_disclaimer`
+  + mở cổng → `kb_search` kéo hướng dẫn NHS; luật không chẩn đoán của persona. Hướng sửa: viết lại
+  lời dẫn ("nhắc lại lời user đã kể không phải là chẩn đoán"), đo bằng dựng lại lượt này (cũ vs mới,
+  2 lần mỗi bản) trước khi sửa.
+- [ ] 🟡 **Agent nghi ngờ fact (đã sửa, theo dõi)** — 16/10 "who am I" trả lời "can't confirm it was
+  you on this device". Nguyên nhân đo bằng ablation: `resume_last_session` đưa câu trả lời ngờ vực cũ
+  của agent quay lại làm nguồn tin; tool ambiguity ép cả lượt sang `clarify`. Đã sửa: bỏ
+  `resume_last_session` (`a0e8e422`), ambiguity không ép clarify (`d2318887`), lời dẫn "trí nhớ là sự
+  thật" (`deb35fb1`). N1 4/4 không còn câu ngờ vực. Theo dõi trên prod: câu trả lời có "can't
+  confirm", "this device", "someone else" khi hỏi về điều user đã kể.
 - [ ] 🟠 **Tầng 2 kéo fact nhiễu vào prompt** — e5-small: điểm câu đúng và câu nhiễu chồng lấn
   0.72–0.91 (khớp mặt chữ, vd "giá vàng" ↔ "chó tên Vàng" 0.834). Top-5 + floor 0.75
   (`e3a8c3ea`): 12/14 câu nhiễu kéo fact vào prompt (~4 dòng). Chưa thấy câu trả lời dùng nhầm

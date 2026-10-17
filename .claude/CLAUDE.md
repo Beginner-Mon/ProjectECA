@@ -139,6 +139,35 @@ K invokes these automatically for infra work — N does not need to ask.
 - K reviews worklogs before approving phase transitions
 - Tests: `pytest` with markers `unit`, `integration`, `e2e` (see `pytest.ini`)
 
+### Ship flow — five steps, never collapsed
+
+```
+1. commit on the feature branch (feature/langgraph-rewrite)
+2. test locally
+3. git push origin feature/langgraph-rewrite      # work lands on GitHub FIRST
+4. update local release from origin/release, merge the feature branch into it
+5. git push origin release                        # only this fires the deploys
+```
+
+**`git push origin HEAD:release` is forbidden**, by K, by N, and by every agent
+handed a plan from this repo. It produces the same deployed artifact, which is
+why it is tempting, and it is still wrong: it moves only the remote `release`
+ref, so the feature branch's remote and the local `release` ref both silently
+fall behind.
+
+That shortcut was used through 30/09/2026 and left
+`origin/feature/langgraph-rewrite` **18 commits** behind local — eleven
+separately-authored feedback commits living on one disk, with no review surface
+on GitHub and nothing recoverable if the disk died.
+
+Step 3 costs nothing: no workflow triggers on `feature/**` (deploys fire on
+`release`, `kimodo-release`, `feature/tts-streaming` only), and Amplify builds
+`release` alone with auto-branch-creation off. There is no reason to skip it.
+
+Any plan written for another agent spells out steps 3, 4 and 5 as separate
+steps. "Is this deployed?" is still answered against `origin/release`, never the
+local `release` ref.
+
 # Subagents
 
 Spawn subagents to isolate context, parallelize independent work, or offload bulk mechanical tasks. Don’t spawn when the parent needs the reasoning, when synthesis requires holding things together, or when spawn overhead dominates.

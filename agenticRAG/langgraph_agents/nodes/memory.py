@@ -32,6 +32,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import os
 import time
 from pathlib import Path
 
@@ -439,7 +440,7 @@ async def memory_node(state: AgentState, config: RunnableConfig) -> dict:
         raw_history = await _load_latest_turns(session_id, user_message_id)
 
     elapsed_ms = round((time.perf_counter() - t0) * 1000)
-    logger.info("node_complete", extra={
+    log_extra = {
         "node": "memory", "request_id": request_id,
         "elapsed_ms": elapsed_ms,
         "user_instructions_count": len(user_instructions),
@@ -450,7 +451,13 @@ async def memory_node(state: AgentState, config: RunnableConfig) -> dict:
         "summary_chunks_count": len(summary_chunks),
         "summary_present": bool(summary_chunks),
         "recent_raw_count": len(raw_history),
-    })
+    }
+    # Opt-in: the benchmark needs the exact tier-2 lines that entered the
+    # prompt (group f asks whether the low floor brings in irrelevant facts).
+    # Off by default so user memory text never lands in production logs.
+    if os.getenv("VVA_LOG_USER_FACTS") == "1":
+        log_extra["user_facts"] = user_facts
+    logger.info("node_complete", extra=log_extra)
 
     return {
         "messages": _recent_raw_to_messages(raw_history),

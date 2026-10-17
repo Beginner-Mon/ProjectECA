@@ -274,8 +274,9 @@ def memory_probe_fields(logs: list[dict]) -> dict:
     """What tier-2 recall actually did this turn (per-probe report columns).
 
     tier2_top_similarity is the best score over every tier-2 row; user_facts_count
-    is how many tier-2 lines really entered the prompt. Both come from the
-    memory node's own node_complete record.
+    is how many tier-2 lines really entered the prompt, and user_facts are those
+    lines themselves (opt-in via VVA_LOG_USER_FACTS, which probes_label sets).
+    All come from the memory node's own node_complete record.
     """
     for r in reversed(logs):
         if r.get("message") == "node_complete" and r.get("node") == "memory":
@@ -284,12 +285,14 @@ def memory_probe_fields(logs: list[dict]) -> dict:
                 "tier2_embed_ms": r.get("tier2_embed_ms"),
                 "tier2_skipped": r.get("tier2_skipped"),
                 "user_facts_count": r.get("user_facts_count"),
+                "user_facts_lines": r.get("user_facts"),
                 "user_instructions_count": r.get("user_instructions_count"),
             }
     return {
         "tier2_top_similarity": None, "tier2_embed_ms": None,
         "tier2_skipped": "no_memory_node",
-        "user_facts_count": None, "user_instructions_count": None,
+        "user_facts_count": None, "user_facts_lines": None,
+        "user_instructions_count": None,
     }
 
 
@@ -639,6 +642,7 @@ def run_probe(client, owner_dsn: str, uid: str, sess: str, probe: dict,
         "tier2_embed_ms": mem_fields["tier2_embed_ms"],
         "tier2_skipped": mem_fields["tier2_skipped"],
         "user_facts_count": mem_fields["user_facts_count"],
+        "user_facts_lines": mem_fields["user_facts_lines"],
         "user_instructions_count": mem_fields["user_instructions_count"],
         "expect_any": probe.get("expect_any") or [],
         "expect_all": probe.get("expect_all") or [],
@@ -676,6 +680,9 @@ def probes_label(label: str, spec: dict, only: set[str], collector: Collector,
 
     configure_root_logger()
     set_ltm("0")
+    # The report needs the exact tier-2 lines that entered the prompt (group f:
+    # did the low floor pull irrelevant facts in?). Opt-in, off in production.
+    os.environ["VVA_LOG_USER_FACTS"] = "1"
     warm_embedding_for_probes()
     by_id = {r["scenario"]: r for r in recs}
     quota_stops: list[str] = []
@@ -723,6 +730,7 @@ def probes_label(label: str, spec: dict, only: set[str], collector: Collector,
                                     "tier2_embed_ms": None,
                                     "tier2_skipped": "no_session_for_last",
                                     "user_facts_count": None,
+                                    "user_facts_lines": None,
                                     "user_instructions_count": None,
                                     "retrieval_src": "none", "memory_ms": None,
                                     "t_to_done_s": None, "t_housekeep_s": None,
@@ -770,6 +778,7 @@ def retry_label(label: str, spec: dict, only: set[str], collector: Collector,
 
     configure_root_logger()
     set_ltm("0")
+    os.environ["VVA_LOG_USER_FACTS"] = "1"
     warm_embedding_for_probes()
     quota_stops: list[str] = []
     app = create_app()
@@ -935,6 +944,7 @@ def render_md(label: str, report: dict, stats: dict) -> str:
                      f"embed_ms={p.get('tier2_embed_ms')}, "
                      f"user_facts={p.get('user_facts_count')}, "
                      f"user_instructions={p.get('user_instructions_count')}")
+            L.append(f"- tier2_lines: {p.get('user_facts_lines')}")
             L.append(f"- answer: {p['answer'][:1500]}")
             L.append("")
         if sc.get("summary_check"):

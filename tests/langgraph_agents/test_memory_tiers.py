@@ -296,6 +296,50 @@ async def test_memory_node_reports_both_tiers(caplog):
     assert done.summary_present is False
 
 
+@pytest.mark.asyncio
+async def test_memory_node_logs_the_tier2_lines_only_when_asked(monkeypatch, caplog):
+    """The benchmark needs the exact tier-2 lines; production logs must not.
+
+    `VVA_LOG_USER_FACTS=1` is the opt-in the harness sets, so memory text stays
+    out of ordinary logs (docs/tracking/memory-benchmark-*).
+    """
+    from langchain_core.runnables import RunnableConfig
+
+    async def fake_instructions(_user):
+        return []
+
+    async def fake_stm(_session, _exclude=None):
+        return [], []
+
+    async def fake_tier2(_user, _session, _query):
+        return (["- [2026-10-14] (Run) Chay 5km"], 0.9, None, 12)
+
+    config = RunnableConfig(configurable={
+        "user_id": "u-1", "session_id": "s-1", "query": "chay bo",
+        "persona_id": "anne", "request_id": "r-1"})
+
+    def _log_lines():
+        (done,) = [r for r in caplog.records if r.getMessage() == "node_complete"]
+        return getattr(done, "user_facts", None)
+
+    monkeypatch.setenv("VVA_LOG_USER_FACTS", "1")
+    with patch.object(mem, "_load_user_instructions", side_effect=fake_instructions), \
+         patch.object(mem, "_load_stm", side_effect=fake_stm), \
+         patch.object(mem, "_load_tier2_facts", side_effect=fake_tier2):
+        with caplog.at_level(logging.INFO, logger="langgraph.memory"):
+            await mem.memory_node({"messages": []}, config)
+    assert _log_lines() == ["- [2026-10-14] (Run) Chay 5km"]
+
+    caplog.clear()
+    monkeypatch.delenv("VVA_LOG_USER_FACTS", raising=False)
+    with patch.object(mem, "_load_user_instructions", side_effect=fake_instructions), \
+         patch.object(mem, "_load_stm", side_effect=fake_stm), \
+         patch.object(mem, "_load_tier2_facts", side_effect=fake_tier2):
+        with caplog.at_level(logging.INFO, logger="langgraph.memory"):
+            await mem.memory_node({"messages": []}, config)
+    assert _log_lines() is None
+
+
 def test_render_user_instructions_cuts_from_the_end_whole_lines():
     from langgraph_agents.shared.context import budget_chars, render_user_instructions
 

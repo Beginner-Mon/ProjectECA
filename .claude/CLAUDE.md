@@ -17,7 +17,7 @@ Healthcare/wellness multimodal AI assistant combining conversational AI, 3D moti
 ECA UI                     Vite 6 + React 19 + TS, Capacitor for mobile, Amplify hosting
 LangGraph service          Port 8000, FastAPI + SSE (agenticRAG/langgraph_agents)
 PostgreSQL + pgvector      Neon, us-east-1, PG 18.4, pgvector 0.8.6 (chuyển 17/08)
-Redis                      STM + TTS task results — STILL LOCAL, not yet hosted
+Redis                      Local dev only. Prod: STM_BACKEND=none, no Redis (D35, 17/10)
 Kimodo text-to-motion      GPU MCP server (replaced DART); ECS deploy awaiting Owner
 VieNeu-TTS                 CPU Vietnamese TTS (replaced Coqui/ElevenLabs)
 Auth                       AWS Cognito via Amplify Gen 2
@@ -67,7 +67,7 @@ into `synthesizer.py`; `nodes/_persona_loader.py` is the surviving fragment.
 - **SSE + REST POST**: Replaces WebSocket (ADR-005 revised). CDN-friendly, auto-reconnect via EventSource.
 - **Approval Gate**: Clinical safety — user must approve before 3D motion render. Saves GPU + prevents unsafe exercise demos.
 - **PostgreSQL (pgvector)**: Replaces Firebase + ChromaDB. Single DB for structured + vector data. **Now hosted on Neon** (`VVA_PG_DSN`, direct endpoint — not `-pooler`; see `.claude/plans/neon-migration.md`).
-- **Redis**: STM + Celery broker + task result persistence + approval gate payloads.
+- ~~**Redis**: STM + Celery broker + task result persistence + approval gate payloads.~~ **Not on prod (D35, 17/10):** the memory node rebuilds the context window from PostgreSQL each turn (p50 76 ms). Revisit only if alarm `vva-memory-node-slow` (p90 > 300 ms) fires.
 - ~~**Celery**: Kept for async background tasks.~~ **Reversed in v2.4.1** — `celery_app = None`, not in requirements. Background work uses `asyncio.create_task` with a strong-reference set (`main.py:69-73`).
 - **Error routing**: 3 severity levels (CRITICAL/RECOVERABLE/IGNORABLE). Graceful degradation when worker down.
 - **Deployment**: Hybrid Edge-Cloud target. **Local-first** for Phases 0-6, then split to Cloud (VPS+Supabase) + Edge (HP ProDesk 48GB RAM, RTX 3060).

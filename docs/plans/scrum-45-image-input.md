@@ -71,10 +71,10 @@ xoá    xoá tin / hội thoại / user → xoá object S3; lifecycle tự hết
 
 ## Các phần (mỗi phần một commit, test riêng)
 
-1. **Bucket + `POST /me/uploads`** (~0,5 ngày). Test: CDK (block public, SSE, SSL-only,
+1. ✅ **Bucket + `POST /me/uploads`** (~0,5 ngày; xong + deploy 17/10, `a1ecd55`). Test: CDK (block public, SSE, SSL-only,
    lifecycle, CORS); moto: key đúng prefix của user, chặn content-type lạ, policy có
    `content-length-range`.
-2. **Vision + `/chat` nhận `image_keys`** (~1,5 ngày). Test: key của user khác → 400; Gemini giả
+2. ✅ **Vision + `/chat` nhận `image_keys`** (~1,5 ngày; code xong 17/10, chờ release + `cdk deploy VvaAgentStack`). Test: key của user khác → 400; Gemini giả
    trả `body`/`document` → planner và synthesizer nhận khối ảnh; Gemini lỗi hoặc quá hạn → lượt vẫn
    xong, không chuỗi lỗi lạ; stage event `vision` phát trước planner.
 3. **Lưu, xem lại, xoá** (~1 ngày). Test moto: extras có `images`; resume trả URL; xoá tin /

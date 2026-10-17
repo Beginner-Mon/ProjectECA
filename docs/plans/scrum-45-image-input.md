@@ -39,7 +39,7 @@ xoá    xoá tin / hội thoại / user → xoá object S3; lifecycle tự hết
 - **Vision lỗi không làm hỏng lượt:** Gemini lỗi/quá hạn → lượt vẫn trả lời và nói rõ không đọc
   được ảnh; log `vision_failed`. Hạn tổng cho cả lời gọi bằng `asyncio.wait_for` (bài học từ
   LLM chấm, 05/10), các ảnh gọi song song.
-- **Ảnh thuộc đúng người:** key dạng `uploads/<user_id>/<uuid>.jpg`; agent và CRUD từ chối key
+- **Ảnh thuộc đúng người:** key dạng `images/<user_id>/<hex32>.jpg` (loại đứng trước để lifecycle lọc theo tiền tố; `key_belongs_to`); agent và CRUD từ chối key
   ngoài prefix của user đang đăng nhập (400), kiểm trước khi đọc S3.
 - **Không log ảnh hay mô tả đầy đủ:** chỉ log `kind`, số ảnh, độ dài mô tả, thời gian.
 - **Bucket:** block public, SSE-S3, chỉ HTTPS, lifecycle N ngày, CORS chỉ cho origin của app.
@@ -55,8 +55,8 @@ xoá    xoá tin / hội thoại / user → xoá object S3; lifecycle tự hết
 | --- | --- |
 | `infra/infra/uploads_stack.py` (mới) | bucket `vva-user-uploads-<account>`, lifecycle, CORS, SSL-only |
 | `infra/app.py` | đăng ký `VvaUploadsStack`; tên bucket truyền dạng chuỗi (không export) |
-| `infra/infra/crud_api_stack.py` | env `UPLOADS_BUCKET`; Put/Get/Delete trên `uploads/*` |
-| `infra/infra/agent_stack.py` | env `UPLOADS_BUCKET`; GetObject trên `uploads/*` |
+| `infra/infra/crud_api_stack.py` | env `UPLOADS_BUCKET`; PutObject trên `images/*` (phần 1, xong 17/10), Get/Delete thêm ở phần 3 |
+| `infra/infra/agent_stack.py` | env `UPLOADS_BUCKET`; GetObject trên `images/*` |
 | `infra/infra/rest_api_stack.py` | `POST /me/uploads` → CRUD (có auth) |
 | `api/routes_uploads.py` (mới, CRUD) | cấp key + presigned POST (5 phút) |
 | `api/schemas.py` | `ChatRequest.image_keys: list[str]` (≤ 3) |

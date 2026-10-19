@@ -1,0 +1,286 @@
+{
+ "source": "NHS website (nhs.uk), Open Government Licence v3.0, via data/knowledge_base/nhs_uk.jsonl",
+ "pages": {
+  "back": {
+   "url": "https://www.nhs.uk/conditions/back-pain/",
+   "reviewed": "05 March 2026",
+   "licence": "OGL-3.0"
+  },
+  "knee": {
+   "url": "https://www.nhs.uk/conditions/knee-pain/",
+   "reviewed": "21 December 2023",
+   "licence": "OGL-3.0"
+  },
+  "neck": {
+   "url": "https://www.nhs.uk/conditions/neck-pain/",
+   "reviewed": "27 April 2023",
+   "licence": "OGL-3.0"
+  },
+  "shoulder": {
+   "url": "https://www.nhs.uk/conditions/shoulder-pain/",
+   "reviewed": "22 May 2023",
+   "licence": "OGL-3.0"
+  }
+ },
+ "criteria": [
+  {
+   "id": "back-L1-01",
+   "region": "back",
+   "level": "L1",
+   "nhs_section": "Non-urgent advice: See a GP if:",
+   "text": "it does not improve after treating it at home for a few weeks"
+  },
+  {
+   "id": "back-L1-02",
+   "region": "back",
+   "level": "L1",
+   "nhs_section": "Non-urgent advice: See a GP if:",
+   "text": "it's stopping you doing your day-to-day activities"
+  },
+  {
+   "id": "back-L1-03",
+   "region": "back",
+   "level": "L1",
+   "nhs_section": "Non-urgent advice: See a GP if:",
+   "text": "you're worried about the pain or you're struggling to cope"
+  },
+  {
+   "id": "back-L1-04",
+   "region": "back",
+   "level": "L1",
+   "nhs_section": "Non-urgent advice: See a GP if:",
+   "text": "you've lost weight without trying to"
+  },
+  {
+   "id": "back-L1-05",
+   "region": "back",
+   "level": "L1",
+   "nhs_section": "Non-urgent advice: See a GP if:",
+   "text": "there's a lump or swelling in your back, or your back has changed shape"
+  },
+  {
+   "id": "back-L1-06",
+   "region": "back",
+   "level": "L1",
+   "nhs_section": "Non-urgent advice: See a GP if:",
+   "text": "it does not improve after resting or is worse at night"
+  },
+  {
+   "id": "back-L1-07",
+   "region": "back",
+   "level": "L1",
+   "nhs_section": "Non-urgent advice: See a GP if:",
+   "text": "it's worse when sneezing, coughing or pooing"
+  },
+  {
+   "id": "back-L1-08",
+   "region": "back",
+   "level": "L1",
+   "nhs_section": "Non-urgent advice: See a GP if:",
+   "text": "it's coming from the top of your back (between your shoulders), rather than your lower back"
+  },
+  {
+   "id": "back-L2-01",
+   "region": "back",
+   "level": "L2",
+   "nhs_section": "Urgent advice: Ask for an urgent GP appointment or get help from 111 if:",
+   "text": "you feel hot, cold, shivery or generally unwell"
+  },
+  {
+   "id": "back-L2-02",
+   "region": "back",
+   "level": "L2",
+   "nhs_section": "Urgent advice: Ask for an urgent GP appointment or get help from 111 if:",
+   "text": "it's severe pain that starts suddenly, or it's getting worse quickly"
+  },
+  {
+   "id": "back-L3-01",
+   "region": "back",
+   "level": "L3",
+   "nhs_section": "Immediate action required: Call 999 or go to A&E if:",
+   "text": "pain, tingling, weakness or numbness in both legs"
+  },
+  {
+   "id": "back-L3-02",
+   "region": "back",
+   "level": "L3",
+   "nhs_section": "Immediate action required: Call 999 or go to A&E if:",
+   "text": "a loss of feeling around your genitals or anus"
+  },
+  {
+   "id": "back-L3-03",
+   "region": "back",
+   "level": "L3",
+   "nhs_section": "Immediate action required: Call 999 or go to A&E if:",
+   "text": "changes in your bladder or bowels, such as difficulty peeing, or peeing or pooing yourself"
+  },
+  {
+   "id": "back-L3-04",
+   "region": "back",
+   "level": "L3",
+   "nhs_section": "Immediate action required: Call 999 or go to A&E if:",
+   "text": "changes in how your penis or vagina feels during sex, not being able to get or keep an erection, or not being able to orgasm"
+  },
+  {
+   "id": "back-L3-05",
+   "region": "back",
+   "level": "L3",
+   "nhs_section": "Immediate action required: Call 999 or go to A&E if:",
+   "text": "chest pain"
+  },
+  {
+   "id": "back-L3-06",
+   "region": "back",
+   "level": "L3",
+   "nhs_section": "Immediate action required: Call 999 or go to A&E if:",
+   "text": "it started after a serious accident, such as a car accident"
+  },
+  {
+   "id": "knee-L1-01",
+   "region": "knee",
+   "level": "L1",
+   "nhs_section": "Non-urgent advice: See a GP if:",
+   "text": "knee pain does not improve within a few weeks"
+  },
+  {
+   "id": "knee-L2-01",
+   "region": "knee",
+   "level": "L2",
+   "nhs_section": "Urgent advice: Get advice from 111 now if:",
+   "text": "your knee is very painful"
+  },
+  {
+   "id": "knee-L2-02",
+   "region": "knee",
+   "level": "L2",
+   "nhs_section": "Urgent advice: Get advice from 111 now if:",
+   "text": "you cannot move your knee or put any weight on it"
+  },
+  {
+   "id": "knee-L2-03",
+   "region": "knee",
+   "level": "L2",
+   "nhs_section": "Urgent advice: Get advice from 111 now if:",
+   "text": "your knee is badly swollen or has changed shape"
+  },
+  {
+   "id": "knee-L2-04",
+   "region": "knee",
+   "level": "L2",
+   "nhs_section": "Urgent advice: Get advice from 111 now if:",
+   "text": "your knee locks, gives way or painfully clicks – painless clicking is normal"
+  },
+  {
+   "id": "knee-L2-05",
+   "region": "knee",
+   "level": "L2",
+   "nhs_section": "Urgent advice: Get advice from 111 now if:",
+   "text": "you have a very high temperature (or feel hot, cold or shivery) and have redness or heat around your knee – this can be a sign of infection"
+  },
+  {
+   "id": "neck-L1-01",
+   "region": "neck",
+   "level": "L1",
+   "nhs_section": "Non-urgent advice: See a GP if:",
+   "text": "neck pain or stiffness does not go away after a few weeks"
+  },
+  {
+   "id": "neck-L1-02",
+   "region": "neck",
+   "level": "L1",
+   "nhs_section": "Non-urgent advice: See a GP if:",
+   "text": "painkillers like paracetamol or ibuprofen have not worked"
+  },
+  {
+   "id": "neck-L1-03",
+   "region": "neck",
+   "level": "L1",
+   "nhs_section": "Non-urgent advice: See a GP if:",
+   "text": "you're worried about the pain"
+  },
+  {
+   "id": "neck-L1-04",
+   "region": "neck",
+   "level": "L1",
+   "nhs_section": "Non-urgent advice: See a GP if:",
+   "text": "you have other symptoms, like pins and needles or a cold arm – this could be something more serious"
+  },
+  {
+   "id": "shoulder-L1-01",
+   "region": "shoulder",
+   "level": "L1",
+   "nhs_section": "Non-urgent advice: See a GP if:",
+   "text": "shoulder pain is getting worse or does not improve after 2 weeks"
+  },
+  {
+   "id": "shoulder-L1-02",
+   "region": "shoulder",
+   "level": "L1",
+   "nhs_section": "Non-urgent advice: See a GP if:",
+   "text": "it's very difficult to move your arm or shoulder"
+  },
+  {
+   "id": "shoulder-L2-01",
+   "region": "shoulder",
+   "level": "L2",
+   "nhs_section": "Urgent advice: Ask for an urgent GP appointment or get help from NHS 111 if:",
+   "text": "you have sudden or very bad shoulder pain"
+  },
+  {
+   "id": "shoulder-L2-02",
+   "region": "shoulder",
+   "level": "L2",
+   "nhs_section": "Urgent advice: Ask for an urgent GP appointment or get help from NHS 111 if:",
+   "text": "you cannot move your arm"
+  },
+  {
+   "id": "shoulder-L2-03",
+   "region": "shoulder",
+   "level": "L2",
+   "nhs_section": "Urgent advice: Ask for an urgent GP appointment or get help from NHS 111 if:",
+   "text": "your arm or shoulder has changed shape or is badly swollen"
+  },
+  {
+   "id": "shoulder-L2-04",
+   "region": "shoulder",
+   "level": "L2",
+   "nhs_section": "Urgent advice: Ask for an urgent GP appointment or get help from NHS 111 if:",
+   "text": "you have pins and needles that do not go away"
+  },
+  {
+   "id": "shoulder-L2-05",
+   "region": "shoulder",
+   "level": "L2",
+   "nhs_section": "Urgent advice: Ask for an urgent GP appointment or get help from NHS 111 if:",
+   "text": "there's no feeling in your arm or shoulder"
+  },
+  {
+   "id": "shoulder-L2-06",
+   "region": "shoulder",
+   "level": "L2",
+   "nhs_section": "Urgent advice: Ask for an urgent GP appointment or get help from NHS 111 if:",
+   "text": "your arm or shoulder is hot or cold to touch"
+  },
+  {
+   "id": "shoulder-L2-07",
+   "region": "shoulder",
+   "level": "L2",
+   "nhs_section": "Urgent advice: Ask for an urgent GP appointment or get help from NHS 111 if:",
+   "text": "the pain started after an injury or accident, like a fall"
+  },
+  {
+   "id": "shoulder-L2-08",
+   "region": "shoulder",
+   "level": "L2",
+   "nhs_section": "Urgent advice: Ask for an urgent GP appointment or get help from NHS 111 if:",
+   "text": "you develop severe pain in both shoulders"
+  },
+  {
+   "id": "shoulder-L2-09",
+   "region": "shoulder",
+   "level": "L2",
+   "nhs_section": "Urgent advice: Ask for an urgent GP appointment or get help from NHS 111 if:",
+   "text": "you feel feverish or unwell"
+  }
+ ]
+}

@@ -438,6 +438,103 @@ Nguồn: `docs/worklogs/01-10-2026.md`, `02-10-2026.md`, `02-10-2026-round3.md`,
 - [ ] ⚪ **Dọn worktree** `D:\Swin documents\VVA-benchA` (cố định ở `15fcb77b`, dùng cho
   benchmark A).
 
+#### Đề xuất gỡ release — Nguyen + K, 17/10 (Tri giao Nguyen gỡ; chưa làm)
+
+Không sửa hết danh sách trên. Chốt một cổng release: 5 việc user nhìn thấy được + 1 lượt
+benchmark trên DeepSeek, rồi release BYOK, memory v2, đọc ảnh và Terms/Privacy cùng một đợt
+(~3 ngày công). Phần còn lại ở backlog.
+
+Số liệu đã kiểm 17/10:
+- B4 10/13: ba câu trượt g, h, i là kiểm hình dạng DB (`answer_source: db`), câu trả lời đúng.
+  Chỉ h lộ lỗi thật: ghi chú tầng 1 viết tiếng Anh cho user Việt ("Do not suggest back
+  exercises"), hiện nguyên văn trên màn Memory.
+- Prod 6 ngày (11–17/10): 10 lượt, 0 lỗi, 0 `llm_fallback_used` — key DeepSeek prod còn chạy.
+- Migration 014–016 chỉ thêm cột (đều có default) và xoá `turn_index` (code 10/10 không dùng):
+  chạy trước release được, image cũ vẫn chạy.
+- RAM `vva-agent` 30 ngày: đỉnh 1.917/2.048 MB, p90 322 MB. Memory v2 nạp model embed mỗi lượt.
+
+Năm việc chặn release:
+
+| # | Lỗi | Hướng sửa | Đo bằng | Ước tính |
+|---|---|---|---|---|
+| 1 | LLM lỗi → user không nhận chữ nào | `api/main.py`: hết stream mà `streamed_text` rỗng thì phát `final_answer` thành 1 `token` trước `done` — một chỗ phủ cả synthesizer, `error_handler` và nhánh graph không có câu trả lời | test giả LLM lỗi | 1 h |
+| 2 | DeepSeek treo ~15 phút | Khi quá tải DeepSeek gửi dòng keep-alive nên timeout đọc không nổ; trên prod Lambda cắt ở 300 s. Thêm hạn chót tổng (`asyncio.wait_for`) cho mọi lời gọi LLM; synthesizer thêm hạn token đầu, quá hạn thì rơi vào fallback Gemini có sẵn | test giả treo | 3–4 h |
+| 3 | Hỏi tên trượt 3/10 | `style` explicit (tên, cách xưng hô) → tầng 1 ngay lần đầu; UPDATE `style` giữ tầng 1 (tên mới đè tên cũ, hiện `apply_policy` hạ xuống candidate); prompt extractor: tên → `style`, ghi chú viết bằng ngôn ngữ user dùng (sửa luôn h) | 10 câu hỏi tên `tier2_recall_probes.yaml`, kỳ vọng 10/10 | 3 h |
+| 4 | "do i have back pain?" → "No. I can't tell you that" | Viết lại lời dẫn tầng 1 ở `_build_user_instructions`: nhắc lại điều user đã kể không phải chẩn đoán | dựng lại lượt `1ba3a9f7` (cũ/mới × 2) + nhóm probe mới EN/VI | 3 h |
+| 5 | Privacy nói sai 2 chỗ | (a) "tiếp tục hội thoại gần nhất còn dang dở" — `resume_last_session` đã bỏ (`a0e8e42`); (b) "tự xoá sau 60 / 30 ngày" — `_purge_user` chỉ chạy trong lượt extract khi user chat và `VVA_LTM` bật. Sửa câu chữ ngay, job quét định kỳ để sau | đối chiếu code | 1 h |
+
+Nên làm cùng đợt, không chặn: luật cổng của planner cho câu hỏi ký ức (mục 🟠 ở trên). Đo: ≥ 8/10
+câu ký ức `needs_retrieval=false`, nhóm m vẫn đạt. ~3 h.
+
+Cổng release: benchmark đủ nhóm + 2 nhóm mới (tên, sức khoẻ) trên DeepSeek qua Neon dev branch
+(`on_dev_branch.py`, không đụng prod; lượt 30 lời gọi trước tốn $0,01); sửa kỳ vọng probe g/h/i
+cho đúng điều cần kiểm; không câu nào có "can't confirm" / "this device" / "không chắc".
+
+Thứ tự release (~nửa ngày, sau cổng):
+1. Neon branch backup từ prod → migration 014 → 016 trên prod.
+2. Deploy tay CRUD Lambda (route màn Memory) + `cdk deploy VvaAgentStack` (`UPLOADS_BUCKET`;
+   đề xuất RAM 2 → 3 GB, chờ Tri vì `agent_stack.py` là file của Tri).
+3. Ship 5 bước, push `release` → CI deploy agent, Amplify build FE.
+4. Smoke test + Logs Insights; quay lui = image `7b02867`, DB không cần lùi.
+5. Sau 1 tuần số liệu: đặt lại ngưỡng `vva-memory-node-slow` rồi mới deploy alarm.
+
+Không release với `VVA_LTM=0` để đi tắt: Privacy hứa "nói quên đi trong chat" và tự xoá — cả
+hai chạy trong extractor; lỗi tên / sức khoẻ / planner vẫn xảy ra với ghi chú user tự thêm. Giữ
+`VVA_LTM` làm công tắc khẩn cấp.
+
+Còn hỏi Tri: ai có quyền Neon để tạo branch backup; có đồng ý nâng RAM không.
+
+#### Nhận xét hướng paper "question-keyed indexing" của Tri — K + Nguyen, 19/10
+
+> Dàn ý: `Guidelines_Fact_Retrieval_ICIIT_2027.md` (Tri, 19/10). Số liệu đã đối chiếu với repo;
+> các bài trích dẫn đã đối chiếu với arXiv / ACL Anthology.
+
+Đã khớp:
+- Số đo: hạng 12 và 14 (hỏi tên), hạng 11 (cầu lông, `q_sport_02`), nhiễu 12/14, e5-base hỏi
+  tên 4/10, "giá vàng" 0,834.
+- Bài trích dẫn: RootMem (2606.23283), MemInsight (EMNLP 2025 main, `2025.emnlp-main.1683`),
+  QuOTE (preprint), RF-Mem (ICLR 2026), ReMind (2610.16137, đăng 12/10/2026).
+- Hạn nộp trên iciit.org: full paper 30/10/2026, abstract 05/11, thông báo kết quả 20/11.
+
+- [ ] 🔴 **Số "kho 430 fact, recall@30 = 0,81" không dùng được** — `noise_facts()` trong
+  `local_tests/run_tier2_direction_probe.py` tạo 400 dòng nhưng chỉ có **50 câu khác nhau, mỗi câu
+  8 bản** (10 mẫu × 25 từ điền, lặp lại sau mỗi 50 dòng). Nhiều câu vô nghĩa ("Has travelled to
+  rock twice", "Có một người bạn tên Hà Nội"). Một câu độn vượt lên trên fact đúng sẽ đẩy fact
+  đúng tụt 8 hạng cùng lúc. Bỏ con số này khỏi Introduction; đo lại theo cỡ kho trên SIM với fact
+  nhiễu thật. Sửa `noise_facts` nếu còn dùng.
+- [ ] 🔴 **Thiếu bài gần nhất: HyPE** — "Bridging the Question-Answer Gap in Retrieval-Augmented
+  Generation: Hypothetical Prompt Embeddings" (arXiv 2607.29402; InnoRenew ghi là đăng IEEE
+  Access, cần kiểm venue). Bài này sinh câu hỏi giả định cho từng đoạn lúc đánh chỉ mục và tìm
+  bằng cách so câu hỏi với câu hỏi, đúng cơ chế question keys. Điểm mới của paper phải nằm ở:
+  - kho fact cá nhân ngắn, thay vì đoạn tài liệu;
+  - key dạng tình huống cho nhu cầu ngầm;
+  - song ngữ Việt–Anh với embedder nhỏ;
+  - đo theo cỡ kho;
+  - đo nhiễu ở lượt không cần fact;
+  - sinh key ngay trong lời gọi trích fact có sẵn.
+- [ ] 🟠 **Quá nhiều baseline cho 4 ngày và 5 trang** — giữ B0, B2, B3, B4 (HyDE, làm mốc trên
+  về chi phí), B5, B6; bỏ B7, B8, B9. ReMind mới đăng 1 tuần và có bộ dự đoán "đã đủ" là thành
+  phần học được; tự dựng lại từ mô tả thì reviewer dễ bắt bẻ.
+- [ ] 🟠 **Thêm 2 baseline rẻ mà reviewer sẽ hỏi**:
+  - (a) Lưu thêm bản dịch của fact: nhắm thẳng lỗi hỏi khác ngôn ngữ (`q_sport_02`,
+    `q_health_04`).
+  - (b) Ghim theo category: tên và cách xưng hô luôn có trong prompt. Đây chính là việc 3 của
+    đề xuất gỡ release ở trên.
+- [ ] 🟠 **Ví dụ "mổ sụn chêm" không phải lỗi tìm kiếm của ECA** — `condition` và `restriction`
+  thuộc tầng 1, luôn có trong prompt, không đi qua bước tìm. Đổi sang ví dụ tầng 2 (sở thích,
+  quỹ thời gian, mục tiêu), hoặc nói rõ là trên SIM mọi category đều phải tìm.
+- [ ] 🟡 **Benchmark bên ngoài: dùng LoCoMo thay IMLogic** — IMLogic mới ghi "code sẽ công bố";
+  LoCoMo đã công khai và MemInsight đã báo recall trên LoCoMo.
+- [ ] 🟡 **Nguồn gốc của D5** — repo không ghi ai viết 77 câu probe (`be0bc25`). Nếu do LLM viết,
+  D5 không thể dùng làm tập "người viết" để chống rò rỉ.
+- [ ] 🟡 **Chốt hướng ngày 21/10 theo E0**:
+  - E0 đạt (câu hỏi tên và câu khác ngôn ngữ lên top-5, nhiễu không tăng) → làm paper truy hồi
+    fact.
+  - E0 không đạt → làm H2 (`docs/plans/paper-safety-eval-h2.md`, đã có pipeline và pilot).
+  - Pipeline H2 dùng lại được cho SIM: lấy mẫu persona, client Gemini có xoay key, verifier dùng
+    model khác họ, tách dev/test. Key sinh bằng DeepSeek (cùng model trích fact trên prod), câu
+    test sinh bằng Gemini, là đủ luật "hai họ model".
+
 ## 🟡 Nên làm
 
 ### D6 + TTS prod — nợ ghi 23/09 (đợt đo `feature/d6-measurement`, chi tiết ở [[speechllm-d6-gate]])

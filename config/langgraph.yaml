@@ -27,15 +27,7 @@ langgraph:
     tier2_embed_timeout_ms: 300
     tier2_top_k: 5
     tier2_floor: 0.75
-    # Tier promotion thresholds (memory-v2 tiers): a candidate fact goes
-    # active after seen in this many conversations, a repeated instruction
-    # becomes a standing tier-1 instruction after this many — unless every
-    # sighting was about the same project, when it stays tier 2 with it.
-    promote_fact_at: 2
-    promote_instruction_at: 3
-    # Expiry, in days: candidates unconfirmed this long are deleted, and rows
-    # hidden by DELETE/FORGET_ALL this long are purged.
-    candidate_ttl_days: 60
+    # Expiry, in days: rows hidden by DELETE/FORGET_ALL this long are purged.
     forget_purge_days: 30
 
   retrieval:

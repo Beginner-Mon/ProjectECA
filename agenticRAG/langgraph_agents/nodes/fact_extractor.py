@@ -74,9 +74,6 @@ def _policy_defaults() -> dict:
     """Tier thresholds: YAML wins, code defaults match the plan."""
     cfg = _memory_config()
     return {
-        "promote_fact_at": int(cfg.get("promote_fact_at", 2)),
-        "promote_instruction_at": int(cfg.get("promote_instruction_at", 3)),
-        "candidate_ttl_days": int(cfg.get("candidate_ttl_days", 60)),
         "forget_purge_days": int(cfg.get("forget_purge_days", 30)),
     }
 
@@ -86,116 +83,128 @@ def _policy_defaults() -> dict:
 MAX_OPS = 8
 MAX_FACT_CHARS = 300
 MAX_PROJECT_CHARS = 60
-CATEGORIES = ("condition", "restriction", "goal", "preference", "profile",
-              "style", "project")
-SAFE_CATEGORIES = ("restriction", "condition")
+MAX_TOPIC_WORDS = 4
+MEMORY_TYPES = ("profile", "preference", "area", "event", "person",
+                "reference", "instruction")
+TYPES = MEMORY_TYPES
+VALID_TYPES = MEMORY_TYPES
+# Legacy aliases kept for older callers/tests.
+CATEGORIES = MEMORY_TYPES
 
-MEMORY_PROMPT = """\
-You maintain the long-term memory of a wellness and physical-therapy chat assistant. \
-You read part of a conversation and decide which durable facts about the USER must be \
-written down, changed, repeated or removed. Your answer is read by a program, not by a person, \
-so reply with a single JSON object and nothing else.
+MEMORY_PROMPT = """You maintain the long-term memory of a wellness and physical-therapy chat assistant. You read
+part of a conversation and decide which items about the USER must be written down, changed,
+repeated or removed. Your answer is read by a program, not by a person, so reply with a single
+JSON object and nothing else.
 
 You are given:
 - the date of the conversation;
-- the standing instructions already stored for this user (they apply in every conversation);
-- other stored facts, newest first. Each has an "id", the fact text, a \
-"category", a "kind" ("instruction" or "fact"), a "project" label or null, and a \
-"locked" flag. Locked means the user typed that fact in themselves;
-- the known project labels for this user;
-- the messages to read, each labelled [user] or [assistant]. The input says whether \
-they are a whole conversation or a single turn (one user message and the assistant's \
-reply to it). In the single-turn case the stored facts already include what earlier \
-turns produced.
+- every item already stored for this user, newest first. Each has an "id", a "type", a "topic",
+a "safety" flag, the "fact" text, and a "locked" flag. Locked means the user typed that item in
+themselves;
+- the topics already in use, listed by type;
+- the messages to read, each labelled [user] or [assistant]. The input says whether they are a
+whole conversation or a later part of one; in the second case the stored items already include
+what earlier parts produced.
 
 OUTPUT FORMAT
 {"operations": [ ... ]}
 Each operation is exactly one of:
-{"op": "ADD", "kind": "instruction|fact", "fact": "<text>", "category": "<category>", "project": "<known label, a new short label, or null>", "explicit": true|false}
-{"op": "UPDATE", "id": "<id of a stored fact>", "fact": "<new full text>", "category": "<category>", "project": "<label or null>"}
-{"op": "REPEAT", "id": "<id of a stored fact>", "project": "<label or null>"}
-{"op": "DELETE", "id": "<id of a stored fact>"}
+{"op": "ADD", "type": "<type>", "topic": "<topic>", "fact": "<text>", "safety": true|false}
+{"op": "UPDATE", "id": "<stored id>", "type": "<type>", "topic": "<topic>", "fact": "<new full text>", "safety": true|false}
+{"op": "REPEAT", "id": "<stored id>"}
+{"op": "DELETE", "id": "<stored id>"}
 {"op": "FORGET_ALL"}
-An empty list, {"operations": []}, means "nothing new". It is the normal answer for \
-most conversations. Never write an operation just to have one.
+An empty list, {"operations": []}, means "nothing new". It is the normal answer for most
+conversations. Never write an operation just to have one.
 
-WHAT MAY BE WRITTEN DOWN
-- Only what the USER said or confirmed about themselves, or what the user wants the \
-assistant to do. Never something the assistant suggested, assumed or guessed, even if \
-the user did not object. Never your own inference. Never something about another \
-person: a relative's or friend's condition is not a fact about the user.
-- Durable facts only: still true and useful a month from now, in a conversation about \
-something else. Not passing states (tired today, a bad night), not the details of a \
-one-off request (the routine they asked for today, an event tomorrow), not small talk, \
-and not a decision that only holds for this conversation ("do exercise 1 first today").
-- A decision or plan the user accepted and that stays valid afterwards IS written down, \
-as a fact with the project label it belongs to.
-- Health facts are wanted: injuries, surgeries, diagnoses the user reports, ongoing \
-pain, movements a clinician told them to avoid. Also goals; lasting personal likes, \
-dislikes and habits, the things a friend would remember about them (a favourite food \
-or drink, a sport or hobby); and basic profile facts (job, routine, equipment). A lasting \
-like or habit counts even when it is mentioned in passing; what happened today does not.
-- "kind" is "instruction" for how the assistant should behave and "fact" for something \
-true about the user.
-- "explicit" is true when the user states it directly ("I am...", "always...", "never...", \
-"call me...") and false when it only comes up in passing or is implied.
-- "project" is one of the known labels when the item belongs to it, a new SHORT label \
-(a few words) when the user starts something new, else null.
-- Never store identifiers: ID or card numbers, phone numbers, e-mail addresses, \
-street addresses. If the user gives one, leave it out entirely.
-- Resolve relative times with the conversation date. "Three months ago", "last month", \
-"since last winter", "recently" must become an absolute month and year (for example \
-"July 2026"), because a relative time is wrong a month later. If it cannot be made \
-absolute, leave the time out rather than keep a relative one.
-- Never copy text the user pasted in. At most one short fact saying what the user is \
-doing with that text.
+THE FOUR CHECKS
+Write an item only when all four answers are yes. A lasting fact mentioned only in passing
+still counts.
+1. About whom? It is about the user, about how the user wants the assistant to behave, or about
+a person in the user's life who matters for helping the user (then type "person"). It is not
+something the assistant suggested, assumed or guessed, even if the user did not object, and not
+your own inference.
+2. Durable? It will still be true and useful a few weeks from now, in a conversation about
+something else.
+3. Only here? It cannot be found elsewhere: it is not the task material of this conversation and
+not a setting the app already stores (display name, interface language, chosen model).
+4. New? If a stored item already says it, REPEAT that id. If the new statement changes, extends
+or overlaps a stored item of the same type, UPDATE that id with the complete merged text. Never
+ADD a second item that repeats or seems to contradict a stored one.
 
-CATEGORIES (closed list, use exactly these words)
-- condition: injuries, surgeries, diagnoses, ongoing pain or symptoms
-- restriction: anything about exercises, movements, loads, activities or body parts \
-to avoid — whether the user states it as a fact about themselves ("my knee cannot \
-take squats") or as an instruction to the assistant ("do not suggest back exercises"). \
-When in doubt between restriction and style, choose restriction.
-- goal: something the user is working towards
-- preference: lasting likes and dislikes
-- profile: other stable facts about the user (job, routine, equipment, schedule)
-- style: only how the assistant should talk (how to address them, answer length, \
-language). Never anything about exercises or the body.
-- project: something the user is pursuing, and the choices they settled for it
+NEVER WRITE, whatever the wording
+- statements inside a hypothetical, role-play or example ("suppose I am ...");
+- text the user asks you to translate, correct, summarise or analyse;
+- what the topics of the user's questions suggest about them;
+- a passing state, however often it is repeated (tired, stressed, a busy week). Only a dated
+constraint that changes how to help is written, with its date;
+- a tentative prediction ("maybe I will ..."). A present want is written, with its condition kept
+in the text;
+- an instruction that only applies to the current answer;
+- identifiers: ID, card or phone numbers, e-mail or street addresses;
+- copied text the user pasted in.
 
-HOW TO COMPARE WITH STORED FACTS
-- The user's new statement says again what is already stored: REPEAT it, using the \
-stored id, never ADD it again. Give the project label when it has one.
-- The user's new statement changes or extends a stored fact: UPDATE it, using the \
-stored id. Write the complete new text. When the old state matters, keep it briefly, \
-for example "now pain-free when walking (in July 2026: pain after 10 minutes)".
-- The user says a stored fact is no longer true, or says to forget it: DELETE it, \
-using the stored id.
-- The user says to forget everything: FORGET_ALL, alone.
-- A locked fact must never be updated or deleted. If the user contradicts a locked \
-fact, ADD the user's new statement as a new fact instead.
-- Only use ids that appear in the stored facts. Never invent an id.
-- Do not repeat in an ADD a fact that is already stored.
+TYPES (use exactly these words)
+- profile: stable facts about the user: identity, body, health conditions, injuries, job,
+routine, habits and activities they do regularly.
+- preference: likes, dislikes and tastes, including how they like to train or to be answered.
+- area: something the user is working on that changes over time (a rehab programme, a goal, a
+job search, a project).
+- event: a dated past event the user may refer back to. Put the absolute date in the text. An
+event that left a lasting condition is two items: an event and a profile item.
+- person: someone in the user's life. Only when the person is identifiable (a name or a unique
+relation such as "wife", "daughter Lan") and matters for helping the user; an unnamed "a friend"
+mentioned in passing is not written. A person's fact is never written as the user's.
+- reference: a device, app, document or programme the user uses.
+- instruction: how the assistant should behave.
 
-STYLE OF EACH FACT
-- At most 8 operations in total, and each fact at most 300 characters.
-- One fact per operation. Several facts mean several operations.
-- Write each fact in the language the user wrote it in, as a short neutral statement \
-about the user, understandable without the conversation (no "she said", no "as above").
-- Only what was said. Do not add details, causes, severity or advice.
+TOPIC
+Every item has exactly one topic: a short title of at most 4 words for what the item is about,
+inside its type ("health", "food", "knee rehab", "answer style"). Reuse a topic already in use
+for the same type whenever it fits; create a new one only when none fits. For a person the topic
+is who the person is ("daughter Lan", "Hoa"). An instruction that applies to one ongoing area
+only takes that area's topic; any other instruction takes its own topic.
 
-EXAMPLES (structure only; write facts in the user's own language)
-User says they had a meniscus operation in May 2025 and nothing is stored:
-{"operations": [{"op": "ADD", "kind": "fact", "fact": "Had meniscus surgery in May 2025", "category": "condition", "project": null, "explicit": true}]}
-User says "call me Tri" and stored fact f2 says "Call me Du":
-{"operations": [{"op": "UPDATE", "id": "f2", "fact": "Call me Tri", "category": "style", "project": null}]}
-User says again they avoid deep squats and stored fact f1 says so:
-{"operations": [{"op": "REPEAT", "id": "f1", "project": null}]}
-User says "forget everything you noted about me":
-{"operations": [{"op": "FORGET_ALL"}]}
-User only chats, asks for a one-off routine, or the assistant guesses a diagnosis \
-the user never confirmed:
+SAFETY
+"safety" is true when ignoring the item could harm the user: a condition, injury, allergy,
+medication, or a movement, load or activity the user must avoid. Otherwise false. A person's
+item is about someone else, so its safety is false.
+
+CHANGES AND REMOVALS
+- The user says a stored item is no longer true, or asks to forget it: DELETE that id.
+- The user asks to forget everything: FORGET_ALL, alone.
+- A locked item: never UPDATE or REPEAT it. When the user explicitly asks to forget it, DELETE
+it. When the user explicitly replaces it ("from now on ..."), DELETE it and ADD the new
+statement.
+- When an old state still matters, keep it briefly in the UPDATE text, for example "Now prefers
+Java over Python (until October 2026: Python)".
+- Only use ids that appear in the stored items. Never invent an id.
+
+STYLE OF EACH ITEM
+- English, whatever language the conversation is in. Keep names of people, dishes and places
+as the user wrote them.
+- A short neutral statement about the user (or about the person), understandable without the
+conversation. No "she said", no "as above".
+- Only what was said: no added causes, severity or advice.
+- Resolve relative times with the conversation date ("last month" -> "September 2026"). If a
+time cannot be made absolute, leave the time out.
+- At most 8 operations, one item per operation, each fact at most 300 characters.
+
+EXAMPLES (structure only)
+Nothing stored; [user] "Sáng nay đánh pickleball xong chân hơi mỏi.":
+{"operations": [{"op": "ADD", "type": "profile", "topic": "routine", "fact": "Plays pickleball.", "safety": false}]}
+Nothing stored; [user] "Tối nay mình nấu cho Hoa, Hoa dị ứng tôm, nên đổi món gì?":
+{"operations": [{"op": "ADD", "type": "person", "topic": "Hoa", "fact": "Has a shrimp allergy.", "safety": false}]}
+[user] "Có lẽ năm sau mình học tiếng Nhật.":
 {"operations": []}
+The assistant guessed a tendinitis and the user did not confirm it:
+{"operations": []}
+Stored f4 {"type": "area", "topic": "knee rehab", "fact": "Knee pain at 6/10 on stairs (September 2026)."}; [user] "Giờ gối chỉ còn đau 3/10.":
+{"operations": [{"op": "UPDATE", "id": "f4", "type": "area", "topic": "knee rehab", "fact": "Knee pain on stairs down to 3/10 (October 2026; September 2026: 6/10).", "safety": false}]}
+Stored locked f1 {"type": "instruction", "topic": "address", "fact": "Call the user Tri", "locked": true}; [user] "Từ giờ gọi mình là Minh nhé.":
+{"operations": [{"op": "DELETE", "id": "f1"}, {"op": "ADD", "type": "instruction", "topic": "address", "fact": "Call the user Minh.", "safety": false}]}
+[user] "Quên hết những gì bạn ghi về mình đi.":
+{"operations": [{"op": "FORGET_ALL"}]}
 """
 
 
@@ -228,20 +237,26 @@ def _check_text_op(op: Any) -> str | None:
     fact = fact.strip()
     if len(fact) > MAX_FACT_CHARS:
         return "too_long"
-    if op.get("category") not in CATEGORIES:
-        return "bad_category"
     if _looks_like_identifier(fact):
         return "identifier"
     return None
 
 
-def _check_project(op: Any) -> str | None:
-    """The project label for an ADD/UPDATE/REPEAT, or the drop reason."""
-    project = op.get("project")
-    if project is None:
+def _norm_topic(value: Any) -> str | None:
+    if not isinstance(value, str):
         return None
-    if not isinstance(project, str) or len(project.strip()) > MAX_PROJECT_CHARS:
-        return "bad_project"
+    return " ".join(value.strip().split())
+
+
+def _check_topic(op: Any) -> str | None:
+    """The topic for an ADD/UPDATE, or the drop reason."""
+    topic = _norm_topic(op.get("topic"))
+    if topic is None or not topic:
+        return "bad_topic"
+    if len(topic) > MAX_PROJECT_CHARS:
+        return "bad_topic"
+    if len(topic.split()) > MAX_TOPIC_WORDS:
+        return "bad_topic"
     return None
 
 
@@ -249,11 +264,23 @@ def enforce(raw_ops: list[Any], stored: list[dict]
             ) -> tuple[list[dict], list[dict]]:
     """The limits the prompt states, held in code. Returns (kept, dropped).
 
-    `stored` are the facts the model was shown: {"id", "fact", "category",
-    "locked"}. dropped = [{"reason", "op"}]. The dropped operations still
-    carry the model's text, so count them and never log them.
+    `stored` are the items the model was shown: {"id", "type", "topic",
+    "safety", "fact", "locked"}. dropped = [{"reason", "op"}]. The dropped
+    operations still carry the model's text, so count them and never log them.
     """
     by_id = {f["id"]: f for f in stored}
+    # Known topics by type, for reuse normalisation.
+    known_by_type: dict[str, dict[str, str]] = {}
+    for f in stored:
+        t = f.get("type")
+        topic = _norm_topic(f.get("topic"))
+        if t is not None and topic:
+            known_by_type.setdefault(t, {}).setdefault(topic.casefold(), topic)
+
+    def _reuse_type_topic(typ: str, topic: str) -> str:
+        known = known_by_type.get(typ, {})
+        return known.get(topic.casefold(), topic)
+
     kept: list[dict] = []
     dropped: list[dict] = []
 
@@ -274,31 +301,37 @@ def enforce(raw_ops: list[Any], stored: list[dict]
             continue
         clean: dict[str, Any] = {"op": kind}
         if kind == "ADD":
-            if op.get("kind") not in ("instruction", "fact"):
-                drop("bad_kind", op)
+            if op.get("type") not in MEMORY_TYPES:
+                drop("bad_type", op)
                 continue
-            if not isinstance(op.get("explicit"), bool):
-                drop("bad_explicit", op)
+            if not isinstance(op.get("safety"), bool):
+                drop("bad_safety", op)
                 continue
             reason = _check_text_op(op)
             if reason is not None:
                 drop(reason, op)
                 continue
-            reason = _check_project(op)
+            reason = _check_topic(op)
             if reason is not None:
                 drop(reason, op)
                 continue
-            clean["kind"] = op["kind"]
+            topic = _reuse_type_topic(op["type"], _norm_topic(op["topic"]))
+            clean["type"] = op["type"]
+            clean["topic"] = topic
             clean["fact"] = op["fact"].strip()
-            clean["category"] = op["category"]
-            clean["project"] = op["project"].strip() if op["project"] else None
-            clean["explicit"] = op["explicit"]
+            clean["safety"] = op["safety"]
         elif kind == "UPDATE":
+            if op.get("type") not in MEMORY_TYPES:
+                drop("bad_type", op)
+                continue
+            if not isinstance(op.get("safety"), bool):
+                drop("bad_safety", op)
+                continue
             reason = _check_text_op(op)
             if reason is not None:
                 drop(reason, op)
                 continue
-            reason = _check_project(op)
+            reason = _check_topic(op)
             if reason is not None:
                 drop(reason, op)
                 continue
@@ -309,15 +342,13 @@ def enforce(raw_ops: list[Any], stored: list[dict]
             if by_id[fid].get("locked"):
                 drop("locked_id", op)
                 continue
+            topic = _reuse_type_topic(op["type"], _norm_topic(op["topic"]))
             clean["id"] = fid
+            clean["type"] = op["type"]
+            clean["topic"] = topic
             clean["fact"] = op["fact"].strip()
-            clean["category"] = op["category"]
-            clean["project"] = op["project"].strip() if op["project"] else None
+            clean["safety"] = op["safety"]
         elif kind == "REPEAT":
-            reason = _check_project(op)
-            if reason is not None:
-                drop(reason, op)
-                continue
             fid = op.get("id")
             if not isinstance(fid, str) or fid not in by_id:
                 drop("unknown_id", op)
@@ -326,15 +357,12 @@ def enforce(raw_ops: list[Any], stored: list[dict]
                 drop("locked_id", op)
                 continue
             clean["id"] = fid
-            clean["project"] = op["project"].strip() if op["project"] else None
         else:  # DELETE
             fid = op.get("id")
             if not isinstance(fid, str) or fid not in by_id:
                 drop("unknown_id", op)
                 continue
-            if by_id[fid].get("locked"):
-                drop("locked_id", op)
-                continue
+            # D8: DELETE on a locked id is kept.
             clean["id"] = fid
         kept.append(clean)
     return kept, dropped
@@ -342,79 +370,69 @@ def enforce(raw_ops: list[Any], stored: list[dict]
 
 # ── Tier policy (pure: no database, no clock) ─────────────────────────────
 
-def _is_safe(category: str) -> bool:
-    """A safety-relevant category reaches tier 1 on its first sighting."""
-    return category in SAFE_CATEGORIES
-
-
 def apply_policy(row: dict | None, op: dict, ctx: dict) -> dict:
     """Decide what one operation writes. Returns {"action", "fields"}.
 
-    `row` is the stored row (or None for ADD): {"id", "fact", "category",
-    "kind", "tier", "status", "project", "seen_count", "seen_projects",
-    "last_seen_session_id", "source"}. `ctx` carries the counting session and
-    the thresholds: {"session_id", "promote_fact_at", "promote_instruction_at"}.
+    `row` is the stored row (or None for ADD): {"id", "fact", "type",
+    "topic", "safety", "kind", "tier", "status", "project", "seen_count",
+    "seen_projects", "last_seen_session_id", "source"}. `ctx` carries the
+    counting session and the known area topics:
+    {"session_id", "area_topics": set[str]}.
     `fields` holds the values to write; the caller stamps said_at/updated_at.
 
     Actions: add | refresh (REPEAT seen again) | rewrite (content changed) |
-    demote (a changed tier-1 instruction falls back to candidate) |
     hide (valid=false) | forget_all | noop.
     """
     session_id = ctx["session_id"]
+    area_topics = {t.casefold() for t in (ctx.get("area_topics") or [])}
     kind = op["op"]
+
+    def _tier_for(typ: str, topic: str, safety: bool) -> tuple[int, str]:
+        if safety:
+            return 1, "active"
+        if typ == "instruction" and _norm_topic(topic).casefold() not in area_topics:
+            return 1, "active"
+        return 2, "active"
+
     if kind == "ADD":
-        project = op.get("project")
-        label = project if project else ""
-        if _is_safe(op["category"]):
-            tier, status = 1, "active"
-        elif op["kind"] == "fact":
-            tier, status = 2, ("active" if op["explicit"] else "candidate")
-        else:
-            # A non-safe instruction never enters tier 1 directly.
-            tier, status = 2, ("active" if op["explicit"] else "candidate")
+        typ = op["type"]
+        topic = op["topic"]
+        safety = op["safety"]
+        tier, status = _tier_for(typ, topic, safety)
+        label = topic if topic else ""
         return {"action": "add", "fields": {
-            "kind": op["kind"], "fact": op["fact"], "category": op["category"],
-            "tier": tier, "status": status, "project": project,
+            "memory_type": typ, "fact": op["fact"], "kind": "instruction"
+            if typ == "instruction" else "fact",
+            "tier": tier, "status": status, "safety": safety,
+            "project": topic,
             "seen_count": 1, "seen_projects": [label],
             "last_seen_session_id": session_id,
+            "category": None,
         }}
     if kind == "REPEAT":
         if row is None or row.get("last_seen_session_id") == session_id:
             # One conversation counts once.
             return {"action": "noop", "fields": {}}
-        project = op.get("project")
         seen = (row.get("seen_count") or 0) + 1
-        projects = list(row.get("seen_projects") or []) + [project if project else ""]
+        projects = list(row.get("seen_projects") or []) + [""]
         fields: dict[str, Any] = {
             "seen_count": seen, "seen_projects": projects,
             "last_seen_session_id": session_id,
         }
-        status, tier = row.get("status"), row.get("tier")
-        if status == "candidate" and seen >= ctx["promote_fact_at"]:
-            status = "active"
-        if (row.get("kind") == "instruction"
-                and seen >= ctx["promote_instruction_at"]):
-            labels = set(projects)
-            if len(labels) == 1 and next(iter(labels)):
-                # Said in every conversation about the same project: it
-                # belongs to that project, not to everywhere.
-                tier, project, status = 2, projects[-1], "active"
-            else:
-                tier, project, status = 1, None, "active"
-        fields.update({"tier": tier, "status": status, "project": project})
         return {"action": "refresh", "fields": fields}
     if kind == "UPDATE":
-        project = op.get("project")
-        if project is None:
-            project = row.get("project")
-        fields = {"fact": op["fact"], "category": op["category"],
-                  "project": project, "last_seen_session_id": session_id}
-        if row.get("tier") == 1 and not _is_safe(op["category"]):
-            # A changed tier-1 instruction: fall back to candidate.
-            label = project if project else ""
-            fields.update({"tier": 2, "status": "candidate",
-                           "seen_count": 1, "seen_projects": [label]})
-            return {"action": "demote", "fields": fields}
+        typ = op["type"]
+        topic = op["topic"]
+        safety = op["safety"]
+        tier, status = _tier_for(typ, topic, safety)
+        fields = {
+            "fact": op["fact"], "memory_type": typ,
+            "kind": "instruction" if typ == "instruction" else "fact",
+            "project": topic, "safety": safety,
+            "tier": tier, "status": status,
+            "last_seen_session_id": session_id,
+            "category": None,
+        }
         return {"action": "rewrite", "fields": fields}
     if kind == "DELETE":
         return {"action": "hide", "fields": {}}
@@ -427,31 +445,56 @@ def apply_policy(row: dict | None, op: dict, ctx: dict) -> dict:
 
 def render_user_message(date: str, tier1: list[dict], tier2: list[dict],
                         projects: list[str], msgs: list[dict], scope: str) -> str:
-    """The user message: the date, both tiers, the project labels, the slice.
+    """The user message: the date, all stored items, known topics, the slice.
 
-    `tier1` is every standing instruction; `tier2` the newest tier-2 rows.
-    Each row carries {"id", "fact", "category", "kind", "project", "locked"}.
-    `scope` tells the model what the messages are, a whole conversation or
-    part of one.
+    `tier1` and `tier2` are combined into one list, newest first, capped at
+    200 rows. Each row carries {"id", "type", "topic", "safety", "fact",
+    "locked"} (and optionally "said_at"). `scope` tells the model what the
+    messages are, a whole conversation or part of one.
     """
-    def _lines(rows: list[dict]) -> str:
-        return "\n".join(
-            json.dumps({"id": f["id"], "kind": f.get("kind", "fact"),
-                        "fact": f["fact"], "category": f["category"],
-                        "project": f.get("project"),
-                        "locked": bool(f.get("locked", False))},
-                       ensure_ascii=False)
-            for f in rows)
+    items = [*tier1, *tier2]
 
-    standing = _lines(tier1) if tier1 else "(none)"
-    others = _lines(tier2) if tier2 else "(none)"
-    labels = ", ".join(projects) if projects else "(none)"
-    lines = "\n".join(f"[{m['role']}] {m['content']}" for m in msgs)
-    return (f"Conversation date: {date}\n\n"
-            f"Standing instructions (apply in every conversation):\n{standing}\n\n"
-            f"Other stored facts, newest first:\n{others}\n\n"
-            f"Known project labels: {labels}\n\n"
-            f"Messages to read ({scope}):\n{lines}\n\n"
+    def _sort_key(f: dict):
+        v = f.get("said_at")
+        return ("" if v is None else str(v))
+
+    if any(f.get("said_at") is not None for f in items):
+        items = sorted(items, key=_sort_key, reverse=True)
+
+    capped = len(items) > 200
+    shown = items[:200]
+    if capped:
+        logger.info("render_user_message_capped", extra={"count": len(items)})
+
+    def _line(f: dict) -> str:
+        return json.dumps({"id": f["id"], "type": f.get("type"),
+                           "topic": f.get("topic"),
+                           "safety": bool(f.get("safety", False)),
+                           "fact": f["fact"],
+                           "locked": bool(f.get("locked", False))},
+                          ensure_ascii=False)
+
+    stored_block = "\\n".join(_line(f) for f in shown) if shown else "(none)"
+
+    topics_by_type: dict[str, set[str]] = {}
+    for f in items:
+        t = f.get("type")
+        topic = _norm_topic(f.get("topic"))
+        if t is not None and topic:
+            topics_by_type.setdefault(t, set()).add(topic)
+
+    topic_lines = []
+    for typ in MEMORY_TYPES:
+        topics = sorted(topics_by_type.get(typ, ()))
+        if topics:
+            topic_lines.append(f"{typ}: {', '.join(topics)}")
+    known_block = "\\n".join(topic_lines) if topic_lines else "(none)"
+
+    lines = "\\n".join(f"[{m['role']}] {m['content']}" for m in msgs)
+    return (f"Conversation date: {date}\\n\\n"
+            f"Stored items (newest first):\\n{stored_block}\\n\\n"
+            f"Known topics by type:\\n{known_block}\\n\\n"
+            f"Messages to read ({scope}):\\n{lines}\\n\\n"
             "Reply with the JSON object only.")
 
 
@@ -517,20 +560,17 @@ _UNREAD_SQL = """
 # What the model may change is what the memory node acts on (nodes/memory.py):
 # the same tier-1 rows plus the newest tier-2 slice.
 _TIER1_SQL = """
-    SELECT id, fact_text, category, kind, tier, status, project,
+    SELECT id, fact_text, category, memory_type, safety, kind, tier, status, project,
            seen_count, seen_projects, last_seen_session_id, source, said_at
     FROM user_memory
     WHERE user_id = $1 AND valid = true AND tier = 1
-    ORDER BY CASE category
-                 WHEN 'restriction' THEN 0
-                 WHEN 'condition' THEN 1
-                 ELSE 2
-             END,
+    ORDER BY CASE WHEN safety THEN 0 ELSE 1 END,
+             CASE WHEN kind = 'instruction' THEN 0 ELSE 1 END,
              said_at DESC
 """
 
 _TIER2_SQL = """
-    SELECT id, fact_text, category, kind, tier, status, project,
+    SELECT id, fact_text, category, memory_type, safety, kind, tier, status, project,
            seen_count, seen_projects, last_seen_session_id, source, said_at
     FROM user_memory
     WHERE user_id = $1 AND valid = true AND tier = 2
@@ -585,12 +625,12 @@ _MARK_SQL = """
 # NOT EXISTS covers what the comparison in Python cannot see: a user with more
 # valid facts than the model is shown.
 _ADD_SQL = """
-    INSERT INTO user_memory (user_id, fact_text, category, kind, tier, status,
-                             project, seen_count, seen_projects, source,
+    INSERT INTO user_memory (user_id, fact_text, category, memory_type, kind, tier, status,
+                             safety, project, seen_count, seen_projects, source,
                              source_session_id, last_seen_session_id,
                              said_at, updated_at)
-    SELECT $1::uuid, $2::text, $3::text, $4::text, $5::smallint, $6::text,
-           $7::text, $8::int, $9::text[], 'extracted', $10::uuid, $10::uuid,
+    SELECT $1::uuid, $2::text, NULL::text, $3::text, $4::text, $5::smallint, $6::text,
+           $7::boolean, $8::text, $9::int, $10::text[], 'extracted', $11::uuid, $11::uuid,
            now(), now()
     WHERE NOT EXISTS (
         SELECT 1 FROM user_memory
@@ -603,16 +643,15 @@ _ADD_SQL = """
 _REPEAT_SQL = """
     UPDATE user_memory
     SET seen_count = $3, seen_projects = $4, last_seen_session_id = $5::uuid,
-        tier = $6::smallint, status = $7::text, project = $8::text,
         said_at = now(), updated_at = now()
     WHERE id = $1::uuid AND user_id = $2::uuid AND source = 'extracted' AND valid = true
 """
 
 _UPDATE_SQL = """
     UPDATE user_memory
-    SET fact_text = $3, category = $4, project = $5::text,
-        tier = $6::smallint, status = $7::text,
-        seen_count = $8, seen_projects = $9::text[],
+    SET fact_text = $3, memory_type = $4::text, project = $5::text,
+        safety = $6::boolean, kind = $7::text,
+        tier = $8::smallint, status = $9::text,
         last_seen_session_id = $10::uuid, said_at = now(), updated_at = now()
     WHERE id = $1::uuid AND user_id = $2::uuid AND source = 'extracted' AND valid = true
 """
@@ -621,7 +660,7 @@ _UPDATE_SQL = """
 _HIDE_SQL = """
     UPDATE user_memory
     SET valid = false, updated_at = now()
-    WHERE id = $1::uuid AND user_id = $2::uuid AND source = 'extracted' AND valid = true
+    WHERE id = $1::uuid AND user_id = $2::uuid AND valid = true
 """
 
 _FORGET_ALL_SQL = """
@@ -634,9 +673,8 @@ _FORGET_ALL_SQL = """
 # the model is shown. Runs once per extraction for the user, even when the
 # slice held no user message.
 _PURGE_SQL = """
-    DELETE FROM user_memory WHERE user_id = $1 AND (
-      (status = 'candidate' AND said_at < now() - make_interval(days => $2))
-      OR (valid = false AND updated_at < now() - make_interval(days => $3)))
+    DELETE FROM user_memory WHERE user_id = $1 AND valid = false
+      AND updated_at < now() - make_interval(days => $2)
 """
 
 
@@ -669,8 +707,8 @@ def _planned_writes(kept: list[dict], rows: dict, row_ids: dict,
             decided = apply_policy(None, op, ctx)
             f = decided["fields"]
             writes.append(("added", "duplicate", _ADD_SQL,
-                           (user_id, f["fact"], f["category"], f["kind"],
-                            f["tier"], f["status"], f["project"],
+                           (user_id, f["fact"], f["memory_type"], f["kind"],
+                            f["tier"], f["status"], f["safety"], f["project"],
                             f["seen_count"], f["seen_projects"], session_id)))
         elif op["op"] == "REPEAT":
             decided = apply_policy(rows[op["id"]], op, ctx)
@@ -679,18 +717,16 @@ def _planned_writes(kept: list[dict], rows: dict, row_ids: dict,
             f = decided["fields"]
             writes.append(("repeated", "gone", _REPEAT_SQL,
                            (row_ids[op["id"]], user_id, f["seen_count"],
-                            f["seen_projects"], f["last_seen_session_id"],
-                            f["tier"], f["status"], f["project"])))
+                            f["seen_projects"], f["last_seen_session_id"])))
         elif op["op"] == "UPDATE":
             decided = apply_policy(rows[op["id"]], op, ctx)
             f = decided["fields"]
             row = rows[op["id"]]
             writes.append(("updated", "gone", _UPDATE_SQL,
-                           (row_ids[op["id"]], user_id, f["fact"], f["category"],
-                            f["project"], f.get("tier", row["tier"]),
+                           (row_ids[op["id"]], user_id, f["fact"], f["memory_type"],
+                            f["project"], f["safety"], f["kind"],
+                            f.get("tier", row["tier"]),
                             f.get("status", row["status"]),
-                            f.get("seen_count", row["seen_count"]),
-                            f.get("seen_projects", row["seen_projects"]),
                             f["last_seen_session_id"])))
         elif op["op"] == "DELETE":
             writes.append(("deleted", "gone", _HIDE_SQL,
@@ -759,25 +795,37 @@ async def _read_conversation(pg, user_id: str, session_id, messages: list,
         for n, r in enumerate([*tier1, *tier2], start=1):
             short = f"f{n}"
             full[short] = {
-                "id": short, "fact": r["fact_text"], "category": r["category"],
+                "id": short, "fact": r["fact_text"], "category": r.get("category"),
+                "memory_type": r.get("memory_type", "profile"),
+                "safety": bool(r.get("safety", False)),
                 "kind": r.get("kind", "fact"), "tier": r.get("tier", 2),
                 "status": r.get("status", "active"), "project": r.get("project"),
+                "topic": r.get("project"),
                 "seen_count": r.get("seen_count", 1),
                 "seen_projects": list(r.get("seen_projects") or []),
                 "last_seen_session_id": r.get("last_seen_session_id"),
                 "source": r.get("source", "extracted"),
+                "said_at": r.get("said_at"),
             }
             stored.append({"id": short, "fact": r["fact_text"],
-                           "category": r["category"],
+                           "type": r.get("memory_type", "profile"),
+                           "topic": r.get("project"),
+                           "safety": bool(r.get("safety", False)),
+                           "category": r.get("category"),
                            "locked": r["source"] != "extracted"})
 
         def _view(short: str) -> dict:
             f = full[short]
-            return {"id": short, "fact": f["fact"], "category": f["category"],
+            return {"id": short, "fact": f["fact"],
+                    "type": f["memory_type"], "topic": f["topic"],
+                    "safety": f["safety"],
                     "kind": f["kind"], "project": f["project"],
-                    "locked": f["source"] != "extracted"}
+                    "locked": f["source"] != "extracted",
+                    "said_at": f.get("said_at")}
 
-        ctx = {"session_id": session_id, **policy}
+        area_topics = [f.get("topic") for f in stored
+                       if f.get("type") == "area" and f.get("topic")]
+        ctx = {"session_id": session_id, "area_topics": area_topics, **policy}
         raw_ops = await _operations(session_id, render_user_message(
             _conversation_date(messages),
             [_view(s) for s in full if full[s]["tier"] == 1],
@@ -829,9 +877,8 @@ async def _read_conversation(pg, user_id: str, session_id, messages: list,
 
 
 async def _purge_user(pg, user_id: str, policy: dict) -> int:
-    """Delete expired candidates and long-hidden rows, wherever they sit."""
-    tag = await pg.execute(_PURGE_SQL, user_id, policy["candidate_ttl_days"],
-                           policy["forget_purge_days"])
+    """Delete long-hidden rows, wherever they sit."""
+    tag = await pg.execute(_PURGE_SQL, user_id, policy["forget_purge_days"])
     return _affected(tag if isinstance(tag, str) else str(tag))
 
 
@@ -882,7 +929,7 @@ async def embed_pending_facts(user_id: str, limit: int = 20) -> int:
     try:
         await pg.connect()
         rows = await pg.fetch(
-            """SELECT id, fact_text, project FROM user_memory
+            """SELECT id, fact_text, project, memory_type FROM user_memory
                WHERE user_id = $1 AND valid = true AND tier = 2
                  AND embedding IS NULL
                ORDER BY said_at LIMIT $2""",
@@ -890,8 +937,12 @@ async def embed_pending_facts(user_id: str, limit: int = 20) -> int:
         )
         if not rows:
             return 0
-        texts = [(f"{r['project']}: {r['fact_text']}" if r["project"]
-                  else r["fact_text"]) for r in rows]
+        texts = []
+        for r in rows:
+            if r.get("memory_type") in ("area", "person") and r.get("project"):
+                texts.append(f"{r['project']}: {r['fact_text']}")
+            else:
+                texts.append(r["fact_text"])
         vectors = await get_embedding_service().aembed_passages(texts)
         done = 0
         for row, vector in zip(rows, vectors):

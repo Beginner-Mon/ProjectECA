@@ -128,11 +128,14 @@ async def create_user_memory(body: UserMemoryCreate, uid: str = Depends(current_
         if safety or memory_type != "instruction":
             tier = 1 if safety else 2
         else:
-            rows = await conn.fetch(
-                "SELECT project FROM user_memory WHERE user_id = $1::uuid "
-                "AND valid = true AND memory_type = 'area' AND project IS NOT NULL",
-                uid,
-            )
+            try:
+                rows = await conn.fetch(
+                    "SELECT project FROM user_memory WHERE user_id = $1::uuid "
+                    "AND valid = true AND memory_type = 'area' AND project IS NOT NULL",
+                    uid,
+                )
+            except Exception:
+                rows = []
             area_topics = {str(r["project"]).strip().casefold() for r in rows}
             if body.project and body.project.strip().casefold() in area_topics:
                 tier = 2
@@ -250,11 +253,14 @@ async def update_user_memory(
             elif memory_type != "instruction":
                 tier = 2
             else:
-                rows = await conn.fetch(
-                    "SELECT project FROM user_memory WHERE user_id = $1::uuid "
-                    "AND valid = true AND memory_type = 'area' AND project IS NOT NULL",
-                    uid,
-                )
+                try:
+                    rows = await conn.fetch(
+                        "SELECT project FROM user_memory WHERE user_id = $1::uuid "
+                        "AND valid = true AND memory_type = 'area' AND project IS NOT NULL",
+                        uid,
+                    )
+                except Exception:
+                    rows = []
                 area_topics = {str(r["project"]).strip().casefold() for r in rows}
                 proj = body.project if body.project is not None else previous.get("project") if hasattr(previous, "get") else None
                 try:

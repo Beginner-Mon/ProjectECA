@@ -106,7 +106,7 @@ async def _load_user_instructions(user_id: str) -> list[str]:
         await pg.connect()
         rows = await pg.fetch(
             """
-            SELECT fact_text FROM user_memory
+            SELECT fact_text, project, said_at FROM user_memory
             WHERE user_id = $1 AND valid = true
               AND tier = 1 AND status = 'active'
             ORDER BY CASE WHEN safety THEN 0 ELSE 1 END,
@@ -115,7 +115,15 @@ async def _load_user_instructions(user_id: str) -> list[str]:
             """,
             user_id,
         )
-        return [r["fact_text"] for r in rows]
+        out = []
+        for r in rows:
+            said = r["said_at"]
+            day = said.date().isoformat() if hasattr(said, "date") else str(said)[:10]
+            if r.get("project"):
+                out.append(f"[{day}] ({r['project']}) {r['fact_text']}")
+            else:
+                out.append(f"[{day}] {r['fact_text']}")
+        return out
     except Exception as exc:
         logger.warning("user_instructions_load_failed", extra={"error": str(exc)})
         return []

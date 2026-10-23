@@ -399,7 +399,7 @@ def apply_policy(row: dict | None, op: dict, ctx: dict) -> dict:
         topic = op["topic"]
         safety = op["safety"]
         tier, status = _tier_for(typ, topic, safety)
-        label = topic if topic else ""
+        label = ""
         return {"action": "add", "fields": {
             "memory_type": typ, "fact": op["fact"], "kind": "instruction"
             if typ == "instruction" else "fact",
@@ -474,7 +474,7 @@ def render_user_message(date: str, tier1: list[dict], tier2: list[dict],
                            "locked": bool(f.get("locked", False))},
                           ensure_ascii=False)
 
-    stored_block = "\\n".join(_line(f) for f in shown) if shown else "(none)"
+    stored_block = "\n".join(_line(f) for f in shown) if shown else "(none)"
 
     topics_by_type: dict[str, set[str]] = {}
     for f in items:
@@ -488,13 +488,13 @@ def render_user_message(date: str, tier1: list[dict], tier2: list[dict],
         topics = sorted(topics_by_type.get(typ, ()))
         if topics:
             topic_lines.append(f"{typ}: {', '.join(topics)}")
-    known_block = "\\n".join(topic_lines) if topic_lines else "(none)"
+    known_block = "\n".join(topic_lines) if topic_lines else "(none)"
 
-    lines = "\\n".join(f"[{m['role']}] {m['content']}" for m in msgs)
-    return (f"Conversation date: {date}\\n\\n"
-            f"Stored items (newest first):\\n{stored_block}\\n\\n"
-            f"Known topics by type:\\n{known_block}\\n\\n"
-            f"Messages to read ({scope}):\\n{lines}\\n\\n"
+    lines = "\n".join(f"[{m['role']}] {m['content']}" for m in msgs)
+    return (f"Conversation date: {date}\n\n"
+            f"Stored items (newest first):\n{stored_block}\n\n"
+            f"Known topics by type:\n{known_block}\n\n"
+            f"Messages to read ({scope}):\n{lines}\n\n"
             "Reply with the JSON object only.")
 
 
@@ -523,7 +523,7 @@ _SLICE_MAX_CHARS = 8000
 # turns fill 8,000 characters in about a dozen messages; this bounds a backlog
 # of very short ones.
 _SLICE_MAX_ROWS = 40
-_MAX_TIER2_SHOWN = 60
+_MAX_TIER2_SHOWN = 200
 
 # What the scope line of the user message says. The probe measured "a whole
 # conversation" and single answered turns; a slice that starts later in a

@@ -76,7 +76,7 @@ def upgrade() -> None:
         "ADD COLUMN IF NOT EXISTS safety BOOLEAN NOT NULL DEFAULT false"
     )
     op.execute(
-        "UPDATE user_memory SET safety = (category IN ('condition', 'restriction'))"
+        "UPDATE user_memory SET safety = COALESCE(category IN ('condition', 'restriction'), false)"
     )
 
     op.execute(

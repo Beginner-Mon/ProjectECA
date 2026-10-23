@@ -117,7 +117,6 @@ async def create_user_memory(body: UserMemoryCreate, uid: str = Depends(current_
         memory_type = "instruction" if body.kind == "instruction" else "profile"
     safety = body.safety if body.safety is not None else False
     kind = "instruction" if memory_type == "instruction" else "fact"
-    tier = 1 if (memory_type == "instruction" or safety) else 2
 
     async with pg.transaction() as conn:
         # Ensure user row exists — the FK on user_memory requires it, and a user
@@ -125,6 +124,20 @@ async def create_user_memory(body: UserMemoryCreate, uid: str = Depends(current_
         await conn.execute(
             "INSERT INTO users (id) VALUES ($1::uuid) ON CONFLICT (id) DO NOTHING", uid,
         )
+        tier = 2
+        if safety or memory_type != "instruction":
+            tier = 1 if safety else 2
+        else:
+            rows = await conn.fetch(
+                "SELECT project FROM user_memory WHERE user_id = $1::uuid "
+                "AND valid = true AND memory_type = 'area' AND project IS NOT NULL",
+                uid,
+            )
+            area_topics = {str(r["project"]).strip().casefold() for r in rows}
+            if body.project and body.project.strip().casefold() in area_topics:
+                tier = 2
+            else:
+                tier = 1
         row = await conn.fetchrow(
             """INSERT INTO user_memory (user_id, fact_text, category, kind, tier,
                                           status, project, source, memory_type, safety)
@@ -232,7 +245,26 @@ async def update_user_memory(
         except Exception:
             tier = 1 if (memory_type == "instruction" or safety) else 2
         if body.memory_type is not None or body.safety is not None:
-            tier = 1 if (memory_type == "instruction" or safety) else 2
+            if safety:
+                tier = 1
+            elif memory_type != "instruction":
+                tier = 2
+            else:
+                rows = await conn.fetch(
+                    "SELECT project FROM user_memory WHERE user_id = $1::uuid "
+                    "AND valid = true AND memory_type = 'area' AND project IS NOT NULL",
+                    uid,
+                )
+                area_topics = {str(r["project"]).strip().casefold() for r in rows}
+                proj = body.project if body.project is not None else previous.get("project") if hasattr(previous, "get") else None
+                try:
+                    proj = body.project if body.project is not None else previous["project"]
+                except Exception:
+                    proj = body.project
+                if proj and str(proj).strip().casefold() in area_topics:
+                    tier = 2
+                else:
+                    tier = 1
 
         row = await conn.fetchrow(
             """UPDATE user_memory SET fact_text = $3, memory_type = $4, safety = $5,

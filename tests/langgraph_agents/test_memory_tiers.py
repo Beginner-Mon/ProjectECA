@@ -22,9 +22,9 @@ _AT = datetime(2026, 10, 14, 12, 0, tzinfo=timezone.utc)
 _CFG = {"timeout_ms": 300, "top_k": 5, "floor": 0.75}
 
 
-def _row(id="r1", fact="f", project=None, sim=0.9, said_at=_AT):
+def _row(id="r1", fact="f", project=None, sim=0.9, said_at=_AT, memory_type="area"):
     return {"id": id, "fact_text": fact, "project": project,
-            "said_at": said_at, "similarity": sim}
+            "memory_type": memory_type, "said_at": said_at, "similarity": sim}
 
 
 class _Pg:
@@ -94,12 +94,15 @@ async def test_tier2_query_filters_the_current_conversation():
 @pytest.mark.asyncio
 async def test_tier2_hit_pulls_its_whole_project():
     pg = _Pg(
-        vector_rows=[_row("r1", "Chay 5km", project="Run", sim=0.9)],
+        vector_rows=[_row("r1", "Chay 5km", project="Run", sim=0.9,
+                          memory_type="area")],
         # As the mates query filters: only rows carrying a hit label, newest
         # said first; the hit itself must not repeat.
-        mates=[_row("r1", "Chay 5km", project="Run", sim=0.9),
+        mates=[_row("r1", "Chay 5km", project="Run", sim=0.9,
+                    memory_type="area"),
                _row("r2", "Nghi 1 ngay", project="Run",
-                    said_at=datetime(2026, 10, 13, tzinfo=timezone.utc))],
+                    said_at=datetime(2026, 10, 13, tzinfo=timezone.utc),
+                    memory_type="area")],
     )
     with patch.object(mem, "get_pg_client", return_value=pg), \
          patch("langgraph_agents.shared.get_embedding_service",

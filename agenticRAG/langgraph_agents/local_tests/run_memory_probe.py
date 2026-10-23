@@ -84,9 +84,7 @@ def _apply_ops(stored: list[dict], kept: list[dict], counter: list[int]) -> list
                           "type": op.get("type"),
                           "topic": op.get("topic"),
                           "safety": op.get("safety", False),
-                          "kind": op.get("kind", "fact"),
-                          "project": op.get("topic"), "locked": False,
-                          "tier": 2})
+                          "locked": False})
         elif op["op"] == "UPDATE":
             for f in facts:
                 if f["id"] == op["id"]:

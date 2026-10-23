@@ -83,7 +83,6 @@ def _apply_ops(stored: list[dict], kept: list[dict], counter: list[int]) -> list
             facts.append({"id": f"n{counter[0]}", "fact": op["fact"],
                           "type": op.get("type"),
                           "topic": op.get("topic"),
-                          "safety": op.get("safety", False),
                           "locked": False})
         elif op["op"] == "UPDATE":
             for f in facts:
@@ -94,8 +93,6 @@ def _apply_ops(stored: list[dict], kept: list[dict], counter: list[int]) -> list
                     if op.get("topic") is not None:
                         f["topic"] = op["topic"]
                         f["project"] = op["topic"]
-                    if op.get("safety") is not None:
-                        f["safety"] = op["safety"]
         elif op["op"] == "DELETE":
             facts = [f for f in facts if f["id"] != op["id"]]
         elif op["op"] == "FORGET_ALL":
@@ -182,7 +179,7 @@ def _forbidden_op_matches(spec: dict, op: Any) -> bool:
 
     spec keys, all optional except op: op (name or list of names), id, type,
     type_not (op type differs), topic_not (op topic differs, case-insensitive),
-    safety (bool, op must carry it), groups (phrase groups over the fact)."""
+    groups (phrase groups over the fact)."""
     if not isinstance(op, dict):
         return False
     names = spec["op"] if isinstance(spec["op"], list) else [spec["op"]]
@@ -196,8 +193,6 @@ def _forbidden_op_matches(spec: dict, op: Any) -> bool:
         return False
     if spec.get("topic_not") is not None and (
             str(op.get("topic") or "").casefold() == str(spec["topic_not"]).casefold()):
-        return False
-    if spec.get("safety") is not None and op.get("safety") != spec["safety"]:
         return False
     if spec.get("groups"):
         fact = op.get("fact")
@@ -232,9 +227,6 @@ def _score(expect: dict, ops: list[dict], dropped: list[dict]) -> dict[str, Any]
             category_mismatch.append({"expected": exp, "got": ops[hit]})
         if (exp.get("topic") and ops[hit].get("topic")
                 and exp["topic"] != ops[hit]["topic"]):
-            category_mismatch.append({"expected": exp, "got": ops[hit]})
-        if (exp.get("safety") is not None and ops[hit].get("safety") is not None
-                and exp["safety"] != ops[hit]["safety"]):
             category_mismatch.append({"expected": exp, "got": ops[hit]})
 
     extras: list[dict] = []
@@ -463,8 +455,6 @@ def _op_str(op: dict) -> str:
 
 def _exp_label(e: dict) -> str:
     bits = [str(e[k]) for k in ("type", "topic") if e.get(k)]
-    if e.get("safety") is not None:
-        bits.append(f"safety={e['safety']}")
     return f" [{', '.join(bits)}]" if bits else ""
 
 
@@ -607,9 +597,8 @@ def _render_report(label: str, results: list[dict], modes: list[str]) -> str:
                 L.append(f"  - CỤM CẤM `{h['phrase']}` trong {_op_str(h['op'])}")
             for cm in sc["category_mismatch"]:
                 g = cm["got"]
-                L.append(f"  - lệch type/topic/safety: kỳ vọng{_exp_label(cm['expected'])}, "
-                         f"được [type={g.get('type')}, topic={g.get('topic')}, "
-                         f"safety={g.get('safety')}]")
+                L.append(f"  - lệch type/topic: kỳ vọng{_exp_label(cm['expected'])}, "
+                         f"được [type={g.get('type')}, topic={g.get('topic')}]")
             L.append("")
     return "\n".join(L) + "\n"
 

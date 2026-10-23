@@ -105,7 +105,11 @@ class FakeDB:
         sql = " ".join(sql.split())
         self.statements.append(sql)
         if "FROM user_memory" in sql:
-            return [{"fact_text": f["fact_text"]} for f in self.facts]
+            rows = self.facts
+            if "tier = 1" in sql:
+                rows = [f for f in rows if f.get("tier", 1) == 1]
+            return [{"fact_text": f["fact_text"], "project": f.get("project"),
+                     "said_at": f.get("said_at", "2026-10-01")} for f in rows]
         if "FROM conversations c" in sql:
             # The memory node's single STM statement: the summary rides along
             # every message row; with no message after the summary the join
@@ -458,7 +462,13 @@ def test_planner_system_prompt_has_no_rule_about_user_facts():
 @pytest.mark.asyncio
 async def test_memory_node_returns_facts_summary_and_only_uncovered_history(budgets):
     db = FakeDB()
-    db.facts = [{"fact_text": "Left knee surgery in July 2026"}]
+    # Tier 1 holds instructions only; a health fact is tier 2 and can reach the
+    # prompt only through the tier-2 retrieval path, never user_instructions.
+    db.facts = [
+        {"fact_text": "Keep answers short", "tier": 1, "project": "answer style",
+         "said_at": "2026-10-02"},
+        {"fact_text": "Left knee surgery in July 2026", "tier": 2},
+    ]
     db.add_turn("old question", "old answer")
     db.set_stm("The user asked about knee pain.", db.messages[-1]["seq_id"])
     db.add_turn("new question", "new answer")
@@ -467,7 +477,8 @@ async def test_memory_node_returns_facts_summary_and_only_uncovered_history(budg
     with patch.object(mem, "get_pg_client", return_value=db):
         out = await mem.memory_node({"messages": []}, _config())
 
-    assert out["user_instructions"] == ["Left knee surgery in July 2026"]
+    assert out["user_instructions"] == ["[2026-10-02] (answer style) Keep answers short"]
+    assert not any("knee" in line for line in out["user_instructions"])
     assert out["user_facts"] == []
     assert out["session_summary"] == ["The user asked about knee pain."]
     assert not any(isinstance(m, SystemMessage) for m in out["messages"])

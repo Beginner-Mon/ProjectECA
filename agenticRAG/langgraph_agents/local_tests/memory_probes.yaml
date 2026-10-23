@@ -119,7 +119,7 @@ probes:
       ops: []
       forbidden: ["sciatica", "tight hips"]
 
-  # ── 7. User phủ định fact đã lưu → DELETE (tiếng Việt) ─────────────────
+  # ── 7. User phủ định fact đã lưu → UPDATE (giữ trạng thái cũ) hoặc DELETE (tiếng Việt) ─────────────────
   - id: c07_vi_negate
     lang: vi
     date: "2026-10-13"
@@ -133,12 +133,14 @@ probes:
       - {role: assistant, content: "Bạn có thể bắt đầu với squat chạm ghế, 2 hiệp 10 lần, rồi tăng dần sau mỗi tuần. Nếu có cảm giác nhói ở gối thì dừng lại và giảm biên độ."}
     expect:
       ops:
-        - {op: DELETE, id: f1}
+        - one_of:
+            - {op: DELETE, id: f1}
+            - {op: UPDATE, id: f1, groups: [["khỏi", "healed", "recovered", "no longer", "no pain", "không còn", "resolved"]]}
       forbidden: []
       forbidden_ops:
         - {op: DELETE, id: f2}
 
-  # ── 8. User phủ định fact đã lưu → DELETE (tiếng Anh) ──────────────────
+  # ── 8. User phủ định fact đã lưu → UPDATE (giữ trạng thái cũ) hoặc DELETE (tiếng Anh) ──────────────────
   - id: c08_en_negate
     lang: en
     date: "2026-10-13"
@@ -152,7 +154,9 @@ probes:
       - {role: assistant, content: "Try three sessions: one minute easy jog, two minutes walk, repeated eight times. Keep every session on soft ground if you can and leave a rest day between them. If the shin ache comes back, drop back a step."}
     expect:
       ops:
-        - {op: DELETE, id: f1}
+        - one_of:
+            - {op: DELETE, id: f1}
+            - {op: UPDATE, id: f1, groups: [["cleared", "gone", "recovered", "run again", "resolved", "no longer"]]}
       forbidden: []
       forbidden_ops:
         - {op: DELETE, id: f2}
@@ -207,7 +211,7 @@ probes:
       forbidden_ops:
         - {op: DELETE, id: f1}
 
-  # ── 12. User mâu thuẫn fact bị KHOÁ (tiếng Anh) ────────────────────────
+  # ── 12. User thay thế fact bị KHOÁ → DELETE + ADD (tiếng Anh) ────────────────────────
   - id: c12_en_locked_contradict
     lang: en
     date: "2026-10-13"
@@ -221,9 +225,8 @@ probes:
     expect:
       ops:
         - {op: ADD, type: preference, groups: [["HIIT", "interval", "high-intensity", "high intensity"]]}
-      forbidden: []
-      forbidden_ops:
         - {op: DELETE, id: f1}
+      forbidden: []
 
   # ── 13. Chỉ là trạng thái nhất thời ────────────────────────────────────
   - id: c13_vi_passing_state

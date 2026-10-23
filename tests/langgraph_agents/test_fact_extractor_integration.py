@@ -331,7 +331,7 @@ async def test_a_fact_the_user_typed_ignores_an_update_and_a_delete_hides_it(pg)
     # The statement itself refuses an update of a typed row, without the check
     # in front of it.
     assert await client.execute(
-        fe._UPDATE_SQL, typed_id, user, "Does HIIT", "profile", "health", False,
+        fe._UPDATE_SQL, typed_id, user, "Does HIIT", "profile", "health",
         "fact", 2, "active", session) == "UPDATE 0"
     assert set(await _facts(client)) == {typed_text}
 
@@ -370,10 +370,10 @@ async def test_user_b_is_neither_read_nor_changed_when_running_as_user_a(pg):
     assert (await _extract(b, b_session, idle))["conversations"] == 0
     assert idle.seen == []
     assert await client.execute(
-        fe._UPDATE_SQL, b_extracted_id, a, "changed by A", "profile", "health", False,
+        fe._UPDATE_SQL, b_extracted_id, a, "changed by A", "profile", "health",
         "fact", 2, "active", a_session) == "UPDATE 0"
     assert await client.execute(
-        fe._UPDATE_SQL, b_extracted_id, b, "changed by A", "profile", "health", False,
+        fe._UPDATE_SQL, b_extracted_id, b, "changed by A", "profile", "health",
         "fact", 2, "active", a_session) == "UPDATE 0"
     assert await client.execute(fe._HIDE_SQL, b_extracted_id, b) == "UPDATE 0"
     assert await client.execute(fe._MARK_SQL, b_session, b, 0, 999) == "UPDATE 0"

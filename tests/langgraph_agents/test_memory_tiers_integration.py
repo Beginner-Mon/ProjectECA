@@ -12,6 +12,7 @@ Every test makes its own users with random UUIDs and deletes them at the end
 from __future__ import annotations
 
 import os
+import re
 import uuid
 from datetime import datetime, timedelta, timezone
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -21,6 +22,16 @@ import pytest
 pytestmark = pytest.mark.integration
 
 _VEC = [1.0] + [0.0] * 383
+_OTHER_VEC = [0.0, 1.0] + [0.0] * 382      # orthogonal to _VEC: similarity 0
+
+
+def _embedding_service(vector=None):
+    """A stand-in embedding service. The code calls aembed_queries(list of
+    strings) and wants one vector per string."""
+    embed = MagicMock()
+    embed.aembed_queries = AsyncMock(
+        side_effect=lambda queries: [list(vector or _VEC) for _ in queries])
+    return embed
 
 
 @pytest.fixture
@@ -73,15 +84,16 @@ async def _conversation(pg, user_id: str) -> str:
 async def _tier_row(pg, user_id: str, fact: str, tier: int = 2,
                     kind: str = "fact", status: str = "active",
                     project=None, vector=None, last_seen=None,
-                    source: str = "extracted", source_session=None):
+                    source: str = "extracted", source_session=None,
+                    memory_type: str = "profile"):
     return await pg.fetchval(
         """INSERT INTO user_memory
            (user_id, fact_text, kind, tier, status, project, source,
-            source_session_id, last_seen_session_id, embedding)
-           VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+            source_session_id, last_seen_session_id, embedding, memory_type)
+           VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
            RETURNING id""",
         user_id, fact, kind, tier, status, project, source,
-        source_session, last_seen, vector,
+        source_session, last_seen, vector, memory_type,
     )
 
 
@@ -100,15 +112,16 @@ async def test_tier_rows_are_invisible_to_another_user(pg):
 
     other = await _user(pg)  # binds other
     assert await _load_user_instructions(other) == []
-    embed = MagicMock()
-    embed.aembed_query = AsyncMock(return_value=list(_VEC))
     with patch("langgraph_agents.shared.get_embedding_service",
-               return_value=embed):
+               return_value=_embedding_service()):
         lines, _, _, _ = await _load_tier2_facts(other, session, "chay bo")
     assert lines == []
 
     bind_request_user(user)
-    assert await _load_user_instructions(user) == ["No squats"]
+    loaded = await _load_user_instructions(user)
+    # "[YYYY-MM-DD] fact": dated, and no parentheses when the row has no topic.
+    assert len(loaded) == 1
+    assert re.fullmatch(r"\[\d{4}-\d{2}-\d{2}\] No squats", loaded[0])
 
 
 @pytest.mark.asyncio
@@ -190,6 +203,11 @@ async def test_extractor_writes_the_decided_tier(pg):
     row = await client.fetchrow(
         "SELECT kind, tier, status FROM user_memory WHERE user_id = $1", user)
     assert (row["kind"], row["tier"], row["status"]) == ("instruction", 1, "active")
+    row = await client.fetchrow(
+        "SELECT memory_type, safety, project FROM user_memory WHERE user_id = $1",
+        user)
+    assert (row["memory_type"], row["safety"], row["project"]) == (
+        "instruction", True, "exercise")
 
 
 @pytest.mark.asyncio
@@ -205,10 +223,8 @@ async def test_tier2_skips_the_current_conversation_live(pg):
     await _tier_row(client, user, "Swims daily", vector=list(_VEC),
                     last_seen=other)
 
-    embed = MagicMock()
-    embed.aembed_query = AsyncMock(return_value=list(_VEC))
     with patch("langgraph_agents.shared.get_embedding_service",
-               return_value=embed):
+               return_value=_embedding_service()):
         lines, _, _, _ = await _load_tier2_facts(user, current, "the duc")
     assert [line for line in lines if "Runs 5km" in line] == []
     assert any("Swims daily" in line for line in lines)
@@ -221,15 +237,14 @@ async def test_unlabelled_hit_pulls_no_project_along_live(pg):
     client, _ = pg
     user = await _user(pg)
     other = await _conversation(client, user)
+    # Area rows without a label: there is nothing to pull along.
     await _tier_row(client, user, "Likes pho", vector=list(_VEC),
-                    last_seen=other)
+                    last_seen=other, memory_type="area")
     await _tier_row(client, user, "Likes hiking", vector=list(_VEC),
-                    last_seen=other)
+                    last_seen=other, memory_type="area")
 
-    embed = MagicMock()
-    embed.aembed_query = AsyncMock(return_value=list(_VEC))
     with patch("langgraph_agents.shared.get_embedding_service",
-               return_value=embed):
+               return_value=_embedding_service()):
         lines, _, _, _ = await _load_tier2_facts(
             user, str(uuid.uuid4()), "an uong")
     assert len(lines) == 2
@@ -247,34 +262,80 @@ async def test_project_label_longer_than_60_is_rejected(pg):
 
 
 @pytest.mark.asyncio
-async def test_purge_deletes_old_rows_beyond_the_newest_shown(pg):
+async def test_purge_deletes_rows_hidden_for_long_and_keeps_active_ones(pg):
     from langgraph_agents.nodes import fact_extractor as fe
 
     client, _ = pg
     user = await _user(pg)
     old = datetime.now(timezone.utc) - timedelta(days=61)
-    # More old candidates than the model is ever shown at once.
+    # More long-hidden rows than the model is ever shown at once.
     await client.executemany(
         """INSERT INTO user_memory
-           (user_id, fact_text, category, tier, status, source, said_at)
-           VALUES ($1, $2, 'profile', 2, 'candidate', 'extracted', $3)""",
-        [(user, f"old candidate {n}", old) for n in range(61)])
-    hidden_id = await client.fetchval(
+           (user_id, fact_text, memory_type, tier, status, source, valid,
+            said_at, updated_at)
+           VALUES ($1, $2, 'profile', 2, 'active', 'extracted', false, $3, $3)""",
+        [(user, f"long hidden {n}", old) for n in range(61)])
+    await client.execute(
         """INSERT INTO user_memory
-           (user_id, fact_text, category, source, valid, updated_at)
-           VALUES ($1, 'hidden fact', 'profile', 'extracted', false,
-                   now() - make_interval(days => 31))
+           (user_id, fact_text, memory_type, source, valid, updated_at)
+           VALUES ($1, 'hidden 31 days', 'profile', 'extracted', false,
+                   now() - make_interval(days => 31))""", user)
+    recently_hidden = await client.fetchval(
+        """INSERT INTO user_memory
+           (user_id, fact_text, memory_type, source, valid, updated_at)
+           VALUES ($1, 'hidden 5 days', 'profile', 'extracted', false,
+                   now() - make_interval(days => 5))
            RETURNING id""", user)
+    # Old but still active: age alone never deletes a row.
+    old_active = await client.fetchval(
+        """INSERT INTO user_memory
+           (user_id, fact_text, memory_type, source, said_at, updated_at)
+           VALUES ($1, 'old but active', 'profile', 'extracted', $2, $2)
+           RETURNING id""", user, old)
     fresh = await _tier_row(client, user, "Fresh fact")
 
-    policy = {"candidate_ttl_days": 60, "forget_purge_days": 30}
-    purged = await fe._purge_user(client, user, policy)
+    purged = await fe._purge_user(client, user, {"forget_purge_days": 30})
     assert purged == 62
-    assert await client.fetchval(
-        "SELECT COUNT(*) FROM user_memory WHERE user_id = $1", user) == 1
-    assert await client.fetchval(
-        "SELECT id FROM user_memory WHERE user_id = $1", user) == fresh
-    assert hidden_id is not None
+    left = await client.fetch(
+        "SELECT id FROM user_memory WHERE user_id = $1", user)
+    assert {r["id"] for r in left} == {recently_hidden, old_active, fresh}
+
+
+@pytest.mark.asyncio
+async def test_mates_are_pulled_only_along_an_area_hit_live(pg):
+    from langgraph_agents.nodes.memory import _load_tier2_facts
+
+    client, _ = pg
+    current = str(uuid.uuid4())
+
+    # Not an area: two rows with the same topic, only one matches the query.
+    user = await _user(pg)
+    await _tier_row(client, user, "Likes pho", vector=list(_VEC),
+                    project="food", memory_type="preference")
+    await _tier_row(client, user, "Likes noodles", vector=list(_OTHER_VEC),
+                    project="food", memory_type="preference")
+    with patch("langgraph_agents.shared.get_embedding_service",
+               return_value=_embedding_service()):
+        lines, _, _, _ = await _load_tier2_facts(user, current, "an uong")
+    assert len(lines) == 1 and "Likes pho" in lines[0]
+    assert "(food)" in lines[0]
+
+    # An area: the hit pulls the other row of the same topic along.
+    user = await _user(pg)
+    await _tier_row(client, user, "Knee pain 3/10", vector=list(_VEC),
+                    project="knee rehab", memory_type="area")
+    await _tier_row(client, user, "Does the exercises daily", vector=list(_OTHER_VEC),
+                    project="knee rehab", memory_type="area")
+    # Same topic but another type: never pulled.
+    await _tier_row(client, user, "Likes cycling", vector=list(_OTHER_VEC),
+                    project="knee rehab", memory_type="preference")
+    with patch("langgraph_agents.shared.get_embedding_service",
+               return_value=_embedding_service()):
+        lines, _, _, _ = await _load_tier2_facts(user, current, "dau goi")
+    assert len(lines) == 2
+    assert "Knee pain 3/10" in lines[0]
+    assert any("Does the exercises daily" in line for line in lines)
+    assert not any("Likes cycling" in line for line in lines)
 
 
 @pytest.mark.asyncio

@@ -84,19 +84,19 @@ async def _message(pg, session_id: str, role: str, content: str) -> int:
     )
 
 
-async def _typed_fact(pg, user_id: str, text: str, category: str | None = None):
+async def _typed_fact(pg, user_id: str, text: str, memory_type: str = "profile"):
     """A fact as POST /me/memory writes it: `source` left to its default."""
     return await pg.fetchval(
-        "INSERT INTO user_memory (user_id, fact_text, category) VALUES ($1, $2, $3) "
+        "INSERT INTO user_memory (user_id, fact_text, memory_type) VALUES ($1, $2, $3) "
         "RETURNING id",
-        user_id, text, category,
+        user_id, text, memory_type,
     )
 
 
 async def _facts(pg) -> dict[str, dict]:
     """Every fact row the bound user can see, by its text."""
     rows = await pg.fetch(
-        "SELECT id, fact_text, category, memory_type, source, valid, source_session_id, "
+        "SELECT id, fact_text, memory_type, safety, project, source, valid, source_session_id, "
         "       last_seen_session_id, updated_at > created_at AS refreshed "
         "FROM user_memory")
     return {r["fact_text"]: dict(r) for r in rows}
@@ -136,7 +136,7 @@ def _stored_in(user_message: str) -> list[dict]:
         if line.startswith('{"id": "f'):
             shown = json.loads(line)
             rows.append({"id": shown["id"], "fact": shown["fact"],
-                         "category": shown.get("category"),
+                         "type": shown.get("type"), "topic": shown.get("topic"),
                          "locked": shown.get("locked", False)})
     return rows
 
@@ -303,7 +303,8 @@ async def test_conversations_are_read_most_recently_updated_first(pg):
 
 
 @pytest.mark.asyncio
-async def test_a_fact_the_user_typed_survives_an_update_and_a_delete_aimed_at_it(pg):
+async def test_a_fact_the_user_typed_ignores_an_update_and_a_delete_hides_it(pg):
+    """D8: an UPDATE aimed at a typed item is dropped; a DELETE is kept."""
     from langgraph_agents.nodes import fact_extractor as fe
 
     client, _ = pg
@@ -314,26 +315,29 @@ async def test_a_fact_the_user_typed_survives_an_update_and_a_delete_aimed_at_it
     await _message(client, session, "user", "I do HIIT three times a week now.")
 
     script = _Script(lambda ids: [
-        {"op": "UPDATE", "id": ids[typed_text], "type": "profile", "topic": "health", "fact": "Does HIIT", "safety": False},
+        {"op": "UPDATE", "id": ids[typed_text], "type": "profile", "topic": "health",
+         "fact": "Does HIIT", "safety": False},
         {"op": "DELETE", "id": ids[typed_text]},
     ])
     summary = await _extract(user, session, script)
 
     assert _stored_in(script.seen[0]) == [
-        {"id": "f1", "fact": typed_text, "category": "preference", "locked": True}]
-    assert (summary["updated"], summary["deleted"]) == (0, 0)
-
-    # The statements themselves refuse it too, without the check in front.
-    assert await client.execute(
-        fe._UPDATE_SQL, typed_id, user, "Does HIIT", "preference", None, 2,
-        "active", 1, [""], session) == "UPDATE 0"
-    assert await client.execute(fe._HIDE_SQL, typed_id, user) == "UPDATE 0"
+        {"id": "f1", "fact": typed_text, "type": "preference", "topic": None,
+         "locked": True}]
+    assert (summary["updated"], summary["deleted"]) == (0, 1)
 
     facts = await _facts(client)
-    assert set(facts) == {typed_text}
+    assert set(facts) == {typed_text}          # the text was never rewritten
     kept = facts[typed_text]
-    assert (kept["source"], kept["valid"], kept["category"]) == ("user", True, "preference")
-    assert kept["source_session_id"] is None and kept["refreshed"] is False
+    assert (kept["source"], kept["memory_type"]) == ("user", "preference")
+    assert kept["valid"] is False and kept["source_session_id"] is None
+
+    # The statement itself refuses an update of a typed row, without the check
+    # in front of it.
+    assert await client.execute(
+        fe._UPDATE_SQL, typed_id, user, "Does HIIT", "profile", "health", False,
+        "fact", 2, "active", session) == "UPDATE 0"
+    assert set(await _facts(client)) == {typed_text}
 
 
 @pytest.mark.asyncio
@@ -346,11 +350,11 @@ async def test_user_b_is_neither_read_nor_changed_when_running_as_user_a(pg):
     b_session = await _conversation(client, b)
     await _message(client, b_session, "user", "B said: I have a slipped disc.")
     b_typed = "B typed: allergic to latex"
-    await _typed_fact(client, b, b_typed, "condition")
+    await _typed_fact(client, b, b_typed, "profile")
     b_extracted = "B extracted: has a slipped disc"
     b_extracted_id = await client.fetchval(
-        "INSERT INTO user_memory (user_id, fact_text, category, source, source_session_id) "
-        "VALUES ($1, $2, 'condition', 'extracted', $3) RETURNING id",
+        "INSERT INTO user_memory (user_id, fact_text, memory_type, source, source_session_id) "
+        "VALUES ($1, $2, 'profile', 'extracted', $3) RETURNING id",
         b, b_extracted, b_session)
 
     a = await _user(pg)                       # binds A
@@ -371,11 +375,11 @@ async def test_user_b_is_neither_read_nor_changed_when_running_as_user_a(pg):
     assert (await _extract(b, b_session, idle))["conversations"] == 0
     assert idle.seen == []
     assert await client.execute(
-        fe._UPDATE_SQL, b_extracted_id, a, "changed by A", "condition", None, 2,
-        "active", 1, [""], a_session) == "UPDATE 0"
+        fe._UPDATE_SQL, b_extracted_id, a, "changed by A", "profile", "health", False,
+        "fact", 2, "active", a_session) == "UPDATE 0"
     assert await client.execute(
-        fe._UPDATE_SQL, b_extracted_id, b, "changed by A", "condition", None, 2,
-        "active", 1, [""], a_session) == "UPDATE 0"
+        fe._UPDATE_SQL, b_extracted_id, b, "changed by A", "profile", "health", False,
+        "fact", 2, "active", a_session) == "UPDATE 0"
     assert await client.execute(fe._HIDE_SQL, b_extracted_id, b) == "UPDATE 0"
     assert await client.execute(fe._MARK_SQL, b_session, b, 0, 999) == "UPDATE 0"
 
@@ -441,25 +445,22 @@ async def test_the_memory_node_loads_tier1_instructions_safety_first(pg):
     user = await _user(pg)
     typed = "Must not lift more than 5 kg (doctor's advice)"
     await client.execute(
-        "INSERT INTO user_memory (user_id, fact_text, category, kind, tier, status) "
-        "VALUES ($1, $2, 'restriction', 'instruction', 1, 'active')",
+        "INSERT INTO user_memory (user_id, fact_text, memory_type, kind, safety, project, "
+        "                         tier, status) "
+        "VALUES ($1, $2, 'instruction', 'instruction', true, 'lifting', 1, 'active')",
         user, typed)
     session = await _conversation(client, user)
     await _message(client, session, "user", "A few things about me.")
 
     await _extract(user, session, _Script([
-        {"op": "ADD", "type": "preference",
-                          "topic": "health", "fact": "Prefers short answers",
-                          "safety": False},
-        {"op": "ADD", "type": "profile",
-                          "topic": "health", "fact": "Has knee osteoarthritis",
-                          "safety": True},
-        {"op": "ADD", "type": "profile",
-                          "topic": "health", "fact": "Avoids deep squats",
-                          "safety": True},
-        {"op": "ADD", "type": "area",
-                          "topic": "health", "fact": "Wants to hike again",
-                          "safety": False},
+        {"op": "ADD", "type": "instruction", "topic": "answer style",
+         "fact": "Prefers short answers", "safety": False},
+        {"op": "ADD", "type": "profile", "topic": "health",
+         "fact": "Has knee osteoarthritis", "safety": True},
+        {"op": "ADD", "type": "instruction", "topic": "movement",
+         "fact": "Avoids deep squats", "safety": True},
+        {"op": "ADD", "type": "area", "topic": "hiking",
+         "fact": "Wants to hike again", "safety": False},
     ]))
     # One of them is hidden by a later conversation and must stop being loaded.
     later = await _conversation(client, user)
@@ -469,5 +470,11 @@ async def test_the_memory_node_loads_tier1_instructions_safety_first(pg):
 
     loaded = await _load_user_instructions(user)
 
-    # Restrictions (newest first), then conditions; tier-2 and hidden rows excluded.
-    assert loaded == ["Avoids deep squats", typed, "Has knee osteoarthritis"]
+    # Every line is "[YYYY-MM-DD] (topic) fact".
+    assert all(re.match(r"\[\d{4}-\d{2}-\d{2}\] \(", line) for line in loaded)
+    undated = [re.sub(r"^\[[\d-]+\] ", "", line) for line in loaded]
+    # Safety first; instructions before other types; newest first. The tier-2
+    # (area) row and the hidden row are not loaded.
+    assert undated == ["(movement) Avoids deep squats",
+                       f"(lifting) {typed}",
+                       "(health) Has knee osteoarthritis"]

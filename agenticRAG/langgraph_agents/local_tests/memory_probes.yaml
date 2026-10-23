@@ -817,6 +817,8 @@ probes:
       forbidden: []
 
   # Stored là instruction để cùng type với câu mới => phải UPDATE gộp, không ADD.
+  # Đây là NGOẠI LỆ cho vấn đề kỹ thuật, không phải thay thế: "gọn" vẫn là quy tắc chung
+  # nên fact không được kể "short answers" như trạng thái cũ ("previously", "no longer"...).
   - id: o18b_vi_instruction_merge_short
     lang: vi
     date: "2026-10-23"
@@ -828,7 +830,7 @@ probes:
     expect:
       ops:
         - {op: UPDATE, id: f1, type: instruction, groups: [["short", "brief", "concise"], ["technical"], ["detail"]]}
-      forbidden: []
+      forbidden: ["previously", "no longer", "used to", "until", "instead of", "formerly", "trước đây"]
       forbidden_ops:
         - {op: ADD}
 

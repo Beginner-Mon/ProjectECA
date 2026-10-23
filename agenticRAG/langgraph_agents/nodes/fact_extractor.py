@@ -116,19 +116,21 @@ OUTPUT
 WHAT TO REMEMBER
 Remember something only when all four hold:
 1. The user stated or confirmed it — about themselves, about how they want the assistant to
-   behave, or about a person in their life who matters for helping them. Never what the assistant
-   said, suggested or guessed, and never your own inference, including from what the user asks.
+   behave, or about a person in their life when it changes what the assistant should do for the
+   user. Never what the assistant said, suggested or guessed, and never your own inference,
+   including from what the user asks.
 2. It is meant as true of the user's real life — not part of a hypothetical, a role-play, an
    example, or material the user asked the assistant to work on (translate, edit, summarise,
    analyse).
 3. It will still be true and useful weeks from now, in a conversation about something else. A
    momentary state is not, however often it comes up. A one-off episode is only when it still
    matters later — it left something lasting, or the user will refer back to it (an injury,
-   moving house, finishing a degree). Something the user only might do is not; something they
-   want now is. An instruction meant only for the current reply is not.
-4. It is not kept elsewhere: not a setting the app already stores (the name shown in the app, the
-   interface language, the chosen model). How the user wants to be addressed is an instruction,
-   not a setting.
+   moving house, finishing a degree). Something the user is unsure they will do is not;
+   something they want or have decided now is, even when it depends on a condition — keep the
+   condition in the fact. An instruction meant only for the current reply is not.
+4. It is not kept elsewhere: not one of the app's own settings, even when the user mentions it —
+   the name shown in the app, the interface language, which model the app runs on. How the user
+   wants to be addressed or answered is an instruction, not a setting.
 Never store identifiers or contact details: ID, account, card or phone numbers, e-mail or street
 addresses.
 
@@ -136,9 +138,9 @@ ONE THING, ONE PLACE
 Each thing is remembered once. Before adding, look for a stored item of ANY type about the same
 thing:
 - it already says it: REPEAT it;
-- the new statement adds to it, narrows it or changes it: UPDATE it. Write the complete new text,
-  keep every part that is still true, and keep the old state briefly when it matters
-  ("Now prefers X (until October 2026: Y)");
+- the new statement adds to it, narrows it, makes an exception to it or changes it: UPDATE it.
+  Write the complete new text, keep every part that is still true, and keep the old state
+  briefly when it matters ("Now prefers X (until October 2026: Y)");
 - it is no longer true: UPDATE it to what is true now, keeping the old state briefly when it
   matters. DELETE it only when nothing true is left to keep, or when the user asks to forget it;
 - the user asks to forget everything: FORGET_ALL, alone. It removes what was learned from

@@ -758,6 +758,13 @@ def test_the_prompt_wants_repeat_not_add_and_project_scoped_decisions():
     assert "it already says it: REPEAT it" in flat
     assert "look for a stored item of ANY type about the same thing" in flat
     assert "material the user asked the assistant to work on" in flat
+    # v3.2
+    assert "when it changes what the assistant should do for the user" in flat
+    assert "is unsure they will do is not" in flat
+    assert "keep the condition in the fact" in flat
+    assert "not one of the app's own settings, even when the user mentions it" in flat
+    assert "which model the app runs on" in flat
+    assert "makes an exception to it or changes it: UPDATE it" in flat
 
 
 def test_the_prompt_has_no_safety_flag_and_is_domain_neutral():

@@ -112,7 +112,12 @@ async def create_user_memory(body: UserMemoryCreate, uid: str = Depends(current_
     a later chat turn).
     """
     pg = get_pg_client()
-    tier = 1 if body.kind == "instruction" else 2
+    memory_type = body.memory_type
+    if memory_type is None:
+        memory_type = "instruction" if body.kind == "instruction" else "profile"
+    safety = body.safety if body.safety is not None else False
+    kind = "instruction" if memory_type == "instruction" else "fact"
+    tier = 1 if (memory_type == "instruction" or safety) else 2
 
     async with pg.transaction() as conn:
         # Ensure user row exists — the FK on user_memory requires it, and a user
@@ -122,17 +127,18 @@ async def create_user_memory(body: UserMemoryCreate, uid: str = Depends(current_
         )
         row = await conn.fetchrow(
             """INSERT INTO user_memory (user_id, fact_text, category, kind, tier,
-                                         status, project, source)
-               VALUES ($1::uuid, $2, $3, $4, $5, 'active', $6, 'user')
+                                          status, project, source, memory_type, safety)
+               VALUES ($1::uuid, $2, $3, $4, $5, 'active', $6, 'user', $7, $8)
                RETURNING id, created_at, updated_at, said_at""",
-            uid, body.fact_text, body.category, body.kind, tier, body.project,
+            uid, body.fact_text, body.category, kind, tier, body.project,
+            memory_type, safety,
         )
 
     return UserMemoryItem(
         id=str(row["id"]),
         fact_text=body.fact_text,
         category=body.category,
-        kind=body.kind,
+        kind=kind,
         tier=tier,
         status="active",
         project=body.project,
@@ -141,6 +147,8 @@ async def create_user_memory(body: UserMemoryCreate, uid: str = Depends(current_
         created_at=row["created_at"].isoformat(),
         updated_at=row["updated_at"].isoformat(),
         said_at=row["said_at"].isoformat() if row["said_at"] else None,
+        memory_type=memory_type,
+        safety=safety,
     )
 
 
@@ -152,7 +160,8 @@ async def list_user_memory(uid: str = Depends(current_user_id)):
 
     rows = await pg.fetch(
         """SELECT id, fact_text, category, kind, tier, status, project,
-                  valid, source, created_at, updated_at, said_at
+                  valid, source, created_at, updated_at, said_at,
+                  memory_type, safety
            FROM user_memory
            WHERE user_id = $1::uuid AND valid = true
            ORDER BY created_at DESC, id""",
@@ -172,6 +181,8 @@ async def list_user_memory(uid: str = Depends(current_user_id)):
             created_at=r["created_at"].isoformat(),
             updated_at=r["updated_at"].isoformat(),
             said_at=r["said_at"].isoformat() if r["said_at"] else None,
+            memory_type=(r["memory_type"] if "memory_type" in r else None),
+            safety=(r["safety"] if "safety" in r else None),
         )
         for r in rows
     ])
@@ -189,7 +200,7 @@ async def update_user_memory(
     pg = get_pg_client()
     async with pg.transaction() as conn:
         previous = await conn.fetchrow(
-            """SELECT updated_at FROM user_memory
+            """SELECT updated_at, memory_type, safety, kind, tier FROM user_memory
                WHERE id = $1::uuid AND user_id = $2::uuid AND valid = true
                FOR UPDATE""",
             fact_id, uid,
@@ -198,12 +209,39 @@ async def update_user_memory(
             raise HTTPException(404, "Fact not found")
         if previous["updated_at"] != body.expected_updated_at:
             raise HTTPException(409, "Memory changed. Reload before saving.")
+
+        try:
+            memory_type = previous["memory_type"]
+        except Exception:
+            try:
+                kind_prev = previous["kind"]
+            except Exception:
+                kind_prev = "fact"
+            memory_type = "instruction" if kind_prev == "instruction" else "profile"
+        try:
+            safety = previous["safety"]
+        except Exception:
+            safety = False
+        if body.memory_type is not None:
+            memory_type = body.memory_type
+        if body.safety is not None:
+            safety = body.safety
+        kind = "instruction" if memory_type == "instruction" else "fact"
+        try:
+            tier = previous["tier"]
+        except Exception:
+            tier = 1 if (memory_type == "instruction" or safety) else 2
+        if body.memory_type is not None or body.safety is not None:
+            tier = 1 if (memory_type == "instruction" or safety) else 2
+
         row = await conn.fetchrow(
-            """UPDATE user_memory SET fact_text = $3, said_at = now(), updated_at = now()
+            """UPDATE user_memory SET fact_text = $3, memory_type = $4, safety = $5,
+                  kind = $6, tier = $7, said_at = now(), updated_at = now()
                WHERE id = $1::uuid AND user_id = $2::uuid AND valid = true
                RETURNING id, fact_text, category, kind, tier, status, project,
-                         valid, source, created_at, updated_at, said_at""",
-            fact_id, uid, body.fact_text,
+                         valid, source, created_at, updated_at, said_at,
+                         memory_type, safety""",
+            fact_id, uid, body.fact_text, memory_type, safety, kind, tier,
         )
     return UserMemoryItem(
         id=str(row["id"]), fact_text=row["fact_text"], category=row["category"],
@@ -211,6 +249,8 @@ async def update_user_memory(
         project=row["project"], valid=row["valid"], source=row["source"],
         created_at=row["created_at"].isoformat(), updated_at=row["updated_at"].isoformat(),
         said_at=row["said_at"].isoformat() if row["said_at"] else None,
+        memory_type=row.get("memory_type"),
+        safety=row.get("safety"),
     )
 
 

@@ -98,11 +98,34 @@ class SessionResumeResponse(BaseModel):
     last_updated: str
 
 
+_MEMORY_TYPES = ("profile", "preference", "area", "event", "person",
+                 "reference", "instruction")
+
+
 class UserMemoryCreate(BaseModel):
     fact_text: str = Field(min_length=1, max_length=500)
     category: Optional[str] = Field(default=None, max_length=100)
     kind: Literal["instruction", "fact"] = "fact"
     project: Optional[str] = Field(default=None, max_length=60)
+    memory_type: Optional[Literal["profile", "preference", "area", "event",
+                                 "person", "reference", "instruction"]] = None
+    safety: Optional[bool] = None
+
+    @field_validator("project", mode="before")
+    @classmethod
+    def _validate_project(cls, value):
+        if value is None:
+            return value
+        if not isinstance(value, str):
+            raise ValueError("project must be a string")
+        value = " ".join(value.strip().split())
+        if not value:
+            return None
+        if len(value) > 60:
+            raise ValueError("project too long")
+        if len(value.split()) > 4:
+            raise ValueError("project too many words")
+        return value
 
 
 class UserMemoryItem(BaseModel):
@@ -119,6 +142,8 @@ class UserMemoryItem(BaseModel):
     created_at: str
     updated_at: Optional[str] = None
     said_at: Optional[str] = None
+    memory_type: Optional[str] = None
+    safety: Optional[bool] = None
 
 
 class UserMemoryListResponse(BaseModel):
@@ -129,6 +154,9 @@ class UserMemoryUpdate(BaseModel):
     model_config = ConfigDict(extra="forbid")
     fact_text: str = Field(min_length=1, max_length=500)
     expected_updated_at: datetime
+    memory_type: Optional[Literal["profile", "preference", "area", "event",
+                                 "person", "reference", "instruction"]] = None
+    safety: Optional[bool] = None
 
     @field_validator("fact_text", mode="before")
     @classmethod

@@ -109,11 +109,8 @@ async def _load_user_instructions(user_id: str) -> list[str]:
             SELECT fact_text FROM user_memory
             WHERE user_id = $1 AND valid = true
               AND tier = 1 AND status = 'active'
-            ORDER BY CASE category
-                         WHEN 'restriction' THEN 0
-                         WHEN 'condition' THEN 1
-                         ELSE 2
-                     END,
+            ORDER BY CASE WHEN safety THEN 0 ELSE 1 END,
+                     CASE WHEN kind = 'instruction' THEN 0 ELSE 1 END,
                      said_at DESC
             """,
             user_id,
@@ -219,7 +216,7 @@ async def _load_tier2_facts(
         user_p, sess_p, topk_p = len(vectors) + 1, len(vectors) + 2, len(vectors) + 3
         rows = await pg.fetch(
             f"""
-            SELECT id, fact_text, project, said_at,
+            SELECT id, fact_text, project, memory_type, said_at,
                    GREATEST({sim_terms}) AS similarity
             FROM user_memory
             WHERE user_id = ${user_p} AND valid = true
@@ -238,7 +235,8 @@ async def _load_tier2_facts(
         hits = [r for r in rows if float(r["similarity"]) >= cfg["floor"]]
         if not hits:
             return [], top_sim, None, embed_ms
-        labels = sorted({r["project"] for r in hits if r.get("project")})
+        labels = sorted({r["project"] for r in hits
+                        if r.get("project") and r.get("memory_type") == "area"})
         lines = [_tier2_line(r) for r in hits]
         if labels:
             mates = await pg.fetch(
@@ -247,6 +245,7 @@ async def _load_tier2_facts(
                 FROM user_memory
                 WHERE user_id = $1 AND valid = true
                   AND tier = 2 AND status = 'active'
+                  AND memory_type = 'area'
                   AND project = ANY($2)
                   AND last_seen_session_id IS DISTINCT FROM $3::uuid
                 ORDER BY said_at DESC

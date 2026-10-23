@@ -81,15 +81,23 @@ def _apply_ops(stored: list[dict], kept: list[dict], counter: list[int]) -> list
         if op["op"] == "ADD":
             counter[0] += 1
             facts.append({"id": f"n{counter[0]}", "fact": op["fact"],
-                          "category": op["category"],
+                          "type": op.get("type"),
+                          "topic": op.get("topic"),
+                          "safety": op.get("safety", False),
                           "kind": op.get("kind", "fact"),
-                          "project": op.get("project"), "locked": False})
+                          "project": op.get("topic"), "locked": False,
+                          "tier": 2})
         elif op["op"] == "UPDATE":
             for f in facts:
                 if f["id"] == op["id"]:
-                    f["fact"], f["category"] = op["fact"], op["category"]
-                    if op.get("project") is not None:
-                        f["project"] = op["project"]
+                    f["fact"] = op["fact"]
+                    if op.get("type") is not None:
+                        f["type"] = op["type"]
+                    if op.get("topic") is not None:
+                        f["topic"] = op["topic"]
+                        f["project"] = op["topic"]
+                    if op.get("safety") is not None:
+                        f["safety"] = op["safety"]
         elif op["op"] == "DELETE":
             facts = [f for f in facts if f["id"] != op["id"]]
         elif op["op"] == "FORGET_ALL":
@@ -187,11 +195,14 @@ def _score(expect: dict, ops: list[dict], dropped: list[dict]) -> dict[str, Any]
             continue
         used.add(hit)
         found.append({"expected": exp, "got": ops[hit]})
-        if (exp.get("category") and ops[hit].get("category")
-                and exp["category"] != ops[hit]["category"]):
+        if (exp.get("type") and ops[hit].get("type")
+                and exp["type"] != ops[hit]["type"]):
             category_mismatch.append({"expected": exp, "got": ops[hit]})
-        if (exp.get("kind") and ops[hit].get("kind")
-                and exp["kind"] != ops[hit]["kind"]):
+        if (exp.get("topic") and ops[hit].get("topic")
+                and exp["topic"] != ops[hit]["topic"]):
+            category_mismatch.append({"expected": exp, "got": ops[hit]})
+        if (exp.get("safety") is not None and ops[hit].get("safety") is not None
+                and exp["safety"] != ops[hit]["safety"]):
             category_mismatch.append({"expected": exp, "got": ops[hit]})
 
     extras: list[dict] = []
@@ -400,8 +411,12 @@ def _op_str(op: dict) -> str:
         return "FORGET_ALL"
     ident = f" {op['id']}" if op["op"] == "UPDATE" else ""
     turn = f" (lượt {op['turn']})" if op.get("turn") else ""
-    kind = f"{op.get('kind')}/" if op.get("kind") else ""
-    return f"{op['op']}{ident} [{kind}{op['category']}] \"{op['fact']}\"{turn}"
+    typ = op.get("type") or op.get("category")
+    topic = op.get("topic")
+    label = f"{typ}" if typ else ""
+    if topic:
+        label = f"{label}/{topic}" if label else topic
+    return f"{op['op']}{ident} [{label}] \"{op['fact']}\"{turn}"
 
 
 def _exp_str(e: dict) -> str:

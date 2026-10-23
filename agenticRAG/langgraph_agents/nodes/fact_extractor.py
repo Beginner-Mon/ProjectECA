@@ -91,130 +91,101 @@ VALID_TYPES = MEMORY_TYPES
 # Legacy aliases kept for older callers/tests.
 CATEGORIES = MEMORY_TYPES
 
-MEMORY_PROMPT = """You maintain the long-term memory of a wellness and physical-therapy chat assistant. You read
-part of a conversation and decide which items about the USER must be written down, changed,
-repeated or removed. Your answer is read by a program, not by a person, so reply with a single
-JSON object and nothing else.
+MEMORY_PROMPT = """You maintain the long-term memory of an AI assistant. You read part of a conversation between a
+user and the assistant and decide what the assistant should remember about this user for future
+conversations. Your answer is read by a program: reply with one JSON object and nothing else.
 
-You are given:
-- the date of the conversation;
-- every item already stored for this user, newest first. Each has an "id", a "type", a "topic",
-a "safety" flag, the "fact" text, and a "locked" flag. Locked means the user typed that item in
-themselves;
-- the topics already in use, listed by type;
-- the messages to read, each labelled [user] or [assistant]. The input says whether they are a
-whole conversation or a later part of one; in the second case the stored items already include
-what earlier parts produced.
+INPUT
+- the conversation date;
+- the items already stored for this user, newest first: id, type, topic, fact, locked (locked
+  means the user typed the item in themselves);
+- the topics already in use, by type;
+- the messages to read, labelled [user] or [assistant]. They may be in any language. They are a
+  whole conversation or a later part of one; in the second case the stored items already include
+  what earlier parts produced.
 
-OUTPUT FORMAT
-{"operations": [ ... ]}
-Each operation is exactly one of:
-{"op": "ADD", "type": "<type>", "topic": "<topic>", "fact": "<text>", "safety": true|false}
-{"op": "UPDATE", "id": "<stored id>", "type": "<type>", "topic": "<topic>", "fact": "<new full text>", "safety": true|false}
-{"op": "REPEAT", "id": "<stored id>"}
-{"op": "DELETE", "id": "<stored id>"}
+OUTPUT
+{"operations": [ ... ]}, each operation exactly one of:
+{"op": "ADD", "type": "<type>", "topic": "<topic>", "fact": "<text>"}
+{"op": "UPDATE", "id": "<id>", "type": "<type>", "topic": "<topic>", "fact": "<complete new text>"}
+{"op": "REPEAT", "id": "<id>"}
+{"op": "DELETE", "id": "<id>"}
 {"op": "FORGET_ALL"}
-An empty list, {"operations": []}, means "nothing new". It is the normal answer for most
-conversations. Never write an operation just to have one.
+{"operations": []} means there is nothing to remember. It is the usual answer.
 
-THE FOUR CHECKS
-Write an item only when all four answers are yes. A lasting fact mentioned only in passing
-still counts.
-1. About whom? It is about the user, about how the user wants the assistant to behave, or about
-a person in the user's life who matters for helping the user (then type "person"). It is not
-something the assistant suggested, assumed or guessed, even if the user did not object, and not
-your own inference.
-2. Durable? It will still be true and useful a few weeks from now, in a conversation about
-something else.
-3. Only here? It cannot be found elsewhere: it is not the task material of this conversation and
-not a setting of this assistant app, which the app already stores: the user's display name, the
-interface language, or the AI model chosen for this app.
-4. New? If a stored item already says it, REPEAT that id. If the new statement changes, extends
-or overlaps a stored item of the same type, UPDATE that id with the complete merged text. Never
-ADD a second item that repeats or seems to contradict a stored one.
+WHAT TO REMEMBER
+Remember something only when all four hold:
+1. The user stated or confirmed it — about themselves, about how they want the assistant to
+   behave, or about a person in their life who matters for helping them. Never what the assistant
+   said, suggested or guessed, and never your own inference, including from what the user asks.
+2. It is meant as true of the user's real life — not part of a hypothetical, a role-play, an
+   example, or material the user asked the assistant to work on (translate, edit, summarise,
+   analyse).
+3. It will still be true and useful weeks from now, in a conversation about something else. A
+   momentary state is not, however often it comes up. A one-off episode is only when it still
+   matters later — it left something lasting, or the user will refer back to it (an injury,
+   moving house, finishing a degree). Something the user only might do is not; something they
+   want now is. An instruction meant only for the current reply is not.
+4. It is not kept elsewhere: not a setting the app already stores (the name shown in the app, the
+   interface language, the chosen model). How the user wants to be addressed is an instruction,
+   not a setting.
+Never store identifiers or contact details: ID, account, card or phone numbers, e-mail or street
+addresses.
 
-NEVER WRITE, whatever the wording
-- statements inside a hypothetical, role-play or example ("suppose I am ...");
-- text the user asks you to translate, correct, summarise or analyse;
-- what the topics of the user's questions suggest about them;
-- a passing state or episode, however often it is repeated and even when it has a date (tired,
-stressed, a bad or late night, a busy week, a deadline crunch). Only a dated constraint that
-changes how to help is written, with its date. A lasting habit or activity that a passing remark
-reveals is still written; only the momentary state is left out;
-- a tentative prediction ("maybe I will ..."). A present want is written, with its condition kept
-in the text;
-- an instruction that only applies to the current answer;
-- identifiers: ID, card or phone numbers, e-mail or street addresses;
-- copied text the user pasted in.
+ONE THING, ONE PLACE
+Each thing is remembered once. Before adding, look for a stored item of ANY type about the same
+thing:
+- it already says it: REPEAT it;
+- the new statement adds to it, narrows it or changes it: UPDATE it. Write the complete new text,
+  keep every part that is still true, and keep the old state briefly when it matters
+  ("Now prefers X (until October 2026: Y)");
+- it is no longer true: UPDATE it to what is true now, keeping the old state briefly when it
+  matters. DELETE it only when nothing true is left to keep, or when the user asks to forget it;
+- the user asks to forget everything: FORGET_ALL, alone. It removes what was learned from
+  conversations; locked items stay.
+A locked item is never UPDATEd or REPEATed. When the user says it is no longer true, asks to
+forget it, or replaces it, DELETE it and ADD what is true now, if anything. When they add to it,
+ADD only the new part.
+Split a statement into separate items when its parts could change or be needed separately (an
+event and the lasting condition it caused); keep together what only makes sense together.
+Use only ids that appear in the stored items.
 
-TYPES (use exactly these words)
-- profile: stable facts about the user: identity, body, health conditions, injuries, job,
-routine, habits and activities they do regularly.
-- preference: likes, dislikes and tastes, including how they like to train or to be answered.
-- area: something the user is working on that changes over time (a rehab programme, a goal, a
-job search, a project).
-- event: a dated past event that still matters later and the user may refer back to (an injury,
-a fall, a surgery, a diagnosis, an exam passed, a milestone). Put the absolute date in the text.
-An event that left a lasting condition is always written as two items: the event, and a profile
-item for the condition.
-- person: someone in the user's life. Only when the person is identifiable (a name or a unique
-relation such as "wife", "daughter Lan") and matters for helping the user; an unnamed "a friend"
-mentioned in passing is not written. A person's fact is never written as the user's.
-- reference: a device, app, document or programme the user uses.
-- instruction: how the assistant should behave.
+EACH ITEM
+- type, one of:
+  profile: stable facts about the user — identity, circumstances, abilities, health, regular
+  activities;
+  preference: likes, dislikes, and how they want things done or answered;
+  area: something they are working on that changes over time;
+  event: a dated past occurrence that still matters later;
+  person: someone in the user's life, only when identifiable (a name or a unique relation);
+  reference: a tool, device, service, document or source the user relies on;
+  instruction: how the assistant should behave.
+- topic: a short English title of at most 4 words for what the item is about, within its type.
+  Reuse a topic already in use for that type when it fits. For a person, the topic is who they
+  are. An instruction that applies to one area only takes that area's topic.
+- fact: one short, neutral English statement, understandable on its own, whatever language the
+  conversation is in. Keep names as written. Only what was said, nothing added. Turn relative
+  times into absolute ones with the conversation date ("last month" -> "September 2026"); drop a
+  time that cannot be made absolute.
+- At most 8 operations, one item per operation, at most 300 characters per fact.
 
-TOPIC
-Every item has exactly one topic: a short title of at most 4 words for what the item is about,
-inside its type ("health", "food", "knee rehab", "answer style"). Reuse a topic already in use
-for the same type whenever it fits; create a new one only when none fits. For a person the topic
-is who the person is ("daughter Lan", "Hoa"). An instruction that applies to one ongoing area
-only takes that area's topic; any other instruction takes its own topic.
-
-SAFETY
-"safety" is true when ignoring the item could harm the user: a condition, injury, allergy,
-medication, or a movement, load or activity the user must avoid. Otherwise false. A person's
-item is about someone else, so its safety is always false, even for that person's allergy or
-illness.
-
-CHANGES AND REMOVALS
-- The user says a stored item is no longer true, or asks to forget it: DELETE that id.
-- The user asks to forget everything: FORGET_ALL, alone.
-- A locked item: never UPDATE or REPEAT it. When the user explicitly asks to forget it, DELETE
-it. When the user explicitly replaces it ("from now on ..."), DELETE it and ADD the new
-statement.
-- An UPDATE keeps every part of the stored item that is still true and adds the new part; it never
-drops what the user did not change.
-- When an old state still matters, keep it briefly in the UPDATE text, for example "Now prefers
-Java over Python (until October 2026: Python)".
-- Only use ids that appear in the stored items. Never invent an id.
-
-STYLE OF EACH ITEM
-- English, whatever language the conversation is in. Keep names of people, dishes and places
-as the user wrote them.
-- A short neutral statement about the user (or about the person), understandable without the
-conversation. No "she said", no "as above".
-- Only what was said: no added causes, severity or advice.
-- Resolve relative times with the conversation date ("last month" -> "September 2026"). If a
-time cannot be made absolute, leave the time out.
-- At most 8 operations, one item per operation, each fact at most 300 characters.
-
-EXAMPLES (structure only)
-Nothing stored; [user] "Sáng nay đánh pickleball xong chân hơi mỏi.":
-{"operations": [{"op": "ADD", "type": "profile", "topic": "routine", "fact": "Plays pickleball.", "safety": false}]}
-Nothing stored, conversation date 2026-10-23; [user] "Tuần trước tôi ngã xe đạp, giờ cổ tay phải vẫn đau.":
-{"operations": [{"op": "ADD", "type": "event", "topic": "health", "fact": "Fell off a bicycle in October 2026.", "safety": false}, {"op": "ADD", "type": "profile", "topic": "health", "fact": "Has ongoing right wrist pain since a bicycle fall in October 2026.", "safety": true}]}
-Nothing stored; [user] "Tối nay mình nấu cho Hoa, Hoa dị ứng tôm, nên đổi món gì?":
-{"operations": [{"op": "ADD", "type": "person", "topic": "Hoa", "fact": "Has a shrimp allergy.", "safety": false}]}
-[user] "Có lẽ năm sau mình học tiếng Nhật.":
+EXAMPLES (structure only; conversations may be in any language)
+Date 2026-10-23. Nothing stored. [user] "I'm exhausted this week. I've been vegetarian for ten years."
+{"operations": [{"op": "ADD", "type": "profile", "topic": "diet", "fact": "Has been vegetarian since 2016."}]}
+Date 2026-10-23. Nothing stored. [user] "La semana pasada me caí de la bici y todavía me duele la muñeca derecha."
+{"operations": [{"op": "ADD", "type": "event", "topic": "health", "fact": "Fell off a bicycle in October 2026."}, {"op": "ADD", "type": "profile", "topic": "health", "fact": "Has ongoing right wrist pain since a bicycle fall in October 2026."}]}
+Date 2026-10-23. Nothing stored. [user] "My sister Mai is a pharmacist, I usually ask her about medicines."
+{"operations": [{"op": "ADD", "type": "person", "topic": "sister Mai", "fact": "Is a pharmacist; the user often asks her about medicines."}]}
+Date 2026-10-23. Stored f5 {"type": "area", "topic": "marathon training", "fact": "Training for a marathon in March 2027."}. [user] "For my marathon training, always suggest low-impact cross-training on rest days."
+{"operations": [{"op": "ADD", "type": "instruction", "topic": "marathon training", "fact": "Suggest low-impact cross-training on rest days."}]}
+Date 2026-10-23. Stored f2 {"type": "profile", "topic": "health", "fact": "Has lower back pain."}. [assistant] "It could be a slipped disc." [user] "Maybe. Which stretches can I do?"
 {"operations": []}
-The assistant guessed a tendinitis and the user did not confirm it:
+Date 2026-10-23. Stored f3 {"type": "profile", "topic": "work", "fact": "Works as a nurse."}. [user] "I moved to night shifts last month."
+{"operations": [{"op": "UPDATE", "id": "f3", "type": "profile", "topic": "work", "fact": "Works as a nurse, on night shifts since September 2026."}]}
+Date 2026-10-23. Stored locked f1 {"type": "preference", "topic": "units", "fact": "Prefers metric units."}. [user] "Use imperial units from now on."
+{"operations": [{"op": "DELETE", "id": "f1"}, {"op": "ADD", "type": "preference", "topic": "units", "fact": "Prefers imperial units."}]}
+Date 2026-10-23. [user] "Imagine I won the lottery — what should I buy first?"
 {"operations": []}
-Stored f4 {"type": "area", "topic": "knee rehab", "fact": "Knee pain at 6/10 on stairs (September 2026)."}; [user] "Giờ gối chỉ còn đau 3/10.":
-{"operations": [{"op": "UPDATE", "id": "f4", "type": "area", "topic": "knee rehab", "fact": "Knee pain on stairs down to 3/10 (October 2026; September 2026: 6/10).", "safety": false}]}
-Stored locked f1 {"type": "instruction", "topic": "address", "fact": "Call the user Tri", "locked": true}; [user] "Từ giờ gọi mình là Minh nhé.":
-{"operations": [{"op": "DELETE", "id": "f1"}, {"op": "ADD", "type": "instruction", "topic": "address", "fact": "Call the user Minh.", "safety": false}]}
-[user] "Quên hết những gì bạn ghi về mình đi.":
-{"operations": [{"op": "FORGET_ALL"}]}
 """
 
 
@@ -275,7 +246,8 @@ def enforce(raw_ops: list[Any], stored: list[dict]
     """The limits the prompt states, held in code. Returns (kept, dropped).
 
     `stored` are the items the model was shown: {"id", "type", "topic",
-    "safety", "fact", "locked"}. dropped = [{"reason", "op"}]. The dropped
+    "fact", "locked"}. A "safety" key on a model operation is ignored.
+    dropped = [{"reason", "op"}]. The dropped
     operations still carry the model's text, so count them and never log them.
     """
     by_id = {f["id"]: f for f in stored}
@@ -314,9 +286,6 @@ def enforce(raw_ops: list[Any], stored: list[dict]
             if op.get("type") not in MEMORY_TYPES:
                 drop("bad_type", op)
                 continue
-            if not isinstance(op.get("safety"), bool):
-                drop("bad_safety", op)
-                continue
             reason = _check_text_op(op)
             if reason is not None:
                 drop(reason, op)
@@ -329,13 +298,9 @@ def enforce(raw_ops: list[Any], stored: list[dict]
             clean["type"] = op["type"]
             clean["topic"] = topic
             clean["fact"] = op["fact"].strip()
-            clean["safety"] = op["safety"]
         elif kind == "UPDATE":
             if op.get("type") not in MEMORY_TYPES:
                 drop("bad_type", op)
-                continue
-            if not isinstance(op.get("safety"), bool):
-                drop("bad_safety", op)
                 continue
             reason = _check_text_op(op)
             if reason is not None:
@@ -357,7 +322,6 @@ def enforce(raw_ops: list[Any], stored: list[dict]
             clean["type"] = op["type"]
             clean["topic"] = topic
             clean["fact"] = op["fact"].strip()
-            clean["safety"] = op["safety"]
         elif kind == "REPEAT":
             fid = op.get("id")
             if not isinstance(fid, str) or fid not in by_id:
@@ -384,7 +348,7 @@ def apply_policy(row: dict | None, op: dict, ctx: dict) -> dict:
     """Decide what one operation writes. Returns {"action", "fields"}.
 
     `row` is the stored row (or None for ADD): {"id", "fact", "type",
-    "topic", "safety", "kind", "tier", "status", "project", "seen_count",
+    "topic", "kind", "tier", "status", "project", "seen_count",
     "seen_projects", "last_seen_session_id", "source"}. `ctx` carries the
     counting session and the known area topics:
     {"session_id", "area_topics": set[str]}.
@@ -397,9 +361,9 @@ def apply_policy(row: dict | None, op: dict, ctx: dict) -> dict:
     area_topics = {t.casefold() for t in (ctx.get("area_topics") or [])}
     kind = op["op"]
 
-    def _tier_for(typ: str, topic: str, safety: bool) -> tuple[int, str]:
-        if safety:
-            return 1, "active"
+    def _tier_for(typ: str, topic: str) -> tuple[int, str]:
+        # Tier 1 holds instructions only: an instruction that is not about one
+        # of the user's areas. Everything else is tier 2.
         if typ == "instruction" and _norm_topic(topic).casefold() not in area_topics:
             return 1, "active"
         return 2, "active"
@@ -407,13 +371,12 @@ def apply_policy(row: dict | None, op: dict, ctx: dict) -> dict:
     if kind == "ADD":
         typ = op["type"]
         topic = op["topic"]
-        safety = op["safety"]
-        tier, status = _tier_for(typ, topic, safety)
+        tier, status = _tier_for(typ, topic)
         label = ""
         return {"action": "add", "fields": {
             "memory_type": typ, "fact": op["fact"], "kind": "instruction"
             if typ == "instruction" else "fact",
-            "tier": tier, "status": status, "safety": safety,
+            "tier": tier, "status": status,
             "project": topic,
             "seen_count": 1, "seen_projects": [label],
             "last_seen_session_id": session_id,
@@ -433,12 +396,11 @@ def apply_policy(row: dict | None, op: dict, ctx: dict) -> dict:
     if kind == "UPDATE":
         typ = op["type"]
         topic = op["topic"]
-        safety = op["safety"]
-        tier, status = _tier_for(typ, topic, safety)
+        tier, status = _tier_for(typ, topic)
         fields = {
             "fact": op["fact"], "memory_type": typ,
             "kind": "instruction" if typ == "instruction" else "fact",
-            "project": topic, "safety": safety,
+            "project": topic,
             "tier": tier, "status": status,
             "last_seen_session_id": session_id,
             "category": None,
@@ -458,7 +420,7 @@ def render_user_message(date: str, tier1: list[dict], tier2: list[dict],
     """The user message: the date, all stored items, known topics, the slice.
 
     `tier1` and `tier2` are combined into one list, newest first, capped at
-    200 rows. Each row carries {"id", "type", "topic", "safety", "fact",
+    200 rows. Each row carries {"id", "type", "topic", "fact",
     "locked"} (and optionally "said_at"). `scope` tells the model what the
     messages are, a whole conversation or part of one.
     """
@@ -479,7 +441,6 @@ def render_user_message(date: str, tier1: list[dict], tier2: list[dict],
     def _line(f: dict) -> str:
         return json.dumps({"id": f["id"], "type": f.get("type"),
                            "topic": f.get("topic"),
-                           "safety": bool(f.get("safety", False)),
                            "fact": f["fact"],
                            "locked": bool(f.get("locked", False))},
                           ensure_ascii=False)
@@ -570,17 +531,15 @@ _UNREAD_SQL = """
 # What the model may change is what the memory node acts on (nodes/memory.py):
 # the same tier-1 rows plus the newest tier-2 slice.
 _TIER1_SQL = """
-    SELECT id, fact_text, category, memory_type, safety, kind, tier, status, project,
+    SELECT id, fact_text, category, memory_type, kind, tier, status, project,
            seen_count, seen_projects, last_seen_session_id, source, said_at
     FROM user_memory
     WHERE user_id = $1 AND valid = true AND tier = 1
-    ORDER BY CASE WHEN safety THEN 0 ELSE 1 END,
-             CASE WHEN kind = 'instruction' THEN 0 ELSE 1 END,
-             said_at DESC
+    ORDER BY said_at DESC
 """
 
 _TIER2_SQL = """
-    SELECT id, fact_text, category, memory_type, safety, kind, tier, status, project,
+    SELECT id, fact_text, category, memory_type, kind, tier, status, project,
            seen_count, seen_projects, last_seen_session_id, source, said_at
     FROM user_memory
     WHERE user_id = $1 AND valid = true AND tier = 2
@@ -636,11 +595,11 @@ _MARK_SQL = """
 # valid facts than the model is shown.
 _ADD_SQL = """
     INSERT INTO user_memory (user_id, fact_text, category, memory_type, kind, tier, status,
-                             safety, project, seen_count, seen_projects, source,
+                             project, seen_count, seen_projects, source,
                              source_session_id, last_seen_session_id,
                              said_at, updated_at)
     SELECT $1::uuid, $2::text, NULL::text, $3::text, $4::text, $5::smallint, $6::text,
-           $7::boolean, $8::text, $9::int, $10::text[], 'extracted', $11::uuid, $11::uuid,
+           $7::text, $8::int, $9::text[], 'extracted', $10::uuid, $10::uuid,
            now(), now()
     WHERE NOT EXISTS (
         SELECT 1 FROM user_memory
@@ -660,9 +619,9 @@ _REPEAT_SQL = """
 _UPDATE_SQL = """
     UPDATE user_memory
     SET fact_text = $3, memory_type = $4::text, project = $5::text,
-        safety = $6::boolean, kind = $7::text,
-        tier = $8::smallint, status = $9::text,
-        last_seen_session_id = $10::uuid, said_at = now(), updated_at = now()
+        kind = $6::text,
+        tier = $7::smallint, status = $8::text,
+        last_seen_session_id = $9::uuid, said_at = now(), updated_at = now()
     WHERE id = $1::uuid AND user_id = $2::uuid AND source = 'extracted' AND valid = true
 """
 
@@ -718,7 +677,7 @@ def _planned_writes(kept: list[dict], rows: dict, row_ids: dict,
             f = decided["fields"]
             writes.append(("added", "duplicate", _ADD_SQL,
                            (user_id, f["fact"], f["memory_type"], f["kind"],
-                            f["tier"], f["status"], f["safety"], f["project"],
+                            f["tier"], f["status"], f["project"],
                             f["seen_count"], f["seen_projects"], session_id)))
         elif op["op"] == "REPEAT":
             decided = apply_policy(rows[op["id"]], op, ctx)
@@ -734,7 +693,7 @@ def _planned_writes(kept: list[dict], rows: dict, row_ids: dict,
             row = rows[op["id"]]
             writes.append(("updated", "gone", _UPDATE_SQL,
                            (row_ids[op["id"]], user_id, f["fact"], f["memory_type"],
-                            f["project"], f["safety"], f["kind"],
+                            f["project"], f["kind"],
                             f.get("tier", row["tier"]),
                             f.get("status", row["status"]),
                             f["last_seen_session_id"])))
@@ -807,7 +766,6 @@ async def _read_conversation(pg, user_id: str, session_id, messages: list,
             full[short] = {
                 "id": short, "fact": r["fact_text"], "category": r.get("category"),
                 "memory_type": r.get("memory_type", "profile"),
-                "safety": bool(r.get("safety", False)),
                 "kind": r.get("kind", "fact"), "tier": r.get("tier", 2),
                 "status": r.get("status", "active"), "project": r.get("project"),
                 "topic": r.get("project"),
@@ -820,7 +778,6 @@ async def _read_conversation(pg, user_id: str, session_id, messages: list,
             stored.append({"id": short, "fact": r["fact_text"],
                            "type": r.get("memory_type", "profile"),
                            "topic": r.get("project"),
-                           "safety": bool(r.get("safety", False)),
                            "category": r.get("category"),
                            "locked": r["source"] != "extracted"})
 
@@ -828,7 +785,6 @@ async def _read_conversation(pg, user_id: str, session_id, messages: list,
             f = full[short]
             return {"id": short, "fact": f["fact"],
                     "type": f["memory_type"], "topic": f["topic"],
-                    "safety": f["safety"],
                     "kind": f["kind"], "project": f["project"],
                     "locked": f["source"] != "extracted",
                     "said_at": f.get("said_at")}

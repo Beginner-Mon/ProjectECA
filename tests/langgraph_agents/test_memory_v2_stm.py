@@ -797,20 +797,22 @@ async def test_one_turn_over_the_ceiling_is_handed_on_whole(budgets, caplog):
 
 
 @pytest.mark.asyncio
-async def test_user_instructions_are_asked_for_in_safety_first_order(budgets):
+async def test_user_instructions_are_asked_for_newest_first(budgets):
     pg = AsyncMock()
-    pg.fetch.return_value = [{"fact_text": "No overhead lifting"},
-                             {"fact_text": "Type 2 diabetes"},
-                             {"fact_text": "Vegan"}]
+    pg.fetch.return_value = [
+        {"fact_text": "No overhead lifting", "project": None, "said_at": "2026-10-03"},
+        {"fact_text": "Type 2 diabetes", "project": None, "said_at": "2026-10-02"},
+        {"fact_text": "Vegan", "project": None, "said_at": "2026-10-01"}]
     with patch.object(mem, "get_pg_client", return_value=pg):
         facts = await mem._load_user_instructions("u-1")
 
-    assert facts == ["No overhead lifting", "Type 2 diabetes", "Vegan"]
+    assert facts == ["[2026-10-03] No overhead lifting",
+                     "[2026-10-02] Type 2 diabetes", "[2026-10-01] Vegan"]
     sql = " ".join(pg.fetch.await_args.args[0].split())
     assert "tier = 1" in sql and "status = 'active'" in sql
     order = sql[sql.index("ORDER BY"):]
-    assert order.index("'restriction'") < order.index("'condition'")
-    assert "said_at DESC" in order
+    assert order == "ORDER BY said_at DESC"
+    assert "safety" not in sql
     assert "valid = true" in sql
 
 

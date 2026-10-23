@@ -193,8 +193,7 @@ async def test_extractor_writes_the_decided_tier(pg):
             return {"raw": None,
                     "parsed": fe.Operations(operations=[
                          {"op": "ADD", "type": "instruction",
-                          "topic": "exercise", "fact": "No exercise for the back",
-                          "safety": True}]),
+                          "topic": "exercise", "fact": "No exercise for the back"}]),
                     "parsing_error": None}
 
     with patch.object(fe, "extraction_llm", return_value=_Script()):
@@ -204,10 +203,9 @@ async def test_extractor_writes_the_decided_tier(pg):
         "SELECT kind, tier, status FROM user_memory WHERE user_id = $1", user)
     assert (row["kind"], row["tier"], row["status"]) == ("instruction", 1, "active")
     row = await client.fetchrow(
-        "SELECT memory_type, safety, project FROM user_memory WHERE user_id = $1",
+        "SELECT memory_type, project FROM user_memory WHERE user_id = $1",
         user)
-    assert (row["memory_type"], row["safety"], row["project"]) == (
-        "instruction", True, "exercise")
+    assert (row["memory_type"], row["project"]) == ("instruction", "exercise")
 
 
 @pytest.mark.asyncio

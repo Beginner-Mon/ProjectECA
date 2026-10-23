@@ -51,9 +51,15 @@ def test_every_execute_is_one_statement(direction):
 
 
 @pytest.mark.unit
-def test_safety_backfill_uses_coalesce():
+def test_no_safety_column_is_added_or_dropped():
+    for direction in ("upgrade", "downgrade"):
+        assert "safety" not in "\n".join(_squashed(direction)).lower()
+
+
+@pytest.mark.unit
+def test_tier1_facts_move_to_tier2():
     joined = "\n".join(_squashed())
-    assert "COALESCE(category IN ('condition', 'restriction'), false)" in joined
+    assert "UPDATE user_memory SET tier = 2 WHERE kind = 'fact' AND tier = 1" in joined
 
 
 @pytest.mark.unit

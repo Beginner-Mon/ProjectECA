@@ -3,7 +3,7 @@
 Runs FIRST before planner (D9: coreference resolve needs memory context).
 Loads what the model is shown about this user and this conversation:
 
-    user_instructions tier-1 standing instructions (safety-relevant first)
+    user_instructions tier-1 standing instructions (newest first)
     session_summary   this session's rolling summary (0 or 1 item)
     user_facts        tier-2 facts about this turn's topic (dated, by project)
     messages          raw history the summary does not cover yet (user/assistant only)
@@ -95,11 +95,10 @@ def history_ceiling() -> int:
 # ── Tier 1: standing user instructions (always-on, cheap, no vector search)
 
 async def _load_user_instructions(user_id: str) -> list[str]:
-    """Load tier-1 instructions, the safety-relevant ones first.
+    """Load tier-1 instructions, newest said first.
 
-    The prompt budgets downstream drop lines from the END of this list, so a
-    movement restriction or a health condition must not queue behind a
-    preference. Newest said first within each group.
+    Tier 1 holds instructions only. The prompt budgets downstream drop lines
+    from the END of this list, so the oldest instruction goes first.
     """
     try:
         pg = get_pg_client()
@@ -109,9 +108,7 @@ async def _load_user_instructions(user_id: str) -> list[str]:
             SELECT fact_text, project, said_at FROM user_memory
             WHERE user_id = $1 AND valid = true
               AND tier = 1 AND status = 'active'
-            ORDER BY CASE WHEN safety THEN 0 ELSE 1 END,
-                     CASE WHEN kind = 'instruction' THEN 0 ELSE 1 END,
-                     said_at DESC
+            ORDER BY said_at DESC
             """,
             user_id,
         )
@@ -188,7 +185,7 @@ async def _load_tier2_facts(
     Returns (lines, top_similarity, skipped_reason, embed_ms). A row last
     seen in this conversation is skipped there — the STM summary already
     covers it. Tier 1 has no such filter: an instruction is one row, and a
-    safety note must not depend on the summary.
+    standing instruction must not depend on the summary.
     """
     import asyncio
     import time

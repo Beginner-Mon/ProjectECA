@@ -407,11 +407,12 @@ async def test_the_scope_line_says_whether_the_conversation_is_read_from_its_sta
     assert "Messages to read (part of a conversation" in _user_message(later)
 
 
-def test_the_stored_facts_read_is_the_users_valid_facts_safety_first():
+def test_the_stored_facts_read_is_the_users_valid_facts_newest_first():
     tier1 = " ".join(fe._TIER1_SQL.split())
     assert "WHERE user_id = $1 AND valid = true AND tier = 1" in tier1
-    assert "safety" in tier1
-    assert "said_at DESC" in tier1
+    assert "safety" not in tier1
+    assert "ORDER BY said_at DESC" in tier1
+    assert "safety" not in " ".join(fe._TIER2_SQL.split())
     tier2 = " ".join(fe._TIER2_SQL.split())
     assert "WHERE user_id = $1 AND valid = true AND tier = 2" in tier2
     assert "ORDER BY said_at DESC" in tier2 and "LIMIT $2" in tier2
@@ -438,10 +439,8 @@ async def test_add_update_repeat_delete_and_the_marker_go_in_one_transaction(cap
     pg = _Pg([_msg(21, "assistant", "noted", marker=20), _msg(22, "user", "an update", marker=20)],
              facts=[back, knee])
     ops = [
-        {"op": "ADD", "type": "area", "topic": "running", "fact": " Wants to run 5 km by spring ",
-         "safety": False},
-        {"op": "UPDATE", "id": "f2", "type": "area", "topic": "knee rehab", "fact": "Left knee is pain-free when walking",
-         "safety": False},
+        {"op": "ADD", "type": "area", "topic": "running", "fact": " Wants to run 5 km by spring "},
+        {"op": "UPDATE", "id": "f2", "type": "area", "topic": "knee rehab", "fact": "Left knee is pain-free when walking"},
         {"op": "REPEAT", "id": "f1"},
         {"op": "DELETE", "id": "f1"},
     ]
@@ -454,9 +453,9 @@ async def test_add_update_repeat_delete_and_the_marker_go_in_one_transaction(cap
     assert conn.statements == [
         ("_MARK_SQL", (_CURRENT, _USER, 20, 22)),
         ("_ADD_SQL", (_USER, "Wants to run 5 km by spring", "area", "fact",
-                      2, "active", False, "running", 1, [""], _CURRENT)),
+                      2, "active", "running", 1, [""], _CURRENT)),
         ("_UPDATE_SQL", (knee["id"], _USER, "Left knee is pain-free when walking",
-                         "area", "knee rehab", False, "fact", 2, "active", _CURRENT)),
+                         "area", "knee rehab", "fact", 2, "active", _CURRENT)),
         ("_REPEAT_SQL", (back["id"], _USER, 2, ["", ""], _CURRENT)),
         ("_HIDE_SQL", (back["id"], _USER)),
     ]
@@ -507,17 +506,14 @@ def test_the_writes_are_scoped_to_the_user_and_to_extracted_facts():
 async def test_an_add_identical_to_a_stored_fact_is_skipped(caplog):
     pg = _Pg([_msg(2, "user", "again", marker=1)],
              facts=[_fact("Has lower back pain", source="user")])
-    ops = [{"op": "ADD", "type": "profile", "topic": "health", "fact": "Has lower back pain",
-            "safety": True},
-           {"op": "ADD", "type": "profile", "topic": "work", "fact": "Works night shifts",
-            "safety": False},
-           {"op": "ADD", "type": "profile", "topic": "work", "fact": "Works night shifts",
-            "safety": False}]
+    ops = [{"op": "ADD", "type": "profile", "topic": "health", "fact": "Has lower back pain"},
+           {"op": "ADD", "type": "profile", "topic": "work", "fact": "Works night shifts"},
+           {"op": "ADD", "type": "profile", "topic": "work", "fact": "Works night shifts"}]
     with caplog.at_level(logging.INFO, logger="langgraph.fact_extractor"):
         summary, _ = await _run(pg, _llm(ops))
     adds = [args for name, args in pg.transactions[0].statements if name == "_ADD_SQL"]
     assert adds == [(_USER, "Works night shifts", "profile", "fact",
-                     2, "active", False, "work", 1, [""], _CURRENT)]
+                     2, "active", "work", 1, [""], _CURRENT)]
     assert summary["added"] == 1
     assert _done(caplog.records)[0].dropped == {"duplicate": 2}
 
@@ -526,10 +522,10 @@ async def test_an_add_identical_to_a_stored_fact_is_skipped(caplog):
 async def test_update_and_delete_never_reach_a_typed_fact_or_an_unknown_id(caplog):
     typed = _fact("Prefers low-impact exercise", "preference", source="user")
     pg = _Pg([_msg(2, "user", "I do HIIT now", marker=1)], facts=[typed])
-    ops = [{"op": "UPDATE", "id": "f1", "type": "preference", "topic": "training", "fact": "Does HIIT", "safety": False},
+    ops = [{"op": "UPDATE", "id": "f1", "type": "preference", "topic": "training", "fact": "Does HIIT"},
            {"op": "DELETE", "id": "f1"},
            {"op": "REPEAT", "id": "f1"},
-           {"op": "UPDATE", "id": "f9", "type": "preference", "topic": "training", "fact": "Does HIIT", "safety": False},
+           {"op": "UPDATE", "id": "f9", "type": "preference", "topic": "training", "fact": "Does HIIT"},
            {"op": "DELETE", "id": str(typed["id"])}]
     with caplog.at_level(logging.INFO, logger="langgraph.fact_extractor"):
         summary, _ = await _run(pg, _llm(ops))
@@ -545,24 +541,15 @@ async def test_update_and_delete_never_reach_a_typed_fact_or_an_unknown_id(caplo
 async def test_the_checks_drop_and_count_what_breaks_a_limit(caplog):
     pg = _Pg([_msg(2, "user", "a lot", marker=1)])
     ops = [
-        {"op": "ADD", "type": "profile", "topic": "health", "fact": "x" * 301,
-         "safety": False},
-        {"op": "ADD", "type": "hobby", "topic": "health", "fact": "Likes swimming",
-         "safety": False},
-        {"op": "ADD", "type": "profile", "topic": "health", "fact": "Phone is 0912 345 678",
-         "safety": False},
-        {"op": "ADD", "type": "profile", "topic": "health", "fact": "Mail me at someone@example.com",
-         "safety": False},
-        {"op": "ADD", "type": "profile", "topic": "health", "fact": "Had knee surgery on 12/07/2026",
-         "safety": True},
-        {"op": "ADD", "type": "profile", "topic": "health", "fact": "Bad safety",
-         "safety": "yes"},
-        {"op": "ADD", "type": "profile", "topic": "one two three four five", "fact": "Long topic",
-         "safety": False},
-        {"op": "ADD", "type": "profile", "topic": "health", "fact": "Phone is 0912 345 678",
-         "safety": False},
-        {"op": "ADD", "type": "profile", "topic": "health", "fact": "Tenth operation",
-         "safety": False},
+        {"op": "ADD", "type": "profile", "topic": "health", "fact": "x" * 301},
+        {"op": "ADD", "type": "hobby", "topic": "health", "fact": "Likes swimming"},
+        {"op": "ADD", "type": "profile", "topic": "health", "fact": "Phone is 0912 345 678"},
+        {"op": "ADD", "type": "profile", "topic": "health", "fact": "Mail me at someone@example.com"},
+        {"op": "ADD", "type": "profile", "topic": "health", "fact": "Had knee surgery on 12/07/2026", "safety": True},
+        {"op": "ADD", "type": "profile", "topic": "health", "fact": "   "},
+        {"op": "ADD", "type": "profile", "topic": "one two three four five", "fact": "Long topic"},
+        {"op": "ADD", "type": "profile", "topic": "health", "fact": "Phone is 0912 345 678"},
+        {"op": "ADD", "type": "profile", "topic": "health", "fact": "Tenth operation"},
     ]
     with caplog.at_level(logging.INFO, logger="langgraph.fact_extractor"):
         summary, _ = await _run(pg, _llm(ops))
@@ -570,15 +557,14 @@ async def test_the_checks_drop_and_count_what_breaks_a_limit(caplog):
     assert adds == ["Had knee surgery on 12/07/2026"]
     assert summary["added"] == 1
     assert _done(caplog.records)[0].dropped == {
-        "too_long": 1, "bad_type": 1, "identifier": 3, "bad_safety": 1,
+        "too_long": 1, "bad_type": 1, "identifier": 3, "empty_fact": 1,
         "bad_topic": 1, "over_limit": 1}
 
 
 @pytest.mark.asyncio
 async def test_a_fact_of_exactly_300_characters_is_kept():
     pg = _Pg([_msg(2, "user", "long", marker=1)])
-    summary, _ = await _run(pg, _llm([{"op": "ADD", "type": "profile", "topic": "health", "fact": "y" * 300,
-                                       "safety": False}]))
+    summary, _ = await _run(pg, _llm([{"op": "ADD", "type": "profile", "topic": "health", "fact": "y" * 300}]))
     assert summary["added"] == 1 and fe.MAX_FACT_CHARS == 300 and fe.MAX_OPS == 8
     assert fe.MEMORY_TYPES == ("profile", "preference", "area", "event", "person",
                               "reference", "instruction")
@@ -590,8 +576,7 @@ async def test_a_write_that_touches_no_row_is_not_counted_as_applied(caplog):
     pg = _Pg([_msg(2, "user", "fine now", marker=1)], facts=[gone],
              tags={"_HIDE_SQL": "UPDATE 0", "_ADD_SQL": "INSERT 0 0"})
     ops = [{"op": "DELETE", "id": "f1"},
-           {"op": "ADD", "type": "profile", "topic": "health", "fact": "Stored beyond the sixty shown",
-            "safety": False}]
+           {"op": "ADD", "type": "profile", "topic": "health", "fact": "Stored beyond the sixty shown"}]
     with caplog.at_level(logging.INFO, logger="langgraph.fact_extractor"):
         summary, _ = await _run(pg, _llm(ops))
     assert (summary["added"], summary["deleted"]) == (0, 0)
@@ -601,8 +586,7 @@ async def test_a_write_that_touches_no_row_is_not_counted_as_applied(caplog):
 @pytest.mark.asyncio
 async def test_a_conversation_another_run_already_read_is_left_alone(caplog):
     pg = _Pg([_msg(2, "user", "I had knee surgery", marker=1)], tags={"_MARK_SQL": "UPDATE 0"})
-    ops = [{"op": "ADD", "type": "profile", "topic": "health", "fact": "Had knee surgery",
-            "safety": True}]
+    ops = [{"op": "ADD", "type": "profile", "topic": "health", "fact": "Had knee surgery"}]
     with caplog.at_level(logging.INFO, logger="langgraph.fact_extractor"):
         summary, _ = await _run(pg, _llm(ops))
     assert pg.transactions[0].statements == [("_MARK_SQL", (_CURRENT, _USER, 1, 2))]
@@ -677,23 +661,15 @@ async def test_no_fact_text_and_no_message_text_reaches_any_log_record(caplog):
          _msg(8, "assistant", "MSGSECRET what the assistant said", _OTHER, marker=3)],
         facts=[typed, stored])
     ops = [
-        {"op": "ADD", "type": "area", "topic": "health", "fact": "FACTSECRET new fact",
-         "safety": False},
-        {"op": "UPDATE", "id": "f2", "type": "area", "topic": "health", "fact": "FACTSECRET changed",
-         "safety": False},
+        {"op": "ADD", "type": "area", "topic": "health", "fact": "FACTSECRET new fact"},
+        {"op": "UPDATE", "id": "f2", "type": "area", "topic": "health", "fact": "FACTSECRET changed"},
         {"op": "DELETE", "id": "f1"},
-        {"op": "ADD", "type": "profile", "topic": "health", "fact": "FACTSECRET call 0912 345 678",
-         "safety": False},
-        {"op": "ADD", "type": "profile", "topic": "health", "fact": "FACTSECRET " + "x" * 300,
-         "safety": False},
-        {"op": "ADD", "type": "profile", "topic": "health", "fact": "FACTSECRET second",
-         "safety": False},
-        {"op": "ADD", "type": "profile", "topic": "health", "fact": "FACTSECRET third",
-         "safety": False},
-        {"op": "ADD", "type": "profile", "topic": "health", "fact": "FACTSECRET fourth",
-         "safety": False},
-        {"op": "ADD", "type": "profile", "topic": "health", "fact": "FACTSECRET over the limit",
-         "safety": False},
+        {"op": "ADD", "type": "profile", "topic": "health", "fact": "FACTSECRET call 0912 345 678"},
+        {"op": "ADD", "type": "profile", "topic": "health", "fact": "FACTSECRET " + "x" * 300},
+        {"op": "ADD", "type": "profile", "topic": "health", "fact": "FACTSECRET second"},
+        {"op": "ADD", "type": "profile", "topic": "health", "fact": "FACTSECRET third"},
+        {"op": "ADD", "type": "profile", "topic": "health", "fact": "FACTSECRET fourth"},
+        {"op": "ADD", "type": "profile", "topic": "health", "fact": "FACTSECRET over the limit"},
     ]
     with caplog.at_level(logging.DEBUG):
         summary, _ = await _run(pg, _llm(ops))
@@ -711,8 +687,7 @@ async def test_no_fact_text_and_no_message_text_reaches_any_log_record(caplog):
 async def test_the_done_line_carries_counts_and_ids_only(caplog):
     pg = _Pg([_msg(2, "user", "hello", marker=1)])
     with caplog.at_level(logging.INFO, logger="langgraph.fact_extractor"):
-        await _run(pg, _llm([{"op": "ADD", "type": "preference", "topic": "yoga", "fact": "Likes yoga",
-                              "safety": False}]))
+        await _run(pg, _llm([{"op": "ADD", "type": "preference", "topic": "yoga", "fact": "Likes yoga"}]))
     (done,) = _done(caplog.records)
     # A handler that formats the record adds these two.
     standard = set(vars(logging.LogRecord("", 0, "", 0, "", (), None))) | {"message", "asctime"}
@@ -743,18 +718,16 @@ def test_the_probes_pure_helpers_still_work():
     from langgraph_agents.local_tests import run_memory_probe as probe
 
     stored = [{"id": "f1", "fact": "Has lower back pain", "type": "profile",
-               "topic": "health", "safety": True, "locked": False}]
+               "topic": "health", "locked": False}]
     kept, dropped = probe.enforce(
-        [{"op": "ADD", "type": "profile", "topic": "health", "fact": "Had ACL surgery in March 2025",
-           "safety": True},
+        [{"op": "ADD", "type": "profile", "topic": "health", "fact": "Had ACL surgery in March 2025"},
          {"op": "DELETE", "id": "f1"},
-         {"op": "ADD", "type": "profile", "topic": "health", "fact": "Call 0912 345 678",
-           "safety": False}], stored)
+         {"op": "ADD", "type": "profile", "topic": "health", "fact": "Call 0912 345 678"}], stored)
     assert [d["reason"] for d in dropped] == ["identifier"]
 
     facts = probe._apply_ops(stored, kept, [0])
     assert facts == [{"id": "n1", "fact": "Had ACL surgery in March 2025",
-                      "type": "profile", "topic": "health", "safety": True,
+                      "type": "profile", "topic": "health",
                       "locked": False}]
 
     score = probe._score(
@@ -771,32 +744,30 @@ def test_the_probes_pure_helpers_still_work():
 async def test_the_probes_call_goes_through_this_modules_request():
     from langgraph_agents.local_tests import run_memory_probe as probe
 
-    llm = _llm([{"op": "ADD", "type": "preference", "topic": "yoga", "fact": "Likes yoga",
-                        "safety": False}])
+    llm = _llm([{"op": "ADD", "type": "preference", "topic": "yoga", "fact": "Likes yoga"}])
     record = await probe._call(llm, "the user message", [])
     assert llm.ainvoke.await_args.args == (
         [("system", fe.MEMORY_PROMPT), ("user", "the user message")],)
     assert record["parse_ok"] is True and record["error"] is None
-    assert record["kept_ops"] == [{"op": "ADD", "type": "preference", "topic": "yoga", "fact": "Likes yoga",
-                                   "safety": False}]
+    assert record["kept_ops"] == [{"op": "ADD", "type": "preference", "topic": "yoga", "fact": "Likes yoga"}]
 
 
 def test_the_prompt_wants_repeat_not_add_and_project_scoped_decisions():
     flat = " ".join(fe.MEMORY_PROMPT.split())
-    assert "REPEAT that id" in flat
-    assert "Never ADD a second item" in flat
-    assert "copied text the user pasted in" in flat
+    assert "ONE THING, ONE PLACE" in flat
+    assert "it already says it: REPEAT it" in flat
+    assert "look for a stored item of ANY type about the same thing" in flat
+    assert "material the user asked the assistant to work on" in flat
 
 
-def test_restriction_covers_avoidance_as_fact_or_instruction():
-    """Safety boundary (Tri 15/10): anything about exercises, movements, loads,
-    activities or body parts to avoid is a restriction — as a fact about the
-    user or as an instruction to the assistant. Style is only how ECA talks
-    and never touches exercises or the body."""
+def test_the_prompt_has_no_safety_flag_and_is_domain_neutral():
+    """v3.1 (Tri 23/10): no safety flag in the contract, and no wellness or
+    physical-therapy role in the prompt."""
     flat = " ".join(fe.MEMORY_PROMPT.split())
-    assert "safety" in flat
-    assert "A person's" in flat
+    assert "safety" not in flat.lower()
+    assert "physical-therapy" not in flat and "wellness" not in flat
     assert "instruction: how the assistant should behave." in flat
+    assert "At most 8 operations" in flat
 
 
 def test_the_probes_live_slices_follow_what_production_sends():

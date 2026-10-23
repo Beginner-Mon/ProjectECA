@@ -109,7 +109,6 @@ class UserMemoryCreate(BaseModel):
     project: Optional[str] = Field(default=None, max_length=60)
     memory_type: Optional[Literal["profile", "preference", "area", "event",
                                  "person", "reference", "instruction"]] = None
-    safety: Optional[bool] = None
 
     @field_validator("project", mode="before")
     @classmethod
@@ -143,7 +142,6 @@ class UserMemoryItem(BaseModel):
     updated_at: Optional[str] = None
     said_at: Optional[str] = None
     memory_type: Optional[str] = None
-    safety: Optional[bool] = None
 
 
 class UserMemoryListResponse(BaseModel):
@@ -156,7 +154,6 @@ class UserMemoryUpdate(BaseModel):
     expected_updated_at: datetime
     memory_type: Optional[Literal["profile", "preference", "area", "event",
                                  "person", "reference", "instruction"]] = None
-    safety: Optional[bool] = None
 
     @field_validator("fact_text", mode="before")
     @classmethod

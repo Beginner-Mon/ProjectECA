@@ -21,28 +21,28 @@ _MISSING = object()
 
 def _add(**over):
     op = {"op": "ADD", "type": "profile", "topic": "routine",
-          "fact": "Plays pickleball.", "safety": False}
+          "fact": "Plays pickleball."}
     op.update(over)
     return op
 
 
 def _update(**over):
     op = {"op": "UPDATE", "id": "f1", "type": "profile", "topic": "routine",
-          "fact": "Plays pickleball twice a week.", "safety": False}
+          "fact": "Plays pickleball twice a week."}
     op.update(over)
     return op
 
 
 def _stored(**over):
     row = {"id": "f1", "type": "profile", "topic": "routine",
-           "safety": False, "fact": "Plays pickleball.", "locked": False}
+           "fact": "Plays pickleball.", "locked": False}
     row.update(over)
     return row
 
 
 def _row(**over):
     row = {"id": "f1", "fact": "Plays pickleball.", "type": "profile",
-           "topic": "routine", "safety": False, "kind": "fact", "tier": 2,
+           "topic": "routine", "kind": "fact", "tier": 2,
            "status": "active", "seen_count": 1, "seen_projects": [""],
            "last_seen_session_id": "s-old", "source": "extracted"}
     row.update(over)
@@ -102,18 +102,23 @@ def test_topic_limits(topic, reason):
         assert _reasons(dropped) == [reason]
 
 
-# ── enforce: safety ──────────────────────────────────────────────────────
+# ── enforce: a "safety" key from the model is ignored ────────────────────
 
-@pytest.mark.parametrize("safety", [1, 0, "true", "false", None, _MISSING])
-def test_add_non_bool_safety_is_dropped(safety):
-    op = _add()
-    if safety is _MISSING:
-        op.pop("safety")
-    else:
-        op["safety"] = safety
-    kept, dropped = fe.enforce([op], [])
-    assert kept == []
-    assert _reasons(dropped) == ["bad_safety"]
+@pytest.mark.parametrize("kind", ["ADD", "UPDATE"])
+@pytest.mark.parametrize("safety", [True, False, 1, "yes", None])
+def test_a_safety_key_is_ignored_not_a_reason_to_drop(kind, safety):
+    op = _add(safety=safety) if kind == "ADD" else _update(safety=safety)
+    kept, dropped = fe.enforce([op], [_stored()])
+    assert dropped == []
+    assert "safety" not in _single(kept, dropped)
+
+
+@pytest.mark.parametrize("kind", ["ADD", "UPDATE"])
+def test_a_missing_safety_key_is_fine(kind):
+    op = _add() if kind == "ADD" else _update()
+    assert "safety" not in op
+    kept, dropped = fe.enforce([op], [_stored()])
+    assert _single(kept, dropped)["op"] == kind
 
 
 # ── enforce: topic reuse ─────────────────────────────────────────────────
@@ -175,11 +180,12 @@ def test_operations_after_the_eighth_are_dropped():
 
 # ── apply_policy: ADD tier and status ────────────────────────────────────
 
-@pytest.mark.parametrize("typ", TYPES)
-def test_add_safety_true_is_tier1_active_for_every_type(typ):
-    out = fe.apply_policy(None, _add(type=typ, safety=True), CTX)
+@pytest.mark.parametrize("typ", NON_INSTRUCTION_TYPES)
+def test_a_health_or_condition_item_is_tier2_active(typ):
+    out = fe.apply_policy(None, _add(type=typ, topic="health"), CTX)
     assert out["action"] == "add"
-    assert (out["fields"]["tier"], out["fields"]["status"]) == (1, "active")
+    assert "safety" not in out["fields"]
+    assert (out["fields"]["tier"], out["fields"]["status"]) == (2, "active")
 
 
 @pytest.mark.parametrize("topic", ["knee rehab", "KNEE  REHAB", " Knee Rehab "])
@@ -195,8 +201,8 @@ def test_add_instruction_outside_area_topics_is_tier1():
 
 
 @pytest.mark.parametrize("typ", NON_INSTRUCTION_TYPES)
-def test_add_other_non_safety_type_is_tier2(typ):
-    out = fe.apply_policy(None, _add(type=typ, safety=False), CTX)
+def test_add_non_instruction_type_is_tier2(typ):
+    out = fe.apply_policy(None, _add(type=typ), CTX)
     assert (out["fields"]["tier"], out["fields"]["status"]) == (2, "active")
 
 
@@ -252,22 +258,23 @@ def test_repeat_in_another_session_refreshes(seen_count, row_type, tier):
 # ── apply_policy: UPDATE recomputes the tier ─────────────────────────────
 
 @pytest.mark.parametrize(
-    "row_type, row_tier, op_type, topic, safety, tier",
+    "row_type, row_tier, op_type, topic, tier",
     [
-        ("profile", 2, "profile", "routine", True, 1),
-        ("profile", 1, "profile", "routine", False, 2),
-        ("event", 2, "instruction", "knee rehab", False, 2),
-        ("event", 2, "instruction", "answer style", False, 1),
-        ("instruction", 1, "instruction", "knee rehab", True, 1),
-        ("preference", 1, "reference", "app", False, 2),
+        ("profile", 2, "profile", "health", 2),
+        ("profile", 1, "profile", "routine", 2),
+        ("event", 2, "instruction", "knee rehab", 2),
+        ("event", 2, "instruction", "answer style", 1),
+        ("instruction", 1, "instruction", "knee rehab", 2),
+        ("preference", 1, "reference", "app", 2),
     ],
 )
-def test_update_recomputes_tier_from_new_type_topic_and_safety(
-        row_type, row_tier, op_type, topic, safety, tier):
+def test_update_recomputes_tier_from_new_type_and_topic(
+        row_type, row_tier, op_type, topic, tier):
     row = _row(type=row_type, tier=row_tier)
     out = fe.apply_policy(
-        row, _update(type=op_type, topic=topic, safety=safety), CTX)
+        row, _update(type=op_type, topic=topic), CTX)
     assert out["action"] == "rewrite"
+    assert "safety" not in out["fields"]
     assert out["fields"]["memory_type"] == op_type
     assert out["fields"]["tier"] == tier
     assert out["fields"]["status"] == "active"

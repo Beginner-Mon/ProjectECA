@@ -1,4 +1,4 @@
-"""user_memory: type + safety + topic rename (memory-store S1a).
+"""user_memory: type + topic rename, tier 1 = instructions (memory-store S1a).
 
 Revision ID: 017_memory_types
 Revises: 016_memory_tiers
@@ -6,19 +6,20 @@ Create Date: 2026-10-23
 
 WHAT
 ----
-1. `user_memory` gains `memory_type` (one of seven types) and `safety`
-   (whether ignoring the item could harm the user). `memory_type` is added
+1. `user_memory` gains `memory_type` (one of seven types). It is added
    nullable, backfilled from the legacy `kind`/`category`, then set NOT NULL
-   with DEFAULT 'profile' and a CHECK. `safety` is NOT NULL DEFAULT false
-   and backfilled from `category`.
+   with DEFAULT 'profile' and a CHECK.
 2. Candidate status is retired: every `candidate` row becomes `active`
    (D1 — no new row is ever a candidate).
 3. `project` keeps its value (it becomes the item's topic); its comment is
    rewritten. `category` stays nullable and legacy; `kind` is kept in sync
    with `memory_type`.
+4. Tier 1 now holds instructions only: every `kind = 'fact'` row on tier 1
+   moves to tier 2.
 
 Downgrade drops what upgrade added and restores the old `project` comment.
-It does NOT restore `candidate` status (rows stay `active`).
+It does NOT restore `candidate` status (rows stay `active`), and it does NOT
+move the rows of step 4 back to tier 1.
 """
 
 from typing import Sequence, Union
@@ -72,25 +73,18 @@ def upgrade() -> None:
     )
 
     op.execute(
-        "ALTER TABLE user_memory "
-        "ADD COLUMN IF NOT EXISTS safety BOOLEAN NOT NULL DEFAULT false"
-    )
-    op.execute(
-        "UPDATE user_memory SET safety = COALESCE(category IN ('condition', 'restriction'), false)"
+        "UPDATE user_memory SET status = 'active' WHERE status = 'candidate'"
     )
 
+    # Tier 1 holds instructions only.
     op.execute(
-        "UPDATE user_memory SET status = 'active' WHERE status = 'candidate'"
+        "UPDATE user_memory SET tier = 2 WHERE kind = 'fact' AND tier = 1"
     )
 
     op.execute(
         "COMMENT ON COLUMN user_memory.memory_type IS "
         "'Type of the item: profile, preference, area, event, person, "
         "reference or instruction.'"
-    )
-    op.execute(
-        "COMMENT ON COLUMN user_memory.safety IS "
-        "'True when ignoring the item could harm the user.'"
     )
     op.execute(
         "COMMENT ON COLUMN user_memory.project IS "
@@ -107,9 +101,6 @@ def downgrade() -> None:
     op.execute(
         "ALTER TABLE user_memory "
         "DROP CONSTRAINT IF EXISTS user_memory_memory_type_check"
-    )
-    op.execute(
-        "ALTER TABLE user_memory DROP COLUMN IF EXISTS safety"
     )
     op.execute(
         "ALTER TABLE user_memory DROP COLUMN IF EXISTS memory_type"

@@ -115,7 +115,6 @@ async def create_user_memory(body: UserMemoryCreate, uid: str = Depends(current_
     memory_type = body.memory_type
     if memory_type is None:
         memory_type = "instruction" if body.kind == "instruction" else "profile"
-    safety = body.safety if body.safety is not None else False
     kind = "instruction" if memory_type == "instruction" else "fact"
 
     async with pg.transaction() as conn:
@@ -125,9 +124,7 @@ async def create_user_memory(body: UserMemoryCreate, uid: str = Depends(current_
             "INSERT INTO users (id) VALUES ($1::uuid) ON CONFLICT (id) DO NOTHING", uid,
         )
         tier = 2
-        if safety or memory_type != "instruction":
-            tier = 1 if safety else 2
-        else:
+        if memory_type == "instruction":
             try:
                 rows = await conn.fetch(
                     "SELECT project FROM user_memory WHERE user_id = $1::uuid "
@@ -143,11 +140,11 @@ async def create_user_memory(body: UserMemoryCreate, uid: str = Depends(current_
                 tier = 1
         row = await conn.fetchrow(
             """INSERT INTO user_memory (user_id, fact_text, category, kind, tier,
-                                          status, project, source, memory_type, safety)
-               VALUES ($1::uuid, $2, $3, $4, $5, 'active', $6, 'user', $7, $8)
+                                          status, project, source, memory_type)
+               VALUES ($1::uuid, $2, $3, $4, $5, 'active', $6, 'user', $7)
                RETURNING id, created_at, updated_at, said_at""",
             uid, body.fact_text, body.category, kind, tier, body.project,
-            memory_type, safety,
+            memory_type,
         )
 
     return UserMemoryItem(
@@ -164,7 +161,6 @@ async def create_user_memory(body: UserMemoryCreate, uid: str = Depends(current_
         updated_at=row["updated_at"].isoformat(),
         said_at=row["said_at"].isoformat() if row["said_at"] else None,
         memory_type=memory_type,
-        safety=safety,
     )
 
 
@@ -177,7 +173,7 @@ async def list_user_memory(uid: str = Depends(current_user_id)):
     rows = await pg.fetch(
         """SELECT id, fact_text, category, kind, tier, status, project,
                   valid, source, created_at, updated_at, said_at,
-                  memory_type, safety
+                  memory_type
            FROM user_memory
            WHERE user_id = $1::uuid AND valid = true
            ORDER BY created_at DESC, id""",
@@ -198,7 +194,6 @@ async def list_user_memory(uid: str = Depends(current_user_id)):
             updated_at=r["updated_at"].isoformat(),
             said_at=r["said_at"].isoformat() if r["said_at"] else None,
             memory_type=(r["memory_type"] if "memory_type" in r else None),
-            safety=(r["safety"] if "safety" in r else None),
         )
         for r in rows
     ])
@@ -216,7 +211,7 @@ async def update_user_memory(
     pg = get_pg_client()
     async with pg.transaction() as conn:
         previous = await conn.fetchrow(
-            """SELECT updated_at, memory_type, safety, kind, tier FROM user_memory
+            """SELECT updated_at, memory_type, kind, tier FROM user_memory
                WHERE id = $1::uuid AND user_id = $2::uuid AND valid = true
                FOR UPDATE""",
             fact_id, uid,
@@ -234,23 +229,15 @@ async def update_user_memory(
             except Exception:
                 kind_prev = "fact"
             memory_type = "instruction" if kind_prev == "instruction" else "profile"
-        try:
-            safety = previous["safety"]
-        except Exception:
-            safety = False
         if body.memory_type is not None:
             memory_type = body.memory_type
-        if body.safety is not None:
-            safety = body.safety
         kind = "instruction" if memory_type == "instruction" else "fact"
         try:
             tier = previous["tier"]
         except Exception:
-            tier = 1 if (memory_type == "instruction" or safety) else 2
-        if body.memory_type is not None or body.safety is not None:
-            if safety:
-                tier = 1
-            elif memory_type != "instruction":
+            tier = 1 if memory_type == "instruction" else 2
+        if body.memory_type is not None:
+            if memory_type != "instruction":
                 tier = 2
             else:
                 try:
@@ -273,13 +260,13 @@ async def update_user_memory(
                     tier = 1
 
         row = await conn.fetchrow(
-            """UPDATE user_memory SET fact_text = $3, memory_type = $4, safety = $5,
-                  kind = $6, tier = $7, said_at = now(), updated_at = now()
+            """UPDATE user_memory SET fact_text = $3, memory_type = $4,
+                  kind = $5, tier = $6, said_at = now(), updated_at = now()
                WHERE id = $1::uuid AND user_id = $2::uuid AND valid = true
                RETURNING id, fact_text, category, kind, tier, status, project,
                          valid, source, created_at, updated_at, said_at,
-                         memory_type, safety""",
-            fact_id, uid, body.fact_text, memory_type, safety, kind, tier,
+                         memory_type""",
+            fact_id, uid, body.fact_text, memory_type, kind, tier,
         )
     return UserMemoryItem(
         id=str(row["id"]), fact_text=row["fact_text"], category=row["category"],
@@ -288,7 +275,6 @@ async def update_user_memory(
         created_at=row["created_at"].isoformat(), updated_at=row["updated_at"].isoformat(),
         said_at=row["said_at"].isoformat() if row["said_at"] else None,
         memory_type=row.get("memory_type"),
-        safety=row.get("safety"),
     )
 
 

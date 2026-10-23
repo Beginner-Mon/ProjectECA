@@ -67,6 +67,12 @@ def _fold(s: str) -> str:
     return "".join(c for c in s if unicodedata.category(c) != "Mn")
 
 
+def _fold_group(s: str) -> str:
+    """Như `_fold`, thêm bỏ dấu phẩy và gộp khoảng trắng: dùng để so khớp `groups`
+    ("October 22 2026" khớp cụm "October 22, 2026"). Không dùng cho `forbidden`."""
+    return " ".join(_fold(s).replace(",", " ").split())
+
+
 def _lower_nfc(s: str) -> str:
     return unicodedata.normalize("NFC", (s or "").lower())
 
@@ -167,9 +173,9 @@ def _matches(exp: dict, op: dict) -> bool:
     if exp.get("id") is not None and op.get("id") != exp["id"]:
         return False
     if op["op"] in ("ADD", "UPDATE"):
-        folded = _fold(op["fact"])
+        folded = _fold_group(op["fact"])
         for group in exp.get("groups") or []:
-            if not any(_fold(p) in folded for p in group):
+            if not any(_fold_group(p) in folded for p in group):
                 return False
     return True
 
@@ -198,8 +204,8 @@ def _forbidden_op_matches(spec: dict, op: Any) -> bool:
         fact = op.get("fact")
         if not isinstance(fact, str):
             return False
-        folded = _fold(fact)
-        if not all(any(_fold(p) in folded for p in g) for g in spec["groups"]):
+        folded = _fold_group(fact)
+        if not all(any(_fold_group(p) in folded for p in g) for g in spec["groups"]):
             return False
     return True
 
@@ -609,6 +615,8 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
     p = argparse.ArgumentParser(description="Đo bước lọc fact LTM (memory-v2 A2).")
     p.add_argument("--label", default="V0")
     p.add_argument("--probes", default=str(_THIS_FILE.parent / "memory_probes.yaml"))
+    p.add_argument("--rescore", default="",
+                   help="JSON của lần chạy trước: chấm lại với yaml hiện tại, không gọi model.")
     p.add_argument("--only", default="", help="Chỉ chạy các id này, cách nhau bằng dấu phẩy.")
     p.add_argument("--mode", default="both", choices=["both", "all", "session", "turn", "live"])
     p.add_argument("--out", default="",
@@ -616,6 +624,32 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
     p.add_argument("--pace-seconds", type=float, default=0.0,
                    help="Nghỉ giữa các hội thoại (Groq giới hạn token/phút).")
     return p.parse_args(argv)
+
+
+def _rescore(recorded: dict, convs: list[dict]) -> list[dict]:
+    """Chấm lại kết quả đã ghi (không gọi model): lấy kept_ops/dropped của từng
+    lượt trong JSON của lần chạy trước, chấm bằng `_score` với kỳ vọng HIỆN TẠI
+    trong yaml. Hội thoại không còn trong yaml thì giữ nguyên."""
+    by_id = {c["id"]: c for c in convs}
+    results: list[dict] = []
+    for r in recorded["results"]:
+        conv = by_id.get(r["id"])
+        if conv is None:
+            results.append(r)
+            continue
+        r = dict(r, expect=conv["expect"])
+        modes: dict[str, Any] = {}
+        for name, md in r["modes"].items():
+            ops: list[dict] = []
+            dropped: list[dict] = []
+            for c in md["calls"]:
+                ops += [dict(o, turn=c["turn"]) if c.get("turn") else o
+                        for o in c["kept_ops"]]
+                dropped += c["dropped"]
+            modes[name] = dict(md, score=_score(conv["expect"], ops, dropped))
+        r["modes"] = modes
+        results.append(r)
+    return results
 
 
 def _validate(convs: list[dict]) -> None:
@@ -633,12 +667,19 @@ async def amain(args: argparse.Namespace) -> int:
     from langgraph_agents.shared.env import load_env
     from langgraph_agents.shared.logging import configure_root_logger
 
-    load_env()
-    configure_root_logger()
-
     with open(args.probes, encoding="utf-8") as f:
         convs = yaml.safe_load(f)["probes"]
     _validate(convs)
+
+    if args.rescore:
+        with open(args.rescore, encoding="utf-8") as f:
+            recorded = json.load(f)
+        results = _rescore(recorded, convs)
+        return _write_report(args, results, recorded["modes"],
+                             recorded.get("prompt", MEMORY_PROMPT))
+
+    load_env()
+    configure_root_logger()
     only = {s.strip() for s in args.only.split(",") if s.strip()}
     selected = [c for c in convs if not only or c["id"] in only]
     if not selected:
@@ -676,6 +717,11 @@ async def amain(args: argparse.Namespace) -> int:
                   f"{first_calls[0]['error']}")
             return 4
 
+    return _write_report(args, results, modes, MEMORY_PROMPT)
+
+
+def _write_report(args: argparse.Namespace, results: list[dict], modes: list[str],
+                  prompt: str) -> int:
     out = args.out or str(_TRACKING_DIR / f"memory-probe-{args.label}.md")
     Path(out).parent.mkdir(parents=True, exist_ok=True)
     with open(out, "w", encoding="utf-8") as f:
@@ -683,7 +729,7 @@ async def amain(args: argparse.Namespace) -> int:
     json_out = str(Path(out).with_suffix("")) + ".json"
     with open(json_out, "w", encoding="utf-8") as f:
         json.dump({"label": args.label, "role": "memory", "modes": modes,
-                   "prompt": MEMORY_PROMPT,
+                   "prompt": prompt,
                    "stats": {m: _mode_stats(results, m) for m in modes},
                    "results": results}, f, ensure_ascii=False, indent=1)
     print(f"Đã ghi {out} ({len(results)} hội thoại).")

@@ -13,8 +13,11 @@
 #                    type / topic (tuỳ chọn; chỉ ghi nhận lệch, không FAIL);
 #                    id (UPDATE/REPEAT/DELETE); groups = danh sách nhóm cụm từ, mỗi
 #                    nhóm cần ít nhất một cụm xuất hiện trong fact (so khớp không
-#                    phân biệt hoa thường và dấu). Fact viết bằng tiếng Anh nên mọi
-#                    nhóm đều có cụm tiếng Anh. Một phần tử có thể là
+#                    phân biệt hoa thường, dấu và dấu phẩy: "October 22 2026" khớp
+#                    cụm "October 22, 2026"). Fact viết bằng tiếng Anh nên mọi
+#                    nhóm đều có cụm tiếng Anh. UPDATE/REPEAT không ghi `id` = khớp
+#                    mọi id, kể cả id n<k> của item do lượt trước tạo ra trong cùng
+#                    lần chạy (ví dụ c20). Một phần tử có thể là
 #                    {one_of: [<thao tác>, ...]} = chấp nhận một trong các thao tác.
 #     acceptable   — thao tác KHÔNG bắt buộc nhưng chấp nhận được (fact đúng, vô hại).
 #     forbidden    — cụm từ không được xuất hiện trong bất kỳ fact nào (so khớp
@@ -193,7 +196,9 @@ probes:
         - {op: UPDATE, id: f1, type: profile, groups: [["lift", "heavy", "nâng"]]}
       forbidden: []
 
-  # ── 11. User mâu thuẫn fact bị KHOÁ → ADD, không UPDATE/DELETE ─────────
+  # ── 11. User mâu thuẫn fact bị KHOÁ → ADD (không UPDATE/DELETE) ────────
+  # v3.1 tách "sự kiện" và "tình trạng kéo dài": ADD profile (mắt cá) là bắt buộc,
+  # ADD event kèm theo cũng được chấp nhận.
   - id: c11_vi_locked_contradict
     lang: vi
     date: "2026-10-13"
@@ -207,6 +212,8 @@ probes:
     expect:
       ops:
         - {op: ADD, type: profile, groups: [["bong gân", "mắt cá", "sprain", "ankle"]]}
+      acceptable:
+        - {op: ADD, type: event, groups: [["bong gân", "mắt cá", "sprain", "ankle"]]}
       forbidden: ["tuần trước", "last week"]
       forbidden_ops:
         - {op: DELETE, id: f1}
@@ -345,6 +352,8 @@ probes:
       forbidden: ["3 tháng", "ba tháng", "cách đây", "3 months", "three months", "ago"]
 
   # ── 20. Hội thoại dài, ba fact riêng biệt ──────────────────────────────
+  # v3.1 "một việc, một chỗ": hạn chế của cổ tay có thể ADD riêng hoặc UPDATE vào
+  # item cổ tay đã tạo ở lượt trước (id n<k> gán lúc chạy, nên không ghi id).
   - id: c20_en_three_facts
     lang: en
     date: "2026-10-13"
@@ -362,8 +371,12 @@ probes:
     expect:
       ops:
         - {op: ADD, type: event, groups: [["wrist"], ["September", "2026-09", "09/2026", "9/2026"]]}
-        - {op: ADD, type: profile, groups: [["push-up", "weight-bearing", "weight bearing"]]}
+        - one_of:
+            - {op: ADD, type: profile, groups: [["push-up", "weight-bearing", "weight bearing"]]}
+            - {op: UPDATE, groups: [["push-up", "weight-bearing", "weight bearing"]]}
         - {op: ADD, type: area, groups: [["ski"], ["February"]]}
+      acceptable:
+        - {op: ADD, type: profile, groups: [["wrist"]]}
       forbidden: ["last month"]
 
   # ── 21–26. Sở thích, thói quen: nhắc thoáng qua trong chuyện phiếm ─────
@@ -539,6 +552,8 @@ probes:
     expect:
       ops:
         - {op: ADD, type: area, groups: [["5km", "5 km", "5k"], ["mùa xuân", "spring"]]}
+      acceptable:
+        - {op: REPEAT}
       forbidden: []
 
   - id: c33_vi_session_only_decision
@@ -971,6 +986,8 @@ probes:
       forbidden_ops:
         - {op: ADD, type: instruction, topic_not: "knee rehab"}
 
+  # Một buổi sáng đánh pickleball chưa nói lên thói quen: lưu "plays pickleball" là suy
+  # diễn (v3.1 quy tắc 1). Không bắt buộc gì; ADD profile pickleball chấp nhận được.
   - id: n04_vi_habit_in_passing
     lang: vi
     date: "2026-10-23"
@@ -979,7 +996,8 @@ probes:
       - {role: user, content: "Sáng nay đánh pickleball xong chân hơi mỏi."}
       - {role: assistant, content: "Đánh xong mỏi chân là bình thường. Bạn nên giãn cơ bắp chân và đùi vài phút để mai đỡ ê."}
     expect:
-      ops:
+      ops: []
+      acceptable:
         - {op: ADD, type: profile, groups: [["pickleball"]]}
       forbidden: ["tired", "sore", "mỏi", "fatigue", "legs"]
 

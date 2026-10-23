@@ -163,6 +163,8 @@ async def _call(structured_llm: Any, user_msg: str, stored: list[dict]
 # ── Chấm điểm ────────────────────────────────────────────────────────────
 
 def _matches(exp: dict, op: dict) -> bool:
+    if exp.get("one_of"):  # any one of several alternative expectations
+        return any(_matches(alt, op) for alt in exp["one_of"])
     if op["op"] != exp["op"]:
         return False
     if exp.get("id") is not None and op.get("id") != exp["id"]:
@@ -172,6 +174,38 @@ def _matches(exp: dict, op: dict) -> bool:
         for group in exp.get("groups") or []:
             if not any(_fold(p) in folded for p in group):
                 return False
+    return True
+
+
+def _forbidden_op_matches(spec: dict, op: Any) -> bool:
+    """True when `op` is an operation the case forbids (`forbidden_ops`).
+
+    spec keys, all optional except op: op (name or list of names), id, type,
+    type_not (op type differs), topic_not (op topic differs, case-insensitive),
+    safety (bool, op must carry it), groups (phrase groups over the fact)."""
+    if not isinstance(op, dict):
+        return False
+    names = spec["op"] if isinstance(spec["op"], list) else [spec["op"]]
+    if op.get("op") not in names:
+        return False
+    if spec.get("id") is not None and op.get("id") != spec["id"]:
+        return False
+    if spec.get("type") is not None and op.get("type") != spec["type"]:
+        return False
+    if spec.get("type_not") is not None and op.get("type") == spec["type_not"]:
+        return False
+    if spec.get("topic_not") is not None and (
+            str(op.get("topic") or "").casefold() == str(spec["topic_not"]).casefold()):
+        return False
+    if spec.get("safety") is not None and op.get("safety") != spec["safety"]:
+        return False
+    if spec.get("groups"):
+        fact = op.get("fact")
+        if not isinstance(fact, str):
+            return False
+        folded = _fold(fact)
+        if not all(any(_fold(p) in folded for p in g) for g in spec["groups"]):
+            return False
     return True
 
 
@@ -224,7 +258,17 @@ def _score(expect: dict, ops: list[dict], dropped: list[dict]) -> dict[str, Any]
         for phrase in forbidden:
             if _lower_nfc(phrase) in text:
                 hits.append({"phrase": phrase, "op": op})
+    for spec in expect.get("forbidden_ops") or []:
+        for op in ops:
+            if _forbidden_op_matches(spec, op):
+                hits.append({"phrase": "forbidden_ops " + json.dumps(
+                    spec, ensure_ascii=False), "op": op})
     dropped_hits: list[dict] = []
+    for spec in expect.get("forbidden_ops") or []:
+        for d in dropped:
+            if _forbidden_op_matches(spec, d["op"]):
+                dropped_hits.append({"phrase": "forbidden_ops " + json.dumps(
+                    spec, ensure_ascii=False), "reason": d["reason"]})
     for d in dropped:
         fact = d["op"].get("fact") if isinstance(d["op"], dict) else None
         if isinstance(fact, str):
@@ -417,11 +461,19 @@ def _op_str(op: dict) -> str:
     return f"{op['op']}{ident} [{label}] \"{op['fact']}\"{turn}"
 
 
+def _exp_label(e: dict) -> str:
+    bits = [str(e[k]) for k in ("type", "topic") if e.get(k)]
+    if e.get("safety") is not None:
+        bits.append(f"safety={e['safety']}")
+    return f" [{', '.join(bits)}]" if bits else ""
+
+
 def _exp_str(e: dict) -> str:
+    if e.get("one_of"):
+        return " OR ".join(_exp_str(x) for x in e["one_of"])
     ident = f" {e['id']}" if e.get("id") else ""
-    cat = f" [{e['category']}]" if e.get("category") else ""
     groups = " AND ".join("(" + " | ".join(g) + ")" for g in e.get("groups") or [])
-    return f"{e['op']}{ident}{cat} {groups}".rstrip()
+    return f"{e['op']}{ident}{_exp_label(e)} {groups}".rstrip()
 
 
 def _render_report(label: str, results: list[dict], modes: list[str]) -> str:
@@ -554,8 +606,10 @@ def _render_report(label: str, results: list[dict], modes: list[str]) -> str:
             for h in sc["forbidden_hits"]:
                 L.append(f"  - CỤM CẤM `{h['phrase']}` trong {_op_str(h['op'])}")
             for cm in sc["category_mismatch"]:
-                L.append(f"  - category lệch: kỳ vọng {cm['expected']['category']}, "
-                         f"được {cm['got']['category']}")
+                g = cm["got"]
+                L.append(f"  - lệch type/topic/safety: kỳ vọng{_exp_label(cm['expected'])}, "
+                         f"được [type={g.get('type')}, topic={g.get('topic')}, "
+                         f"safety={g.get('safety')}]")
             L.append("")
     return "\n".join(L) + "\n"
 

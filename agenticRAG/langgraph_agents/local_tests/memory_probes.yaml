@@ -1,17 +1,26 @@
-# Bộ câu thử cho run_memory_probe.py (memory-v2 A2).
-# 20 hội thoại tổng hợp viết tay — không có dữ liệu người dùng thật.
+# Bộ câu thử cho run_memory_probe.py (memory-v2 A2, quy tắc memory mới: type/topic/safety).
+# Hội thoại tổng hợp viết tay — không có dữ liệu người dùng thật.
 #
 # Mỗi hội thoại:
-#   id, lang, date (ngày hội thoại, ISO), stored (fact đã lưu), messages
+#   id, lang, date (ngày hội thoại, ISO), stored (item đã lưu), messages
 #   (xen kẽ user/assistant, bắt đầu bằng user, kết thúc bằng assistant),
+#   stored: mỗi item {id, type, topic, safety, fact, locked}. type thuộc 7 loại
+#     (profile, preference, area, event, person, reference, instruction); topic có
+#     thể null (hàng cũ); locked = user tự gõ (không UPDATE/REPEAT, chỉ DELETE khi
+#     user nói rõ).
 #   expect:
-#     ops        — thao tác BẮT BUỘC. op ADD|UPDATE|DELETE; category (tuỳ chọn);
-#                  id (UPDATE/DELETE); groups = danh sách nhóm cụm từ, mỗi nhóm
-#                  cần ít nhất một cụm xuất hiện trong fact (so khớp không phân
-#                  biệt hoa thường và dấu).
-#     acceptable — thao tác KHÔNG bắt buộc nhưng chấp nhận được (fact đúng, vô hại).
-#     forbidden  — cụm từ không được xuất hiện trong bất kỳ fact nào (so khớp
-#                  nguyên văn, không phân biệt hoa thường, giữ dấu).
+#     ops          — thao tác BẮT BUỘC. op ADD|UPDATE|REPEAT|DELETE|FORGET_ALL;
+#                    type / topic / safety (tuỳ chọn; chỉ ghi nhận lệch, không FAIL);
+#                    id (UPDATE/REPEAT/DELETE); groups = danh sách nhóm cụm từ, mỗi
+#                    nhóm cần ít nhất một cụm xuất hiện trong fact (so khớp không
+#                    phân biệt hoa thường và dấu). Fact viết bằng tiếng Anh nên mọi
+#                    nhóm đều có cụm tiếng Anh. Một phần tử có thể là
+#                    {one_of: [<thao tác>, ...]} = chấp nhận một trong các thao tác.
+#     acceptable   — thao tác KHÔNG bắt buộc nhưng chấp nhận được (fact đúng, vô hại).
+#     forbidden    — cụm từ không được xuất hiện trong bất kỳ fact nào (so khớp
+#                    nguyên văn, không phân biệt hoa thường, giữ dấu).
+#     forbidden_ops — thao tác bị CẤM (dính là FAIL). Khoá: op (tên hoặc danh sách),
+#                    id, type, type_not, topic_not, safety, groups (như trên).
 probes:
   # ── 1. Fact sức khoẻ nói thẳng ─────────────────────────────────────────
   - id: c01_vi_plain_condition
@@ -25,10 +34,11 @@ probes:
       - {role: assistant, content: "Bạn có thể thử bài xoay nhẹ hông khi nằm ngửa và bài mèo-bò trên bốn điểm chống. Mỗi bài làm chậm 8-10 lần, dừng ngay nếu thấy đau lan xuống chân. Tránh cúi gập người về phía trước khi mới ngủ dậy."}
     expect:
       ops:
-        - {op: ADD, category: condition, groups: [["thoát vị", "đĩa đệm", "L4"]]}
+        - {op: ADD, type: profile, safety: true, groups: [["thoát vị", "đĩa đệm", "L4", "herniat", "disc", "disk"]]}
       forbidden: []
 
   # ── 2. Fact sức khoẻ nói thẳng (tiếng Anh, phẫu thuật) ─────────────────
+  # Phẫu thuật có ngày: có thể là event, profile hoặc cả hai — không ép type.
   - id: c02_en_plain_surgery
     lang: en
     date: "2026-10-13"
@@ -40,7 +50,9 @@ probes:
       - {role: assistant, content: "Good options are step-ups, single-leg glute bridges and slow tempo squats within a comfortable range. Aim for two or three sessions a week and stop if you feel sharp pain or the knee feels unstable. Your surgeon or physio can tell you which load level is right for you."}
     expect:
       ops:
-        - {op: ADD, category: condition, groups: [["ACL"], ["2025", "March", "right knee", "right"]]}
+        - {op: ADD, groups: [["ACL"], ["2025", "March", "right knee", "right"]]}
+      acceptable:
+        - {op: ADD, groups: [["ACL"]]}
       forbidden: []
 
   # ── 3. Fact lẫn trong chuyện phiếm ─────────────────────────────────────
@@ -55,10 +67,10 @@ probes:
       - {role: assistant, content: "Chúc bạn có buổi sáng thật vui. Nếu thấy chóng mặt hay run tay khi tập thì nghỉ ngay và đo lại đường huyết nhé."}
     expect:
       ops:
-        - {op: ADD, category: condition, groups: [["tiểu đường", "đái tháo đường", "type 2", "diabetes"]]}
+        - {op: ADD, type: profile, safety: true, groups: [["tiểu đường", "đái tháo đường", "type 2", "diabetes"]]}
       acceptable:
-        - {op: ADD, groups: [["đồ ngọt", "kiêng", "ngọt"]]}
-      forbidden: ["đi chợ"]
+        - {op: ADD, groups: [["đồ ngọt", "kiêng", "ngọt", "sweet", "sugar"]]}
+      forbidden: ["đi chợ", "market", "shopping", "grocer"]
 
   # ── 4. Fact lẫn trong chuyện phiếm (tiếng Anh) ─────────────────────────
   - id: c04_en_buried_small_talk
@@ -72,9 +84,9 @@ probes:
       - {role: assistant, content: "Great. Start with two sets of twelve with a light band and slow control on the way back. Let me know if you'd like a progression for next week."}
     expect:
       ops:
-        - {op: ADD, category: condition, groups: [["rotator cuff"]]}
+        - {op: ADD, type: profile, safety: true, groups: [["rotator cuff"]]}
       acceptable:
-        - {op: ADD, category: restriction, groups: [["overhead"]]}
+        - {op: ADD, groups: [["overhead"]]}
       forbidden: ["cat", "coffee"]
 
   # ── 5. Assistant giả định điều user không xác nhận (tiếng Việt) ────────
@@ -90,8 +102,8 @@ probes:
     expect:
       ops: []
       acceptable:
-        - {op: ADD, groups: [["cổ cứng", "cứng cổ", "ngồi máy tính", "ngồi nhiều"]]}
-      forbidden: ["thoái hóa", "đốt sống cổ", "MRI"]
+        - {op: ADD, groups: [["cổ cứng", "cứng cổ", "ngồi máy tính", "ngồi nhiều", "stiff neck", "neck", "sits", "sitting", "computer"]]}
+      forbidden: ["thoái hóa", "đốt sống cổ", "MRI", "degenerat", "spondyl", "herniat", "disc"]
 
   # ── 6. Assistant gợi ý điều user không nói (tiếng Anh) ─────────────────
   - id: c06_en_assistant_suggests
@@ -112,8 +124,8 @@ probes:
     lang: vi
     date: "2026-10-13"
     stored:
-      - {id: f1, fact: "Đau đầu gối phải khi chạy bộ", category: condition, locked: false}
-      - {id: f2, fact: "Muốn giảm 5 kg trong năm nay", category: goal, locked: false}
+      - {id: f1, type: profile, topic: "knee", safety: true, fact: "Đau đầu gối phải khi chạy bộ", locked: false}
+      - {id: f2, type: area, topic: "weight goal", safety: false, fact: "Muốn giảm 5 kg trong năm nay", locked: false}
     messages:
       - {role: user, content: "Đầu gối mình khỏi hẳn rồi, không còn đau nữa."}
       - {role: assistant, content: "Tin vui quá! Nghe vậy là phần hồi phục của bạn đang đi đúng hướng. Bạn vẫn nên tăng lại cường độ từ từ để khớp quen dần."}
@@ -123,14 +135,16 @@ probes:
       ops:
         - {op: DELETE, id: f1}
       forbidden: []
+      forbidden_ops:
+        - {op: DELETE, id: f2}
 
   # ── 8. User phủ định fact đã lưu → DELETE (tiếng Anh) ──────────────────
   - id: c08_en_negate
     lang: en
     date: "2026-10-13"
     stored:
-      - {id: f1, fact: "Avoids running because of shin splints", category: restriction, locked: false}
-      - {id: f2, fact: "Works as a nurse on long shifts", category: profile, locked: false}
+      - {id: f1, type: profile, topic: "running", safety: true, fact: "Avoids running because of shin splints", locked: false}
+      - {id: f2, type: profile, topic: "job", safety: false, fact: "Works as a nurse on long shifts", locked: false}
     messages:
       - {role: user, content: "Good news, my doctor cleared me to run again. The shin splints are completely gone."}
       - {role: assistant, content: "That's great to hear! Since you've been off running for a while, build back gradually. A run-walk interval format works well for the first couple of weeks."}
@@ -140,13 +154,15 @@ probes:
       ops:
         - {op: DELETE, id: f1}
       forbidden: []
+      forbidden_ops:
+        - {op: DELETE, id: f2}
 
   # ── 9. User thay đổi fact đã lưu → UPDATE (tiếng Việt) ─────────────────
   - id: c09_vi_update
     lang: vi
     date: "2026-10-13"
     stored:
-      - {id: f1, fact: "Đau gối trái khi đi bộ quá 10 phút (tháng 7/2026)", category: condition, locked: false}
+      - {id: f1, type: profile, topic: "knee", safety: true, fact: "Đau gối trái khi đi bộ quá 10 phút (tháng 7/2026)", locked: false}
     messages:
       - {role: user, content: "Giờ mình đi bộ cả tiếng cũng không đau gối nữa, nhưng leo cầu thang vẫn còn hơi nhói."}
       - {role: assistant, content: "Tiến bộ rõ rệt đó! Đi bộ cả tiếng mà không đau là dấu hiệu tốt. Leo cầu thang đòi hỏi gối chịu lực nhiều hơn nên nhói nhẹ cũng là chuyện dễ hiểu ở giai đoạn này."}
@@ -154,7 +170,7 @@ probes:
       - {role: assistant, content: "Bài bước lên bậc thấp (step-up) rất hợp, bắt đầu với bậc cao 10-15 cm, 2 hiệp 8 lần mỗi chân. Giữ đầu gối thẳng hàng với ngón chân và bước xuống thật chậm."}
     expect:
       ops:
-        - {op: UPDATE, id: f1, category: condition, groups: [["cầu thang"]]}
+        - {op: UPDATE, id: f1, type: profile, groups: [["cầu thang", "stairs", "stair"]]}
       forbidden: []
 
   # ── 10. User thay đổi fact đã lưu → UPDATE (tiếng Anh) ─────────────────
@@ -162,7 +178,7 @@ probes:
     lang: en
     date: "2026-10-13"
     stored:
-      - {id: f1, fact: "Has lower back pain when sitting for more than an hour", category: condition, locked: false}
+      - {id: f1, type: profile, topic: "lower back", safety: true, fact: "Has lower back pain when sitting for more than an hour", locked: false}
     messages:
       - {role: user, content: "Quick update: I started seeing a physio and now the pain only comes when I lift heavy things. Sitting is fine."}
       - {role: assistant, content: "That's a nice change. Pain that only shows up under load usually points to what to train rather than what to avoid. Your physio will be the best guide on how heavy to go."}
@@ -170,7 +186,7 @@ probes:
       - {role: assistant, content: "Hinge at the hips instead of rounding your back, keep the bags close to your body and split the load between both hands. Two lighter trips are better than one heavy one while it settles."}
     expect:
       ops:
-        - {op: UPDATE, id: f1, category: condition, groups: [["lift", "heavy"]]}
+        - {op: UPDATE, id: f1, type: profile, groups: [["lift", "heavy", "nâng"]]}
       forbidden: []
 
   # ── 11. User mâu thuẫn fact bị KHOÁ → ADD, không UPDATE/DELETE ─────────
@@ -178,7 +194,7 @@ probes:
     lang: vi
     date: "2026-10-13"
     stored:
-      - {id: f1, fact: "Không có chấn thương hay bệnh lý nào", category: profile, locked: true}
+      - {id: f1, type: profile, topic: "health", safety: false, fact: "Không có chấn thương hay bệnh lý nào", locked: true}
     messages:
       - {role: user, content: "Mình mới bị bong gân mắt cá chân trái tuần trước, giờ đi lại vẫn còn sưng."}
       - {role: assistant, content: "Mình rất tiếc khi nghe vậy. Bong gân còn sưng thì bạn nên cho chân nghỉ, kê cao khi ngồi và chườm lạnh. Nếu sưng không giảm sau vài ngày hoặc không chịu lực được thì nên đi khám nhé."}
@@ -186,15 +202,17 @@ probes:
       - {role: assistant, content: "Được, bạn có thể tập tay và vai khi ngồi, ví dụ nâng tạ nhẹ hoặc kéo dây kháng lực. Tránh các bài đứng một chân hoặc nhảy cho đến khi mắt cá ổn định hơn."}
     expect:
       ops:
-        - {op: ADD, category: condition, groups: [["bong gân", "mắt cá"]]}
-      forbidden: ["tuần trước"]
+        - {op: ADD, type: profile, safety: true, groups: [["bong gân", "mắt cá", "sprain", "ankle"]]}
+      forbidden: ["tuần trước", "last week"]
+      forbidden_ops:
+        - {op: DELETE, id: f1}
 
   # ── 12. User mâu thuẫn fact bị KHOÁ (tiếng Anh) ────────────────────────
   - id: c12_en_locked_contradict
     lang: en
     date: "2026-10-13"
     stored:
-      - {id: f1, fact: "Prefers low-impact exercise only", category: preference, locked: true}
+      - {id: f1, type: preference, topic: "exercise intensity", safety: false, fact: "Prefers low-impact exercise only", locked: true}
     messages:
       - {role: user, content: "I actually do HIIT three times a week and I enjoy it, so please don't just give me low-impact stuff."}
       - {role: assistant, content: "Understood, I'll include higher-intensity options. Since you already train with intervals, I can suggest progressions rather than basics."}
@@ -202,8 +220,10 @@ probes:
       - {role: assistant, content: "Try four rounds: 40 seconds of squat jumps, 20 seconds rest, 40 seconds of mountain climbers, 20 seconds rest, then a 1 minute walk between rounds. Warm up for three minutes first."}
     expect:
       ops:
-        - {op: ADD, category: preference, groups: [["HIIT", "interval", "high-intensity", "high intensity"]]}
+        - {op: ADD, type: preference, groups: [["HIIT", "interval", "high-intensity", "high intensity"]]}
       forbidden: []
+      forbidden_ops:
+        - {op: DELETE, id: f1}
 
   # ── 13. Chỉ là trạng thái nhất thời ────────────────────────────────────
   - id: c13_vi_passing_state
@@ -217,7 +237,7 @@ probes:
       - {role: assistant, content: "Như vậy là hợp lý. Bạn thử bài thở bụng 5 phút và vài động tác xoay cổ vai thật nhẹ, rồi nghỉ sớm."}
     expect:
       ops: []
-      forbidden: []
+      forbidden: ["tired", "sleep", "mệt", "ngủ", "fatigue"]
 
   # ── 14. Chỉ chuyện phiếm (tiếng Anh) ───────────────────────────────────
   - id: c14_en_small_talk
@@ -233,7 +253,7 @@ probes:
       - {role: assistant, content: "Any time. Come back whenever you want to plan a session."}
     expect:
       ops: []
-      forbidden: []
+      forbidden: ["movie", "raining", "rainy", "phim", "mưa"]
 
   # ── 15. Mục tiêu ───────────────────────────────────────────────────────
   - id: c15_vi_goal
@@ -247,12 +267,13 @@ probes:
       - {role: assistant, content: "Vậy bạn nên tăng quãng đường khoảng 10% mỗi tuần và xen kẽ ngày chạy với ngày nghỉ hoặc đi bộ nhanh. Thêm 2 buổi tập sức mạnh chân và lõi mỗi tuần sẽ giúp bạn chạy bền hơn."}
     expect:
       ops:
-        - {op: ADD, category: goal, groups: [["10 km", "10km"]]}
+        - {op: ADD, type: area, groups: [["10 km", "10km", "10k", "10-km"]]}
       acceptable:
-        - {op: ADD, groups: [["3 km", "3km"]]}
+        - {op: ADD, groups: [["3 km", "3km", "3k"]]}
       forbidden: []
 
   # ── 16. Sở thích về cách viết câu trả lời ──────────────────────────────
+  # preference hay instruction đều hợp lý; type chỉ ghi nhận lệch, không FAIL.
   - id: c16_en_preference_style
     lang: en
     date: "2026-10-13"
@@ -264,7 +285,7 @@ probes:
       - {role: assistant, content: "- Extend one arm, palm up, and gently pull the fingers back for 15 seconds.\n- Switch to palm down and repeat.\n- Make slow fists and open them 10 times.\n- Do the set every hour or so."}
     expect:
       ops:
-        - {op: ADD, category: preference, groups: [["short", "brief", "concise"], ["bullet"]]}
+        - {op: ADD, type: preference, groups: [["short", "brief", "concise"], ["bullet"]]}
       forbidden: []
 
   # ── 17. User đưa số điện thoại / e-mail ────────────────────────────────
@@ -279,10 +300,12 @@ probes:
       - {role: assistant, content: "Thứ Hai: đạp xe tại chỗ 20 phút. Thứ Tư: tăng sức mạnh đùi bằng bài nâng chân thẳng khi nằm. Thứ Sáu: bơi hoặc đi bộ dưới nước 20 phút. Giữ cường độ vừa phải và nghỉ nếu khớp sưng nóng."}
     expect:
       ops:
-        - {op: ADD, category: condition, groups: [["viêm khớp"]]}
+        - {op: ADD, type: profile, safety: true, groups: [["viêm khớp", "arthritis"]]}
       forbidden: ["0912", "345 678", "345678", "tran.van.a", "gmail"]
 
   # ── 18. User kể bệnh của người thân (không phải của user) ──────────────
+  # Quy tắc mới cho phép type person khi người đó định danh được ("mom") và việc
+  # này giúp ích cho user; nhưng bệnh KHÔNG bao giờ được ghi cho user.
   - id: c18_en_relative_condition
     lang: en
     date: "2026-10-13"
@@ -294,9 +317,15 @@ probes:
       - {role: assistant, content: "Lovely. Keep sessions short, about ten minutes, and make sure the floor is clear and non-slip."}
     expect:
       ops: []
-      forbidden: ["osteoporosis", "mom", "mother"]
+      acceptable:
+        - {op: ADD, type: person, groups: [["osteoporosis", "loãng xương"]]}
+      forbidden: []
+      forbidden_ops:
+        - {op: [ADD, UPDATE], type_not: person, groups: [["osteoporosis", "loãng xương"]]}
+        - {op: [ADD, UPDATE], type: person, safety: true}
 
   # ── 19. Thời gian tương đối phải thành ngày tuyệt đối ──────────────────
+  # Ca mổ có ngày + hạn chế còn lại: event, có thể kèm profile.
   - id: c19_vi_relative_time
     lang: vi
     date: "2026-10-13"
@@ -308,15 +337,17 @@ probes:
       - {role: assistant, content: "Bạn có thể làm bài con lắc (cúi người, để tay buông thõng rồi đung đưa nhẹ) và bài trượt tay trên bàn về phía trước. Chỉ làm trong tầm không đau, và hỏi bác sĩ phẫu thuật khi nào được tăng biên độ."}
     expect:
       ops:
-        - {op: ADD, category: condition, groups: [["vai"], ["tháng 7", "7/2026", "07/2026", "2026-07", "tháng 07"]]}
-      forbidden: ["3 tháng", "ba tháng", "cách đây"]
+        - {op: ADD, type: event, groups: [["vai", "shoulder"], ["tháng 7", "7/2026", "07/2026", "2026-07", "tháng 07", "July 2026", "Jul 2026"]]}
+      acceptable:
+        - {op: ADD, type: profile, groups: [["vai", "shoulder"]]}
+      forbidden: ["3 tháng", "ba tháng", "cách đây", "3 months", "three months", "ago"]
 
   # ── 20. Hội thoại dài, ba fact riêng biệt ──────────────────────────────
   - id: c20_en_three_facts
     lang: en
     date: "2026-10-13"
     stored:
-      - {id: f1, fact: "Works as a software developer", category: profile, locked: false}
+      - {id: f1, type: profile, topic: "job", safety: false, fact: "Works as a software developer", locked: false}
     messages:
       - {role: user, content: "Hey, I'm back. I broke my wrist skiing last month and the cast just came off."}
       - {role: assistant, content: "Welcome back, and glad the cast is off. The wrist will be stiff and the forearm muscles weaker for a while. Did your doctor or physio give you any guidance?"}
@@ -328,9 +359,9 @@ probes:
       - {role: assistant, content: "Do wrist circles ten times each direction, then ten slow finger flexes and extensions, and finish with five tendon glides. Repeat the set twice and stop if it hurts."}
     expect:
       ops:
-        - {op: ADD, category: condition, groups: [["wrist"], ["September", "2026-09", "09/2026", "9/2026"]]}
-        - {op: ADD, category: restriction, groups: [["push-up", "weight-bearing", "weight bearing"]]}
-        - {op: ADD, category: goal, groups: [["ski"], ["February"]]}
+        - {op: ADD, type: event, groups: [["wrist"], ["September", "2026-09", "09/2026", "9/2026"]]}
+        - {op: ADD, type: profile, safety: true, groups: [["push-up", "weight-bearing", "weight bearing"]]}
+        - {op: ADD, type: area, groups: [["ski"], ["February"]]}
       forbidden: ["last month"]
 
   # ── 21–26. Sở thích, thói quen: nhắc thoáng qua trong chuyện phiếm ─────
@@ -341,9 +372,9 @@ probes:
     lang: en
     date: "2026-10-14"
     stored:
-      - {id: f1, fact: "Prefers to be called Mon", category: preference, locked: false}
-      - {id: f2, fact: "Has back pain", category: condition, locked: false}
-      - {id: f3, fact: "Does not want exercises involving the back recommended, for fear of harming himself", category: restriction, locked: false}
+      - {id: f1, type: instruction, topic: "address", safety: false, fact: "Prefers to be called Mon", locked: false}
+      - {id: f2, type: profile, topic: "back pain", safety: true, fact: "Has back pain", locked: false}
+      - {id: f3, type: instruction, topic: "exercise selection", safety: true, fact: "Does not want exercises involving the back recommended, for fear of harming himself", locked: false}
     messages:
       - {role: user, content: "hey, nothing to train today, just want to chat for a bit"}
       - {role: assistant, content: "Sure, happy to just chat. We could talk about food, music, what you watched lately, or anything else on your mind. Where do you want to start?"}
@@ -351,9 +382,10 @@ probes:
       - {role: assistant, content: "Ha, I do love a good bowl of soup with something warm in it. Noodles are fine in moderation, and adding an egg or some vegetables makes them a lot more balanced. What kind of noodles do you like most?"}
     expect:
       ops:
-        - {op: ADD, category: preference, groups: [["noodle"]]}
-      forbidden: ["back"]
+        - {op: ADD, type: preference, groups: [["noodle"]]}
+      forbidden: ["back", "lưng"]
 
+  # Thói quen uống cà phê mỗi sáng: profile (habit) hoặc preference — không ép type.
   - id: c22_vi_daily_coffee_in_passing
     lang: vi
     date: "2026-10-14"
@@ -365,7 +397,7 @@ probes:
       - {role: assistant, content: "Nghe quen ghê, nhiều người cũng cần ly cà phê buổi sáng để vào nhịp. Bạn nhớ uống thêm nước lọc trong ngày nhé, cà phê dễ làm mình quên uống nước."}
     expect:
       ops:
-        - {op: ADD, category: preference, groups: [["cà phê", "coffee"]]}
+        - {op: ADD, groups: [["cà phê", "coffee"]]}
       forbidden: []
 
   - id: c23_vi_music_taste_in_passing
@@ -379,7 +411,7 @@ probes:
       - {role: assistant, content: "Nhạc trữ tình nhịp chậm rất hợp cho buổi giãn cơ. Bạn cứ chọn một danh sách phát khoảng 20 phút, hết bài là hết buổi."}
     expect:
       ops:
-        - {op: ADD, category: preference, groups: [["trữ tình"]]}
+        - {op: ADD, type: preference, groups: [["trữ tình", "lyrical", "ballad", "romantic", "sentimental"]]}
       forbidden: []
 
   - id: c24_en_ate_and_did_today
@@ -393,7 +425,7 @@ probes:
       - {role: assistant, content: "Lazy days are allowed. Tomorrow we can ease back in with something short if you feel like it."}
     expect:
       ops: []
-      forbidden: ["pizza", "walk", "movie"]
+      forbidden: ["pizza", "walk", "movie", "tired"]
 
   - id: c25_vi_someone_elses_like
     lang: vi
@@ -406,7 +438,7 @@ probes:
       - {role: assistant, content: "Được chứ. Bạn thường đi ngủ lúc mấy giờ và có hay thức giữa đêm không?"}
     expect:
       ops: []
-      forbidden: ["chạy bộ", "nấu ăn", "chị"]
+      forbidden: ["chạy bộ", "nấu ăn", "chị", "running", "cooking", "sister", "mother"]
 
   - id: c26_en_assistant_guess_unconfirmed
     lang: en
@@ -420,6 +452,7 @@ probes:
     expect:
       ops: []
       forbidden: ["hiking", "hike", "trail"]
+
   - id: c27_vi_general_instruction
     lang: vi
     date: "2026-10-14"
@@ -429,11 +462,9 @@ probes:
       - {role: assistant, content: "Rõ rồi, mình sẽ trả lời ngắn gọn."}
     expect:
       ops:
-        - op: ADD
-          kind: instruction
-          category: style
-          groups: [["ngắn gọn"]]
+        - {op: ADD, type: instruction, groups: [["ngắn gọn", "short", "concise", "brief"]]}
       forbidden: []
+
   - id: c28_en_project_instruction
     lang: en
     date: "2026-10-14"
@@ -443,52 +474,57 @@ probes:
       - {role: assistant, content: "Got it, low-impact cross-training on rest days for your marathon prep."}
     expect:
       ops:
-        - op: ADD
-          kind: instruction
-          category: project
-          groups: [["marathon"], ["low-impact", "low impact"]]
+        - {op: ADD, type: instruction, groups: [["marathon"], ["low-impact", "low impact"]]}
       forbidden: []
+
   - id: c29_vi_repeat_stored
     lang: vi
     date: "2026-10-14"
     stored:
-      - {id: f1, fact: "Tránh ngồi xổm sâu", category: restriction, locked: false}
+      - {id: f1, type: profile, topic: "squat", safety: true, fact: "Tránh ngồi xổm sâu", locked: false}
     messages:
       - {role: user, content: "Bác sĩ dặn mình không được ngồi xổm sâu."}
       - {role: assistant, content: "Mình nhớ rồi, bạn tránh ngồi xổm sâu."}
     expect:
       ops:
-        - op: REPEAT
-          id: f1
+        - {op: REPEAT, id: f1}
       forbidden: []
+      forbidden_ops:
+        - {op: ADD, groups: [["ngồi xổm", "squat", "crouch"]]}
+
+  # Không cấm "Du": UPDATE được phép nhắc trạng thái cũ ngắn gọn ("previously Du"),
+  # và "du" là chuỗi con của "during", "duration".
   - id: c30_vi_rename
     lang: vi
     date: "2026-10-14"
     stored:
-      - {id: f1, fact: "Gọi tôi là Du", category: style, locked: false}
+      - {id: f1, type: instruction, topic: "address", safety: false, fact: "Gọi tôi là Du", locked: false}
     messages:
       - {role: user, content: "Thôi, từ giờ gọi tôi là Long nhé."}
       - {role: assistant, content: "Rõ rồi Long, mình sẽ gọi bạn là Long."}
     expect:
       ops:
-        - op: UPDATE
-          id: f1
-          category: style
-          groups: [["Long"]]
-      forbidden: ["Du"]
+        - {op: UPDATE, id: f1, type: instruction, groups: [["Long"]]}
+      forbidden: []
+      forbidden_ops:
+        - {op: ADD}
+
   - id: c31_en_forget_all
     lang: en
     date: "2026-10-14"
     stored:
-      - {id: f1, fact: "Prefers morning sessions", category: preference, locked: false}
-      - {id: f2, fact: "Allergic to latex", category: condition, locked: false}
+      - {id: f1, type: preference, topic: "session time", safety: false, fact: "Prefers morning sessions", locked: false}
+      - {id: f2, type: profile, topic: "allergy", safety: true, fact: "Allergic to latex", locked: false}
     messages:
       - {role: user, content: "Please forget everything you noted about me."}
       - {role: assistant, content: "Done, I have forgotten what I noted."}
     expect:
       ops:
-        - op: FORGET_ALL
+        - {op: FORGET_ALL}
       forbidden: []
+      forbidden_ops:
+        - {op: [ADD, UPDATE, REPEAT, DELETE]}
+
   - id: c32_vi_accepted_plan
     lang: vi
     date: "2026-10-14"
@@ -500,11 +536,9 @@ probes:
       - {role: assistant, content: "Chốt nhé, chúc bạn tập vui!"}
     expect:
       ops:
-        - op: ADD
-          kind: fact
-          category: project
-          groups: [["5km", "5 km"], ["mùa xuân"]]
+        - {op: ADD, type: area, groups: [["5km", "5 km", "5k"], ["mùa xuân", "spring"]]}
       forbidden: []
+
   - id: c33_vi_session_only_decision
     lang: vi
     date: "2026-10-14"
@@ -514,4 +548,459 @@ probes:
       - {role: assistant, content: "Được thôi, hôm nay tập bài 1 trước."}
     expect:
       ops: []
+      forbidden: ["bài 1", "exercise 1", "lesson 1", "tomorrow"]
+
+  # ══ Ca nghiệm thu của Owner (o01–o20) ═════════════════════════════════
+  - id: o01_vi_preference_python
+    lang: vi
+    date: "2026-10-23"
+    stored: []
+    messages:
+      - {role: user, content: "Tôi thích dùng Python hơn Java."}
+      - {role: assistant, content: "Mình ghi nhận rồi, Python viết gọn và dễ đọc hơn nhiều. Bạn muốn làm gì với nó hôm nay?"}
+    expect:
+      ops:
+        - {op: ADD, type: preference, groups: [["python"], ["java"]]}
       forbidden: []
+
+  # Deadline kêu ca qua ba ngày: trạng thái nhất thời dù nhắc lại nhiều lần.
+  - id: o02_vi_deadline_passing
+    lang: vi
+    date: "2026-10-23"
+    stored: []
+    messages:
+      - {role: user, content: "Hôm kia tôi mới nhận ra deadline nộp báo cáo gấp quá, tôi lo lắm."}
+      - {role: assistant, content: "Nghe áp lực thật. Bạn thử chia báo cáo thành từng phần nhỏ, mỗi ngày làm một phần nhé."}
+      - {role: user, content: "Hôm qua tôi thức đến 2 giờ sáng vì deadline đó mà vẫn chưa xong, stress lắm."}
+      - {role: assistant, content: "Thức khuya như vậy dễ làm bạn kiệt sức. Tối nay bạn nên ngủ sớm một chút rồi làm tiếp sáng mai."}
+      - {role: user, content: "Hôm nay deadline vẫn còn đè lên tôi, mai là hạn rồi mà phần kết luận chưa viết."}
+      - {role: assistant, content: "Còn một ngày là đủ để viết phần kết luận nếu bạn tập trung. Bạn cần mình gợi ý dàn ý không?"}
+    expect:
+      ops: []
+      forbidden: ["deadline", "stress", "hạn chót", "báo cáo", "report"]
+
+  - id: o03_vi_rag_questions_only
+    lang: vi
+    date: "2026-10-23"
+    stored: []
+    messages:
+      - {role: user, content: "RAG là gì vậy?"}
+      - {role: assistant, content: "RAG là kỹ thuật cho mô hình ngôn ngữ tra cứu tài liệu liên quan trước khi trả lời, để câu trả lời bám sát dữ liệu hơn."}
+      - {role: user, content: "Chunk size nên chọn bao nhiêu cho RAG?"}
+      - {role: assistant, content: "Thường bắt đầu từ 300 đến 500 token mỗi đoạn, có gối nhau khoảng 10 đến 20 phần trăm, rồi chỉnh theo kết quả thử."}
+      - {role: user, content: "Reranker có giúp RAG chính xác hơn không?"}
+      - {role: assistant, content: "Có, reranker sắp xếp lại các đoạn tìm được nên đoạn đúng nhất lên đầu, thường tăng độ chính xác đáng kể."}
+    expect:
+      ops: []
+      forbidden: ["RAG", "retrieval", "chunk", "reranker"]
+
+  - id: o04_vi_friend_allergy_in_passing
+    lang: vi
+    date: "2026-10-23"
+    stored: []
+    messages:
+      - {role: user, content: "Hôm nay tôi đi ăn hải sản với nhóm bạn. Bạn tôi bị dị ứng tôm nên cả bàn gọi cua thay. Ăn cua có nhiều cholesterol không?"}
+      - {role: assistant, content: "Cua có cholesterol ở mức vừa phải, ăn thỉnh thoảng thì không sao. Bạn nên tránh các món chiên nhiều dầu đi kèm."}
+    expect:
+      ops: []
+      forbidden: ["allerg", "dị ứng", "shrimp", "tôm", "prawn"]
+
+  - id: o04b_vi_named_person_allergy
+    lang: vi
+    date: "2026-10-23"
+    stored: []
+    messages:
+      - {role: user, content: "Tối nay tôi nấu cho Hoa, Hoa bị dị ứng tôm, nên đổi món gì?"}
+      - {role: assistant, content: "Bạn có thể làm cá hồi áp chảo hoặc gà nướng chanh thay cho món tôm. Nhớ kiểm tra nước sốt xem có mắm tôm hay dầu tôm không nhé."}
+    expect:
+      ops:
+        - {op: ADD, type: person, topic: "Hoa", safety: false, groups: [["shrimp", "tôm", "prawn"]]}
+      forbidden: []
+      forbidden_ops:
+        - {op: [ADD, UPDATE], type_not: person, groups: [["allerg", "dị ứng", "shrimp", "tôm"]]}
+        - {op: ADD, type: person, topic_not: "Hoa"}
+        - {op: [ADD, UPDATE], type: person, safety: true}
+
+  - id: o05_vi_roleplay_student
+    lang: vi
+    date: "2026-10-23"
+    stored: []
+    messages:
+      - {role: user, content: "Giả sử tôi là học sinh lớp 9 đang sống ở Nhật, bạn hãy gợi ý cho tôi cách làm quen với bạn mới ở trường."}
+      - {role: assistant, content: "Được, trong vai đó bạn có thể chủ động chào các bạn cùng lớp và tham gia một câu lạc bộ sau giờ học để dễ kết bạn hơn."}
+      - {role: user, content: "Vậy với vai đó, tôi nên chuẩn bị gì cho kỳ thi cuối kỳ?"}
+      - {role: assistant, content: "Bạn lập thời khóa biểu ôn tập theo từng môn, ôn môn yếu trước và nhờ bạn cùng lớp luyện đề chung."}
+    expect:
+      ops: []
+      forbidden: ["Japan", "Nhật", "9th", "lớp 9", "grade 9", "ninth", "student"]
+
+  - id: o06_vi_translate_text
+    lang: vi
+    date: "2026-10-23"
+    stored: []
+    messages:
+      - {role: user, content: "Bạn dịch giúp tôi câu này sang tiếng Anh: \"Tôi thích được gọi là Minh\"."}
+      - {role: assistant, content: "Bản dịch là: \"I like to be called Minh.\" Bạn cũng có thể nói \"I prefer to be called Minh\" cho trang trọng hơn."}
+    expect:
+      ops: []
+      forbidden: ["Minh", "called"]
+
+  - id: o07_vi_job_search_area
+    lang: vi
+    date: "2026-10-23"
+    stored: []
+    messages:
+      - {role: user, content: "Tôi đang tìm việc AI Intern."}
+      - {role: assistant, content: "Chúc bạn sớm tìm được vị trí phù hợp. Bạn đã chuẩn bị CV và vài dự án nhỏ để đưa vào portfolio chưa?"}
+    expect:
+      ops:
+        - {op: ADD, type: area, groups: [["intern"], ["October 2026", "Oct 2026", "2026-10"]]}
+      forbidden: []
+
+  - id: o08_vi_rename_unlocked
+    lang: vi
+    date: "2026-10-23"
+    stored:
+      - {id: f1, type: instruction, topic: "address", safety: false, fact: "Call the user Tri", locked: false}
+    messages:
+      - {role: user, content: "Từ giờ hãy gọi tôi là Minh."}
+      - {role: assistant, content: "Được, mình sẽ gọi bạn là Minh từ giờ."}
+    expect:
+      ops:
+        - {op: UPDATE, id: f1, type: instruction, topic: "address", groups: [["Minh"]]}
+      forbidden: []
+      forbidden_ops:
+        - {op: ADD}
+
+  - id: o09_vi_tentative_prediction
+    lang: vi
+    date: "2026-10-23"
+    stored: []
+    messages:
+      - {role: user, content: "Có lẽ tôi sẽ học tiếng Nhật vào năm sau."}
+      - {role: assistant, content: "Nghe thú vị đó. Khi nào bạn quyết định bắt đầu, mình có thể gợi ý lộ trình học cho người mới."}
+    expect:
+      ops: []
+      forbidden: ["Japanese", "tiếng Nhật", "Japan"]
+
+  - id: o10_vi_conditional_want
+    lang: vi
+    date: "2026-10-23"
+    stored: []
+    messages:
+      - {role: user, content: "Nếu có đủ thời gian, tôi muốn học Deep Learning."}
+      - {role: assistant, content: "Mục tiêu hay đó. Khi có thời gian, bạn nên nắm vững đại số tuyến tính và Python cơ bản trước nhé."}
+    expect:
+      ops:
+        - {op: ADD, type: preference, groups: [["deep learning"], ["time"]]}
+      forbidden: []
+
+  - id: o11_vi_merge_into_stored_style
+    lang: vi
+    date: "2026-10-23"
+    stored:
+      - {id: f1, type: preference, topic: "answer style", safety: false, fact: "Prefers short answers", locked: false}
+    messages:
+      - {role: user, content: "Đừng giải thích dài dòng nếu tôi chưa hỏi thêm."}
+      - {role: assistant, content: "Rõ rồi, mình sẽ trả lời gọn và chỉ giải thích thêm khi bạn hỏi."}
+    expect:
+      ops:
+        - one_of:
+            - {op: UPDATE, id: f1, groups: [["short", "brief", "concise"], ["explain", "elaborat", "detail", "long"]]}
+            - {op: REPEAT, id: f1}
+      forbidden: []
+      forbidden_ops:
+        - {op: ADD}
+
+  - id: o12_vi_app_setting_model
+    lang: vi
+    date: "2026-10-23"
+    stored: []
+    messages:
+      - {role: user, content: "Tôi đang dùng model Qwen cho app này."}
+      - {role: assistant, content: "Mình hiểu rồi. Bạn đang cần hỗ trợ gì với app này?"}
+    expect:
+      ops: []
+      forbidden: ["Qwen"]
+
+  - id: o13_vi_event_yesterday
+    lang: vi
+    date: "2026-10-23"
+    stored: []
+    messages:
+      - {role: user, content: "Hôm qua tôi đã hoàn thành bài kiểm tra AWS."}
+      - {role: assistant, content: "Chúc mừng bạn đã hoàn thành! Bạn thấy bài kiểm tra có khó không?"}
+    expect:
+      ops:
+        - {op: ADD, type: event, groups: [["AWS"], ["22 October 2026", "October 22, 2026", "22 Oct 2026", "Oct 22, 2026", "2026-10-22", "22/10/2026"]]}
+      forbidden: ["yesterday", "hôm qua"]
+
+  - id: o14_vi_project_postgres
+    lang: vi
+    date: "2026-10-23"
+    stored: []
+    messages:
+      - {role: user, content: "Dự án hiện tại của tôi sử dụng PostgreSQL."}
+      - {role: assistant, content: "PostgreSQL là lựa chọn vững chắc. Bạn muốn mình giúp thiết kế bảng hay tối ưu truy vấn?"}
+    expect:
+      ops:
+        - {op: ADD, type: area, groups: [["PostgreSQL", "Postgres"]]}
+      forbidden: []
+
+  # Một ADD duy nhất gói cả hai ngữ cảnh: tách thành hai ADD thì không nhóm nào
+  # chứa cả python và typescript => bị tính là bỏ sót.
+  - id: o15_vi_two_context_preference
+    lang: vi
+    date: "2026-10-23"
+    stored: []
+    messages:
+      - {role: user, content: "Tôi thích Python khi làm AI, nhưng thích TypeScript khi phát triển frontend."}
+      - {role: assistant, content: "Hợp lý đó, Python mạnh về hệ sinh thái AI còn TypeScript an toàn hơn cho frontend. Bạn đang làm dự án nào?"}
+    expect:
+      ops:
+        - {op: ADD, type: preference, groups: [["python"], ["typescript"], ["frontend", "front-end", "front end"]]}
+      forbidden: []
+
+  - id: o16_vi_reverse_stored_preference
+    lang: vi
+    date: "2026-10-23"
+    stored:
+      - {id: f1, type: preference, topic: "programming languages", safety: false, fact: "Prefers Python over Java", locked: false}
+    messages:
+      - {role: user, content: "Dạo này tôi thấy Java hợp với tôi hơn, giờ tôi thích Java hơn Python."}
+      - {role: assistant, content: "Mình ghi nhận rồi, từ giờ mình sẽ ưu tiên ví dụ bằng Java cho bạn."}
+    expect:
+      ops:
+        - {op: UPDATE, id: f1, type: preference, groups: [["java"], ["python"]]}
+      forbidden: []
+      forbidden_ops:
+        - {op: ADD}
+
+  - id: o17_vi_health_once
+    lang: vi
+    date: "2026-10-23"
+    stored: []
+    messages:
+      - {role: user, content: "Tôi bị hen suyễn từ nhỏ, bạn gợi ý vài bài tập nhẹ nhàng giúp tôi nhé."}
+      - {role: assistant, content: "Bạn có thể bắt đầu bằng đi bộ chậm và các bài thở bụng, khởi động kỹ và mang theo thuốc xịt khi tập. Nếu thấy khó thở hoặc tức ngực thì dừng lại ngay."}
+    expect:
+      ops:
+        - {op: ADD, type: profile, safety: true, groups: [["asthma", "hen suyễn"]]}
+      forbidden: []
+      forbidden_ops:
+        - {op: [ADD, UPDATE], safety: false, groups: [["asthma", "hen suyễn"]]}
+
+  - id: o18_vi_general_instruction_detail
+    lang: vi
+    date: "2026-10-23"
+    stored: []
+    messages:
+      - {role: user, content: "Từ nay, hãy giải thích các vấn đề kỹ thuật thật chi tiết."}
+      - {role: assistant, content: "Rõ rồi, từ giờ với các vấn đề kỹ thuật mình sẽ giải thích đầy đủ từng bước."}
+    expect:
+      ops:
+        - {op: ADD, type: instruction, groups: [["detail"]]}
+      forbidden: []
+
+  # Stored là instruction để cùng type với câu mới => phải UPDATE gộp, không ADD.
+  - id: o18b_vi_instruction_merge_short
+    lang: vi
+    date: "2026-10-23"
+    stored:
+      - {id: f1, type: instruction, topic: "answer style", safety: false, fact: "Prefers short answers", locked: false}
+    messages:
+      - {role: user, content: "Từ nay, hãy giải thích các vấn đề kỹ thuật thật chi tiết."}
+      - {role: assistant, content: "Rõ rồi, câu trả lời thông thường vẫn gọn, còn với vấn đề kỹ thuật mình sẽ giải thích đầy đủ từng bước."}
+    expect:
+      ops:
+        - {op: UPDATE, id: f1, type: instruction, groups: [["short", "brief", "concise"], ["technical"], ["detail"]]}
+      forbidden: []
+      forbidden_ops:
+        - {op: ADD}
+
+  - id: o19_vi_current_answer_only
+    lang: vi
+    date: "2026-10-23"
+    stored: []
+    messages:
+      - {role: user, content: "Tính giúp tôi 15% của 240. Trong câu trả lời này, chỉ đưa ra kết quả, không giải thích."}
+      - {role: assistant, content: "36."}
+    expect:
+      ops: []
+      forbidden: ["explain", "explanation", "giải thích", "result only", "only the result", "only result"]
+
+  - id: o20_vi_delete_stored_like
+    lang: vi
+    date: "2026-10-23"
+    stored:
+      - {id: f1, type: preference, topic: "music", safety: false, fact: "Likes jazz music", locked: false}
+    messages:
+      - {role: user, content: "Xóa sở thích nghe jazz của tôi đi."}
+      - {role: assistant, content: "Đã xóa, mình sẽ không còn nhắc đến sở thích nghe jazz nữa."}
+    expect:
+      ops:
+        - {op: DELETE, id: f1}
+      forbidden: []
+      forbidden_ops:
+        - {op: ADD, groups: [["jazz"]]}
+
+  # ══ D8: item khoá (user tự gõ) ═══════════════════════════════════════
+  - id: d01_vi_locked_replace
+    lang: vi
+    date: "2026-10-23"
+    stored:
+      - {id: f1, type: instruction, topic: "address", safety: false, fact: "Call the user Tri", locked: true}
+    messages:
+      - {role: user, content: "Từ giờ hãy gọi tôi là Minh."}
+      - {role: assistant, content: "Được, mình sẽ gọi bạn là Minh từ giờ."}
+    expect:
+      ops:
+        - {op: DELETE, id: f1}
+        - {op: ADD, type: instruction, groups: [["Minh"]]}
+      forbidden: []
+
+  - id: d02_vi_locked_forget
+    lang: vi
+    date: "2026-10-23"
+    stored:
+      - {id: f1, type: preference, topic: "food", safety: false, fact: "Likes spicy food", locked: true}
+    messages:
+      - {role: user, content: "Quên sở thích ăn cay của tôi đi."}
+      - {role: assistant, content: "Đã quên, mình sẽ không dùng sở thích ăn cay của bạn nữa."}
+    expect:
+      ops:
+        - {op: DELETE, id: f1}
+      forbidden: []
+      forbidden_ops:
+        - {op: ADD, groups: [["spicy", "cay"]]}
+
+  # Nhắc lại gối đúng như đã lưu: không UPDATE/DELETE/REPEAT item khoá (code chặn
+  # UPDATE/REPEAT, nên chỉ DELETE và ADD trùng mới làm FAIL; UPDATE/REPEAT bị chặn
+  # hiện ở cột "forbidden_in_dropped").
+  - id: d03_vi_locked_untouched
+    lang: vi
+    date: "2026-10-23"
+    stored:
+      - {id: f1, type: profile, topic: "knee", safety: true, fact: "Has knee osteoarthritis", locked: true}
+    messages:
+      - {role: user, content: "Gối tôi vẫn như cũ thôi, bạn gợi ý vài bài tập ngồi cho tôi nhé."}
+      - {role: assistant, content: "Bạn có thể thử nâng chân thẳng khi ngồi và duỗi gối nhẹ, mỗi bài 10 lần, dừng nếu thấy đau nhói."}
+    expect:
+      ops: []
+      forbidden: []
+      forbidden_ops:
+        - {op: [UPDATE, DELETE, REPEAT], id: f1}
+        - {op: ADD, groups: [["knee", "gối", "osteoarthritis"]]}
+
+  # ══ Dùng lại topic ═══════════════════════════════════════════════════
+  - id: t01_vi_topic_reuse_update
+    lang: vi
+    date: "2026-10-23"
+    stored:
+      - {id: f1, type: area, topic: "knee rehab", safety: false, fact: "Knee pain at 6/10 on stairs (September 2026).", locked: false}
+    messages:
+      - {role: user, content: "Giờ gối tôi chỉ còn đau 3/10."}
+      - {role: assistant, content: "Tiến bộ tốt đó! Bạn cứ giữ nhịp tập hiện tại và tăng tải từ từ nhé."}
+    expect:
+      ops:
+        - {op: UPDATE, id: f1, type: area, topic: "knee rehab", groups: [["3/10"], ["knee"]]}
+      forbidden: []
+      forbidden_ops:
+        - {op: UPDATE, id: f1, topic_not: "knee rehab"}
+        - {op: ADD}
+
+  # Một sự thật khác về Lan (dị ứng) => ADD mới dùng lại topic "daughter Lan".
+  # Có thể bàn: quy tắc 4 cho phép gộp (UPDATE) vào item cùng type; ở đây hai
+  # sự thật khác thuộc tính nên chọn ADD theo ý Owner.
+  - id: t02_vi_topic_reuse_person
+    lang: vi
+    date: "2026-10-23"
+    stored:
+      - {id: f1, type: person, topic: "daughter Lan", safety: false, fact: "Daughter Lan is in 9th grade.", locked: false}
+    messages:
+      - {role: user, content: "Lan, con gái tôi, bị dị ứng đậu phộng và sống cùng tôi, nên đừng gợi ý món có đậu phộng cho cả nhà nhé."}
+      - {role: assistant, content: "Mình nhớ rồi, sẽ tránh đậu phộng trong các gợi ý bữa ăn cho cả nhà."}
+    expect:
+      ops:
+        - {op: ADD, type: person, topic: "daughter Lan", safety: false, groups: [["peanut", "đậu phộng"]]}
+      acceptable:
+        - {op: ADD, type: instruction, groups: [["peanut", "đậu phộng"]]}
+      forbidden: []
+      forbidden_ops:
+        - {op: ADD, type: person, topic_not: "daughter Lan"}
+        - {op: [ADD, UPDATE], type: person, safety: true}
+        - {op: [ADD, UPDATE], type: profile, groups: [["peanut", "đậu phộng"]]}
+
+  # ══ Loại mới ═════════════════════════════════════════════════════════
+  # Ngã ngày 3/10 (ngày/tháng) => 3 October 2026, không phải 10 March.
+  - id: n01_vi_event_plus_profile
+    lang: vi
+    date: "2026-10-23"
+    stored: []
+    messages:
+      - {role: user, content: "Tôi ngã cầu thang ngày 3/10 và từ đó đầu gối trái hay đau."}
+      - {role: assistant, content: "Mình rất tiếc. Đau kéo dài sau cú ngã thì bạn nên cho bác sĩ xem. Trong lúc đó, tránh các bài nhảy hoặc gập sâu gối nhé."}
+    expect:
+      ops:
+        - {op: ADD, type: event, groups: [["fell", "fall"], ["3 October 2026", "October 3, 2026", "3 Oct 2026", "Oct 3, 2026", "2026-10-03", "3/10/2026"]]}
+        - {op: ADD, type: profile, safety: true, groups: [["knee"]]}
+      forbidden: ["March", "10 March", "2026-03"]
+      forbidden_ops:
+        - {op: ADD, type: profile, safety: false, groups: [["knee"]]}
+
+  - id: n02_vi_reference_device
+    lang: vi
+    date: "2026-10-23"
+    stored: []
+    messages:
+      - {role: user, content: "Tôi đo nhịp tim bằng đồng hồ Garmin."}
+      - {role: assistant, content: "Garmin cho dữ liệu nhịp tim khá ổn định. Bạn có thể dùng vùng nhịp tim đó để chia cường độ buổi tập."}
+    expect:
+      ops:
+        - {op: ADD, type: reference, groups: [["Garmin"]]}
+      forbidden: []
+
+  # Hướng dẫn gắn với một area đang có => topic "knee rehab"; tránh động tác nên safety true.
+  - id: n03_vi_scoped_instruction
+    lang: vi
+    date: "2026-10-23"
+    stored:
+      - {id: f1, type: area, topic: "knee rehab", safety: false, fact: "Doing a knee rehab programme after surgery (since September 2026).", locked: false}
+    messages:
+      - {role: user, content: "Trong chương trình phục hồi gối, đừng cho tôi bài nhảy."}
+      - {role: assistant, content: "Rõ rồi, trong chương trình phục hồi gối mình sẽ không đưa các bài nhảy vào."}
+    expect:
+      ops:
+        - {op: ADD, type: instruction, topic: "knee rehab", safety: true, groups: [["jump", "hop", "plyometric", "dance"]]}
+      forbidden: []
+      forbidden_ops:
+        - {op: ADD, type: instruction, topic_not: "knee rehab"}
+        - {op: ADD, type: instruction, safety: false}
+
+  - id: n04_vi_habit_in_passing
+    lang: vi
+    date: "2026-10-23"
+    stored: []
+    messages:
+      - {role: user, content: "Sáng nay đánh pickleball xong chân hơi mỏi."}
+      - {role: assistant, content: "Đánh xong mỏi chân là bình thường. Bạn nên giãn cơ bắp chân và đùi vài phút để mai đỡ ê."}
+    expect:
+      ops:
+        - {op: ADD, type: profile, groups: [["pickleball"]]}
+      forbidden: ["tired", "sore", "mỏi", "fatigue", "legs"]
+
+  # Hàng cũ tiếng Việt, topic null: nói lại đúng điều đó => REPEAT, không ADD.
+  - id: n05_vi_repeat_legacy_row
+    lang: vi
+    date: "2026-10-23"
+    stored:
+      - {id: f1, type: profile, topic: null, safety: true, fact: "Bị đau lưng dưới", locked: false}
+    messages:
+      - {role: user, content: "Lưng dưới của tôi vẫn hay đau như mọi khi, bạn gợi ý bài kéo giãn buổi sáng nhé."}
+      - {role: assistant, content: "Bạn thử bài mèo-bò và bài xoay hông khi nằm ngửa, làm chậm và dừng nếu đau lan xuống chân."}
+    expect:
+      ops:
+        - {op: REPEAT, id: f1}
+      forbidden: []
+      forbidden_ops:
+        - {op: ADD, groups: [["back", "lưng"]]}

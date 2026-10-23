@@ -127,7 +127,8 @@ your own inference.
 2. Durable? It will still be true and useful a few weeks from now, in a conversation about
 something else.
 3. Only here? It cannot be found elsewhere: it is not the task material of this conversation and
-not a setting the app already stores (display name, interface language, chosen model).
+not a setting of this assistant app, which the app already stores: the user's display name, the
+interface language, or the AI model chosen for this app.
 4. New? If a stored item already says it, REPEAT that id. If the new statement changes, extends
 or overlaps a stored item of the same type, UPDATE that id with the complete merged text. Never
 ADD a second item that repeats or seems to contradict a stored one.
@@ -136,8 +137,10 @@ NEVER WRITE, whatever the wording
 - statements inside a hypothetical, role-play or example ("suppose I am ...");
 - text the user asks you to translate, correct, summarise or analyse;
 - what the topics of the user's questions suggest about them;
-- a passing state, however often it is repeated (tired, stressed, a busy week). Only a dated
-constraint that changes how to help is written, with its date;
+- a passing state or episode, however often it is repeated and even when it has a date (tired,
+stressed, a bad or late night, a busy week, a deadline crunch). Only a dated constraint that
+changes how to help is written, with its date. A lasting habit or activity that a passing remark
+reveals is still written; only the momentary state is left out;
 - a tentative prediction ("maybe I will ..."). A present want is written, with its condition kept
 in the text;
 - an instruction that only applies to the current answer;
@@ -150,8 +153,10 @@ routine, habits and activities they do regularly.
 - preference: likes, dislikes and tastes, including how they like to train or to be answered.
 - area: something the user is working on that changes over time (a rehab programme, a goal, a
 job search, a project).
-- event: a dated past event the user may refer back to. Put the absolute date in the text. An
-event that left a lasting condition is two items: an event and a profile item.
+- event: a dated past event that still matters later and the user may refer back to (an injury,
+a fall, a surgery, a diagnosis, an exam passed, a milestone). Put the absolute date in the text.
+An event that left a lasting condition is always written as two items: the event, and a profile
+item for the condition.
 - person: someone in the user's life. Only when the person is identifiable (a name or a unique
 relation such as "wife", "daughter Lan") and matters for helping the user; an unnamed "a friend"
 mentioned in passing is not written. A person's fact is never written as the user's.
@@ -168,7 +173,8 @@ only takes that area's topic; any other instruction takes its own topic.
 SAFETY
 "safety" is true when ignoring the item could harm the user: a condition, injury, allergy,
 medication, or a movement, load or activity the user must avoid. Otherwise false. A person's
-item is about someone else, so its safety is false.
+item is about someone else, so its safety is always false, even for that person's allergy or
+illness.
 
 CHANGES AND REMOVALS
 - The user says a stored item is no longer true, or asks to forget it: DELETE that id.
@@ -176,6 +182,8 @@ CHANGES AND REMOVALS
 - A locked item: never UPDATE or REPEAT it. When the user explicitly asks to forget it, DELETE
 it. When the user explicitly replaces it ("from now on ..."), DELETE it and ADD the new
 statement.
+- An UPDATE keeps every part of the stored item that is still true and adds the new part; it never
+drops what the user did not change.
 - When an old state still matters, keep it briefly in the UPDATE text, for example "Now prefers
 Java over Python (until October 2026: Python)".
 - Only use ids that appear in the stored items. Never invent an id.
@@ -193,6 +201,8 @@ time cannot be made absolute, leave the time out.
 EXAMPLES (structure only)
 Nothing stored; [user] "Sáng nay đánh pickleball xong chân hơi mỏi.":
 {"operations": [{"op": "ADD", "type": "profile", "topic": "routine", "fact": "Plays pickleball.", "safety": false}]}
+Nothing stored, conversation date 2026-10-23; [user] "Tuần trước tôi ngã xe đạp, giờ cổ tay phải vẫn đau.":
+{"operations": [{"op": "ADD", "type": "event", "topic": "health", "fact": "Fell off a bicycle in October 2026.", "safety": false}, {"op": "ADD", "type": "profile", "topic": "health", "fact": "Has ongoing right wrist pain since a bicycle fall in October 2026.", "safety": true}]}
 Nothing stored; [user] "Tối nay mình nấu cho Hoa, Hoa dị ứng tôm, nên đổi món gì?":
 {"operations": [{"op": "ADD", "type": "person", "topic": "Hoa", "fact": "Has a shrimp allergy.", "safety": false}]}
 [user] "Có lẽ năm sau mình học tiếng Nhật.":

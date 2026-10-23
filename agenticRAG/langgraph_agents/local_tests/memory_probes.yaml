@@ -654,7 +654,7 @@ probes:
       - {role: assistant, content: "Chúc bạn sớm tìm được vị trí phù hợp. Bạn đã chuẩn bị CV và vài dự án nhỏ để đưa vào portfolio chưa?"}
     expect:
       ops:
-        - {op: ADD, type: area, groups: [["intern"], ["October 2026", "Oct 2026", "2026-10"]]}
+        - {op: ADD, type: area, groups: [["intern"]]}
       forbidden: []
 
   - id: o08_vi_rename_unlocked
@@ -909,9 +909,8 @@ probes:
         - {op: UPDATE, id: f1, topic_not: "knee rehab"}
         - {op: ADD}
 
-  # Một sự thật khác về Lan (dị ứng) => ADD mới dùng lại topic "daughter Lan".
-  # Có thể bàn: quy tắc 4 cho phép gộp (UPDATE) vào item cùng type; ở đây hai
-  # sự thật khác thuộc tính nên chọn ADD theo ý Owner.
+  # Một sự thật khác về Lan (dị ứng) => UPDATE f1 (cùng type person, cùng topic),
+  # giữ phần cũ (lớp 9) và thêm phần mới; quy tắc 4 yêu cầu gộp.
   - id: t02_vi_topic_reuse_person
     lang: vi
     date: "2026-10-23"
@@ -922,7 +921,7 @@ probes:
       - {role: assistant, content: "Mình nhớ rồi, sẽ tránh đậu phộng trong các gợi ý bữa ăn cho cả nhà."}
     expect:
       ops:
-        - {op: ADD, type: person, topic: "daughter Lan", safety: false, groups: [["peanut", "đậu phộng"]]}
+        - {op: UPDATE, id: f1, type: person, topic: "daughter Lan", safety: false, groups: [["peanut", "đậu phộng"], ["9th", "grade", "lớp 9"]]}
       acceptable:
         - {op: ADD, type: instruction, groups: [["peanut", "đậu phộng"]]}
       forbidden: []

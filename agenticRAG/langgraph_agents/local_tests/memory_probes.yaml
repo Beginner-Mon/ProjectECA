@@ -334,7 +334,8 @@ probes:
         - {op: [ADD, UPDATE], type_not: person, groups: [["osteoporosis", "loãng xương"]]}
 
   # ── 19. Thời gian tương đối phải thành ngày tuyệt đối ──────────────────
-  # Ca mổ có ngày + hạn chế còn lại: event, có thể kèm profile.
+  # Ca mổ có ngày + hạn chế còn lại: event, có thể kèm profile. "Tự tập ở nhà" là hoàn
+  # cảnh lâu dài user tự nói: ADD profile về việc tập ở nhà cũng chấp nhận được.
   - id: c19_vi_relative_time
     lang: vi
     date: "2026-10-13"
@@ -349,6 +350,7 @@ probes:
         - {op: ADD, type: event, groups: [["vai", "shoulder"], ["tháng 7", "7/2026", "07/2026", "2026-07", "tháng 07", "July 2026", "Jul 2026"]]}
       acceptable:
         - {op: ADD, type: profile, groups: [["vai", "shoulder"]]}
+        - {op: ADD, type: profile, groups: [["home", "nhà", "self", "own"]]}
       forbidden: ["3 tháng", "ba tháng", "cách đây", "3 months", "three months", "ago"]
 
   # ── 20. Hội thoại dài, ba fact riêng biệt ──────────────────────────────
@@ -1004,6 +1006,7 @@ probes:
       forbidden: ["tired", "sore", "mỏi", "fatigue", "legs"]
 
   # Hàng cũ tiếng Việt, topic null: nói lại đúng điều đó => REPEAT, không ADD.
+  # "vẫn hay đau như mọi khi" thêm tần suất vào hàng cũ nên UPDATE f1 cũng chấp nhận được.
   - id: n05_vi_repeat_legacy_row
     lang: vi
     date: "2026-10-23"
@@ -1014,7 +1017,9 @@ probes:
       - {role: assistant, content: "Bạn thử bài mèo-bò và bài xoay hông khi nằm ngửa, làm chậm và dừng nếu đau lan xuống chân."}
     expect:
       ops:
-        - {op: REPEAT, id: f1}
+        - one_of:
+            - {op: REPEAT, id: f1}
+            - {op: UPDATE, id: f1, groups: [["lưng", "back"]]}
       forbidden: []
       forbidden_ops:
         - {op: ADD, groups: [["back", "lưng"]]}

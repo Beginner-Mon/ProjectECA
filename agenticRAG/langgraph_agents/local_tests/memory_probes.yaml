@@ -41,7 +41,8 @@ probes:
       forbidden: []
 
   # ── 2. Fact sức khoẻ nói thẳng (tiếng Anh, phẫu thuật) ─────────────────
-  # Phẫu thuật có ngày: có thể là event, profile hoặc cả hai — không ép type.
+  # Phẫu thuật có ngày: đúng MỘT item (event hoặc profile, type nào cũng được). Ghi thêm
+  # item thứ hai về cùng ca mổ là ghi trùng (v3.4 "một việc, một chỗ") => FAIL.
   - id: c02_en_plain_surgery
     lang: en
     date: "2026-10-13"
@@ -54,8 +55,6 @@ probes:
     expect:
       ops:
         - {op: ADD, groups: [["ACL"], ["2025", "March", "right knee", "right"]]}
-      acceptable:
-        - {op: ADD, groups: [["ACL"]]}
       forbidden: []
 
   # ── 3. Fact lẫn trong chuyện phiếm ─────────────────────────────────────
@@ -355,7 +354,8 @@ probes:
 
   # ── 20. Hội thoại dài, ba fact riêng biệt ──────────────────────────────
   # v3.1 "một việc, một chỗ": hạn chế của cổ tay có thể ADD riêng hoặc UPDATE vào
-  # item cổ tay đã tạo ở lượt trước (id n<k> gán lúc chạy, nên không ghi id).
+  # item cổ tay đã tạo ở lượt trước (id n<k> gán lúc chạy, nên không ghi id). Một profile
+  # chỉ nhắc lại sự kiện gãy tay (không mang hạn chế) là ghi trùng với event => FAIL.
   - id: c20_en_three_facts
     lang: en
     date: "2026-10-13"
@@ -377,8 +377,6 @@ probes:
             - {op: ADD, type: profile, groups: [["push-up", "weight-bearing", "weight bearing"]]}
             - {op: UPDATE, groups: [["push-up", "weight-bearing", "weight bearing"]]}
         - {op: ADD, type: area, groups: [["ski"], ["February"]]}
-      acceptable:
-        - {op: ADD, type: profile, groups: [["wrist"]]}
       forbidden: ["last month"]
 
   # ── 21–26. Sở thích, thói quen: nhắc thoáng qua trong chuyện phiếm ─────

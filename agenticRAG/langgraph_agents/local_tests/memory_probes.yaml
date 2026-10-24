@@ -1023,3 +1023,82 @@ probes:
       forbidden: []
       forbidden_ops:
         - {op: ADD, groups: [["back", "lưng"]]}
+
+  # ── Câu nói nước đôi (hedged): không được ghi chắc hơn user ────────────
+  # v3.2 quy tắc 3: điều user chưa chắc sẽ làm thì không ghi. Phần user nói chắc (h06)
+  # vẫn phải ghi; phần nói nước đôi thì bỏ.
+  - id: h01_vi_chac_la
+    lang: vi
+    date: "2026-10-24"
+    stored: []
+    messages:
+      - {role: user, content: "Chắc là tháng sau tôi chuyển vào Đà Nẵng sống."}
+      - {role: assistant, content: "Nghe là một thay đổi lớn đấy. Nếu cần, mình có thể giúp bạn tìm hiểu thời tiết và nhịp sống ở đó."}
+    expect:
+      ops: []
+      forbidden: ["Da Nang", "Đà Nẵng", "move", "moving", "relocat"]
+
+  - id: h02_en_might
+    lang: en
+    date: "2026-10-24"
+    stored: []
+    messages:
+      - {role: user, content: "I might sign up for a pottery class this winter, we'll see."}
+      - {role: assistant, content: "That sounds like a nice way to spend the winter. Let me know if you'd like help comparing options."}
+    expect:
+      ops: []
+      forbidden: ["pottery", "ceramic"]
+
+  # lang zh / es: run_memory_probe.py và validator không giới hạn giá trị `lang`.
+  - id: h03_zh_yexu
+    lang: zh
+    date: "2026-10-24"
+    stored: []
+    messages:
+      - {role: user, content: "我也许明年会去考驾照。"}
+      - {role: assistant, content: "好的，如果你需要，我可以帮你了解一下考试的大致流程。"}
+    expect:
+      ops: []
+      forbidden: ["driv", "licen", "驾照"]
+
+  - id: h04_es_quizas
+    lang: es
+    date: "2026-10-24"
+    stored: []
+    messages:
+      - {role: user, content: "Quizás empiece a correr por las mañanas, todavía no lo sé."}
+      - {role: assistant, content: "Tómate tu tiempo para decidirlo. Si quieres, puedo explicarte cómo suelen empezar las personas con ese hábito."}
+    expect:
+      ops: []
+      forbidden: ["run", "jog", "correr"]
+
+  # Việc làm đã lưu vẫn đúng: user chỉ đang cân nhắc, nên không UPDATE/DELETE f1.
+  - id: h05_vi_dang_tinh_stored
+    lang: vi
+    date: "2026-10-24"
+    stored:
+      - {id: f1, type: profile, topic: "work", fact: "Works as an accountant.", locked: false}
+    messages:
+      - {role: user, content: "Tôi đang tính bỏ nghề kế toán để chuyển sang học lập trình, nhưng chưa chắc lắm."}
+      - {role: assistant, content: "Đó là một quyết định cần cân nhắc kỹ. Bạn muốn mình giúp liệt kê ưu và nhược điểm của hai hướng không?"}
+    expect:
+      ops: []
+      acceptable:
+        - {op: REPEAT, id: f1}
+      forbidden: ["programm", "coding", "lập trình", "quit", "leave", "career change"]
+      forbidden_ops:
+        - {op: UPDATE, id: f1}
+        - {op: DELETE, id: f1}
+
+  # "vegetarian" không chứa "vegan" nên cụm cấm không khớp nhầm phần nói chắc.
+  - id: h06_en_certain_plus_hedge
+    lang: en
+    date: "2026-10-24"
+    stored: []
+    messages:
+      - {role: user, content: "I've been vegetarian for five years, and I'll probably try going fully vegan next month."}
+      - {role: assistant, content: "Five years is a long time. If you'd like, I can share some tips on getting enough protein and B12."}
+    expect:
+      ops:
+        - {op: ADD, type: profile, groups: [["vegetarian"], ["2021", "five years"]]}
+      forbidden: ["vegan"]

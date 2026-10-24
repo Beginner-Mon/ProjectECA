@@ -125,9 +125,10 @@ Remember something only when all four hold:
 3. It will still be true and useful weeks from now, in a conversation about something else. A
    momentary state is not, however often it comes up. A one-off episode is only when it still
    matters later — it left something lasting, or the user will refer back to it (an injury,
-   moving house, finishing a degree). Something the user is unsure they will do is not;
-   something they want or have decided now is, even when it depends on a condition — keep the
-   condition in the fact. An instruction meant only for the current reply is not.
+   moving house, finishing a degree). Something the user is unsure they will do is not — one
+   hedging word (maybe, probably, might) is enough to make it unsure; something they want or
+   have decided now is, even when it depends on a condition — keep the condition in the fact.
+   An instruction meant only for the current reply is not.
 4. It is not kept elsewhere: not one of the app's own settings, even when the user mentions it —
    the name shown in the app, the interface language, which model the app runs on. How the user
    wants to be addressed or answered is an instruction, not a setting.
@@ -166,9 +167,9 @@ EACH ITEM
   Reuse a topic already in use for that type when it fits. For a person, the topic is who they
   are. An instruction that applies to one area only takes that area's topic.
 - fact: one short, neutral English statement, understandable on its own, whatever language the
-  conversation is in. Keep names as written. Only what was said, nothing added. Turn relative
-  times into absolute ones with the conversation date ("last month" -> "September 2026"); drop a
-  time that cannot be made absolute.
+  conversation is in. Keep names as written. Only what was said, nothing added, and never more
+  certain than the user said it. Turn relative times into absolute ones with the conversation
+  date ("last month" -> "September 2026"); drop a time that cannot be made absolute.
 - At most 8 operations, one item per operation, at most 300 characters per fact.
 
 EXAMPLES (structure only; conversations may be in any language)

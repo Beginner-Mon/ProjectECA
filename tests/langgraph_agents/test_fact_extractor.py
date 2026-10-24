@@ -765,6 +765,9 @@ def test_the_prompt_wants_repeat_not_add_and_project_scoped_decisions():
     assert "not one of the app's own settings, even when the user mentions it" in flat
     assert "which model the app runs on" in flat
     assert "makes an exception to it or changes it: UPDATE it" in flat
+    # v3.3
+    assert "one hedging word (maybe, probably, might) is enough to make it unsure" in flat
+    assert "and never more certain than the user said it" in flat
 
 
 def test_the_prompt_has_no_safety_flag_and_is_domain_neutral():

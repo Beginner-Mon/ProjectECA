@@ -274,13 +274,27 @@ def _score(expect: dict, ops: list[dict], dropped: list[dict]) -> dict[str, Any]
                 if _lower_nfc(phrase) in _lower_nfc(fact):
                     dropped_hits.append({"phrase": phrase, "reason": d["reason"]})
 
-    if missed or hits:
+    # Chính sách "thà ghi thiếu còn hơn ghi thừa": ADD/UPDATE/DELETE không được
+    # kỳ vọng và không nằm trong acceptable (kể cả bản lặp của một kỳ vọng) là LỖI.
+    # Chỉ REPEAT thừa (không ghi chữ mới) vẫn là REVIEW.
+    extra_writes = [o for o in [*extras, *repeats] if o["op"] != "REPEAT"]
+    if missed or hits or extra_writes:
         verdict = "FAIL"
     elif extras or repeats:
         verdict = "REVIEW"
     else:
         verdict = "OK"
+    written = sum(1 for o in [*(f["got"] for f in found), *accepted, *repeats, *extras]
+                  if o["op"] in ("ADD", "UPDATE"))
+
+    def _is_write(e: dict) -> bool:
+        alts = e["one_of"] if e.get("one_of") else [e]
+        return any(a.get("op") in ("ADD", "UPDATE") for a in alts)
+
+    required = sum(1 for e in exp_ops if _is_write(e))
     return {"found": found, "missed": missed, "extras": extras,
+            "extra_writes": extra_writes, "written": written, "required": required,
+            "no_store": not exp_ops,
             "repeats": repeats, "acceptable": accepted,
             "category_mismatch": category_mismatch,
             "forbidden_hits": hits, "forbidden_in_dropped": dropped_hits,
@@ -426,6 +440,10 @@ def _mode_stats(results: list[dict], mode: str) -> dict[str, Any]:
         "found": sum(len(s["found"]) for s in scores),
         "missed": sum(len(s["missed"]) for s in scores),
         "extras": sum(len(s["extras"]) for s in scores),
+        "written": sum(s["written"] for s in scores),
+        "required": sum(s["required"] for s in scores),
+        "no_store_cases": sum(1 for s in scores if s["no_store"]),
+        "no_store_written": sum(1 for s in scores if s["no_store"] and s["written"]),
         "repeats": sum(len(s["repeats"]) for s in scores),
         "acceptable": sum(len(s["acceptable"]) for s in scores),
         "category_mismatch": sum(len(s["category_mismatch"]) for s in scores),
@@ -513,6 +531,9 @@ def _render_report(label: str, results: list[dict], modes: list[str]) -> str:
     row("fact kỳ vọng bị bỏ sót", lambda s: str(s["missed"]))
     row("thao tác thừa (extra, người xét)", lambda s: str(s["extras"]))
     row("thao tác lặp lại fact kỳ vọng", lambda s: str(s["repeats"]))
+    row("item ghi / item cần (ADD+UPDATE)", lambda s: f"{s['written']}/{s['required']}")
+    row("case 'không lưu gì' bị ghi",
+        lambda s: f"{s['no_store_written']}/{s['no_store_cases']}")
     row("thao tác ngoài kỳ vọng nhưng chấp nhận được", lambda s: str(s["acceptable"]))
     row("cụm CẤM xuất hiện (mỗi cái là một lỗi)", lambda s: str(s["forbidden_hits"]))
     row("sai category so với kỳ vọng", lambda s: str(s["category_mismatch"]))
@@ -527,9 +548,13 @@ def _render_report(label: str, results: list[dict], modes: list[str]) -> str:
         lambda s: f"{s['verdicts']['OK']} / {s['verdicts']['REVIEW']} / "
                   f"{s['verdicts']['FAIL']}")
     L.append("")
-    L.append("Ghi chú: OK = tìm đủ, không thừa, không cụm cấm. REVIEW = tìm đủ, "
-             "không cụm cấm, nhưng có thao tác thừa cần người xét (fact đúng vô hại "
-             "hay bịa). FAIL = bỏ sót hoặc dính cụm cấm. Cụm cấm chỉ tính trên "
+    L.append("Ghi chú: chính sách là thà ghi thiếu còn hơn ghi thừa. OK = tìm đủ, "
+             "không thừa, không cụm cấm. REVIEW = tìm đủ, không cụm cấm, chỉ có "
+             "REPEAT thừa (không ghi chữ mới). FAIL = bỏ sót, dính cụm cấm, hoặc có "
+             "ADD/UPDATE/DELETE không được kỳ vọng và không nằm trong acceptable "
+             "(kể cả ghi lặp một kỳ vọng). 'item ghi / item cần' đếm ADD+UPDATE đã "
+             "ghi so với số kỳ vọng ghi (một one_of tính là một; one_of có ADD hoặc "
+             "UPDATE thì tính là cần ghi). Cụm cấm chỉ tính trên "
              "thao tác đã qua kiểm tra của code; nếu model viết số điện thoại và "
              "code bỏ nó thì ghi vào cột \"bị code bỏ\", không tính là dính cụm cấm "
              "(số lần như vậy nằm trong `forbidden_in_dropped` của file JSON).")

@@ -198,6 +198,16 @@ jobs:
       - uses: aws-actions/amazon-ecr-login@v2
         id: login-ecr
 
+      # Log in to ECR Public as well. The Dockerfile's base images come from
+      # public.ecr.aws, and anonymous pulls from GitHub's shared runner IPs
+      # failed with "429 toomanyrequests: Data limit exceeded" (24/10/2026,
+      # twice in a row). Needs AmazonElasticContainerRegistryPublicReadOnly
+      # on GitHubActionsECRRole. ECR Public auth only exists in us-east-1,
+      # which is already this workflow's region.
+      - uses: aws-actions/amazon-ecr-login@v2
+        with:
+          registry-type: public
+
       - name: Resolve image URI
         id: meta
         run: |

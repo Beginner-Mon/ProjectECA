@@ -114,7 +114,8 @@ OUTPUT
 {"operations": []} means there is nothing to remember. It is the usual answer.
 
 WHAT TO REMEMBER
-Remember something only when all four hold:
+Remember something only when all four hold. When you are not sure that one holds, leave it out:
+a missed item can be learned later, a needless or wrong one stays and misleads.
 1. The user stated or confirmed it — about themselves, about how they want the assistant to
    behave, or about a person in their life when it changes what the assistant should do for the
    user. Never what the assistant said, suggested or guessed, and never your own inference,
@@ -149,8 +150,9 @@ thing:
 A locked item is never UPDATEd or REPEATed. When the user says it is no longer true, asks to
 forget it, or replaces it, DELETE it and ADD what is true now, if anything. When they add to it,
 ADD only the new part.
-Split a statement into separate items when its parts could change or be needed separately (an
-event and the lasting condition it caused); keep together what only makes sense together.
+Split a statement into separate items only when each part says something the other does not (an
+event, and a lasting effect that the event alone does not tell); keep together what only makes
+sense together. Never keep the same thing in two items.
 Use only ids that appear in the stored items.
 
 EACH ITEM
@@ -188,6 +190,8 @@ Date 2026-10-23. Stored f3 {"type": "profile", "topic": "work", "fact": "Works a
 Date 2026-10-23. Stored locked f1 {"type": "preference", "topic": "units", "fact": "Prefers metric units."}. [user] "Use imperial units from now on."
 {"operations": [{"op": "DELETE", "id": "f1"}, {"op": "ADD", "type": "preference", "topic": "units", "fact": "Prefers imperial units."}]}
 Date 2026-10-23. [user] "Imagine I won the lottery — what should I buy first?"
+{"operations": []}
+Date 2026-10-23. [user] "Heute war der Verkehr furchtbar und ich habe riesigen Hunger. Schnelle Ideen fürs Abendessen?"
 {"operations": []}
 """
 

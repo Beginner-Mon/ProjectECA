@@ -768,6 +768,12 @@ def test_the_prompt_wants_repeat_not_add_and_project_scoped_decisions():
     # v3.3
     assert "one hedging word (maybe, probably, might) is enough to make it unsure" in flat
     assert "and never more certain than the user said it" in flat
+    # v3.4
+    assert "When you are not sure that one holds, leave it out" in flat
+    assert "a missed item can be learned later, a needless or wrong one stays and misleads" in flat
+    assert "only when each part says something the other does not" in flat
+    assert "Never keep the same thing in two items." in flat
+    assert "riesigen Hunger" in flat
 
 
 def test_the_prompt_has_no_safety_flag_and_is_domain_neutral():

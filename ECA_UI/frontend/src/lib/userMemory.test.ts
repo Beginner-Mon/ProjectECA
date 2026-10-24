@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 
-import { MAX_FACT_LENGTH, groupFacts, normaliseFacts, sortFacts, validateNewFact } from './userMemory'
+import { MAX_FACT_LENGTH, groupByType, normaliseFacts, sortFacts, validateNewFact, validateTopic } from './userMemory'
 
 const raw = (over: Record<string, unknown> = {}) => ({
   id: 'f1',
@@ -96,33 +96,89 @@ describe('normaliseFact tier defaults', () => {
   })
 })
 
-describe('groupFacts', () => {
+describe('normaliseFact memory_type', () => {
+  it('keeps memory_type and a null project', () => {
+    const [fact] = normaliseFacts({ facts: [raw({ memory_type: 'person', project: null })] })
+    expect(fact.memory_type).toBe('person')
+    expect(fact.project).toBeNull()
+  })
+
+  it('derives it from kind when missing', () => {
+    expect(normaliseFacts({ facts: [raw({ kind: 'instruction' })] })[0].memory_type).toBe('instruction')
+    expect(normaliseFacts({ facts: [raw({ kind: 'fact' })] })[0].memory_type).toBe('profile')
+    expect(normaliseFacts({ facts: [raw()] })[0].memory_type).toBe('profile')
+  })
+
+  it('derives it when memory_type is unknown', () => {
+    expect(normaliseFacts({ facts: [raw({ memory_type: 'robot' })] })[0].memory_type).toBe('profile')
+  })
+})
+
+describe('groupByType', () => {
   const item = (over: Record<string, unknown> = {}) => normaliseFacts({ facts: [raw(over)] })[0]
 
-  it('splits instructions, project groups and candidates', () => {
-    const groups = groupFacts([
-      item({ id: 'i', kind: 'instruction', tier: 1 }),
-      item({ id: 'p', project: 'run' }),
+  it('orders sections in the fixed order and leaves empty ones out', () => {
+    const groups = groupByType([
+      item({ id: 'r', memory_type: 'reference' }),
+      item({ id: 'p', memory_type: 'profile' }),
+      item({ id: 'i', memory_type: 'instruction', kind: 'instruction' }),
+      item({ id: 'e', memory_type: 'event' }),
+    ])
+    expect(groups.map((g) => g.type)).toEqual(['instruction', 'profile', 'event', 'reference'])
+  })
+
+  it('returns nothing for no facts', () => {
+    expect(groupByType([])).toEqual([])
+  })
+
+  it('sorts topics alphabetically with no topic last', () => {
+    const [group] = groupByType([
       item({ id: 'n' }),
-      item({ id: 'c', status: 'candidate' }),
+      item({ id: 'z', project: 'work' }),
+      item({ id: 'a', project: 'health' }),
     ])
-    expect(groups.instructions.map((f) => f.id)).toEqual(['i'])
-    expect(groups.byProject.map((g) => [g.project, g.items.map((f) => f.id)])).toEqual([
-      ['run', ['p']],
-      [null, ['n']],
+    expect(group.topics.map((t) => [t.topic, t.items.map((f) => f.id)])).toEqual([
+      ['health', ['a']], ['work', ['z']], [null, ['n']],
     ])
-    expect(groups.candidates.map((f) => f.id)).toEqual(['c'])
   })
 
-  it('keeps tier-2 instructions out of the standing section', () => {
-    const groups = groupFacts([item({ id: 'x', kind: 'instruction', tier: 2, project: 'run' })])
-    expect(groups.instructions).toEqual([])
-    expect(groups.byProject).toHaveLength(1)
+  it('puts the newest first inside a topic', () => {
+    const [group] = groupByType([
+      item({ id: 'old', project: 'x', updated_at: '2026-10-01T00:00:00' }),
+      item({ id: 'new', project: 'x', updated_at: '2026-10-09T00:00:00' }),
+    ])
+    expect(group.topics[0].items.map((f) => f.id)).toEqual(['new', 'old'])
   })
 
-  it('keeps tier-1 facts in the standing section regardless of kind', () => {
-    const groups = groupFacts([item({ id: 'f', kind: 'fact', tier: 1, fact_text: 'Has back pain' })])
-    expect(groups.instructions.map((f) => f.id)).toEqual(['f'])
-    expect(groups.byProject).toEqual([])
+  it('keeps a tier-2 instruction in the instruction section under its topic', () => {
+    const groups = groupByType([item({ id: 'x', memory_type: 'instruction', kind: 'instruction', tier: 2, project: 'run' })])
+    expect(groups).toHaveLength(1)
+    expect(groups[0].type).toBe('instruction')
+    expect(groups[0].topics[0].topic).toBe('run')
+    expect(groups[0].topics[0].items[0].tier).toBe(2)
+  })
+
+  it('shows a candidate row from an old backend in its type section', () => {
+    const groups = groupByType([item({ id: 'c', status: 'candidate', memory_type: 'area' })])
+    expect(groups.map((g) => g.type)).toEqual(['area'])
+    expect(groups[0].topics[0].items.map((f) => f.id)).toEqual(['c'])
+  })
+})
+
+describe('validateTopic', () => {
+  it('returns null for no topic', () => {
+    expect(validateTopic('')).toBeNull()
+    expect(validateTopic('   ')).toBeNull()
+  })
+  it('trims and collapses spaces', () => {
+    expect(validateTopic('  knee   rehab ')).toBe('knee rehab')
+  })
+  it('rejects more than 4 words', () => {
+    expect(validateTopic('a b c d')).toBe('a b c d')
+    expect(validateTopic('a b c d e')).toBe('invalid')
+  })
+  it('rejects more than 60 characters', () => {
+    expect(validateTopic('a'.repeat(60))).toHaveLength(60)
+    expect(validateTopic('a'.repeat(61))).toBe('invalid')
   })
 })

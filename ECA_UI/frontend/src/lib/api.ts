@@ -534,6 +534,9 @@ export async function fetchLlmConfig(): Promise<LlmConfig> {
 
 // ── User memory CRUD ───────────────────────────────────────────────────────────
 
+export const MEMORY_TYPES = ['instruction', 'profile', 'preference', 'area', 'event', 'person', 'reference'] as const
+export type MemoryType = (typeof MEMORY_TYPES)[number]
+
 /** One thing ECA remembers about the user. */
 export interface UserMemoryItem {
   id: string
@@ -545,7 +548,9 @@ export interface UserMemoryItem {
   tier: 1 | 2
   /** 'active' = in use, 'candidate' = still being confirmed. */
   status: 'active' | 'candidate'
+  /** The topic (the backend calls it `project`); null on rows written before topics existed. */
   project: string | null
+  memory_type: MemoryType
   /** 'user' = typed by the user, 'extracted' = noted by ECA from a conversation. */
   source: 'user' | 'extracted'
   created_at: string
@@ -567,6 +572,7 @@ export interface UserMemoryWire {
   tier?: number
   status?: string
   project?: string | null
+  memory_type?: string
   source?: string
   created_at: string
   updated_at?: string | null
@@ -580,13 +586,14 @@ export async function listUserMemory(): Promise<{ facts: UserMemoryWire[] }> {
 
 export async function createUserMemory(
   factText: string,
-  opts?: { kind?: 'instruction' | 'fact'; category?: string; project?: string },
+  opts?: { kind?: 'instruction' | 'fact'; category?: string; project?: string; memory_type?: MemoryType },
 ): Promise<UserMemoryWire> {
   const { data } = await http.post('/me/memory', {
     fact_text: factText,
     kind: opts?.kind ?? 'fact',
     category: opts?.category,
     project: opts?.project,
+    memory_type: opts?.memory_type,
   })
   return data
 }

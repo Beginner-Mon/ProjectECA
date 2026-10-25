@@ -474,7 +474,7 @@ def test_user_facts_block_carries_today_date():
 
     from langgraph_agents.nodes.synthesizer import _build_user_facts
 
-    block = _build_user_facts(["- [2026-10-14] Prefers to be called Mon"])
+    block = _build_user_facts(["[2026-10-14] Prefers to be called Mon"])
     today = datetime.now(timezone.utc).date().isoformat()
     assert f"Today is {today}." in block
     # Ngay dưới tiêu đề khối, trước lời dẫn.

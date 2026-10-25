@@ -212,12 +212,12 @@ class TestMemoryNode:
                     {"role": "assistant", "content": "Chao ban!"},
                 ],
             )
-            mock_tier2.return_value = (["- [2026-10-14] di bo"], 0.9, None, 5)
+            mock_tier2.return_value = (["[2026-10-14] di bo"], 0.9, None, 5)
 
             result = await memory_node(state, config)
             # Facts and summaries are fields of their own, not a SystemMessage.
             assert result["user_instructions"] == ["65 tuoi"]
-            assert result["user_facts"] == ["- [2026-10-14] di bo"]
+            assert result["user_facts"] == ["[2026-10-14] di bo"]
             assert result["session_summary"] == ["Session: squat"]
             assert [type(m) for m in result["messages"]] == [HumanMessage, AIMessage]
 

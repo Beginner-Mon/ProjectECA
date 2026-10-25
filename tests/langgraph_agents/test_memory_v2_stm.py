@@ -222,7 +222,7 @@ async def _synth_messages(**state_fields) -> list:
 
 @pytest.mark.asyncio
 async def test_synthesizer_system_prompt_carries_user_facts(budgets):
-    msgs = await _synth_messages(user_facts=["- [2026-10-14] Left knee surgery in July 2026"])
+    msgs = await _synth_messages(user_facts=["[2026-10-14] Left knee surgery in July 2026"])
     system = msgs[0].content
     assert isinstance(msgs[0], SystemMessage)
     assert _FACTS_HEADING in system
@@ -232,7 +232,8 @@ async def test_synthesizer_system_prompt_carries_user_facts(budgets):
     assert "Each line has its date" in block
     assert "a newer line replaces an older one" in block
     assert "today's message replaces both" in block
-    assert "Use the ones that bear on this message" in block
+    assert "not possibilities" in block
+    assert "Use the ones that bear on this message" not in block
 
 
 @pytest.mark.asyncio
@@ -245,13 +246,25 @@ async def test_synthesizer_system_prompt_carries_user_instructions(budgets):
     assert "The user gave these themselves" in block
     assert "Treat them as true" in block
     assert "only today's message can change one" in block
-    assert "not a diagnosis" in block
+    assert "Health notes" not in block
+    assert "not a diagnosis" not in block
+
+
+def test_rendered_fact_line_has_a_single_bullet(budgets):
+    from datetime import datetime
+    from langgraph_agents.nodes.memory import _tier2_line
+    line = _tier2_line({"said_at": datetime(2026, 10, 14), "project": "A",
+                        "fact_text": "Allergic to shellfish"})
+    assert line == "[2026-10-14] (A) Allergic to shellfish"
+    block = syn._build_user_facts([line])
+    assert block.endswith("\n- [2026-10-14] (A) Allergic to shellfish")
+    assert "- - " not in block
 
 
 @pytest.mark.asyncio
 async def test_instructions_come_before_facts_in_the_prompt(budgets):
     msgs = await _synth_messages(user_instructions=["No overhead lifting"],
-                                 user_facts=["- [2026-10-14] Vegan"])
+                                 user_facts=["[2026-10-14] Vegan"])
     system = msgs[0].content
     assert system.index(_INSTRUCTIONS_HEADING) < system.index(_FACTS_HEADING)
 
@@ -292,7 +305,7 @@ async def test_synthesizer_keeps_the_raw_history_beside_the_new_blocks(budgets):
 def test_user_facts_block_follows_the_about_you_pattern(budgets):
     assert syn._build_user_facts([]) == ""
     assert syn._build_user_instructions([]) == ""
-    block = syn._build_user_facts(["- [2026-10-14] Vegan"])
+    block = syn._build_user_facts(["[2026-10-14] Vegan"])
     assert block.startswith(f"\n\n{_FACTS_HEADING}\n")
     assert block.endswith("- [2026-10-14] Vegan")
     instructions = syn._build_user_instructions(["Vegan"])
@@ -302,7 +315,7 @@ def test_user_facts_block_follows_the_about_you_pattern(budgets):
 
 def test_no_prompt_block_mentions_session(budgets):
     for block in (syn._build_user_instructions(["Vegan"]),
-                  syn._build_user_facts(["- [2026-10-14] Vegan"]),
+                  syn._build_user_facts(["[2026-10-14] Vegan"]),
                   syn._build_session_summary(["Knee pain reported."])):
         assert "session" not in block.lower()
 
@@ -339,14 +352,14 @@ def test_session_summary_block_drops_the_oldest_chunks_over_budget(budgets):
 async def test_prompt_blocks_log_reports_both_new_blocks(budgets, caplog):
     with caplog.at_level(logging.INFO, logger="langgraph.synthesizer"):
         await _synth_messages(user_instructions=["No overhead lifting"],
-                              user_facts=["- [2026-10-14] Vegan"],
+                              user_facts=["[2026-10-14] Vegan"],
                               session_summary=["Knee pain reported."])
     done = [r for r in caplog.records if r.getMessage() == "node_complete"]
     assert len(done) == 1
     assert done[0].prompt_blocks["user_instructions"] == len(
         syn._build_user_instructions(["No overhead lifting"]))
     assert done[0].prompt_blocks["user_facts"] == len(
-        syn._build_user_facts(["- [2026-10-14] Vegan"]))
+        syn._build_user_facts(["[2026-10-14] Vegan"]))
     assert done[0].prompt_blocks["session_summary"] == len(
         syn._build_session_summary(["Knee pain reported."]))
 
@@ -357,7 +370,7 @@ async def test_prompt_blocks_log_reports_both_new_blocks_on_the_addition_pass(
     with caplog.at_level(logging.INFO, logger="langgraph.synthesizer"):
         await _synth_messages(
             user_instructions=["No overhead lifting"],
-            user_facts=["- [2026-10-14] Vegan"],
+            user_facts=["[2026-10-14] Vegan"],
             session_summary=["Knee pain reported."],
             retry_count=1, grader_feedback="- how often",
             final_answer="Do heel slides.")

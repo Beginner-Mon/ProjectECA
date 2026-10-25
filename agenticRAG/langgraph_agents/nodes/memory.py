@@ -147,11 +147,11 @@ def _tier2_config() -> dict:
 
 
 def _tier2_line(row) -> str:
-    """One tier-2 row as `- [date] (project) fact` (no parens without a label)."""
+    """One tier-2 row as `[date] (project) fact` (no parens without a label)."""
     said = row["said_at"]
     day = said.date().isoformat() if hasattr(said, "date") else str(said)[:10]
     label = f"({row['project']}) " if row.get("project") else ""
-    return f"- [{day}] {label}{row['fact_text']}"
+    return f"[{day}] {label}{row['fact_text']}"
 
 
 def _split_tier2_queries(query: str) -> list[str]:

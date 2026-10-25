@@ -437,8 +437,7 @@ def _build_user_instructions(instructions: list[str]) -> str:
     return (
         "\n\n## Standing instructions from this user\n"
         "The user gave these themselves. Treat them as true and follow them "
-        "in every answer; only today's message can change one. "
-        "Health notes are the user's own account, not a diagnosis.\n"
+        "in every answer; only today's message can change one.\n"
         f"{content}"
     )
 
@@ -461,7 +460,10 @@ def _build_user_facts(facts: list[str]) -> str:
         f"Today is {today}.\n"
         "The user said these themselves; treat them as true. Each line has "
         "its date: a newer line replaces an older one, and today's message "
-        "replaces both. Use the ones that bear on this message.\n"
+        "replaces both. These are facts about this user, not possibilities. "
+        "When one bears on what the user asks, use it as theirs and let it "
+        "shape the answer, whatever kind of turn this is. Saying back what "
+        "they told you is not diagnosing.\n"
         f"{content}"
     )
 

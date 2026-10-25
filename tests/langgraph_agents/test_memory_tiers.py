@@ -70,7 +70,7 @@ async def test_tier2_hit_is_dated_and_labelled():
          patch.object(mem, "_tier2_config", return_value=dict(_CFG)):
         lines, top_sim, skipped, _ms = await mem._load_tier2_facts(
             "u-1", "s-now", "dau goi")
-    assert lines == ["- [2026-10-14] (A) Tranh squat sau"]
+    assert lines == ["[2026-10-14] (A) Tranh squat sau"]
     assert top_sim == 0.91
     assert skipped is None
 
@@ -111,8 +111,8 @@ async def test_tier2_hit_pulls_its_whole_project():
         lines, _top, _skipped, _ms = await mem._load_tier2_facts(
             "u-1", "s-now", "chay bo")
     # Direct hit first, then the project mate (hit itself not repeated).
-    assert lines == ["- [2026-10-14] (Run) Chay 5km",
-                     "- [2026-10-13] (Run) Nghi 1 ngay"]
+    assert lines == ["[2026-10-14] (Run) Chay 5km",
+                     "[2026-10-13] (Run) Nghi 1 ngay"]
     mate_sql = pg.statements[1]
     assert "project = ANY" in mate_sql
     assert "last_seen_session_id IS DISTINCT FROM" in mate_sql
@@ -127,7 +127,7 @@ async def test_tier2_hit_without_a_label_pulls_nothing_along():
          patch.object(mem, "_tier2_config", return_value=dict(_CFG)):
         lines, _top, _skipped, _ms = await mem._load_tier2_facts(
             "u-1", "s-now", "an sang")
-    assert lines == ["- [2026-10-14] Thich pho"]
+    assert lines == ["[2026-10-14] Thich pho"]
     assert len(pg.statements) == 1  # no project follow-up without a label
 
 
@@ -171,7 +171,7 @@ async def test_tier2_never_more_than_k_direct_hits():
         lines, top_sim, skipped, _ms = await mem._load_tier2_facts(
             "u-1", "s-now", "cai gi do")
     # LIMIT 2 ở SQL nên chỉ 2 dòng vào, không project nên không kéo theo.
-    assert lines == ["- [2026-10-14] Mot", "- [2026-10-14] Hai"]
+    assert lines == ["[2026-10-14] Mot", "[2026-10-14] Hai"]
     assert top_sim == 0.9 and skipped is None
 
 
@@ -221,7 +221,7 @@ async def test_tier2_single_sentence_embeds_one_vector():
     assert svc.aembed_queries.await_count == 1
     (qs,), _ = svc.aembed_queries.call_args
     assert qs == ["toi thich an pho"]
-    assert lines == ["- [2026-10-14] Thich pho"]
+    assert lines == ["[2026-10-14] Thich pho"]
     assert top_sim == 0.92 and skipped is None
 
 
@@ -244,7 +244,7 @@ async def test_tier2_compound_message_embeds_whole_plus_first_sentences():
     assert qs[1:] == ["Ten toi la Mon", "Toi thich an pho",
                       "Goi toi dau khi leo cau thang"]
     assert len(qs) == 4
-    assert lines == ["- [2026-10-14] Thich pho"]
+    assert lines == ["[2026-10-14] Thich pho"]
 
 
 @pytest.mark.asyncio
@@ -276,7 +276,7 @@ async def test_memory_node_reports_both_tiers(caplog):
         return [], []
 
     async def fake_tier2(_user, _session, _query):
-        return (["- [2026-10-14] (Run) Chay 5km"], 0.9, None, 12)
+        return (["[2026-10-14] (Run) Chay 5km"], 0.9, None, 12)
 
     config = RunnableConfig(configurable={
         "user_id": "u-1", "session_id": "s-1", "query": "chay bo",
@@ -288,7 +288,7 @@ async def test_memory_node_reports_both_tiers(caplog):
         with caplog.at_level(logging.INFO, logger="langgraph.memory"):
             out = await mem.memory_node({"messages": []}, config)
     assert out["user_instructions"] == ["No overhead lifting"]
-    assert out["user_facts"] == ["- [2026-10-14] (Run) Chay 5km"]
+    assert out["user_facts"] == ["[2026-10-14] (Run) Chay 5km"]
     assert out["session_summary"] == []
     (done,) = [r for r in caplog.records if r.getMessage() == "node_complete"]
     assert done.user_instructions_count == 1
@@ -315,7 +315,7 @@ async def test_memory_node_logs_the_tier2_lines_only_when_asked(monkeypatch, cap
         return [], []
 
     async def fake_tier2(_user, _session, _query):
-        return (["- [2026-10-14] (Run) Chay 5km"], 0.9, None, 12)
+        return (["[2026-10-14] (Run) Chay 5km"], 0.9, None, 12)
 
     config = RunnableConfig(configurable={
         "user_id": "u-1", "session_id": "s-1", "query": "chay bo",
@@ -331,7 +331,7 @@ async def test_memory_node_logs_the_tier2_lines_only_when_asked(monkeypatch, cap
          patch.object(mem, "_load_tier2_facts", side_effect=fake_tier2):
         with caplog.at_level(logging.INFO, logger="langgraph.memory"):
             await mem.memory_node({"messages": []}, config)
-    assert _log_lines() == ["- [2026-10-14] (Run) Chay 5km"]
+    assert _log_lines() == ["[2026-10-14] (Run) Chay 5km"]
 
     caplog.clear()
     monkeypatch.delenv("VVA_LOG_USER_FACTS", raising=False)

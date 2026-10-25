@@ -3,6 +3,7 @@ import { useTranslation } from 'react-i18next'
 import { MessageSquare, Trash2, RefreshCw, Loader2 } from 'lucide-react'
 import { ScrollArea } from '../ui/scroll-area'
 import ConfirmDialog from '../ui/confirm-dialog'
+import PanelHeader, { PANEL_HEADER_ACTION_CLASS } from '../ui/PanelHeader'
 import { useChat, type SessionItem } from '../../hooks/useChat'
 
 let _cacheLoaded = false
@@ -65,23 +66,20 @@ export default function ChatSessionsPanel({ onSessionSelected }: { onSessionSele
 
   return (
     <div className="flex flex-col h-full">
-      <div className="px-4 py-3 border-b border-border/40 shrink-0 flex items-center justify-between">
-        <div>
-          <h2 className="text-sm font-semibold text-foreground tracking-tight flex items-center gap-2">
-            <MessageSquare className="w-4 h-4 text-primary" />
-            {t('sessions.title')}
-          </h2>
-          <p className="text-[11px] text-muted-foreground mt-0.5">{t('sessions.subtitle')}</p>
-        </div>
-        <button
-          onClick={handleRefresh}
-          disabled={refreshing}
-          className="p-1.5 rounded-lg text-muted-foreground hover:text-foreground hover:bg-secondary/60 transition-colors"
-          title={t('common.refresh')}
-        >
-          <RefreshCw className={`w-4 h-4 ${refreshing ? 'animate-spin' : ''}`} />
-        </button>
-      </div>
+      <PanelHeader
+        icon={<MessageSquare className="w-5 h-5 text-primary" />}
+        title={t('sessions.title')}
+        action={
+          <button
+            onClick={handleRefresh}
+            disabled={refreshing}
+            className={PANEL_HEADER_ACTION_CLASS}
+            title={t('common.refresh')}
+          >
+            <RefreshCw className={`w-5 h-5 ${refreshing ? 'animate-spin' : ''}`} />
+          </button>
+        }
+      />
 
       <ScrollArea className="flex-1 min-h-0">
         {loading ? (
@@ -91,16 +89,8 @@ export default function ChatSessionsPanel({ onSessionSelected }: { onSessionSele
           </div>
         ) : sessionsError && sessionList.length === 0 ? (
           // The fetch failed — not the same as having no conversations.
-          <div className="flex flex-col items-center justify-center gap-2 px-6 py-8 text-center h-full min-h-[300px]">
+          <div className="flex flex-col items-center justify-center px-6 py-8 text-center h-full min-h-[300px]">
             <p className="text-sm text-muted-foreground">{t('sessions.load_failed')}</p>
-            <button
-              type="button"
-              onClick={handleRefresh}
-              disabled={refreshing}
-              className="text-xs font-medium text-foreground underline underline-offset-2 hover:text-foreground/80"
-            >
-              {t('chat.retry')}
-            </button>
           </div>
         ) : sessionList.length === 0 ? (
           <div className="flex flex-col items-center justify-center px-6 py-8 text-center h-full min-h-[300px]">
@@ -116,12 +106,7 @@ export default function ChatSessionsPanel({ onSessionSelected }: { onSessionSele
           <div className="px-2 py-1">
             {sessionsError && (
               // A refresh failed but an earlier list is still on screen.
-              <p className="px-3 py-2 text-xs text-muted-foreground">
-                {t('sessions.load_failed')}{' '}
-                <button type="button" onClick={handleRefresh} className="font-medium text-foreground underline underline-offset-2">
-                  {t('chat.retry')}
-                </button>
-              </p>
+              <p className="px-3 py-2 text-xs text-muted-foreground">{t('sessions.load_failed')}</p>
             )}
             <p className="px-3 py-2 text-xs font-medium text-muted-foreground">{t('sessions.recents')}</p>
             {sessionList.map((s) => {

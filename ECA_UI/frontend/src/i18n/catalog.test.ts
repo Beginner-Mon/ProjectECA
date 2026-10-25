@@ -73,6 +73,7 @@ describe('locale catalogues', () => {
       'providers.api_key_label', // "API key" is the term the Vietnamese UI uses too
       'providers.base_url_placeholder', // URL scheme, not language
       'providers.eca', // product name
+      'chat.title', // product name
       'providers.model_label', // "Model" is the same loanword in both
       'memory.filename', // "memory.md" is a filename, not language
     ])

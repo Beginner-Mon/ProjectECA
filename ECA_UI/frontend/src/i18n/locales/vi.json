@@ -53,14 +53,11 @@
     "retry": "Thử lại",
     "sign_in_again": "Đăng nhập lại",
     "open_llm_settings": "Mở cài đặt key",
-    "interrupted_note": "Câu trả lời bị ngắt giữa chừng.",
     "record_start": "Nhập bằng giọng nói",
     "record_stop": "Dừng nhập giọng nói",
     "show_conversation": "Hiện hội thoại",
     "resize_conversation": "Kéo để chỉnh chiều cao hội thoại hoặc bấm để mở, đóng. Dùng phím mũi tên để điều chỉnh chiều cao.",
-    "status_online": "Trực tuyến · Sẵn sàng trò chuyện",
-    "status_restoring": "Đang tải hội thoại trước...",
-    "title": "Trợ lý ảo"
+    "title": "ECA"
   },
   "motion": {
     "auto": "(tự động)",
@@ -89,7 +86,6 @@
     "reset": "Đặt lại",
     "reset_position": "Về vị trí ban đầu",
     "reset_position_busy": "Dùng được khi động tác hiện tại kết thúc",
-    "subtitle": "Nguồn animation & phát lại",
     "target_head": "Mục tiêu: Đầu",
     "target_hips": "Mục tiêu: Hông",
     "title": "Điều khiển chuyển động",
@@ -102,7 +98,6 @@
     "empty_hint": "Bắt đầu một cuộc trò chuyện để thấy lịch sử ở đây.",
     "load_failed": "Không tải được danh sách hội thoại.",
     "recents": "Gần đây",
-    "subtitle": "Lịch sử trò chuyện của bạn",
     "title": "Phiên trò chuyện",
     "untitled": "(trống)"
   },
@@ -112,7 +107,6 @@
     "load_failed": "Không tải được danh sách nhân vật.",
     "loading": "Đang tải danh sách nhân vật...",
     "set_default": "Đặt làm mặc định",
-    "subtitle": "Chọn một avatar 3D",
     "title": "Nhân vật"
   },
   "settings": {

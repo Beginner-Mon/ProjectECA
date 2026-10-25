@@ -53,14 +53,11 @@
     "retry": "Try again",
     "sign_in_again": "Sign in again",
     "open_llm_settings": "Open key settings",
-    "interrupted_note": "This reply was cut off.",
     "record_start": "Voice input",
     "record_stop": "Stop voice input",
     "show_conversation": "Show conversation",
     "resize_conversation": "Drag to resize the conversation or tap to open or close. Use arrow keys to adjust the height.",
-    "status_online": "Online · Ready to chat",
-    "status_restoring": "Loading your previous conversation...",
-    "title": "Virtual Assistant"
+    "title": "ECA"
   },
   "motion": {
     "auto": "(auto)",
@@ -88,7 +85,6 @@
     "reset": "Reset",
     "reset_position": "Reset position",
     "reset_position_busy": "Available once the current movement finishes",
-    "subtitle": "Animation source & playback",
     "target_head": "Target: Head",
     "target_hips": "Target: Hips",
     "title": "Motion Controls",
@@ -102,7 +98,6 @@
     "empty_hint": "Start a conversation to see your chat history here.",
     "load_failed": "Could not load your conversations.",
     "recents": "Recents",
-    "subtitle": "Your conversation history",
     "title": "Chat Sessions",
     "untitled": "(empty)"
   },
@@ -112,7 +107,6 @@
     "load_failed": "Could not load characters.",
     "loading": "Loading characters...",
     "set_default": "Set as default",
-    "subtitle": "Choose a 3D avatar",
     "title": "Characters"
   },
   "settings": {

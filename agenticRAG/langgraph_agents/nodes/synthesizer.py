@@ -433,10 +433,7 @@ def _build_user_facts(facts: list[str]) -> str:
         f"Today is {today}.\n"
         "The user said these themselves; treat them as true. Each line has "
         "its date: a newer line replaces an older one, and today's message "
-        "replaces both. These are facts about this user, not possibilities. "
-        "When one bears on what the user asks, use it as theirs and let it "
-        "shape the answer, whatever kind of turn this is. Saying back what "
-        "they told you is not diagnosing.\n"
+        "replaces both. Use the ones that bear on this message.\n"
         f"{content}"
     )
 

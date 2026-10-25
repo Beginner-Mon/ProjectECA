@@ -232,8 +232,8 @@ async def test_synthesizer_system_prompt_carries_user_facts(budgets):
     assert "Each line has its date" in block
     assert "a newer line replaces an older one" in block
     assert "today's message replaces both" in block
-    assert "not possibilities" in block
-    assert "Use the ones that bear on this message" not in block
+    assert "not possibilities" not in block
+    assert "Use the ones that bear on this message" in block
 
 
 @pytest.mark.asyncio

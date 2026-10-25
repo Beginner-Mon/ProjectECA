@@ -16,7 +16,7 @@ export default function PanelHeader({ icon, title, action, className }: PanelHea
   return (
     <header className={cn('flex items-center gap-2 h-12 px-4 border-b border-border/40 shrink-0', className)}>
       <span className="w-5 h-5 shrink-0 flex items-center justify-center">{icon}</span>
-      <h2 className="flex-1 min-w-0 text-base font-semibold text-foreground tracking-tight truncate">{title}</h2>
+      <h2 className="flex-1 min-w-0 text-sm font-semibold text-foreground tracking-tight truncate">{title}</h2>
       {action}
     </header>
   )

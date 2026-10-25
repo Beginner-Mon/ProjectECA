@@ -26,7 +26,7 @@ def test_chat_mode_excludes_exercise_rules():
     assert "one thing they can do right now" not in prompt
 
 
-@pytest.mark.parametrize("mode", ["synthesize", "refuse", "clarify"])
+@pytest.mark.parametrize("mode", ["synthesize", "clarify"])
 def test_non_chat_modes_include_exercise_rules(mode):
     persona = get_persona("anne", "en")
     prompt = build_persona_prompt(persona, mode)

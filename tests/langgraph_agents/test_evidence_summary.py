@@ -34,8 +34,8 @@ def test_summary_is_empty_when_retriever_never_searched():
 
 
 def test_summary_agrees_with_mode():
-    """An errored search is not evidence: the turn refuses and the log says why."""
+    """An errored search is not evidence: the turn has no evidence and the log says why."""
     state = {"required_outputs": ["exercise_steps"],
              "messages": [_tool("kb_search", {"error": "timeout"})]}
-    assert _derive_mode(state) == "refuse"
+    assert _derive_mode(state) == "chat"
     assert _evidence_summary(state["messages"])[0]["status"] == "error"

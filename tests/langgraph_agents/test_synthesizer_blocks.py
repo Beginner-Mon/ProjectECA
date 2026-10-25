@@ -9,7 +9,6 @@ from langchain_core.messages import ToolMessage
 
 from langgraph_agents.nodes.synthesizer import (
     _CLARIFY_TASK,
-    _REFUSE_TASK,
     _build_about_you,
     _build_body_state_note,
     _build_tag_instructions,
@@ -92,7 +91,7 @@ def test_unknown_tool_gets_generic_title():
 
 
 def test_clarify_task_is_narrow_not_whole_turn():
-    """Như _REFUSE_TASK: chỉ hỏi phần thiếu, phần còn lại của lượt vẫn trả lời."""
+    """Chỉ hỏi phần thiếu, phần còn lại của lượt vẫn trả lời."""
     assert "that part only" not in _CLARIFY_TASK
     assert "anything else in the turn you can still answer" in _CLARIFY_TASK
 
@@ -248,9 +247,21 @@ def test_anne_identity_core_claims_a_voice():
     assert "You have a voice of your own." in prompt
 
 
-def test_refuse_task_is_narrow_not_whole_turn():
-    assert "You cannot answer this one" not in _REFUSE_TASK
-    assert "that part only" in _REFUSE_TASK
+def test_clinical_tags_without_results_give_chat_mode():
+    from langgraph_agents.nodes.synthesizer import _derive_mode
+
+    for tags in (["red_flag_screen"], ["referral_advice"], ["exercise_protocol"],
+                 ["scope_disclaimer", "contraindication"]):
+        state = {"needs_clarification": False, "required_outputs": tags, "messages": []}
+        assert _derive_mode(state) == "chat"
+
+
+def test_chat_task_does_not_call_the_turn_non_clinical():
+    from langgraph_agents.nodes.synthesizer import _CHAT_TASK
+
+    assert "no clinical content" not in _CHAT_TASK.lower()
+    assert "Do NOT add clinical advice" not in _CHAT_TASK
+    assert "No evidence was retrieved for this turn." in _CHAT_TASK
 
 
 class _FakeAI:
@@ -271,7 +282,7 @@ def _capturing_llm(captured: dict) -> MagicMock:
 
 @pytest.mark.unit
 @pytest.mark.asyncio
-async def test_refuse_with_queued_motion_carries_body_note():
+async def test_no_evidence_with_queued_motion_carries_body_note():
     """tags motion + thư viện rỗng + motion queued: prompt có khối cơ thể,
     không có câu từ chối cả lượt."""
     from langgraph_agents.nodes import synthesizer as syn_mod

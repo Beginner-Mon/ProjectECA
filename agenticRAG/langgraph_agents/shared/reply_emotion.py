@@ -141,14 +141,14 @@ class EmotionTagStream:
 def apply_emotion_policy(emotion: dict | None, mode: str, required_outputs: list) -> dict | None:
     """Keep the face appropriate for a health assistant.
 
-    - Refusals and safety content (red-flag screening, referrals) → neutral.
+    - Safety content (red-flag screening, referrals) → neutral.
     - Angry → neutral: never frown at a patient.
     - Every emotion capped (sad ≤ 0.5 reads as sympathy, not distress).
     """
     if emotion is None:
         return None
     name = emotion["name"]
-    if mode == "refuse" or _SAFETY_TAGS.intersection(required_outputs or []) or name == "angry":
+    if _SAFETY_TAGS.intersection(required_outputs or []) or name == "angry":
         return {"name": "neutral", "intensity": 1.0}
     cap = _INTENSITY_CAP.get(name)
     if cap is None:

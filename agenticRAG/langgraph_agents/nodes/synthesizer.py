@@ -2,7 +2,7 @@
 
 Decisions encoded:
   D29:  Mode EMERGES from signals, NOT enum response_mode
-  D30:  Persona applies to ALL modes (including refuse/clarify)
+  D30:  Persona applies to ALL modes (including clarify)
   D32:  Safety warning = FIRST in output (synthesizer writes);
         unverified disclaimer = LAST (grader appends)
   D33:  Danger detection = PLANNER only (1 place);
@@ -12,9 +12,9 @@ Decisions encoded:
 
 Mode derivation (D29 — derive, don't store):
    needs_clarification (planner only — tool ambiguous never forces it) → CLARIFY
-   clinical tag + all tools empty (no-source)  → REFUSE
   Has ToolMessage non-empty                   → SYNTHESIZE
-  No tools + no tags                          → CHAT
+  Everything else (incl. clinical tags, no tools) → CHAT
+  Clinical gating on no-evidence turns is left to a future guardrail layer.
 """
 
 from __future__ import annotations
@@ -149,32 +149,6 @@ Instructions:
 - Length and layout are set by your own Formatting rules, not by this list.
 """
 
-_REFUSE_TASK = """## This turn
-You have no reliable source for the guidance the user asked for. Do not make
-up exercise or health guidance. Say so for that part only.
-
-{language_rule}
-
-## Situation
-The guidance the user asked for has no reliable source: the question is
-OUTSIDE your wellness advisory scope and/or nothing trustworthy was found.
-Speak only to that part — anything else in the turn you can still answer.
-
-## Required deliverables (tags)
-{required_outputs}
-
-## What the user wrote
-{user_message}
-
-Instructions:
-- Be honest: explain WHY you cannot give that guidance (out of scope / no sources)
-- If no sources were found: state this clearly, suggest the user rephrase or ask a professional
-- Keep it brief
-- Do NOT invent exercises, diagnoses, or medical advice
-- Numbers for sets, reps, hold times or frequency come only from the evidence.
-  If the evidence gives none, give none.
-"""
-
 _CLARIFY_TASK = """## This turn
 The user's query needs clarification before you can give a useful answer.
 
@@ -195,7 +169,7 @@ Instructions:
 """
 
 _CHAT_TASK = """## This turn
-A casual conversational message — no clinical content needed.
+No evidence was retrieved for this turn.
 
 {language_rule}
 
@@ -205,7 +179,6 @@ A casual conversational message — no clinical content needed.
 Instructions:
 - Respond naturally, the way you would speak
 - Keep under 50 words for greetings, under 100 for follow-up chat
-- Do NOT add clinical advice unless the user explicitly asks
 """
 
 
@@ -264,7 +237,7 @@ def _top_similarity(content: str) -> float | None:
 
 
 def _evidence_summary(messages: list) -> list[dict]:
-    """One entry per tool call: why a turn refused, or what it answered from.
+    """One entry per tool call: why a turn had no evidence, or what it answered from.
 
     Tells a library gap (hits, low similarity) from a retrieval fault (error)
     from a retriever that never searched (empty list).
@@ -500,7 +473,7 @@ def _build_session_summary(chunks: list[str]) -> str:
 def _derive_mode(state: AgentState) -> str:
     """Derive synthesizer mode from state signals.
 
-    Returns one of: 'clarify', 'refuse', 'synthesize', 'chat'
+    Returns one of: 'clarify', 'synthesize', 'chat'
 
     Clarify comes ONLY from the planner (needs_clarification). A tool's
     ambiguity flag never forces the whole turn into clarify: the newest
@@ -518,20 +491,12 @@ def _derive_mode(state: AgentState) -> str:
 
     has_results = _has_tool_results(messages)
 
-    # 2. REFUSE: clinical/safety tags + no sources (D25 — clinical-no-source)
-    safety_tags = {"red_flag_screen", "referral_advice"}
-    clinical_tags = {"exercise_protocol", "exercise_steps", "contraindication",
-                     "evidence_citation", "scope_disclaimer"}
-    has_clinical = bool(set(required_outputs) & (safety_tags | clinical_tags))
-
-    if has_clinical and not has_results:
-        return "refuse"
-
-    # 3. SYNTHESIZE: has tool results (regardless of tags)
+    # 2. SYNTHESIZE: has tool results (regardless of tags)
     if has_results:
         return "synthesize"
 
-    # 4. CHAT: no tools, no tags (greeting/general/empty)
+    # 3. CHAT: everything else, clinical tags or not. Clinical gating belongs
+    # to the future guardrail layer, not to a mode here (Owner 25/10).
     return "chat"
 
 
@@ -693,12 +658,6 @@ async def synthesizer_node(state: AgentState, config: RunnableConfig) -> dict:
             language_rule=_LANGUAGE_RULE,
             user_message=user_message,
             tool_results=tool_results or "(no tool results — static clarification)",
-        )
-    elif mode == "refuse":
-        task_system = _REFUSE_TASK.format(
-            language_rule=_LANGUAGE_RULE,
-            required_outputs=tags_str,
-            user_message=user_message,
         )
     elif mode == "synthesize":
         task_system = _SYNTHESIZE_TASK.format(

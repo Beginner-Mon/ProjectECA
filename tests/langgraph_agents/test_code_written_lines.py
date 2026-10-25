@@ -156,11 +156,10 @@ async def test_deliverables_list_only_model_tags():
 
 
 @pytest.mark.asyncio
-async def test_number_rule_in_synthesize_and_refuse():
+async def test_number_rule_in_synthesize():
     from langgraph_agents.nodes import synthesizer as syn_mod
 
-    for tags, msgs in ((["exercise_steps"], [_tm("kb_search", _KB)]),
-                       (["exercise_steps"], [])):
+    for tags, msgs in ((["exercise_steps"], [_tm("kb_search", _KB)]),):
         captured: list = []
         sent: list = []
         with patch.object(syn_mod, "get_chat_model",

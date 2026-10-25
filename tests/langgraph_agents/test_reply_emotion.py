@@ -102,11 +102,10 @@ class TestEmotionPolicy:
     def test_never_angry_at_a_patient(self):
         assert apply_emotion_policy({"name": "angry", "intensity": 0.9}, "chat", [])["name"] == "neutral"
 
-    def test_safety_warnings_and_refusals_are_neutral(self):
+    def test_safety_warnings_are_neutral(self):
         happy = {"name": "happy", "intensity": 0.8}
         assert apply_emotion_policy(happy, "synthesize", ["red_flag_screen"])["name"] == "neutral"
         assert apply_emotion_policy(happy, "synthesize", ["referral_advice"])["name"] == "neutral"
-        assert apply_emotion_policy(happy, "refuse", [])["name"] == "neutral"
 
     def test_no_emotion_stays_none(self):
         assert apply_emotion_policy(None, "chat", []) is None

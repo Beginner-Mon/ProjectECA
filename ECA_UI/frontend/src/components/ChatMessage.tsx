@@ -86,6 +86,9 @@ interface ChatMessageProps {
   isStreaming?: boolean
 }
 
+/** The thin left rule on every line that is not the agent's own answer (errors, notices). */
+const NOTICE_BAR_CLASS = 'border-l-2 border-muted-foreground/40 pl-3'
+
 /** How a reply's text looks. A failure line uses it too, so it reads as part of the reply. */
 const REPLY_TEXT_CLASS =
   'prose dark:prose-invert prose-p:leading-relaxed prose-strong:text-foreground prose-headings:text-foreground prose-pre:bg-secondary/50 prose-pre:border prose-pre:border-border/40 max-w-none text-sm text-foreground/90'
@@ -128,14 +131,14 @@ export default function ChatMessage({ message, isStreaming }: ChatMessageProps) 
         {message.motionNotice && (
           // Muted and small: an aside about the 3D clip, not part of the
           // answer. It disappears on its own once the avatar starts moving.
-          <p className="mt-1 text-[0.7rem] italic text-muted-foreground">
+          <p className={`mt-1 text-[0.7rem] italic text-muted-foreground ${NOTICE_BAR_CLASS}`}>
             {message.motionNotice}
           </p>
         )}
         {message.providerNotice && (
           // Same aside slot: the user's provider failed (and ECA answered, or
           // — in an error turn — could not either).
-          <p className="mt-1 text-[0.7rem] italic text-muted-foreground">
+          <p className={`mt-1 text-[0.7rem] italic text-muted-foreground ${NOTICE_BAR_CLASS}`}>
             {message.providerNotice}
           </p>
         )}
@@ -168,7 +171,7 @@ export default function ChatMessage({ message, isStreaming }: ChatMessageProps) 
 /** Restored turn whose reply was cut off: the text stays, this says why it stops short. */
 function InterruptedNote() {
   const { t } = useTranslation()
-  return <p className="mt-1 text-[0.7rem] italic text-muted-foreground">{t('chat.interrupted_note')}</p>
+  return <p className={`mt-1 text-[0.7rem] italic text-muted-foreground ${NOTICE_BAR_CLASS}`}>{t('chat.interrupted_note')}</p>
 }
 
 /**
@@ -198,7 +201,7 @@ export function ErrorNotice({
 }) {
   const { t } = useTranslation()
   return (
-    <div role="alert" className={spaced ? 'mt-3' : undefined}>
+    <div role="alert" className={`${NOTICE_BAR_CLASS}${spaced ? ' mt-3' : ''}`}>
       <div className={REPLY_TEXT_CLASS}>
         <p>{text}</p>
       </div>

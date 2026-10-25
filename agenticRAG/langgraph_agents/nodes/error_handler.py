@@ -1,10 +1,13 @@
 from langchain_core.runnables import RunnableConfig
 
 from langgraph_agents.state import AgentState, ErrorSeverity
+from langgraph_agents.nodes._errors import error_code_for
 from langgraph_agents.nodes._persona_loader import get_ui_string
 from langgraph_agents.shared.logging import get_logger
 
 logger = get_logger("langgraph.error_handler")
+
+_CODE_PRIORITY = ("provider_billing", "provider_auth", "provider_unavailable", "internal")
 
 
 async def error_handler_node(
@@ -42,10 +45,21 @@ async def error_handler_node(
 
     if critical:
         msg = get_ui_string(persona_id, "error_system", locale)
+        # The most severe CRITICAL error names the failure. Billing outranks
+        # auth outranks the rest, because that is what the operator must act on.
+        codes = [error_code_for(e) for e in critical]
+        code = next((c for c in _CODE_PRIORITY if c in codes), "internal")
+        cause = critical[codes.index(code)]
         logger.error("error_handler_invoked", extra={
             "node": "error_handler", "total_errors": total_count,
             "critical_errors": critical_count, "persona_id": persona_id,
         })
+        # One line per failed turn, no text: the hook for alarms.
+        logger.error("chat_error", extra={
+            "code": code, "kind": cause.get("kind"),
+            "status": cause.get("status"), "node": cause.get("node"),
+        })
+        return {"final_answer": msg, "error_code": code}
     else:
         msg = get_ui_string(persona_id, "error_partial", locale)
         logger.warning("error_handler_invoked", extra={

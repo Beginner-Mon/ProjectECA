@@ -67,6 +67,12 @@ def _fold(s: str) -> str:
     return "".join(c for c in s if unicodedata.category(c) != "Mn")
 
 
+def _fold_group(s: str) -> str:
+    """Như `_fold`, thêm bỏ dấu phẩy và gộp khoảng trắng: dùng để so khớp `groups`
+    ("October 22 2026" khớp cụm "October 22, 2026"). Không dùng cho `forbidden`."""
+    return " ".join(_fold(s).replace(",", " ").split())
+
+
 def _lower_nfc(s: str) -> str:
     return unicodedata.normalize("NFC", (s or "").lower())
 
@@ -81,15 +87,18 @@ def _apply_ops(stored: list[dict], kept: list[dict], counter: list[int]) -> list
         if op["op"] == "ADD":
             counter[0] += 1
             facts.append({"id": f"n{counter[0]}", "fact": op["fact"],
-                          "category": op["category"],
-                          "kind": op.get("kind", "fact"),
-                          "project": op.get("project"), "locked": False})
+                          "type": op.get("type"),
+                          "topic": op.get("topic"),
+                          "locked": False})
         elif op["op"] == "UPDATE":
             for f in facts:
                 if f["id"] == op["id"]:
-                    f["fact"], f["category"] = op["fact"], op["category"]
-                    if op.get("project") is not None:
-                        f["project"] = op["project"]
+                    f["fact"] = op["fact"]
+                    if op.get("type") is not None:
+                        f["type"] = op["type"]
+                    if op.get("topic") is not None:
+                        f["topic"] = op["topic"]
+                        f["project"] = op["topic"]
         elif op["op"] == "DELETE":
             facts = [f for f in facts if f["id"] != op["id"]]
         elif op["op"] == "FORGET_ALL":
@@ -157,15 +166,47 @@ async def _call(structured_llm: Any, user_msg: str, stored: list[dict]
 # ── Chấm điểm ────────────────────────────────────────────────────────────
 
 def _matches(exp: dict, op: dict) -> bool:
+    if exp.get("one_of"):  # any one of several alternative expectations
+        return any(_matches(alt, op) for alt in exp["one_of"])
     if op["op"] != exp["op"]:
         return False
     if exp.get("id") is not None and op.get("id") != exp["id"]:
         return False
     if op["op"] in ("ADD", "UPDATE"):
-        folded = _fold(op["fact"])
+        folded = _fold_group(op["fact"])
         for group in exp.get("groups") or []:
-            if not any(_fold(p) in folded for p in group):
+            if not any(_fold_group(p) in folded for p in group):
                 return False
+    return True
+
+
+def _forbidden_op_matches(spec: dict, op: Any) -> bool:
+    """True when `op` is an operation the case forbids (`forbidden_ops`).
+
+    spec keys, all optional except op: op (name or list of names), id, type,
+    type_not (op type differs), topic_not (op topic differs, case-insensitive),
+    groups (phrase groups over the fact)."""
+    if not isinstance(op, dict):
+        return False
+    names = spec["op"] if isinstance(spec["op"], list) else [spec["op"]]
+    if op.get("op") not in names:
+        return False
+    if spec.get("id") is not None and op.get("id") != spec["id"]:
+        return False
+    if spec.get("type") is not None and op.get("type") != spec["type"]:
+        return False
+    if spec.get("type_not") is not None and op.get("type") == spec["type_not"]:
+        return False
+    if spec.get("topic_not") is not None and (
+            str(op.get("topic") or "").casefold() == str(spec["topic_not"]).casefold()):
+        return False
+    if spec.get("groups"):
+        fact = op.get("fact")
+        if not isinstance(fact, str):
+            return False
+        folded = _fold_group(fact)
+        if not all(any(_fold_group(p) in folded for p in g) for g in spec["groups"]):
+            return False
     return True
 
 
@@ -187,11 +228,11 @@ def _score(expect: dict, ops: list[dict], dropped: list[dict]) -> dict[str, Any]
             continue
         used.add(hit)
         found.append({"expected": exp, "got": ops[hit]})
-        if (exp.get("category") and ops[hit].get("category")
-                and exp["category"] != ops[hit]["category"]):
+        if (exp.get("type") and ops[hit].get("type")
+                and exp["type"] != ops[hit]["type"]):
             category_mismatch.append({"expected": exp, "got": ops[hit]})
-        if (exp.get("kind") and ops[hit].get("kind")
-                and exp["kind"] != ops[hit]["kind"]):
+        if (exp.get("topic") and ops[hit].get("topic")
+                and exp["topic"] != ops[hit]["topic"]):
             category_mismatch.append({"expected": exp, "got": ops[hit]})
 
     extras: list[dict] = []
@@ -215,7 +256,17 @@ def _score(expect: dict, ops: list[dict], dropped: list[dict]) -> dict[str, Any]
         for phrase in forbidden:
             if _lower_nfc(phrase) in text:
                 hits.append({"phrase": phrase, "op": op})
+    for spec in expect.get("forbidden_ops") or []:
+        for op in ops:
+            if _forbidden_op_matches(spec, op):
+                hits.append({"phrase": "forbidden_ops " + json.dumps(
+                    spec, ensure_ascii=False), "op": op})
     dropped_hits: list[dict] = []
+    for spec in expect.get("forbidden_ops") or []:
+        for d in dropped:
+            if _forbidden_op_matches(spec, d["op"]):
+                dropped_hits.append({"phrase": "forbidden_ops " + json.dumps(
+                    spec, ensure_ascii=False), "reason": d["reason"]})
     for d in dropped:
         fact = d["op"].get("fact") if isinstance(d["op"], dict) else None
         if isinstance(fact, str):
@@ -223,13 +274,27 @@ def _score(expect: dict, ops: list[dict], dropped: list[dict]) -> dict[str, Any]
                 if _lower_nfc(phrase) in _lower_nfc(fact):
                     dropped_hits.append({"phrase": phrase, "reason": d["reason"]})
 
-    if missed or hits:
+    # Chính sách "thà ghi thiếu còn hơn ghi thừa": ADD/UPDATE/DELETE không được
+    # kỳ vọng và không nằm trong acceptable (kể cả bản lặp của một kỳ vọng) là LỖI.
+    # Chỉ REPEAT thừa (không ghi chữ mới) vẫn là REVIEW.
+    extra_writes = [o for o in [*extras, *repeats] if o["op"] != "REPEAT"]
+    if missed or hits or extra_writes:
         verdict = "FAIL"
     elif extras or repeats:
         verdict = "REVIEW"
     else:
         verdict = "OK"
+    written = sum(1 for o in [*(f["got"] for f in found), *accepted, *repeats, *extras]
+                  if o["op"] in ("ADD", "UPDATE"))
+
+    def _is_write(e: dict) -> bool:
+        alts = e["one_of"] if e.get("one_of") else [e]
+        return any(a.get("op") in ("ADD", "UPDATE") for a in alts)
+
+    required = sum(1 for e in exp_ops if _is_write(e))
     return {"found": found, "missed": missed, "extras": extras,
+            "extra_writes": extra_writes, "written": written, "required": required,
+            "no_store": not exp_ops,
             "repeats": repeats, "acceptable": accepted,
             "category_mismatch": category_mismatch,
             "forbidden_hits": hits, "forbidden_in_dropped": dropped_hits,
@@ -375,6 +440,10 @@ def _mode_stats(results: list[dict], mode: str) -> dict[str, Any]:
         "found": sum(len(s["found"]) for s in scores),
         "missed": sum(len(s["missed"]) for s in scores),
         "extras": sum(len(s["extras"]) for s in scores),
+        "written": sum(s["written"] for s in scores),
+        "required": sum(s["required"] for s in scores),
+        "no_store_cases": sum(1 for s in scores if s["no_store"]),
+        "no_store_written": sum(1 for s in scores if s["no_store"] and s["written"]),
         "repeats": sum(len(s["repeats"]) for s in scores),
         "acceptable": sum(len(s["acceptable"]) for s in scores),
         "category_mismatch": sum(len(s["category_mismatch"]) for s in scores),
@@ -400,15 +469,25 @@ def _op_str(op: dict) -> str:
         return "FORGET_ALL"
     ident = f" {op['id']}" if op["op"] == "UPDATE" else ""
     turn = f" (lượt {op['turn']})" if op.get("turn") else ""
-    kind = f"{op.get('kind')}/" if op.get("kind") else ""
-    return f"{op['op']}{ident} [{kind}{op['category']}] \"{op['fact']}\"{turn}"
+    typ = op.get("type") or op.get("category")
+    topic = op.get("topic")
+    label = f"{typ}" if typ else ""
+    if topic:
+        label = f"{label}/{topic}" if label else topic
+    return f"{op['op']}{ident} [{label}] \"{op['fact']}\"{turn}"
+
+
+def _exp_label(e: dict) -> str:
+    bits = [str(e[k]) for k in ("type", "topic") if e.get(k)]
+    return f" [{', '.join(bits)}]" if bits else ""
 
 
 def _exp_str(e: dict) -> str:
+    if e.get("one_of"):
+        return " OR ".join(_exp_str(x) for x in e["one_of"])
     ident = f" {e['id']}" if e.get("id") else ""
-    cat = f" [{e['category']}]" if e.get("category") else ""
     groups = " AND ".join("(" + " | ".join(g) + ")" for g in e.get("groups") or [])
-    return f"{e['op']}{ident}{cat} {groups}".rstrip()
+    return f"{e['op']}{ident}{_exp_label(e)} {groups}".rstrip()
 
 
 def _render_report(label: str, results: list[dict], modes: list[str]) -> str:
@@ -452,6 +531,9 @@ def _render_report(label: str, results: list[dict], modes: list[str]) -> str:
     row("fact kỳ vọng bị bỏ sót", lambda s: str(s["missed"]))
     row("thao tác thừa (extra, người xét)", lambda s: str(s["extras"]))
     row("thao tác lặp lại fact kỳ vọng", lambda s: str(s["repeats"]))
+    row("item ghi / item cần (ADD+UPDATE)", lambda s: f"{s['written']}/{s['required']}")
+    row("case 'không lưu gì' bị ghi",
+        lambda s: f"{s['no_store_written']}/{s['no_store_cases']}")
     row("thao tác ngoài kỳ vọng nhưng chấp nhận được", lambda s: str(s["acceptable"]))
     row("cụm CẤM xuất hiện (mỗi cái là một lỗi)", lambda s: str(s["forbidden_hits"]))
     row("sai category so với kỳ vọng", lambda s: str(s["category_mismatch"]))
@@ -466,9 +548,13 @@ def _render_report(label: str, results: list[dict], modes: list[str]) -> str:
         lambda s: f"{s['verdicts']['OK']} / {s['verdicts']['REVIEW']} / "
                   f"{s['verdicts']['FAIL']}")
     L.append("")
-    L.append("Ghi chú: OK = tìm đủ, không thừa, không cụm cấm. REVIEW = tìm đủ, "
-             "không cụm cấm, nhưng có thao tác thừa cần người xét (fact đúng vô hại "
-             "hay bịa). FAIL = bỏ sót hoặc dính cụm cấm. Cụm cấm chỉ tính trên "
+    L.append("Ghi chú: chính sách là thà ghi thiếu còn hơn ghi thừa. OK = tìm đủ, "
+             "không thừa, không cụm cấm. REVIEW = tìm đủ, không cụm cấm, chỉ có "
+             "REPEAT thừa (không ghi chữ mới). FAIL = bỏ sót, dính cụm cấm, hoặc có "
+             "ADD/UPDATE/DELETE không được kỳ vọng và không nằm trong acceptable "
+             "(kể cả ghi lặp một kỳ vọng). 'item ghi / item cần' đếm ADD+UPDATE đã "
+             "ghi so với số kỳ vọng ghi (một one_of tính là một; one_of có ADD hoặc "
+             "UPDATE thì tính là cần ghi). Cụm cấm chỉ tính trên "
              "thao tác đã qua kiểm tra của code; nếu model viết số điện thoại và "
              "code bỏ nó thì ghi vào cột \"bị code bỏ\", không tính là dính cụm cấm "
              "(số lần như vậy nằm trong `forbidden_in_dropped` của file JSON).")
@@ -541,8 +627,9 @@ def _render_report(label: str, results: list[dict], modes: list[str]) -> str:
             for h in sc["forbidden_hits"]:
                 L.append(f"  - CỤM CẤM `{h['phrase']}` trong {_op_str(h['op'])}")
             for cm in sc["category_mismatch"]:
-                L.append(f"  - category lệch: kỳ vọng {cm['expected']['category']}, "
-                         f"được {cm['got']['category']}")
+                g = cm["got"]
+                L.append(f"  - lệch type/topic: kỳ vọng{_exp_label(cm['expected'])}, "
+                         f"được [type={g.get('type')}, topic={g.get('topic')}]")
             L.append("")
     return "\n".join(L) + "\n"
 
@@ -553,6 +640,8 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
     p = argparse.ArgumentParser(description="Đo bước lọc fact LTM (memory-v2 A2).")
     p.add_argument("--label", default="V0")
     p.add_argument("--probes", default=str(_THIS_FILE.parent / "memory_probes.yaml"))
+    p.add_argument("--rescore", default="",
+                   help="JSON của lần chạy trước: chấm lại với yaml hiện tại, không gọi model.")
     p.add_argument("--only", default="", help="Chỉ chạy các id này, cách nhau bằng dấu phẩy.")
     p.add_argument("--mode", default="both", choices=["both", "all", "session", "turn", "live"])
     p.add_argument("--out", default="",
@@ -560,6 +649,32 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
     p.add_argument("--pace-seconds", type=float, default=0.0,
                    help="Nghỉ giữa các hội thoại (Groq giới hạn token/phút).")
     return p.parse_args(argv)
+
+
+def _rescore(recorded: dict, convs: list[dict]) -> list[dict]:
+    """Chấm lại kết quả đã ghi (không gọi model): lấy kept_ops/dropped của từng
+    lượt trong JSON của lần chạy trước, chấm bằng `_score` với kỳ vọng HIỆN TẠI
+    trong yaml. Hội thoại không còn trong yaml thì giữ nguyên."""
+    by_id = {c["id"]: c for c in convs}
+    results: list[dict] = []
+    for r in recorded["results"]:
+        conv = by_id.get(r["id"])
+        if conv is None:
+            results.append(r)
+            continue
+        r = dict(r, expect=conv["expect"])
+        modes: dict[str, Any] = {}
+        for name, md in r["modes"].items():
+            ops: list[dict] = []
+            dropped: list[dict] = []
+            for c in md["calls"]:
+                ops += [dict(o, turn=c["turn"]) if c.get("turn") else o
+                        for o in c["kept_ops"]]
+                dropped += c["dropped"]
+            modes[name] = dict(md, score=_score(conv["expect"], ops, dropped))
+        r["modes"] = modes
+        results.append(r)
+    return results
 
 
 def _validate(convs: list[dict]) -> None:
@@ -577,12 +692,19 @@ async def amain(args: argparse.Namespace) -> int:
     from langgraph_agents.shared.env import load_env
     from langgraph_agents.shared.logging import configure_root_logger
 
-    load_env()
-    configure_root_logger()
-
     with open(args.probes, encoding="utf-8") as f:
         convs = yaml.safe_load(f)["probes"]
     _validate(convs)
+
+    if args.rescore:
+        with open(args.rescore, encoding="utf-8") as f:
+            recorded = json.load(f)
+        results = _rescore(recorded, convs)
+        return _write_report(args, results, recorded["modes"],
+                             recorded.get("prompt", MEMORY_PROMPT))
+
+    load_env()
+    configure_root_logger()
     only = {s.strip() for s in args.only.split(",") if s.strip()}
     selected = [c for c in convs if not only or c["id"] in only]
     if not selected:
@@ -620,6 +742,11 @@ async def amain(args: argparse.Namespace) -> int:
                   f"{first_calls[0]['error']}")
             return 4
 
+    return _write_report(args, results, modes, MEMORY_PROMPT)
+
+
+def _write_report(args: argparse.Namespace, results: list[dict], modes: list[str],
+                  prompt: str) -> int:
     out = args.out or str(_TRACKING_DIR / f"memory-probe-{args.label}.md")
     Path(out).parent.mkdir(parents=True, exist_ok=True)
     with open(out, "w", encoding="utf-8") as f:
@@ -627,7 +754,7 @@ async def amain(args: argparse.Namespace) -> int:
     json_out = str(Path(out).with_suffix("")) + ".json"
     with open(json_out, "w", encoding="utf-8") as f:
         json.dump({"label": args.label, "role": "memory", "modes": modes,
-                   "prompt": MEMORY_PROMPT,
+                   "prompt": prompt,
                    "stats": {m: _mode_stats(results, m) for m in modes},
                    "results": results}, f, ensure_ascii=False, indent=1)
     print(f"Đã ghi {out} ({len(results)} hội thoại).")

@@ -3,7 +3,7 @@
 Runs FIRST before planner (D9: coreference resolve needs memory context).
 Loads what the model is shown about this user and this conversation:
 
-    user_instructions tier-1 standing instructions (safety-relevant first)
+    user_instructions tier-1 standing instructions (newest first)
     session_summary   this session's rolling summary (0 or 1 item)
     user_facts        tier-2 facts about this turn's topic (dated, by project)
     messages          raw history the summary does not cover yet (user/assistant only)
@@ -95,30 +95,32 @@ def history_ceiling() -> int:
 # ── Tier 1: standing user instructions (always-on, cheap, no vector search)
 
 async def _load_user_instructions(user_id: str) -> list[str]:
-    """Load tier-1 instructions, the safety-relevant ones first.
+    """Load tier-1 instructions, newest said first.
 
-    The prompt budgets downstream drop lines from the END of this list, so a
-    movement restriction or a health condition must not queue behind a
-    preference. Newest said first within each group.
+    Tier 1 holds instructions only. The prompt budgets downstream drop lines
+    from the END of this list, so the oldest instruction goes first.
     """
     try:
         pg = get_pg_client()
         await pg.connect()
         rows = await pg.fetch(
             """
-            SELECT fact_text FROM user_memory
+            SELECT fact_text, project, said_at FROM user_memory
             WHERE user_id = $1 AND valid = true
               AND tier = 1 AND status = 'active'
-            ORDER BY CASE category
-                         WHEN 'restriction' THEN 0
-                         WHEN 'condition' THEN 1
-                         ELSE 2
-                     END,
-                     said_at DESC
+            ORDER BY said_at DESC
             """,
             user_id,
         )
-        return [r["fact_text"] for r in rows]
+        out = []
+        for r in rows:
+            said = r["said_at"]
+            day = said.date().isoformat() if hasattr(said, "date") else str(said)[:10]
+            if r.get("project"):
+                out.append(f"[{day}] ({r['project']}) {r['fact_text']}")
+            else:
+                out.append(f"[{day}] {r['fact_text']}")
+        return out
     except Exception as exc:
         logger.warning("user_instructions_load_failed", extra={"error": str(exc)})
         return []
@@ -145,11 +147,11 @@ def _tier2_config() -> dict:
 
 
 def _tier2_line(row) -> str:
-    """One tier-2 row as `- [date] (project) fact` (no parens without a label)."""
+    """One tier-2 row as `[date] (project) fact` (no parens without a label)."""
     said = row["said_at"]
     day = said.date().isoformat() if hasattr(said, "date") else str(said)[:10]
     label = f"({row['project']}) " if row.get("project") else ""
-    return f"- [{day}] {label}{row['fact_text']}"
+    return f"[{day}] {label}{row['fact_text']}"
 
 
 def _split_tier2_queries(query: str) -> list[str]:
@@ -183,7 +185,7 @@ async def _load_tier2_facts(
     Returns (lines, top_similarity, skipped_reason, embed_ms). A row last
     seen in this conversation is skipped there — the STM summary already
     covers it. Tier 1 has no such filter: an instruction is one row, and a
-    safety note must not depend on the summary.
+    standing instruction must not depend on the summary.
     """
     import asyncio
     import time
@@ -219,7 +221,7 @@ async def _load_tier2_facts(
         user_p, sess_p, topk_p = len(vectors) + 1, len(vectors) + 2, len(vectors) + 3
         rows = await pg.fetch(
             f"""
-            SELECT id, fact_text, project, said_at,
+            SELECT id, fact_text, project, memory_type, said_at,
                    GREATEST({sim_terms}) AS similarity
             FROM user_memory
             WHERE user_id = ${user_p} AND valid = true
@@ -238,7 +240,8 @@ async def _load_tier2_facts(
         hits = [r for r in rows if float(r["similarity"]) >= cfg["floor"]]
         if not hits:
             return [], top_sim, None, embed_ms
-        labels = sorted({r["project"] for r in hits if r.get("project")})
+        labels = sorted({r["project"] for r in hits
+                        if r.get("project") and r.get("memory_type") == "area"})
         lines = [_tier2_line(r) for r in hits]
         if labels:
             mates = await pg.fetch(
@@ -247,6 +250,7 @@ async def _load_tier2_facts(
                 FROM user_memory
                 WHERE user_id = $1 AND valid = true
                   AND tier = 2 AND status = 'active'
+                  AND memory_type = 'area'
                   AND project = ANY($2)
                   AND last_seen_session_id IS DISTINCT FROM $3::uuid
                 ORDER BY said_at DESC
@@ -279,9 +283,11 @@ async def _load_stm(
         await pg.connect()
         rows = await pg.fetch(
             """
-            SELECT c.stm_summary, m.role, m.content FROM conversations c
+            SELECT c.stm_summary, m.role, m.content, m.error_code FROM conversations c
             LEFT JOIN LATERAL (
-                SELECT m.role, m.content FROM messages m
+                SELECT m.role, m.content,
+                       m.extras->'meta'->>'error_code' AS error_code
+                FROM messages m
                 WHERE m.session_id = c.session_id
                   AND m.seq_id > c.stm_up_to_seq
                   AND ($2::uuid IS NULL OR m.id <> $2)
@@ -295,8 +301,11 @@ async def _load_stm(
         if not rows:
             return [], []
         summary = rows[0]["stm_summary"]
+        # An assistant row with meta.error_code is the apology of a failed turn,
+        # not an answer of ours: the next turn must not read it as one.
         history = [{"role": r["role"], "content": r["content"]}
-                   for r in reversed(rows) if r["role"] is not None]
+                   for r in reversed(rows)
+                   if r["role"] is not None and not r.get("error_code")]
         return ([summary] if summary else [], history)
     except Exception as exc:
         logger.warning("stm_load_failed", extra={"error": str(exc)})
@@ -323,7 +332,8 @@ async def _load_latest_turns(
         await pg.connect()
         rows = await pg.fetch(
             """
-            SELECT role, content FROM messages
+            SELECT role, content, extras->'meta'->>'error_code' AS error_code
+            FROM messages
             WHERE session_id = $1
               AND ($2::uuid IS NULL OR id <> $2)
             ORDER BY seq_id DESC
@@ -331,7 +341,8 @@ async def _load_latest_turns(
             """,
             session_id, exclude_message_id, _LATEST_TURNS_MAX_ROWS,
         )
-        history = [{"role": r["role"], "content": r["content"]} for r in reversed(rows)]
+        history = [{"role": r["role"], "content": r["content"]}
+                   for r in reversed(rows) if not r.get("error_code")]
         return _latest_turns(history, history_budget())
     except Exception as exc:
         logger.warning("latest_turns_load_failed", extra={"error": str(exc)})

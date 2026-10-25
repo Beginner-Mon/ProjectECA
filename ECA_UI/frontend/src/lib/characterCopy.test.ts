@@ -189,3 +189,30 @@ describe('getTimeSlot', () => {
     expect(getTimeSlot(at)).toBe(slot)
   })
 })
+
+describe('uiStringsFor - error keys', () => {
+  it('has neutral error_system and error_unavailable in both locales', () => {
+    for (const locale of ['en', 'vi'] as const) {
+      const ui = uiStringsFor(null, locale)
+      expect(ui.error_system.length).toBeGreaterThan(0)
+      expect(ui.error_unavailable.length).toBeGreaterThan(0)
+    }
+    expect(FALLBACK_UI_STRINGS.vi.error_system).toBe('Xin lỗi, hệ thống đang gặp sự cố. Vui lòng thử lại sau.')
+    expect(FALLBACK_UI_STRINGS.en.error_unavailable).toBe('I could not answer that. Try asking it another way?')
+  })
+
+  it('reads the character own lines, and falls back per key when it has none', () => {
+    const mei = {
+      slug: 'mei',
+      ui_strings: { vi: { error_system: 'Hệ thống đang trục trặc. Bạn thử lại sau ít phút nhé.' } },
+    } as unknown as Character
+    const ui = uiStringsFor(mei, 'vi')
+    expect(ui.error_system).toBe('Hệ thống đang trục trặc. Bạn thử lại sau ít phút nhé.')
+    expect(ui.error_unavailable).toBe(FALLBACK_UI_STRINGS.vi.error_unavailable)
+    expect(ui.error_stream).toBe(FALLBACK_UI_STRINGS.vi.error_stream)
+  })
+
+  it('serves no Vietnamese in English for the new keys', () => {
+    expect(vietnameseIn(uiStringsFor(null, 'en'))).toEqual([])
+  })
+})

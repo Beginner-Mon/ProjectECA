@@ -35,8 +35,6 @@ _MODES = {
     "chat": {"messages": [], "required_outputs": [], "needs_clarification": False},
     "synthesize": {"messages": [_tm("kb_search", _KB)], "required_outputs": [],
                    "needs_clarification": False},
-    "refuse": {"messages": [], "required_outputs": ["exercise_protocol"],
-               "needs_clarification": False},
     "clarify": {"messages": [], "required_outputs": [], "needs_clarification": True},
 }
 

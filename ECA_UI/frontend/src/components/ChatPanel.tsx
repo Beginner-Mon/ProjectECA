@@ -1,8 +1,9 @@
 import { useRef, useEffect } from 'react'
 import { useTranslation } from 'react-i18next'
-import { Sparkles, SquarePen, Loader2 } from 'lucide-react'
+import { Plus, Loader2 } from 'lucide-react'
 import { ScrollArea } from './ui/scroll-area'
-import ChatMessage from './ChatMessage'
+import PanelHeader, { PANEL_HEADER_ACTION_CLASS } from './ui/PanelHeader'
+import ChatMessage, { ErrorNotice } from './ChatMessage'
 import ChatDivider from './ChatDivider'
 import ChatInputBar from './ChatInputBar'
 import { useChat } from '../hooks/useChat'
@@ -19,8 +20,10 @@ export default function ChatPanel({ hideInput = false, active = true }: { hideIn
     isTyping,
     isGenerating,
     stageLabel,
-    isRestoring,
     isSwitching,
+    sessionLoadError,
+    retrySessionLoad,
+    ui,
     startNewSession,
   } = useChat()
 
@@ -37,26 +40,22 @@ export default function ChatPanel({ hideInput = false, active = true }: { hideIn
   return (
     <div className={`flex flex-col h-full desktop:border-r border-border/40 ${hideInput ? 'bg-transparent' : 'bg-card relative z-10'}`}>
       {/* ── Header ── */}
-      <header className="hidden desktop:flex items-center gap-3 px-5 py-4 border-b border-border/40 bg-card shrink-0">
-        <div className="flex-1 min-w-0">
-          <h1 className="text-sm font-semibold text-foreground tracking-tight">
-            {t('chat.title')}
-          </h1>
-          <p className="text-xs text-muted-foreground flex items-center gap-1">
-            <Sparkles className="w-3 h-3" />
-            {isRestoring ? t('chat.status_restoring') : t('chat.status_online')}
-          </p>
-        </div>
-        {/* Without this the conversation restored on load is the only one the
-            user can ever be in — there is no other way out of it yet. */}
-        <button
-          onClick={startNewSession}
-          title={t('chat.new_conversation')}
-          className="p-1.5 rounded-lg text-muted-foreground hover:text-foreground hover:bg-secondary/60 transition-colors shrink-0"
-        >
-          <SquarePen className="w-4 h-4" />
-        </button>
-      </header>
+      <PanelHeader
+        className="hidden desktop:flex bg-card"
+        icon={<img src="/eca-logo.svg" alt="" className="w-5 h-5 object-contain select-none dark:invert" />}
+        title={t('chat.title')}
+        action={
+          /* Without this the conversation restored on load is the only one the
+             user can ever be in — there is no other way out of it yet. */
+          <button
+            onClick={startNewSession}
+            title={t('chat.new_conversation')}
+            className={PANEL_HEADER_ACTION_CLASS}
+          >
+            <Plus className="w-5 h-5" />
+          </button>
+        }
+      />
 
       {/* ── Messages ── */}
       <ScrollArea className="flex-1 min-h-0 px-2">
@@ -65,6 +64,12 @@ export default function ChatPanel({ hideInput = false, active = true }: { hideIn
             <div className="flex flex-col items-center justify-center py-16 gap-2 text-muted-foreground">
               <Loader2 className="w-5 h-5 animate-spin" />
               <p className="text-xs animate-pulse">{t('common.wait')}</p>
+            </div>
+          ) : sessionLoadError ? (
+            // The conversation exists but could not be read. Not the greeting
+            // (it would pass an old conversation off as new) and not blank.
+            <div className="px-3 desktop:px-5 py-2 desktop:py-3 animate-message-in w-full max-w-full">
+              <ErrorNotice text={ui.error_system} onRetry={() => void retrySessionLoad()} />
             </div>
           ) : (
             <>

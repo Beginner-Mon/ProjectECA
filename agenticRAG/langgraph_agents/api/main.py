@@ -613,7 +613,32 @@ def _start_answer_write(coro) -> asyncio.Task:
     return task
 
 
+def _error_event(code: str, request_id: str) -> dict:
+    """The SSE `error` event. A code and nothing else: the client picks the words.
+
+    `retryable` is true for every code the backend emits — each one is a turn
+    that can simply be sent again. Never put exception text in here.
+    """
+    return encode_event("error", {
+        "code": code, "retryable": True, "request_id": request_id,
+    })
+
+
+def _log_chat_error(code: str, kind=None, status=None, node=None) -> None:
+    """One line per failed turn. Codes only: no message, no answer, no error text."""
+    logger.error("chat_error", extra={
+        "code": code, "kind": kind, "status": status, "node": node,
+    })
+
+
 def _turn_meta(req, request_id, final_state: dict, t0: float) -> dict:
+    meta = _turn_meta_base(req, request_id, final_state, t0)
+    if final_state.get("error_code"):
+        meta["error_code"] = final_state["error_code"]
+    return meta
+
+
+def _turn_meta_base(req, request_id, final_state: dict, t0: float) -> dict:
     return {
         "request_id": request_id,
         "persona_id": req.persona_id,
@@ -679,6 +704,8 @@ async def _stream_chat(req, request_id, config, state, background_tasks, request
     streamed_text = ""
     conversation_stage_started = False
     answer_write: asyncio.Task | None = None
+    error_sent = False
+    done_sent = False
 
     graph = _get_graph()
     logger.info("chat_start", extra={"query": req.query[:120], "session_id": req.session_id})
@@ -792,6 +819,14 @@ async def _stream_chat(req, request_id, config, state, background_tasks, request
                         if node_output.get("final_answer"):
                             final_state.update(node_output)
 
+                    # The turn ended in error_handler: tell the client with a
+                    # code (the words are the client's). final_answer stays the
+                    # persona's error_system line for history and speech.
+                    if node_name == "error_handler" and isinstance(node_output, dict)                             and node_output.get("error_code"):
+                        final_state["error_code"] = node_output["error_code"]
+                        error_sent = True
+                        yield _error_event(node_output["error_code"], request_id)
+
             elif mode == "custom":
                 if isinstance(payload, dict) and "emotion" in payload:
                     # Reply-driven avatar emotion (shared/reply_emotion.py): the
@@ -817,9 +852,12 @@ async def _stream_chat(req, request_id, config, state, background_tasks, request
                     yield encode_event("token", {"content": payload["content"]})
 
         if llm_req is not None and getattr(llm_req, "failure", None):
+            # "eca" only when ECA really produced the answer; a turn that ended
+            # in an error was answered by nobody.
+            answered = bool(final_state.get("final_answer")) and not error_sent
             yield encode_event(
                 "provider_notice",
-                {**llm_req.failure, "answered_by": "eca"},
+                {**llm_req.failure, "answered_by": "eca" if answered else None},
             )
 
         stored = final_state.get("final_answer") or ""
@@ -829,9 +867,14 @@ async def _stream_chat(req, request_id, config, state, background_tasks, request
                 "streamed_chars": len(streamed_text), "final_chars": len(stored),
             })
 
-        final_answer = final_state.get("final_answer") or get_ui_string(
-            req.persona_id or "anne", "error_unavailable", req.locale
-        )
+        # The graph finished with nothing to say and no error: the client is
+        # told with a code (it shows the persona's error_unavailable line).
+        if not final_state.get("final_answer") and not error_sent:
+            error_sent = True
+            _log_chat_error("no_answer")
+            yield _error_event("no_answer", request_id)
+
+        final_answer = final_state.get("final_answer")
 
         # Eager session write. The question comes first, answer or no answer: it
         # has to be in the table before the answer is, and before this stream
@@ -919,6 +962,7 @@ async def _stream_chat(req, request_id, config, state, background_tasks, request
         # No speech_task_id: there is no task any more, so nothing for the client
         # to look one up by. The frontend slice of this change is told not to rely
         # on this field.
+        done_sent = True
         yield encode_event("done", {
             "request_id": request_id,
             "total_tokens": final_state.get("total_tokens", 0),
@@ -946,7 +990,20 @@ async def _stream_chat(req, request_id, config, state, background_tasks, request
         # The turn failed with no answer. Its question must not still be on
         # its way to the table when the response ends.
         await asyncio.shield(question_write)
-        raise
+        if done_sent:
+            # Failed after `done` (housekeeping): the stream already ended.
+            raise
+        # Not re-raised: that would cut the stream with nothing to show the
+        # user. They get a code, then `done`, which is always the last event.
+        logger.error("chat_stream_failed", exc_info=True)
+        if not error_sent:
+            _log_chat_error("internal")
+            yield _error_event("internal", request_id)
+        yield encode_event("done", {
+            "request_id": request_id,
+            "total_tokens": final_state.get("total_tokens", 0),
+            "required_outputs": final_state.get("required_outputs", []),
+        })
     finally:
         # Reached with housekeeping unfinished only when the stream was cut
         # short. Nothing will wait for it now, and on Lambda a task left

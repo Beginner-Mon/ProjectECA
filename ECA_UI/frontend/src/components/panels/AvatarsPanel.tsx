@@ -4,6 +4,7 @@ import { motion } from 'framer-motion'
 import { UserRound, Check, TriangleAlert, Star, RefreshCw, Loader2 } from 'lucide-react'
 import { ScrollArea } from '../ui/scroll-area'
 import { Button } from '../ui/button'
+import PanelHeader from '../ui/PanelHeader'
 import { useMotion } from '../../hooks/useMotion'
 import { incompatibilityReason, type Character } from '../../lib/characters'
 import { usePreferences } from '../../hooks/usePreferences'
@@ -315,13 +316,7 @@ export default function AvatarsPanel() {
 
   return (
     <div className="flex flex-col h-full">
-      <div className="px-4 py-3 border-b border-border/40 shrink-0">
-        <h2 className="text-sm font-semibold text-foreground tracking-tight flex items-center gap-2">
-          <UserRound className="w-4 h-4 text-primary" />
-          {t('avatars.title')}
-        </h2>
-        <p className="text-[11px] text-muted-foreground mt-0.5">{t('avatars.subtitle')}</p>
-      </div>
+      <PanelHeader icon={<UserRound className="w-5 h-5 text-primary" />} title={t('avatars.title')} />
 
       <ScrollArea className="flex-1 min-h-0">
         <div className="p-4">

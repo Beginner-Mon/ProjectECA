@@ -434,9 +434,8 @@ async def preload_personas_from_db() -> int:
 
 
 _MODE_HINTS = {
-    "chat":        "This turn is a casual greeting or general chat — be brief and warm.",
+    "chat":        "No evidence was retrieved for this turn — keep it brief.",
     "clarify":     "This turn is asking the user a clarification question — be concise and inviting.",
-    "refuse":      "This turn is declining only the guidance it has no reliable source for — be polite, explain why for that part, and refer to a professional.",
     "synthesize":  "This turn is delivering factual content from retrieved sources — keep claims accurate, cite sources when available, and preserve all safety warnings verbatim.",
 }
 
@@ -553,7 +552,7 @@ def _persona_has_sheet(persona_id: str) -> bool:
 def build_persona_prompt(persona: dict, mode: str) -> str:
     """Build system prompt from persona sections for LLM styling/generation.
 
-    `mode` is the synthesizer mode: 'chat' | 'clarify' | 'refuse' | 'synthesize'.
+    `mode` is the synthesizer mode: 'chat' | 'clarify' | 'synthesize'.
     Adds a one-line nudge so persona instructions adapt to the current turn type
     without bloating the system message.
     """

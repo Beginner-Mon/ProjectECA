@@ -96,7 +96,9 @@ export async function fetchCharacter(slug: string, signal?: AbortSignal): Promis
     signal,
     headers: await authHeader(),
   })
-  if (!res.ok) throw new Error(`GET /characters/${slug} failed: ${res.status}`)
+  // `status` is what lib/characterBoot.ts reads to tell a missing character (404)
+  // from a broken backend.
+  if (!res.ok) throw Object.assign(new Error(`GET /characters/${slug} failed: ${res.status}`), { status: res.status })
   return (await res.json()) as Character
 }
 

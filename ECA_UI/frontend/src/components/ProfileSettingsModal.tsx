@@ -16,20 +16,24 @@ interface ProfileSettingsModalProps {
   type: 'profile' | 'settings' | 'notifications' | 'graphics' | 'about' | 'billing'
   onClose: () => void
   onBack?: () => void
+  /** Open Settings straight on this view (the chat's "open key settings" link). */
+  initialSettingsView?: 'providers'
 }
 
 const ROOT_VIEW = 'main' as const
 
-export default function ProfileSettingsModal({ type, onClose, onBack }: ProfileSettingsModalProps) {
+export default function ProfileSettingsModal({ type, onClose, onBack, initialSettingsView }: ProfileSettingsModalProps) {
   const { t } = useTranslation()
-  const [settingsView, setSettingsView] = useState<'main' | 'providers' | 'provider-detail' | 'graphics' | 'about' | 'language' | 'legal' | 'memory'>(ROOT_VIEW)
+  const [settingsView, setSettingsView] = useState<'main' | 'providers' | 'provider-detail' | 'graphics' | 'about' | 'language' | 'legal' | 'memory'>(
+    type === 'settings' && initialSettingsView ? initialSettingsView : ROOT_VIEW,
+  )
   const [selectedProvider, setSelectedProvider] = useState<LlmPreset | undefined>()
 
   useEffect(() => {
     // eslint-disable-next-line react-hooks/set-state-in-effect -- reset view when type changes
-    setSettingsView(ROOT_VIEW)
+    setSettingsView(type === 'settings' && initialSettingsView ? initialSettingsView : ROOT_VIEW)
     setSelectedProvider(undefined)
-  }, [type])
+  }, [type]) // eslint-disable-line react-hooks/exhaustive-deps -- the start view applies when the modal opens
 
   const handleKeyDown = useCallback(
     (e: KeyboardEvent) => {

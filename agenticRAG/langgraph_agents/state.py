@@ -83,7 +83,17 @@ class AgentState(TypedDict):
     retriever_rounds: int
 
     # ── Error tracking (append-only) ───────────────────────────────────
+    # Each entry: {node, severity, message, timestamp, kind, status}. Built by
+    # nodes/_errors.py:error_entry. `kind` is the classify_provider_error kind
+    # (auth | quota | model_not_found | bad_request | unreachable | server |
+    # other) and `status` the HTTP status or None; both are None-safe for
+    # entries from older code paths. `message` is for logs, never the client.
     errors: Annotated[list[dict], operator.add]
+
+    # Set only by error_handler when a CRITICAL error ended the turn: the code
+    # /chat sends in the SSE `error` event (provider_billing | provider_auth |
+    # provider_unavailable | internal). Absent on every other turn.
+    error_code: str
 
     # SCRUM-45: photo keys sent with the turn (validated in /chat), and what the
     # vision node read from them. Both absent on a turn without photos.

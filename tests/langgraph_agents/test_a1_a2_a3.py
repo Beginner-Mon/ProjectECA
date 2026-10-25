@@ -506,8 +506,8 @@ def test_a1_derive_mode_not_clarify_when_no_ambiguous():
     }
 
     mode = _derive_mode(state)
-    assert mode in ("synthesize", "refuse", "chat"), (
-        f"Expected synthesize/refuse/chat without ambiguous, got '{mode}'"
+    assert mode in ("synthesize", "chat"), (
+        f"Expected synthesize/chat without ambiguous, got '{mode}'"
     )
     assert mode != "clarify"
 

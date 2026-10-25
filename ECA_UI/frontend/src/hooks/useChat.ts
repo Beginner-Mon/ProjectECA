@@ -11,6 +11,15 @@ export interface SessionItem {
   message_count: number
 }
 
+/** Something the chat asks the app shell to do, because the shell owns the panels.
+ *  `seq` makes every request distinct, so asking twice in a row acts twice. */
+export interface ChatUiRequest {
+  seq: number
+  /** show_chat: a turn failed — open the chat dock if it is closed (mobile).
+   *  llm_settings: open the key settings (Providers) from an error. */
+  kind: 'show_chat' | 'llm_settings'
+}
+
 export interface ChatContextType {
   messages: Message[]
   setMessages: React.Dispatch<React.SetStateAction<Message[]>>
@@ -38,7 +47,13 @@ export interface ChatContextType {
   sessionsDirty: boolean
   activeSessionId: string | null
   refreshSessions: () => Promise<void>
+  /** The last session-list fetch failed (so an empty list means "unknown", not "none"). */
+  sessionsError: boolean
   switchToSession: (sessionId: string) => Promise<void>
+  /** The selected conversation could not be loaded; the chat panel shows an error with a retry. */
+  sessionLoadError: boolean
+  /** Reload the selected conversation after a load error. */
+  retrySessionLoad: () => Promise<void>
   deleteSessionAction: (sessionId: string) => Promise<void>
   markSessionsClean: () => void
   /** Set (or clear, with `null`) one message's saved vote by its server id
@@ -50,6 +65,13 @@ export interface ChatContextType {
    *  post-switch. A serverId is a real UUID, so a stale update from a
    *  session the user has since left simply matches nothing. */
   setMessageFeedback: (serverId: string, feedback: MessageFeedback | null) => void
+  /** The assistant message that may offer "Try again": the newest one. */
+  latestAssistantId: string | null
+  /** Send the prompt behind a failed assistant message again, as a new turn. */
+  retryTurn: (assistantMessageId: string) => void
+  /** The latest request to the app shell (FloatingNavBar acts on it). */
+  uiRequest: ChatUiRequest | null
+  requestUi: (kind: ChatUiRequest['kind']) => void
   // Audio recording (frontend only, click toggle)
   /** Voice input (dictation) is listening. Speech lands in `input`. */
   isRecording: boolean

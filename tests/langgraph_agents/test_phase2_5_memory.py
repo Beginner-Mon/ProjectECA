@@ -61,21 +61,22 @@ class TestMemoryLoaderMocks:
     """Test async loader functions with mocked PostgreSQL."""
 
     @pytest.mark.asyncio
-    async def test_load_user_instructions_returns_tier1_safety_first(self):
+    async def test_load_user_instructions_returns_tier1_newest_first(self):
         from langgraph_agents.nodes.memory import _load_user_instructions
         mock_pg = AsyncMock()
         mock_pg.fetch.return_value = [
-            {"fact_text": "65 tuổi"},
-            {"fact_text": "đau lưng mãn tính"},
+            {"fact_text": "65 tuổi", "project": None, "said_at": "2026-10-02"},
+            {"fact_text": "đau lưng mãn tính", "project": None, "said_at": "2026-10-01"},
         ]
 
         with patch("langgraph_agents.nodes.memory.get_pg_client", return_value=mock_pg):
             facts = await _load_user_instructions("test-user-id")
             assert len(facts) == 2
-            assert "65 tuổi" in facts
+            assert "[2026-10-02] 65 tuổi" in facts
             sql = " ".join(mock_pg.fetch.await_args.args[0].split())
             assert "tier = 1" in sql and "status = 'active'" in sql
-            assert "said_at DESC" in sql
+            assert "ORDER BY said_at DESC" in sql
+            assert "safety" not in sql
 
     @pytest.mark.asyncio
     async def test_load_user_instructions_handles_db_error(self):
@@ -211,12 +212,12 @@ class TestMemoryNode:
                     {"role": "assistant", "content": "Chao ban!"},
                 ],
             )
-            mock_tier2.return_value = (["- [2026-10-14] di bo"], 0.9, None, 5)
+            mock_tier2.return_value = (["[2026-10-14] di bo"], 0.9, None, 5)
 
             result = await memory_node(state, config)
             # Facts and summaries are fields of their own, not a SystemMessage.
             assert result["user_instructions"] == ["65 tuoi"]
-            assert result["user_facts"] == ["- [2026-10-14] di bo"]
+            assert result["user_facts"] == ["[2026-10-14] di bo"]
             assert result["session_summary"] == ["Session: squat"]
             assert [type(m) for m in result["messages"]] == [HumanMessage, AIMessage]
 

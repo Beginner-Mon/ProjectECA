@@ -2,6 +2,7 @@ import { Activity, Sliders, Smile, Lock, RotateCcw } from 'lucide-react'
 import { useEffect, useState, useMemo } from 'react'
 import { useTranslation } from 'react-i18next'
 import { ScrollArea } from '../ui/scroll-area'
+import PanelHeader from '../ui/PanelHeader'
 import { useMotion } from '../../hooks/useMotion'
 import type { CameraMode, CharState } from '../../lib/AnimationStates'
 import { CANONICAL_EMOTIONS, type CanonicalEmotion } from '../../avatar/AvatarProfile'
@@ -127,13 +128,7 @@ export default function MotionControlPanel() {
 
   return (
     <div className="flex flex-col h-full">
-      <div className="px-4 py-3 border-b border-border/40 shrink-0">
-        <h2 className="text-sm font-semibold text-foreground tracking-tight flex items-center gap-2">
-          <Sliders className="w-4 h-4 text-primary" />
-          {t('motion.title')}
-        </h2>
-        <p className="text-[11px] text-muted-foreground mt-0.5">{t('motion.subtitle')}</p>
-      </div>
+      <PanelHeader icon={<Sliders className="w-5 h-5 text-primary" />} title={t('motion.title')} />
 
       <ScrollArea className="flex-1 min-h-0 p-4">
         <div className="flex flex-col gap-4">

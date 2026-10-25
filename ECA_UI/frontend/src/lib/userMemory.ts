@@ -6,7 +6,7 @@
  * the side effects.
  */
 
-import type { UserMemoryItem, UserMemoryWire } from './api'
+import { MEMORY_TYPES, type MemoryType, type UserMemoryItem, type UserMemoryWire } from './api'
 
 /** The server rejects a fact longer than this (UserMemoryCreate.fact_text). */
 export const MAX_FACT_LENGTH = 500
@@ -24,14 +24,17 @@ export function normaliseFacts(answer: { facts?: unknown } | null | undefined): 
 }
 
 export function normaliseFact(f: UserMemoryWire): UserMemoryItem {
+  const kind = f.kind === 'instruction' ? 'instruction' : 'fact'
+  const known = MEMORY_TYPES.find((type) => type === f.memory_type)
   return {
     id: f.id,
     fact_text: f.fact_text,
     category: f.category ?? null,
-    kind: f.kind === 'instruction' ? 'instruction' : 'fact',
+    kind,
     tier: f.tier === 1 ? 1 : 2,
     status: f.status === 'candidate' ? 'candidate' : 'active',
     project: f.project ?? null,
+    memory_type: known ?? (kind === 'instruction' ? 'instruction' : 'profile'),
     source: f.source === 'extracted' ? 'extracted' : 'user',
     created_at: f.created_at,
     updated_at: f.updated_at || f.created_at,
@@ -55,43 +58,48 @@ export function sortFacts(facts: readonly UserMemoryItem[]): UserMemoryItem[] {
   return [...facts].sort((a, b) => at(b) - at(a))
 }
 
-export interface ProjectGroup {
-  project: string | null
+export interface TopicGroup {
+  topic: string | null
   items: UserMemoryItem[]
 }
 
-export interface GroupedFacts {
-  /** Standing instructions ECA follows everywhere (tier 1). */
-  instructions: UserMemoryItem[]
-  /** What ECA knows, grouped by project label (null = no label). */
-  byProject: ProjectGroup[]
-  /** Things ECA noticed but has not confirmed yet (candidates). */
-  candidates: UserMemoryItem[]
+export interface TypeGroup {
+  type: MemoryType
+  topics: TopicGroup[]
 }
 
-/** Split the list into the three sections of the Memory screen. */
-export function groupFacts(facts: readonly UserMemoryItem[]): GroupedFacts {
-  const instructions: UserMemoryItem[] = []
-  const candidates: UserMemoryItem[] = []
-  const groups = new Map<string | null, UserMemoryItem[]>()
-  for (const fact of facts) {
-    if (fact.status === 'candidate') {
-      candidates.push(fact)
-    } else if (fact.status === 'active' && fact.tier === 1) {
-      instructions.push(fact)
-    } else {
+/**
+ * The Memory screen: one section per memory type in a fixed order (empty ones
+ * left out), topics alphabetical with "no topic" last, newest first inside a
+ * topic. Status is ignored: an older backend's candidate is shown like any
+ * other row.
+ */
+export function groupByType(facts: readonly UserMemoryItem[]): TypeGroup[] {
+  const sorted = sortFacts(facts)
+  return MEMORY_TYPES.flatMap((type) => {
+    const byTopic = new Map<string | null, UserMemoryItem[]>()
+    for (const fact of sorted) {
+      if (fact.memory_type !== type) continue
       const key = fact.project ?? null
-      const list = groups.get(key)
+      const list = byTopic.get(key)
       if (list) list.push(fact)
-      else groups.set(key, [fact])
+      else byTopic.set(key, [fact])
     }
-  }
-  const byProject: ProjectGroup[] = [...groups.entries()]
-    .sort(([a], [b]) => {
-      if (a === null) return 1
-      if (b === null) return -1
-      return a.localeCompare(b)
-    })
-    .map(([project, items]) => ({ project, items }))
-  return { instructions, byProject, candidates }
+    if (byTopic.size === 0) return []
+    const topics = [...byTopic.entries()]
+      .sort(([a], [b]) => (a === null ? 1 : b === null ? -1 : a.localeCompare(b)))
+      .map(([topic, items]) => ({ topic, items }))
+    return [{ type, topics }]
+  })
+}
+
+export const MAX_TOPIC_WORDS = 4
+export const MAX_TOPIC_LENGTH = 60
+
+/** The topic to send (trimmed, spaces collapsed), null for none, 'invalid' if the server would answer 422. */
+export function validateTopic(input: string): string | null | 'invalid' {
+  const topic = input.trim().replace(/\s+/g, ' ')
+  if (topic === '') return null
+  if (topic.split(' ').length > MAX_TOPIC_WORDS || Array.from(topic).length > MAX_TOPIC_LENGTH) return 'invalid'
+  return topic
 }

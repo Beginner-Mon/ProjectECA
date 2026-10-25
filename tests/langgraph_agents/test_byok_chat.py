@@ -242,3 +242,26 @@ def test_http_client_closed_and_key_not_persisted(monkeypatch):
     finally:
         mod._graph = None
         llm.get_chat_model.cache_clear()
+
+
+def test_provider_notice_answered_by_null_when_eca_failed_too(monkeypatch):
+    async def fake_stream(state, config, stream_mode=None):
+        from langgraph_agents.llm_byok import current_request_llm
+
+        current_request_llm().failure = {"kind": "auth", "status": 401}
+        yield ("updates", {"error_handler": {
+            "final_answer": "Sorry.", "error_code": "provider_unavailable",
+        }})
+
+    client, api_module, llm = _make_client(monkeypatch, fake_stream)
+    try:
+        resp = client.post("/chat", json={"query": "hi", "llm": _llm_body()})
+        events = _parse_sse(resp.content)
+        notices = [e for e in events if e["event"] == "provider_notice"]
+        assert len(notices) == 1
+        assert notices[0]["data"]["answered_by"] is None
+        names = [e["event"] for e in events]
+        assert "error" in names and names[-1] == "done"
+    finally:
+        api_module._graph = None
+        llm.get_chat_model.cache_clear()

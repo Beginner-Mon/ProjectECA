@@ -3,8 +3,8 @@ import { Check, FileText, Loader2, Pencil, Plus, Trash2 } from 'lucide-react'
 import { isAxiosError } from 'axios'
 import TextareaAutosize from 'react-textarea-autosize'
 import { useTranslation } from 'react-i18next'
-import { createUserMemory, deleteAllUserMemory, deleteUserMemory, listUserMemory, updateUserMemory, type UserMemoryItem } from '@/lib/api'
-import { MAX_FACT_LENGTH, groupFacts, normaliseFact, normaliseFacts, sortFacts, validateNewFact } from '@/lib/userMemory'
+import { createUserMemory, deleteAllUserMemory, deleteUserMemory, listUserMemory, updateUserMemory, MEMORY_TYPES, type MemoryType, type UserMemoryItem } from '@/lib/api'
+import { MAX_FACT_LENGTH, groupByType, normaliseFact, normaliseFacts, sortFacts, validateNewFact, validateTopic } from '@/lib/userMemory'
 
 const ACTION = 'inline-flex items-center justify-center gap-2 rounded-lg px-3 py-2 text-sm transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:opacity-40'
 const NEW_FACT = 'new'
@@ -114,7 +114,7 @@ function SaidOn({ saidAt }: { saidAt: string }) {
       /* keep the ISO date */
     }
   }
-  return <span className="shrink-0 pt-1 font-mono text-xs text-muted-foreground/70">{text}</span>
+  return <>{text}</>
 }
 
 /** Markdown-like presentation; each editor retains a single fact's identity. */
@@ -124,7 +124,9 @@ export default function MemoryContent() {
   const [loadFailed, setLoadFailed] = useState(false)
   const [attempt, setAttempt] = useState(0)
   const [editingId, setEditingId] = useState<string | null>(null)
-  const [newKind, setNewKind] = useState<'instruction' | 'fact'>('fact')
+  const [newType, setNewType] = useState<MemoryType>('profile')
+  const [newTopic, setNewTopic] = useState('')
+  const [topicInvalid, setTopicInvalid] = useState(false)
   const [confirmDeleteAll, setConfirmDeleteAll] = useState(false)
   const [saved, setSaved] = useState(false)
   const lastTrigger = useRef(NEW_FACT)
@@ -156,11 +158,28 @@ export default function MemoryContent() {
     setAttempt((value) => value + 1)
   }
   const saveFact = async (fact: UserMemoryItem | undefined, text: string) => {
+    let topic: string | null = null
+    if (!fact) {
+      const checked = validateTopic(newTopic)
+      if (checked === 'invalid') {
+        setTopicInvalid(true)
+        return
+      }
+      topic = checked
+    }
     const updated = normaliseFact(await (fact
       ? updateUserMemory(fact, text)
-      : createUserMemory(text, { kind: fact === undefined ? newKind : 'fact' })))
+      : createUserMemory(text, {
+        kind: newType === 'instruction' ? 'instruction' : 'fact',
+        memory_type: newType,
+        ...(topic !== null && { project: topic }),
+      })))
     setFacts((prev) => fact ? (prev ?? []).map((item) => item.id === fact.id ? updated : item) : [...(prev ?? []), updated])
     setSaved(true)
+    if (!fact) {
+      setNewTopic('')
+      setTopicInvalid(false)
+    }
     finish()
   }
   const deleteAll = async () => {
@@ -171,7 +190,7 @@ export default function MemoryContent() {
     finish()
   }
 
-  const grouped = facts === null ? null : groupFacts(facts)
+  const grouped = facts === null ? null : groupByType(facts)
 
   const renderRow = (fact: UserMemoryItem) => (
     <li key={fact.id} className="group flex items-start gap-3 py-1 text-sm leading-7 sm:text-[15px]">
@@ -182,8 +201,11 @@ export default function MemoryContent() {
         setSaved(true)
         finish()
       }} /> : <>
-        <p className="min-w-0 flex-1 whitespace-pre-wrap break-words py-1 text-foreground/90">{fact.fact_text}</p>
-        <SaidOn saidAt={fact.said_at ?? fact.created_at} />
+        <div className="min-w-0 flex-1 py-1">
+          <p className="whitespace-pre-wrap break-words text-foreground/90">{fact.fact_text}</p>
+          {fact.memory_type === 'instruction' && fact.tier === 2 && fact.project && <p className="text-xs text-muted-foreground">{t('memory.only_for', { topic: fact.project })}</p>}
+          <p className="text-xs text-muted-foreground/70"><SaidOn saidAt={fact.said_at ?? fact.created_at} /> · {t(fact.source === 'extracted' ? 'memory.source_extracted' : 'memory.source_user')}</p>
+        </div>
         <button ref={(button) => rememberButton(fact.id, button)} type="button" disabled={editingId !== null} title={t('memory.edit')} aria-label={t('memory.edit_fact', { fact: fact.fact_text })} onClick={() => {
           lastTrigger.current = fact.id
           setSaved(false)
@@ -213,33 +235,39 @@ export default function MemoryContent() {
         </h3>
         {loadFailed ? <div role="alert" className="text-sm">
           <p className="text-destructive">{t('memory.load_failed')}</p>
-          <button type="button" onClick={reload} className={`${ACTION} mt-2 underline underline-offset-4`}>{t('common.refresh')}</button>
+          <button type="button" onClick={reload} className="mt-2 rounded-sm text-sm text-foreground underline underline-offset-4 transition-colors hover:text-foreground/80 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring">{t('common.refresh')}</button>
         </div> : facts === null || grouped === null ? <p role="status" className="text-sm text-muted-foreground">{t('common.loading')}</p> : <>
           {facts.length === 0 && editingId !== NEW_FACT && <p className="text-sm leading-7 text-muted-foreground">{t('memory.empty_document')}</p>}
-          <h4 className="mb-2 mt-2 text-sm font-semibold text-foreground">{t('memory.section_instructions')}</h4>
-          <ul className="space-y-2">
-            {grouped.instructions.map(renderRow)}
-          </ul>
-          <h4 className="mb-2 mt-6 text-sm font-semibold text-foreground">{t('memory.section_facts')}</h4>
-          {grouped.byProject.map((group) => (
-            <div key={group.project ?? ''}>
-              {group.project !== null && <h5 className="mb-1 mt-4 font-mono text-xs text-muted-foreground">{group.project}</h5>}
-              <ul className="space-y-2">
-                {group.items.map(renderRow)}
-              </ul>
+          {grouped.map((section, index) => (
+            <div key={section.type}>
+              <h4 className={`mb-2 text-sm font-semibold text-foreground ${index === 0 ? 'mt-2' : 'mt-6'}`}>{t(`memory.type_${section.type}`)}</h4>
+              {section.topics.map((group) => (
+                <div key={group.topic ?? ''}>
+                  {group.topic !== null && <h5 className="mb-1 mt-4 font-mono text-xs text-muted-foreground">{group.topic}</h5>}
+                  <ul className="space-y-2">
+                    {group.items.map(renderRow)}
+                  </ul>
+                </div>
+              ))}
             </div>
           ))}
-          <h4 className="mb-2 mt-6 text-sm font-semibold text-foreground">{t('memory.section_candidates')}</h4>
-          <p className="mb-2 text-xs text-muted-foreground">{t('memory.candidates_note')}</p>
-          <ul className="space-y-2">
-            {grouped.candidates.map(renderRow)}
-          </ul>
           {editingId === NEW_FACT && <div className="mt-4">
             <label className="mb-2 block text-xs text-muted-foreground" htmlFor="memory-new-kind">{t('memory.kind_label')}</label>
-            <select id="memory-new-kind" value={newKind} onChange={(event) => setNewKind(event.target.value as 'instruction' | 'fact')} className="mb-2 block rounded-lg border border-border/60 bg-background/30 px-3 py-2 text-sm text-foreground focus:border-ring focus:outline-none">
-              <option value="fact">{t('memory.kind_fact')}</option>
-              <option value="instruction">{t('memory.kind_instruction')}</option>
+            <select id="memory-new-kind" value={newType} onChange={(event) => setNewType(event.target.value as MemoryType)} className="mb-2 block rounded-lg border border-border/60 bg-background/30 px-3 py-2 text-sm text-foreground focus:border-ring focus:outline-none">
+              {MEMORY_TYPES.map((type) => <option key={type} value={type}>{t(`memory.type_${type}`)}</option>)}
             </select>
+            <input
+              id="memory-new-topic"
+              type="text"
+              value={newTopic}
+              onChange={(event) => { setNewTopic(event.target.value); setTopicInvalid(false) }}
+              aria-label={t('memory.topic_label')}
+              aria-invalid={topicInvalid}
+              aria-describedby={topicInvalid ? 'memory-topic-error' : undefined}
+              placeholder={t('memory.topic_placeholder')}
+              className="mb-2 block w-full rounded-lg border border-border/60 bg-background/30 px-3 py-2 text-sm text-foreground placeholder:text-muted-foreground/50 focus:border-ring focus:outline-none"
+            />
+            {topicInvalid && <p id="memory-topic-error" role="alert" className="mb-2 text-sm text-destructive">{t('memory.topic_invalid')}</p>}
             <div className="flex items-start gap-3 py-1">
               <span className="pt-2 font-mono text-muted-foreground/50" aria-hidden="true">-</span>
               <MemoryEditor onSave={(text) => saveFact(undefined, text)} onCancel={finish} onReload={reload} onDelete={async () => {}} />

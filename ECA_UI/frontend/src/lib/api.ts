@@ -293,7 +293,10 @@ export async function streamChat(
   })
 
   if (!resp.ok) {
-    throw new Error(`HTTP ${resp.status}: ${await resp.text()}`)
+    // The status is all the client acts on (lib/chatErrors.ts: errorFromHttp).
+    // The body is deliberately neither read nor logged: it can echo the request.
+    console.warn('[chat] POST /chat answered', resp.status)
+    throw new HttpStatusError(resp.status)
   }
 
   let sawDone = false
@@ -316,6 +319,51 @@ export class StreamInterruptedError extends Error {
   constructor(message = 'Chat stream interrupted', options?: { cause?: unknown }) {
     super(message, options)
     this.name = 'StreamInterruptedError'
+  }
+}
+
+/** A non-2xx answer to a request that streams. Carries the status and nothing else. */
+export class HttpStatusError extends Error {
+  readonly status: number
+  constructor(status: number) {
+    super(`HTTP ${status}`)
+    this.name = 'HttpStatusError'
+    this.status = status
+  }
+}
+
+/**
+ * Not one byte arrived for SSE_IDLE_TIMEOUT_MS. The server pings every ~15 s, so
+ * silence this long means the connection is dead even though it never closed.
+ */
+export class StreamTimeoutError extends Error {
+  constructor(message = 'Chat stream went silent') {
+    super(message)
+    this.name = 'StreamTimeoutError'
+  }
+}
+
+/** Watchdog: the longest a stream may be silent (pings count as bytes). */
+export const SSE_IDLE_TIMEOUT_MS = 45_000
+
+/** reader.read(), but rejects with StreamTimeoutError (and cancels the body) after `ms` of silence. */
+async function readWithWatchdog(
+  reader: ReadableStreamDefaultReader<Uint8Array>,
+  ms: number,
+): Promise<ReadableStreamReadResult<Uint8Array>> {
+  let timer: ReturnType<typeof setTimeout> | undefined
+  const silence = new Promise<never>((_, reject) => {
+    timer = setTimeout(() => {
+      void reader.cancel().catch(() => {})
+      reject(new StreamTimeoutError())
+    }, ms)
+  })
+  const read = reader.read()
+  read.catch(() => {}) // the loser of the race must not surface as unhandled
+  try {
+    return await Promise.race([read, silence])
+  } finally {
+    clearTimeout(timer)
   }
 }
 
@@ -343,7 +391,7 @@ async function consumeSSE(resp: Response, onEvent: SSEEventCallback): Promise<vo
 
     try {
       while (true) {
-        const { done, value } = await reader.read()
+        const { done, value } = await readWithWatchdog(reader, SSE_IDLE_TIMEOUT_MS)
         if (done) break
         buffer += decoder.decode(value, { stream: true })
         // sse-starlette terminates blocks with \r\n\r\n — a literal '\n\n'
@@ -365,7 +413,7 @@ async function consumeSSE(resp: Response, onEvent: SSEEventCallback): Promise<vo
       if (emittedAny) return // streaming worked
       console.warn('[SSE] reader returned 0 events — falling back to text()')
     } catch (e) {
-      if ((e as Error).name === 'AbortError') throw e
+      if ((e as Error).name === 'AbortError' || e instanceof StreamTimeoutError) throw e
       // Part of the reply already went to the caller: replaying the clone would
       // emit it twice. Report the cut instead.
       if (emittedAny) throw new StreamInterruptedError(undefined, { cause: e })
@@ -438,6 +486,9 @@ export interface SessionMessage {
    * the answer. Absent means treat it as gone.
    */
   motion_expires_at?: string
+  /** Assistant rows only: the turn failed with this code (sse-contract.md); the
+   *  row's text is the apology the server stored, which the client does not show. */
+  error_code?: string | null
 }
 
 /**
@@ -534,6 +585,9 @@ export async function fetchLlmConfig(): Promise<LlmConfig> {
 
 // ── User memory CRUD ───────────────────────────────────────────────────────────
 
+export const MEMORY_TYPES = ['instruction', 'profile', 'preference', 'area', 'event', 'person', 'reference'] as const
+export type MemoryType = (typeof MEMORY_TYPES)[number]
+
 /** One thing ECA remembers about the user. */
 export interface UserMemoryItem {
   id: string
@@ -545,7 +599,9 @@ export interface UserMemoryItem {
   tier: 1 | 2
   /** 'active' = in use, 'candidate' = still being confirmed. */
   status: 'active' | 'candidate'
+  /** The topic (the backend calls it `project`); null on rows written before topics existed. */
   project: string | null
+  memory_type: MemoryType
   /** 'user' = typed by the user, 'extracted' = noted by ECA from a conversation. */
   source: 'user' | 'extracted'
   created_at: string
@@ -567,6 +623,7 @@ export interface UserMemoryWire {
   tier?: number
   status?: string
   project?: string | null
+  memory_type?: string
   source?: string
   created_at: string
   updated_at?: string | null
@@ -580,13 +637,14 @@ export async function listUserMemory(): Promise<{ facts: UserMemoryWire[] }> {
 
 export async function createUserMemory(
   factText: string,
-  opts?: { kind?: 'instruction' | 'fact'; category?: string; project?: string },
+  opts?: { kind?: 'instruction' | 'fact'; category?: string; project?: string; memory_type?: MemoryType },
 ): Promise<UserMemoryWire> {
   const { data } = await http.post('/me/memory', {
     fact_text: factText,
     kind: opts?.kind ?? 'fact',
     category: opts?.category,
     project: opts?.project,
+    memory_type: opts?.memory_type,
   })
   return data
 }

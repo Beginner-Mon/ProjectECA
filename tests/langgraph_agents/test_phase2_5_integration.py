@@ -247,14 +247,14 @@ class TestModeDerivation:
         }
         assert _derive_mode(state) == "clarify"
 
-    def test_refuse_clinical_no_source(self):
+    def test_clinical_no_source_is_chat(self):
         from langgraph_agents.nodes.synthesizer import _derive_mode
         state = {
             "needs_clarification": False,
             "required_outputs": ["exercise_protocol", "scope_disclaimer"],
             "messages": [],  # No ToolMessages
         }
-        assert _derive_mode(state) == "refuse"
+        assert _derive_mode(state) == "chat"
 
     def test_synthesize_has_tool_results(self):
         from langgraph_agents.nodes.synthesizer import _derive_mode

@@ -84,19 +84,19 @@ async def _message(pg, session_id: str, role: str, content: str) -> int:
     )
 
 
-async def _typed_fact(pg, user_id: str, text: str, category: str | None = None):
+async def _typed_fact(pg, user_id: str, text: str, memory_type: str = "profile"):
     """A fact as POST /me/memory writes it: `source` left to its default."""
     return await pg.fetchval(
-        "INSERT INTO user_memory (user_id, fact_text, category) VALUES ($1, $2, $3) "
+        "INSERT INTO user_memory (user_id, fact_text, memory_type) VALUES ($1, $2, $3) "
         "RETURNING id",
-        user_id, text, category,
+        user_id, text, memory_type,
     )
 
 
 async def _facts(pg) -> dict[str, dict]:
     """Every fact row the bound user can see, by its text."""
     rows = await pg.fetch(
-        "SELECT id, fact_text, category, source, valid, source_session_id, "
+        "SELECT id, fact_text, memory_type, project, source, valid, source_session_id, "
         "       last_seen_session_id, updated_at > created_at AS refreshed "
         "FROM user_memory")
     return {r["fact_text"]: dict(r) for r in rows}
@@ -136,7 +136,7 @@ def _stored_in(user_message: str) -> list[dict]:
         if line.startswith('{"id": "f'):
             shown = json.loads(line)
             rows.append({"id": shown["id"], "fact": shown["fact"],
-                         "category": shown.get("category"),
+                         "type": shown.get("type"), "topic": shown.get("topic"),
                          "locked": shown.get("locked", False)})
     return rows
 
@@ -164,12 +164,10 @@ async def test_add_then_a_later_update_and_delete_and_the_marker_follows(pg):
                                           "lower back hurts when I sit for long.")
     answered = await _message(client, first, "assistant", "Thanks, I will keep that in mind.")
 
-    script = _Script([{"op": "ADD", "kind": "fact", "fact": _ACL,
-                       "category": "condition", "project": None,
-                       "explicit": True},
-                      {"op": "ADD", "kind": "fact", "fact": _BACK,
-                       "category": "condition", "project": None,
-                       "explicit": True}])
+    script = _Script([{"op": "ADD", "type": "profile",
+                          "topic": "health", "fact": _ACL},
+                      {"op": "ADD", "type": "profile",
+                          "topic": "health", "fact": _BACK}])
     summary = await _extract(user, first, script)
 
     assert (summary["llm_calls"], summary["added"]) == (1, 2)
@@ -179,13 +177,13 @@ async def test_add_then_a_later_update_and_delete_and_the_marker_follows(pg):
     assert set(facts) == {_ACL, _BACK}
     for fact in facts.values():
         assert fact["source"] == "extracted" and fact["valid"] is True
-        assert str(fact["source_session_id"]) == first and fact["category"] == "condition"
+        assert str(fact["source_session_id"]) == first and fact["memory_type"] == "profile"
         assert fact["refreshed"] is False
     assert await _marker(client, first) == answered
 
     # The same text again is not a second row, whatever the caller checked.
     assert await client.execute(
-        fe._ADD_SQL, user, _ACL, "condition", "fact", 2, "active", None, 1,
+        fe._ADD_SQL, user, _ACL, "profile", "fact", 2, "active", "health", 1,
         [""], first) == "INSERT 0 0"
 
     # Days later, in another conversation, the user corrects both.
@@ -193,8 +191,7 @@ async def test_add_then_a_later_update_and_delete_and_the_marker_follows(pg):
     said = await _message(client, second, "user", "My back is fine now, and the knee no "
                                                   "longer hurts when I walk.")
     script = _Script(lambda ids: [
-        {"op": "UPDATE", "id": ids[_ACL], "fact": _KNEE_NOW, "category": "condition",
-         "project": None},
+        {"op": "UPDATE", "id": ids[_ACL], "type": "profile", "topic": "health", "fact": _KNEE_NOW},
         {"op": "DELETE", "id": ids[_BACK]},
     ])
     summary = await _extract(user, second, script)
@@ -222,8 +219,8 @@ async def test_a_second_run_with_nothing_new_reads_nothing_and_calls_no_model(pg
     session = await _conversation(client, user)
     last = await _message(client, session, "user", "I work night shifts as a nurse.")
     await _extract(user, session, _Script(
-        [{"op": "ADD", "kind": "fact", "fact": "Works night shifts as a nurse",
-          "category": "profile", "project": None, "explicit": True}]))
+        [{"op": "ADD", "type": "profile",
+                          "topic": "health", "fact": "Works night shifts as a nurse"}]))
 
     idle = _Script()
     summary = await _extract(user, session, idle)
@@ -249,9 +246,8 @@ async def test_long_backlog_is_read_over_several_runs_and_an_answer_alone_needs_
 
     # Run 1: the second message would pass 8,000 characters, so the slice is the
     # assistant message alone, and that needs no model.
-    script = _Script([{"op": "ADD", "kind": "fact", "fact": "Avoids running",
-                       "category": "restriction", "project": None,
-                       "explicit": True}])
+    script = _Script([{"op": "ADD", "type": "profile",
+                          "topic": "health", "fact": "Avoids running"}])
     summary = await _extract(user, session, script)
     assert (summary["conversations"], summary["llm_calls"]) == (1, 0)
     assert script.seen == [] and await _marker(client, session) == first
@@ -303,7 +299,8 @@ async def test_conversations_are_read_most_recently_updated_first(pg):
 
 
 @pytest.mark.asyncio
-async def test_a_fact_the_user_typed_survives_an_update_and_a_delete_aimed_at_it(pg):
+async def test_a_fact_the_user_typed_ignores_an_update_and_a_delete_hides_it(pg):
+    """D8: an UPDATE aimed at a typed item is dropped; a DELETE is kept."""
     from langgraph_agents.nodes import fact_extractor as fe
 
     client, _ = pg
@@ -314,27 +311,29 @@ async def test_a_fact_the_user_typed_survives_an_update_and_a_delete_aimed_at_it
     await _message(client, session, "user", "I do HIIT three times a week now.")
 
     script = _Script(lambda ids: [
-        {"op": "UPDATE", "id": ids[typed_text], "fact": "Does HIIT",
-         "category": "preference", "project": None},
+        {"op": "UPDATE", "id": ids[typed_text], "type": "profile", "topic": "health",
+         "fact": "Does HIIT"},
         {"op": "DELETE", "id": ids[typed_text]},
     ])
     summary = await _extract(user, session, script)
 
     assert _stored_in(script.seen[0]) == [
-        {"id": "f1", "fact": typed_text, "category": "preference", "locked": True}]
-    assert (summary["updated"], summary["deleted"]) == (0, 0)
-
-    # The statements themselves refuse it too, without the check in front.
-    assert await client.execute(
-        fe._UPDATE_SQL, typed_id, user, "Does HIIT", "preference", None, 2,
-        "active", 1, [""], session) == "UPDATE 0"
-    assert await client.execute(fe._HIDE_SQL, typed_id, user) == "UPDATE 0"
+        {"id": "f1", "fact": typed_text, "type": "preference", "topic": None,
+         "locked": True}]
+    assert (summary["updated"], summary["deleted"]) == (0, 1)
 
     facts = await _facts(client)
-    assert set(facts) == {typed_text}
+    assert set(facts) == {typed_text}          # the text was never rewritten
     kept = facts[typed_text]
-    assert (kept["source"], kept["valid"], kept["category"]) == ("user", True, "preference")
-    assert kept["source_session_id"] is None and kept["refreshed"] is False
+    assert (kept["source"], kept["memory_type"]) == ("user", "preference")
+    assert kept["valid"] is False and kept["source_session_id"] is None
+
+    # The statement itself refuses an update of a typed row, without the check
+    # in front of it.
+    assert await client.execute(
+        fe._UPDATE_SQL, typed_id, user, "Does HIIT", "profile", "health",
+        "fact", 2, "active", session) == "UPDATE 0"
+    assert set(await _facts(client)) == {typed_text}
 
 
 @pytest.mark.asyncio
@@ -347,20 +346,19 @@ async def test_user_b_is_neither_read_nor_changed_when_running_as_user_a(pg):
     b_session = await _conversation(client, b)
     await _message(client, b_session, "user", "B said: I have a slipped disc.")
     b_typed = "B typed: allergic to latex"
-    await _typed_fact(client, b, b_typed, "condition")
+    await _typed_fact(client, b, b_typed, "profile")
     b_extracted = "B extracted: has a slipped disc"
     b_extracted_id = await client.fetchval(
-        "INSERT INTO user_memory (user_id, fact_text, category, source, source_session_id) "
-        "VALUES ($1, $2, 'condition', 'extracted', $3) RETURNING id",
+        "INSERT INTO user_memory (user_id, fact_text, memory_type, source, source_session_id) "
+        "VALUES ($1, $2, 'profile', 'extracted', $3) RETURNING id",
         b, b_extracted, b_session)
 
     a = await _user(pg)                       # binds A
     a_session = await _conversation(client, a)
     await _message(client, a_session, "user", "A said: I sprained my ankle last week.")
 
-    script = _Script([{"op": "ADD", "kind": "fact", "fact": "A: sprained ankle",
-                       "category": "condition", "project": None,
-                       "explicit": True}])
+    script = _Script([{"op": "ADD", "type": "profile",
+                          "topic": "health", "fact": "A: sprained ankle"}])
     summary = await _extract(a, a_session, script)
     assert (summary["conversations"], summary["added"]) == (1, 1)
     assert _stored_in(script.seen[0]) == []
@@ -372,11 +370,11 @@ async def test_user_b_is_neither_read_nor_changed_when_running_as_user_a(pg):
     assert (await _extract(b, b_session, idle))["conversations"] == 0
     assert idle.seen == []
     assert await client.execute(
-        fe._UPDATE_SQL, b_extracted_id, a, "changed by A", "condition", None, 2,
-        "active", 1, [""], a_session) == "UPDATE 0"
+        fe._UPDATE_SQL, b_extracted_id, a, "changed by A", "profile", "health",
+        "fact", 2, "active", a_session) == "UPDATE 0"
     assert await client.execute(
-        fe._UPDATE_SQL, b_extracted_id, b, "changed by A", "condition", None, 2,
-        "active", 1, [""], a_session) == "UPDATE 0"
+        fe._UPDATE_SQL, b_extracted_id, b, "changed by A", "profile", "health",
+        "fact", 2, "active", a_session) == "UPDATE 0"
     assert await client.execute(fe._HIDE_SQL, b_extracted_id, b) == "UPDATE 0"
     assert await client.execute(fe._MARK_SQL, b_session, b, 0, 999) == "UPDATE 0"
 
@@ -398,12 +396,10 @@ async def test_deleting_a_conversation_removes_its_facts_and_keeps_the_typed_one
     doomed = await _conversation(client, user)
     await _message(client, doomed, "user", "My right shoulder clicks when I lift.")
 
-    script = _Script([{"op": "ADD", "kind": "fact",
-                        "fact": "Right shoulder clicks when lifting",
-                        "category": "condition", "project": None, "explicit": True}],
-                     [{"op": "ADD", "kind": "fact",
-                       "fact": "Wants to run 5 km by spring", "category": "goal",
-                       "project": None, "explicit": True}])
+    script = _Script([{"op": "ADD", "type": "profile",
+                          "topic": "health", "fact": "Right shoulder clicks when lifting"}],
+                     [{"op": "ADD", "type": "area",
+                          "topic": "health", "fact": "Wants to run 5 km by spring"}])
     summary = await _extract(user, doomed, script)
     assert summary["added"] == 2
     assert len(await _facts(client)) == 3
@@ -425,10 +421,8 @@ async def test_after_a_failed_call_the_marker_has_not_moved_and_the_next_run_ret
     assert await _marker(client, session) == 0
     assert await _facts(client) == {}
 
-    script = _Script([{"op": "ADD", "kind": "fact",
-                        "fact": "Had a left hip replacement in 2024",
-                        "category": "condition", "project": None,
-                        "explicit": True}])
+    script = _Script([{"op": "ADD", "type": "profile",
+                          "topic": "health", "fact": "Had a left hip replacement in 2024"}])
     summary = await _extract(user, session, script)
     assert (summary["failed"], summary["added"]) == (0, 1)
     assert "[user] I had my left hip replaced in 2024." in script.seen[0]
@@ -436,28 +430,29 @@ async def test_after_a_failed_call_the_marker_has_not_moved_and_the_next_run_ret
 
 
 @pytest.mark.asyncio
-async def test_the_memory_node_loads_tier1_instructions_safety_first(pg):
+async def test_the_memory_node_loads_tier1_instructions_only_newest_first(pg):
     from langgraph_agents.nodes.memory import _load_user_instructions
 
     client, _ = pg
     user = await _user(pg)
     typed = "Must not lift more than 5 kg (doctor's advice)"
     await client.execute(
-        "INSERT INTO user_memory (user_id, fact_text, category, kind, tier, status) "
-        "VALUES ($1, $2, 'restriction', 'instruction', 1, 'active')",
+        "INSERT INTO user_memory (user_id, fact_text, memory_type, kind, project, "
+        "                         tier, status) "
+        "VALUES ($1, $2, 'instruction', 'instruction', 'lifting', 1, 'active')",
         user, typed)
     session = await _conversation(client, user)
     await _message(client, session, "user", "A few things about me.")
 
     await _extract(user, session, _Script([
-        {"op": "ADD", "kind": "fact", "fact": "Prefers short answers",
-         "category": "preference", "project": None, "explicit": True},
-        {"op": "ADD", "kind": "fact", "fact": "Has knee osteoarthritis",
-         "category": "condition", "project": None, "explicit": True},
-        {"op": "ADD", "kind": "fact", "fact": "Avoids deep squats",
-         "category": "restriction", "project": None, "explicit": True},
-        {"op": "ADD", "kind": "fact", "fact": "Wants to hike again",
-         "category": "goal", "project": None, "explicit": True},
+        {"op": "ADD", "type": "instruction", "topic": "answer style",
+         "fact": "Prefers short answers"},
+        {"op": "ADD", "type": "profile", "topic": "health",
+         "fact": "Has knee osteoarthritis"},
+        {"op": "ADD", "type": "instruction", "topic": "movement",
+         "fact": "Avoids deep squats"},
+        {"op": "ADD", "type": "area", "topic": "hiking",
+         "fact": "Wants to hike again"},
     ]))
     # One of them is hidden by a later conversation and must stop being loaded.
     later = await _conversation(client, user)
@@ -467,5 +462,10 @@ async def test_the_memory_node_loads_tier1_instructions_safety_first(pg):
 
     loaded = await _load_user_instructions(user)
 
-    # Restrictions (newest first), then conditions; tier-2 and hidden rows excluded.
-    assert loaded == ["Avoids deep squats", typed, "Has knee osteoarthritis"]
+    # Every line is "[YYYY-MM-DD] (topic) fact".
+    assert all(re.match(r"\[\d{4}-\d{2}-\d{2}\] \(", line) for line in loaded)
+    undated = [re.sub(r"^\[[\d-]+\] ", "", line) for line in loaded]
+    # Tier 1 holds instructions only, newest first. The tier-2 rows (the health
+    # fact, the area) and the hidden row are not loaded.
+    assert undated == ["(movement) Avoids deep squats",
+                       f"(lifting) {typed}"]

@@ -1,4 +1,4 @@
-import { useState, useRef, useEffect, useSyncExternalStore } from 'react'
+import { useState, useRef, useEffect, useSyncExternalStore, type ReactNode } from 'react'
 import { useTranslation } from 'react-i18next'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
@@ -21,6 +21,8 @@ import {
 import { cancelSpeech, liveSpeech, openSpeech } from '../lib/speechSource'
 import { useMotion } from '../hooks/useMotion'
 import { useChat } from '../hooks/useChat'
+import { useAuth } from '../contexts/AuthContext'
+import { errorAction, errorCopy, showRetry, type ChatError } from '../lib/chatErrors'
 import DislikeFeedbackModal from './feedback/DislikeFeedbackModal'
 
 export interface Message {
@@ -55,6 +57,12 @@ export interface Message {
   motionNotice?: string
   /** One line when the user's own provider failed and ECA answered instead. */
   providerNotice?: string
+  /** The user's own provider failed AND ECA could not answer either
+   *  (`provider_notice.answered_by` null): the error block then links to the key settings. */
+  providerNoticeFailed?: boolean
+  /** Why this turn failed (lib/chatErrors.ts). The words are chosen at render,
+   *  from the character on screen and the site language, never stored here. */
+  error?: ChatError
   /** Restored turns only: the motion this reply rendered, and when it dies.
    *  A live turn plays its motion straight from the SSE event and needs
    *  neither. */
@@ -76,6 +84,13 @@ interface ChatMessageProps {
   isStreaming?: boolean
 }
 
+/** The thin left rule on every line that is not the agent's own answer (errors, notices). */
+const NOTICE_BAR_CLASS = 'border-l-2 border-muted-foreground/40 pl-3'
+
+/** How a reply's text looks. A failure line uses it too, so it reads as part of the reply. */
+const REPLY_TEXT_CLASS =
+  'prose dark:prose-invert prose-p:leading-relaxed prose-strong:text-foreground prose-headings:text-foreground prose-pre:bg-secondary/50 prose-pre:border prose-pre:border-border/40 max-w-none text-sm text-foreground/90'
+
 function useCopy(text: string) {
   const [copied, setCopied] = useState(false)
   const handleCopy = async () => {
@@ -94,32 +109,39 @@ export default function ChatMessage({ message, isStreaming }: ChatMessageProps) 
   const isUser = message.role === 'user'
 
   if (!isUser) {
-    /* Assistant message được tạo rỗng ngay lúc user gửi (ChatContext.tsx:364)
-     * để id của nó bắt token từ stream. Chưa có text thì không render — cái
-     * shell rỗng vẫn ăn py-3 + space-y-2 của container, đẩy loading indicator
-     * xuống hơn 30px so với user message. */
-    if (!message.content) return null
+    /* Assistant message được tạo rỗng ngay lúc user gửi (ChatContext) để id của
+     * nó bắt token từ stream. Chưa có text thì không render — cái shell rỗng
+     * vẫn ăn py-3 + space-y-2 của container, đẩy loading indicator xuống hơn
+     * 30px so với user message. Trừ khi lượt này lỗi hoặc có thông báo: những
+     * thứ đó người dùng phải thấy dù bubble không có chữ. */
+    if (!message.content && !message.error && !message.providerNotice) return null
 
     const cleaned = message.content.replace(/<\/?evidence_citation>/g, '')
     return (
       <div className="px-3 desktop:px-5 py-2 desktop:py-3 animate-message-in w-full max-w-full">
-        <div className="prose dark:prose-invert prose-p:leading-relaxed prose-strong:text-foreground prose-headings:text-foreground prose-pre:bg-secondary/50 prose-pre:border prose-pre:border-border/40 max-w-none text-sm text-foreground/90">
-          <ReactMarkdown remarkPlugins={[remarkGfm]}>{cleaned}</ReactMarkdown>
-        </div>
+        {message.content && (
+          <div className={REPLY_TEXT_CLASS}>
+            <ReactMarkdown remarkPlugins={[remarkGfm]}>{cleaned}</ReactMarkdown>
+          </div>
+        )}
+        {message.error && <ErrorBlock message={message} />}
         {message.motionNotice && (
           // Muted and small: an aside about the 3D clip, not part of the
           // answer. It disappears on its own once the avatar starts moving.
-          <p className="mt-1 text-[0.7rem] italic text-muted-foreground">
+          <p className={`mt-1 text-[0.7rem] italic text-muted-foreground ${NOTICE_BAR_CLASS}`}>
             {message.motionNotice}
           </p>
         )}
         {message.providerNotice && (
-          // Same aside slot: the user's provider failed and ECA answered.
-          <p className="mt-1 text-[0.7rem] italic text-muted-foreground">
+          // Same aside slot: the user's provider failed (and ECA answered, or
+          // — in an error turn — could not either).
+          <p className={`mt-1 text-[0.7rem] italic text-muted-foreground ${NOTICE_BAR_CLASS}`}>
             {message.providerNotice}
           </p>
         )}
-        <AssistantActions message={message} isStreaming={isStreaming} />
+        {message.content && !message.error && (
+          <AssistantActions message={message} isStreaming={isStreaming} />
+        )}
       </div>
     )
   }
@@ -140,6 +162,84 @@ export default function ChatMessage({ message, isStreaming }: ChatMessageProps) 
         <UserCopyAction content={message.content} />
       </div>
     </div>
+  )
+}
+
+/**
+ * A failure line is just more of the character's reply: the same text style as
+ * any answer (REPLY_TEXT_CLASS), no box, no colour, no icon. Under it, small
+ * muted text links in the style of the message action row: "Thử lại" when
+ * sending the same prompt again makes sense, plus the one action the error asks
+ * of the user, if any. `role="alert"` is for screen readers only.
+ *
+ * Used by a failed turn (ErrorBlock below) and by a conversation that would not
+ * load (ChatPanel), so there is one look. Words come from lib/chatErrors.ts;
+ * nothing per-code lives here.
+ */
+const ERROR_LINK_CLASS = 'text-muted-foreground underline underline-offset-2 hover:text-foreground'
+
+export function ErrorNotice({
+  text,
+  onRetry,
+  spaced = false,
+  children,
+}: {
+  text: string
+  onRetry?: () => void
+  /** There is reply text above: this line starts a new paragraph of it. */
+  spaced?: boolean
+  children?: ReactNode
+}) {
+  const { t } = useTranslation()
+  return (
+    <div role="alert" className={`${NOTICE_BAR_CLASS}${spaced ? ' mt-3' : ''}`}>
+      <div className={REPLY_TEXT_CLASS}>
+        <p>{text}</p>
+      </div>
+      {(onRetry || !!children) && (
+        <div className="mt-1 flex flex-wrap items-center gap-x-3 gap-y-1 text-xs">
+          {onRetry && (
+            <button type="button" className={ERROR_LINK_CLASS} onClick={onRetry}>
+              {t('chat.retry')}
+            </button>
+          )}
+          {children}
+        </div>
+      )}
+    </div>
+  )
+}
+
+function ErrorBlock({ message }: { message: Message }) {
+  const { t } = useTranslation()
+  const { ui, isGenerating, latestAssistantId, retryTurn, requestUi } = useChat()
+  const { signOut } = useAuth()
+  const error = message.error!
+  const action = errorAction(error, !!message.providerNoticeFailed)
+  const retry = showRetry(error, latestAssistantId === message.id, isGenerating)
+  const linkClass = ERROR_LINK_CLASS
+
+  return (
+    <ErrorNotice
+      text={errorCopy(error, ui, t)}
+      spaced={!!message.content}
+      onRetry={retry ? () => retryTurn(message.id) : undefined}
+    >
+      {action && (
+        <>
+        {action === 'sign_in' && (
+          <button type="button" className={linkClass} onClick={() => void signOut?.()}>
+            {t('chat.sign_in_again')}
+          </button>
+        )}
+        {action === 'llm_settings' && (
+          <button type="button" className={linkClass} onClick={() => requestUi('llm_settings')}>
+            {t('chat.open_llm_settings')}
+          </button>
+        )}
+        </>
+      )}
+    </ErrorNotice>
   )
 }
 

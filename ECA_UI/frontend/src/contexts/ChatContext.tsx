@@ -19,8 +19,12 @@ import { RECOVERY_DELAYS_MS, createTurnRecovery, pickSavedReply, type TurnRecove
 import { pollMotionJob } from '../lib/motionJob'
 import { clearSessionPointer, forgetMissingSession, readSessionPointer, stampSessionPointer } from '../lib/chatSession'
 import { useMotion } from '../hooks/useMotion'
-import { ChatContext, type ChatContextType, type SessionItem } from '../hooks/useChat'
+import { ChatContext, type ChatContextType, type ChatUiRequest, type SessionItem } from '../hooks/useChat'
+import {
+  errorFromEvent, errorFromHistory, errorFromThrow, shouldRecover, type ChatError,
+} from '../lib/chatErrors'
 import { uiStringsFor, getGreetingForSlot, getTimeSlot, buildGreetingKey, type UiStrings } from '../lib/characterCopy'
+import { sessionLoadOutcome } from '../lib/sessionLoad'
 import { stageLabelFor } from '../lib/stageLabel'
 import { resolveGreeting, type CapturedGreeting } from '../lib/greeting'
 import { useLocale } from '../hooks/useLocale'
@@ -52,6 +56,16 @@ const GREETING_ID = '1'
  * button on the first message played a fixed clip that had nothing to do with
  * the text. That was debug scaffolding and is gone.
  */
+/**
+ * What a stored row says about how its turn ended, in the shape of a Message.
+ * A failed turn's stored text is the server's apology (kept for history and
+ * speech); the screen shows the error block instead, worded by the client.
+ */
+function turnEndFromRow(m: SessionMessage): Pick<Message, 'content' | 'error'> {
+  const error = errorFromHistory(m)
+  return { content: error ? '' : m.content, error }
+}
+
 function buildInitialMessages(text: string): Message[] {
   return [
     {
@@ -115,6 +129,14 @@ export function ChatProvider({ children }: { children: ReactNode }) {
   const [sessionsDirty, setSessionsDirty] = useState(true)
   const [isSwitching, setIsSwitching] = useState(false)
   const switchingRef = useRef(false)
+  /** The conversation in `activeSessionId` exists but could not be read. The
+   *  chat panel shows the error block instead of messages (never an empty
+   *  panel, never the new-chat greeting) and the retry reloads that session. */
+  const [sessionLoadError, setSessionLoadError] = useState(false)
+  const sessionLoadErrorRef = useRef(false)
+  sessionLoadErrorRef.current = sessionLoadError
+  /** The session list could not be fetched — distinct from an empty list. */
+  const [sessionsError, setSessionsError] = useState(false)
 
   // Voice input = dictation into the chat box (lib/dictation.ts). The mic used
   // to record a clip that was shown as an audio bubble and never reached the
@@ -163,6 +185,14 @@ export function ChatProvider({ children }: { children: ReactNode }) {
     return id
   }, [])
   const abortControllerRef = useRef<AbortController | null>(null)
+  /** The prompt behind each live assistant bubble, so "Try again" can send it
+   *  again. Keyed by the bubble's client id. Text only: images are not sent to
+   *  the model yet (chat.image_not_sent), so there is nothing else to keep. */
+  const promptsRef = useRef(new Map<string, string>())
+  const [uiRequest, setUiRequest] = useState<ChatUiRequest | null>(null)
+  const requestUi = useCallback((kind: ChatUiRequest['kind']) => {
+    setUiRequest((prev) => ({ seq: (prev?.seq ?? 0) + 1, kind }))
+  }, [])
   const thinkingRef = useRef(false)
   /** Latest messages, for recovery to compare server ids against what is on screen. */
   const messagesRef = useRef<Message[]>([])
@@ -337,7 +367,7 @@ export function ChatProvider({ children }: { children: ReactNode }) {
           history.map((m, i) => ({
             id: `restored-${i}`,
             role: m.role,
-            content: m.content,
+            ...turnEndFromRow(m),
             timestamp: new Date(m.timestamp),
             // Audio is not persisted with the transcript. The speaker button
             // replays it from this browser's cache (IndexedDB, per user, one
@@ -393,12 +423,18 @@ export function ChatProvider({ children }: { children: ReactNode }) {
           }
         })
       } catch (e) {
-        const status = (e as { response?: { status?: number } }).response?.status
-        if (status !== 404) {
+        const outcome = sessionLoadOutcome(e)
+        if (outcome === 'missing') {
+          if (forgetMissingSession(sessionId, restoreStartedAt) && !cancelled) {
+            sessionIdRef.current = null
+            setActiveSessionId(null)
+          }
+        } else if (outcome === 'failed' && !cancelled) {
+          // The conversation is there but unreadable: keep the pointer, show
+          // the error, and leave no greeting that would pass it off as new.
           console.warn('[session] restore failed:', e)
-        } else if (forgetMissingSession(sessionId, restoreStartedAt) && !cancelled) {
-          sessionIdRef.current = null
-          setActiveSessionId(null)
+          setMessages([])
+          setSessionLoadError(true)
         }
       } finally {
         if (!cancelled) setIsRestoring(false)
@@ -430,6 +466,7 @@ export function ChatProvider({ children }: { children: ReactNode }) {
     // one (the effect below only replays on key CHANGE; an explicit new chat
     // is a new opening, including pristine-to-pristine).
     greetedKeyRef.current = null
+    setSessionLoadError(false)
     const newSlot = getTimeSlot()
     const newGreetingText = getGreetingForSlot(uiRef.current, newSlot)
     displayedGreetingRef.current = { slot: newSlot, text: newGreetingText }
@@ -447,8 +484,11 @@ export function ChatProvider({ children }: { children: ReactNode }) {
       const sessions = (data?.sessions ?? []) as SessionItem[]
       setSessionList(sessions)
       setSessionsDirty(false)
+      setSessionsError(false)
     } catch (e) {
       console.warn('[sessions] refresh failed:', e)
+      // Not an empty list: the panel must not say "No sessions yet" for this.
+      setSessionsError(true)
     }
   }, [])
 
@@ -478,9 +518,10 @@ export function ChatProvider({ children }: { children: ReactNode }) {
     void transitionTo('thinking_outro')
   }, [transitionTo])
 
-  const switchToSession = useCallback(async (sessionId: string) => {
-    if (sessionId === sessionIdRef.current || switchingRef.current) return
+  /** Load `sessionId` into the panel. The guards live in the two callers. */
+  const openSession = useCallback(async (sessionId: string) => {
     switchingRef.current = true
+    setSessionLoadError(false)
     abortControllerRef.current?.abort()
     speechPlayer.stop() // same as startNewSession
 
@@ -514,7 +555,7 @@ export function ChatProvider({ children }: { children: ReactNode }) {
           history.map((m, i) => ({
             id: `switched-${i}`,
             role: m.role,
-            content: m.content,
+            ...turnEndFromRow(m),
             timestamp: new Date(m.timestamp),
             serverId: m.id,
             feedback: m.feedback ?? null,
@@ -527,15 +568,30 @@ export function ChatProvider({ children }: { children: ReactNode }) {
         setMessages(buildInitialMessages(switchGreetingText))
       }
     } catch (e) {
-      const isAbort = (e as { name?: string })?.name === 'AbortError' || (e as { code?: string })?.code === 'ERR_CANCELED'
-      if (isAbort) return
+      if (sessionLoadOutcome(e) === 'cancelled') return
       console.warn('[session] switch failed:', e)
+      // Still on this session (the user may have clicked another meanwhile):
+      // keep it selected so "Try again" knows which one to reload.
+      if (sessionId === sessionIdRef.current) setSessionLoadError(true)
     } finally {
       // Chỉ clear nếu vẫn đang ở session này (tránh đè isSwitching của session mới)
       if (sessionId === sessionIdRef.current) setIsSwitching(false)
       switchingRef.current = false
     }
   }, [endThinking])
+
+  const switchToSession = useCallback(async (sessionId: string) => {
+    // Clicking the conversation that failed to load is a retry, not a no-op.
+    if ((sessionId === sessionIdRef.current && !sessionLoadErrorRef.current) || switchingRef.current) return
+    await openSession(sessionId)
+  }, [openSession])
+
+  /** "Try again" on the chat panel's load error: reload the selected session. */
+  const retrySessionLoad = useCallback(async () => {
+    const id = sessionIdRef.current
+    if (!id || switchingRef.current) return
+    await openSession(id)
+  }, [openSession])
 
   const deleteSessionAction = useCallback(async (sessionId: string) => {
     try {
@@ -557,12 +613,11 @@ export function ChatProvider({ children }: { children: ReactNode }) {
     endThinking()
   }, [endThinking])
 
-  const handleSend = useCallback(async () => {
-    const text = inputRef.current.trim()
+  /** Run one turn for `text`: the composer's message, or a retry of an earlier one. */
+  const sendPrompt = useCallback(async (text: string) => {
     if (!text || isGeneratingRef.current) return
-    // Sending ends dictation, discarding words still in flight: otherwise they
-    // arrive after the box is cleared and refill it.
-    cancelDictation()
+    // Typing into a conversation that failed to load moves on from the error.
+    setSessionLoadError(false)
     // Voice mode: wake the AudioContext NOW, while this is still the click (or
     // Enter) that sent the message. The reply's audio lands seconds later, far
     // outside any user gesture; a context started here stays running, so the
@@ -583,7 +638,6 @@ export function ChatProvider({ children }: { children: ReactNode }) {
       if (isPristine) return [userMsg]
       return [...prev, userMsg]
     })
-    setInput('')
     // Hiển thị stage ngay để tránh 3 chấm đầu, dùng text pulse thay vì dots.
     // Trung tính (thinking) — nhãn nguồn thật tới sau qua sự kiện stage (T6).
     setIsTyping(false)
@@ -593,6 +647,7 @@ export function ChatProvider({ children }: { children: ReactNode }) {
     void transitionTo('thinking_intro')
 
     const assistantMsgId = crypto.randomUUID()
+    promptsRef.current.set(assistantMsgId, text)
     /* The character answering, resolved once. It goes to /chat, onto the
      * message (so a replay asks POST /tts for the same voice) and into the
      * cache key — three places that must agree. */
@@ -604,6 +659,22 @@ export function ChatProvider({ children }: { children: ReactNode }) {
     /** The answer as streamed: what the cache is keyed by, and exactly the
      *  text the speaker button will look up on a replay. */
     let answer = ''
+    /** How this turn failed, once it has. The first failure wins: an `error`
+     *  event is followed by `done`, and a cut stream after it adds nothing. */
+    let turnError: ChatError | null = null
+    /** `session_persisted` arrived: the answer is saved whatever happens next. */
+    let persisted = false
+    const failTurn = (error: ChatError) => {
+      if (turnError) return
+      turnError = error
+      setMessages((prev) => prev.map((msg) => (msg.id === assistantMsgId ? { ...msg, error } : msg)))
+      // Nothing more is coming that the user waits on.
+      setIsTyping(false)
+      setStageLabel(null)
+      endThinking()
+      // On a phone the dock may be closed: the error must not happen off screen.
+      requestUi('show_chat')
+    }
     setMessages((prev) => [
       ...prev,
       { id: assistantMsgId, role: 'assistant', content: '', timestamp: new Date(), speech, personaId: persona },
@@ -650,6 +721,7 @@ export function ChatProvider({ children }: { children: ReactNode }) {
       // this being set, so it targets THIS turn's message specifically rather
       // than whichever assistant bubble happens to be latest.
       attachServerId: (id) => {
+        persisted = true
         setMessages((prev) =>
           prev.map((msg) => (msg.id === assistantMsgId ? { ...msg, serverId: id } : msg))
         )
@@ -793,12 +865,16 @@ export function ChatProvider({ children }: { children: ReactNode }) {
                 }
               })()
             }
+          } else if (type === 'error') {
+            // The turn failed. The server sends a code, never words
+            // (docs/architecture/sse-contract.md); `done` still follows.
+            failTurn(errorFromEvent(data))
           } else if (type === 'provider_notice') {
             // The user's provider failed mid-turn, so ECA answered instead.
             // Same shape as motionNotice above: one muted line under the reply.
             // An auth failure additionally retires the card — its key is dead,
             // and every later turn would fail the same way.
-            const p = data as { kind?: string }
+            const p = data as { kind?: string; answered_by?: string | null }
             const kind = typeof p.kind === 'string' ? p.kind : 'other'
             const key =
               kind === 'auth'
@@ -817,27 +893,37 @@ export function ChatProvider({ children }: { children: ReactNode }) {
             const text = t(key)
             setMessages((prev) =>
               prev.map((msg) =>
-                msg.id === assistantMsgId ? { ...msg, providerNotice: text } : msg
+                msg.id === assistantMsgId
+                  ? { ...msg, providerNotice: text, providerNoticeFailed: p.answered_by === null }
+                  : msg
               )
             )
             if (kind === 'auth' && sentPresetId) markInvalid(sentPresetId)
+          } else {
+            // Not silently dropped: a new backend event shows up in the console.
+            console.debug('[SSE] unhandled event', type)
           }
         },
         controller.signal,
       )
+      // A finished stream with no text and no `error` event: the backend sends
+      // no_answer itself; this is the same verdict if it ever does not.
+      if (!turnError && answer === '' && !controller.signal.aborted) {
+        failTurn(errorFromEvent({ code: 'no_answer' }))
+      }
     } catch (e) {
-      if ((e as Error).name !== 'AbortError') {
-        setMessages((prev) =>
-          prev.map((msg) =>
-            msg.id === assistantMsgId
-              // A session_persisted before the failure may already have set
-              // serverId/feedback on this bubble; clear both along with the
-              // content, or the feedback buttons show on an error message the
-              // user can no longer see, voting on an answer that isn't there.
-              ? { ...msg, content: copy.error_stream, serverId: undefined, feedback: null }
-              : msg
-          )
-        )
+      const error = errorFromThrow(e)
+      if (error && persisted) {
+        // Cut after the answer was saved (during speech): the text on screen is
+        // the whole reply, so it is not an error.
+        console.warn('[chat] stream cut after the turn was saved', e)
+      } else if (error) {
+        // Text already streamed stays on screen; the error block goes under
+        // it. Only the error name is logged, never a response body.
+        console.warn('[chat] turn failed:', error.code, (e as Error)?.name)
+        failTurn(error)
+      }
+      if (error && !persisted && shouldRecover(error)) {
         // The server often finished and saved the turn anyway: look for it.
         const recovery: TurnRecovery = createTurnRecovery({
           delays: RECOVERY_DELAYS_MS,
@@ -852,7 +938,7 @@ export function ChatProvider({ children }: { children: ReactNode }) {
             setMessages((prev) =>
               prev.map((msg) =>
                 msg.id === assistantMsgId
-                  ? { ...msg, content: saved.content, serverId: saved.id, feedback: saved.feedback ?? null }
+                  ? { ...msg, ...turnEndFromRow(saved), serverId: saved.id, feedback: saved.feedback ?? null }
                   : msg
               )
             )
@@ -882,7 +968,41 @@ export function ChatProvider({ children }: { children: ReactNode }) {
     // request. Without it the closure keeps whichever locale was active when the
     // callback was created, and the backend would keep serving the old
     // character voice and the old safety-warning language.
-  }, [webSearch, voiceReply, selectedVrmId, locale, transitionTo, endThinking, playMotionFile, ensureSessionId, avatarRef, cancelDictation, consumePreviousAvatar, t, markInvalid])
+  }, [webSearch, voiceReply, selectedVrmId, locale, transitionTo, endThinking, playMotionFile, ensureSessionId, avatarRef, consumePreviousAvatar, t, markInvalid, requestUi])
+
+  const handleSend = useCallback(async () => {
+    const text = inputRef.current.trim()
+    if (!text || isGeneratingRef.current) return
+    // Sending ends dictation, discarding words still in flight: otherwise they
+    // arrive after the box is cleared and refill it.
+    cancelDictation()
+    setInput('')
+    await sendPrompt(text)
+  }, [cancelDictation, sendPrompt])
+
+  /** "Try again": the same prompt, sent as a NEW turn through sendPrompt.
+   *  The earlier question stays in the history and is saved a second time —
+   *  accepted: a retry that rewrote history would need a backend endpoint for
+   *  it, and the failed turn is a record of what happened. A bubble restored
+   *  from history has no stored prompt; the user message before it is it. */
+  const retryTurn = useCallback((assistantMessageId: string) => {
+    if (isGeneratingRef.current) return
+    let prompt = promptsRef.current.get(assistantMessageId)
+    if (!prompt) {
+      const list = messagesRef.current
+      for (let i = list.findIndex((m) => m.id === assistantMessageId) - 1; i >= 0; i--) {
+        if (list[i].role === 'user') { prompt = list[i].content; break }
+      }
+    }
+    if (prompt) void sendPrompt(prompt)
+  }, [sendPrompt])
+
+  const latestAssistantId = useMemo(() => {
+    for (let i = messages.length - 1; i >= 0; i--) {
+      if (messages[i].role === 'assistant') return messages[i].id
+    }
+    return null
+  }, [messages])
 
   useEffect(() => {
     return () => {
@@ -917,10 +1037,17 @@ export function ChatProvider({ children }: { children: ReactNode }) {
       sessionsDirty,
       activeSessionId,
       refreshSessions,
+      sessionsError,
       switchToSession,
+      sessionLoadError,
+      retrySessionLoad,
       deleteSessionAction,
       markSessionsClean,
       setMessageFeedback,
+      latestAssistantId,
+      retryTurn,
+      uiRequest,
+      requestUi,
       isRecording,
       recordingDuration,
       recordingError,
@@ -928,7 +1055,7 @@ export function ChatProvider({ children }: { children: ReactNode }) {
       startRecord,
       stopRecord,
     }),
-    [messages, input, isTyping, isGenerating, stageLabel, ui, webSearch, voiceReply, isRestoring, isSwitching, startNewSession, handleSend, handleStop, imageUrls, addImage, removeImage, sessionList, sessionsDirty, activeSessionId, refreshSessions, switchToSession, deleteSessionAction, markSessionsClean, setMessageFeedback, isRecording, recordingDuration, recordingError, dictationSupported, startRecord, stopRecord],
+    [messages, input, isTyping, isGenerating, stageLabel, ui, webSearch, voiceReply, isRestoring, isSwitching, startNewSession, handleSend, handleStop, imageUrls, addImage, removeImage, sessionList, sessionsDirty, activeSessionId, refreshSessions, sessionsError, switchToSession, sessionLoadError, retrySessionLoad, deleteSessionAction, markSessionsClean, setMessageFeedback, latestAssistantId, retryTurn, uiRequest, requestUi, isRecording, recordingDuration, recordingError, dictationSupported, startRecord, stopRecord],
   )
 
   return <ChatContext.Provider value={value}>{children}</ChatContext.Provider>

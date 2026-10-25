@@ -15,7 +15,6 @@ Metaphor: Planner = manager — assigns deliverables (WHAT).
 from __future__ import annotations
 
 import time
-from datetime import datetime, timezone
 from typing import Optional
 
 from pydantic import BaseModel, Field
@@ -23,6 +22,7 @@ from pydantic import BaseModel, Field
 from langchain_core.messages import AIMessage, HumanMessage
 from langchain_core.runnables import RunnableConfig
 
+from langgraph_agents.nodes._errors import error_entry
 from langgraph_agents.state import AgentState, ErrorSeverity
 from langgraph_agents.llm import (
     get_chat_model, get_fallback_chat_model, get_gemini_cached_chat_model,
@@ -249,12 +249,9 @@ async def planner_node(state: AgentState, config: RunnableConfig) -> dict:
             "resolved_query": query,
             "needs_retrieval": False,
             "needs_clarification": True,
-            "errors": [{
-                "node": "planner",
-                "severity": ErrorSeverity.RECOVERABLE,
-                "message": "No LLM provider is configured or reachable",
-                "timestamp": datetime.now(timezone.utc).isoformat(),
-            }],
+            "errors": [error_entry(
+                "planner", None, ErrorSeverity.RECOVERABLE,
+                "No LLM provider is configured or reachable")],
         }
 
     # include_raw=True so we can read response_metadata/usage_metadata for
@@ -366,12 +363,9 @@ async def planner_node(state: AgentState, config: RunnableConfig) -> dict:
                 "resolved_query": query,
                 "needs_retrieval": False,
                 "needs_clarification": True,
-                "errors": [{
-                    "node": "planner",
-                    "severity": ErrorSeverity.RECOVERABLE,
-                    "message": f"LLM call failed ({elapsed_ms:.0f}ms): {exc}",
-                    "timestamp": datetime.now(timezone.utc).isoformat(),
-                }],
+                "errors": [error_entry(
+                    "planner", exc, ErrorSeverity.RECOVERABLE,
+                    f"LLM call failed ({elapsed_ms:.0f}ms): {exc}")],
             }
 
         logger.info("llm_fallback_used", extra={
@@ -392,12 +386,9 @@ async def planner_node(state: AgentState, config: RunnableConfig) -> dict:
             "resolved_query": query,
             "needs_retrieval": False,
             "needs_clarification": True,
-            "errors": [{
-                "node": "planner",
-                "severity": ErrorSeverity.RECOVERABLE,
-                "message": f"LLM chain returned None ({elapsed_ms:.0f}ms)",
-                "timestamp": datetime.now(timezone.utc).isoformat(),
-            }],
+            "errors": [error_entry(
+                "planner", None, ErrorSeverity.RECOVERABLE,
+                f"LLM chain returned None ({elapsed_ms:.0f}ms)")],
         }
 
     # ── Post-validate ─────────────────────────────────────────────────

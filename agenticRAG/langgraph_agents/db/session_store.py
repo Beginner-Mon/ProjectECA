@@ -81,6 +81,11 @@ def _shape_message(row, created_at: Optional[datetime]) -> dict:
         prompt = motion.get("prompt")
         if prompt:
             out["motion_prompt"] = prompt
+    # From the existing extras.meta; null when the turn had neither. The rest of
+    # meta stays off the wire.
+    meta = _extras(row).get("meta") or {}
+    out["error_code"] = meta.get("error_code")
+    out["interrupted"] = meta.get("interrupted")
     if "feedback_rating" in row.keys() and row["feedback_rating"] is not None:
         out["feedback"] = {
             "rating":  row["feedback_rating"],
@@ -533,7 +538,9 @@ async def write_turn_answer(
     if STATS_ENABLED:
         STATS.record("write_turn_answer", time.perf_counter() - t0)
 
-    await _append_stm(session_id, user_query, assistant_answer, ts)
+    # An apology is not an answer: keep it out of the cache the next turn reads.
+    if not (meta and meta.get("error_code")):
+        await _append_stm(session_id, user_query, assistant_answer, ts)
 
     return str(assistant_id) if assistant_id is not None else None
 

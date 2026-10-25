@@ -105,8 +105,9 @@ async def test_question_is_saved_when_the_graph_raises(monkeypatch, store):
 
     _use_graph(monkeypatch, exploding_graph)
 
-    with pytest.raises(RuntimeError, match="graph exploded"):
-        await _events(_stream())
+    # The stream is no longer cut: the user gets `error` then `done`.
+    kinds = await _events(_stream())
+    assert kinds[-2:] == ["error", "done"]
 
     # Already there when the stream ends: on Lambda nothing runs after it.
     assert store.log == ["question_started", "question_saved"]
@@ -294,8 +295,8 @@ async def test_housekeeping_is_cancelled_when_the_graph_raises(monkeypatch, stor
     housekeeping = _Housekeeping()
     monkeypatch.setattr(api_module, "housekeep", housekeeping)
 
-    with pytest.raises(RuntimeError, match="graph exploded"):
-        await _events(_stream())
+    kinds = await _events(_stream())
+    assert kinds[-2:] == ["error", "done"]
     await asyncio.sleep(0.01)
 
     assert housekeeping.started and housekeeping.cancelled
@@ -448,10 +449,10 @@ async def test_a_graph_error_after_some_tokens_leaves_only_the_question(monkeypa
 
     _use_graph(monkeypatch, failing_graph)
 
-    with pytest.raises(RuntimeError, match="graph exploded"):
-        await _events(_stream())
+    kinds = await _events(_stream())
     await _drain_answer_writes()
 
+    assert kinds[-2:] == ["error", "done"]
     assert store.answers == []
     assert store.log == ["question_started", "question_saved"]
 

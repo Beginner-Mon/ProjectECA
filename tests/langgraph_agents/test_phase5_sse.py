@@ -1337,3 +1337,112 @@ def test_no_mismatch_log_without_tokens(api_client, monkeypatch, caplog):
         resp = client.post("/chat", json={"query": "hi"})
     assert resp.status_code == 200
     assert "stream_final_mismatch" not in caplog.text
+
+
+# ── Error contract (docs/architecture/sse-contract.md) ─────────────
+
+
+def _error_handler_graph(code="provider_billing"):
+    async def fake_stream(state, config, stream_mode=None):
+        yield ("updates", {"memory": {}})
+        yield ("updates", {"error_handler": {
+            "final_answer": "Hệ thống đang trục trặc.", "error_code": code,
+        }})
+    return fake_stream
+
+
+@pytest.mark.unit
+def test_sse_error_event_when_error_handler_runs(api_client, monkeypatch):
+    client, _, mock_graph = api_client
+    mock_graph.astream = _error_handler_graph("provider_billing")
+    _set_graph(mock_graph)
+    write_answer = AsyncMock(return_value="id-1")
+    _fake_session_writes(monkeypatch, write_answer)
+
+    events = _parse_sse_stream(client.post("/chat", json={"query": "hi"}).content)
+    names = [e["event"] for e in events]
+
+    errors = [e for e in events if e["event"] == "error"]
+    assert len(errors) == 1
+    data = errors[0]["data"]
+    assert data["code"] == "provider_billing"
+    assert data["retryable"] is True
+    assert data["request_id"]
+    assert set(data) == {"code", "retryable", "request_id"}   # no error text
+    assert names[-1] == "done"
+    assert names.index("error") < names.index("done")
+    # The apology is still saved as the assistant row, tagged with the code.
+    assert write_answer.await_args.kwargs["meta"]["error_code"] == "provider_billing"
+    assert write_answer.await_args.kwargs["assistant_answer"] == "Hệ thống đang trục trặc."
+
+
+@pytest.mark.unit
+def test_sse_no_answer_error_when_graph_has_no_text(api_client, monkeypatch):
+    client, _, mock_graph = api_client
+
+    async def silent(state, config, stream_mode=None):
+        yield ("updates", {"memory": {}})
+
+    mock_graph.astream = silent
+    _set_graph(mock_graph)
+    _fake_session_writes(monkeypatch, AsyncMock(return_value="id-1"))
+
+    events = _parse_sse_stream(client.post("/chat", json={"query": "hi"}).content)
+    names = [e["event"] for e in events]
+    assert [e["data"]["code"] for e in events if e["event"] == "error"] == ["no_answer"]
+    assert names[-2:] == ["error", "done"]
+    assert "session_persisted" not in names
+
+
+@pytest.mark.unit
+def test_sse_exception_in_graph_gives_error_then_done(api_client, monkeypatch):
+    client, _, mock_graph = api_client
+
+    async def exploding(state, config, stream_mode=None):
+        yield ("custom", {"content": "Xin "})
+        raise RuntimeError("graph exploded")
+
+    mock_graph.astream = exploding
+    _set_graph(mock_graph)
+    _fake_session_writes(monkeypatch, AsyncMock(return_value="id-1"))
+
+    resp = client.post("/chat", json={"query": "hi"})
+    assert resp.status_code == 200
+    events = _parse_sse_stream(resp.content)
+    names = [e["event"] for e in events]
+    assert names[-2:] == ["error", "done"]
+    err = events[-2]["data"]
+    assert err["code"] == "internal" and err["retryable"] is True
+    assert "graph exploded" not in resp.content.decode("utf-8")
+
+
+@pytest.mark.unit
+def test_sse_normal_turn_has_no_error_event(api_client, monkeypatch):
+    client, _, mock_graph = api_client
+    mock_graph.astream = _make_fake_astream_with_tokens()
+    _set_graph(mock_graph)
+    _fake_session_writes(monkeypatch, AsyncMock(return_value="id-1"))
+
+    names = [e["event"] for e in _parse_sse_stream(
+        client.post("/chat", json={"query": "hi"}).content)]
+    assert "error" not in names
+    assert names[-1] == "done"
+
+
+@pytest.mark.unit
+def test_chat_error_log_has_codes_and_no_text(api_client, monkeypatch, caplog):
+    import logging
+    client, _, mock_graph = api_client
+
+    async def silent(state, config, stream_mode=None):
+        yield ("updates", {"memory": {}})
+
+    mock_graph.astream = silent
+    _set_graph(mock_graph)
+    _fake_session_writes(monkeypatch, AsyncMock(return_value="id-1"))
+    with caplog.at_level(logging.ERROR):
+        client.post("/chat", json={"query": "secret question text"})
+    lines = [r for r in caplog.records if r.getMessage() == "chat_error"]
+    assert len(lines) == 1
+    assert lines[0].code == "no_answer"
+    assert "secret question text" not in " ".join(str(v) for v in vars(lines[0]).values())

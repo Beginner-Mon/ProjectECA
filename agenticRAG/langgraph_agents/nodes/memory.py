@@ -283,9 +283,11 @@ async def _load_stm(
         await pg.connect()
         rows = await pg.fetch(
             """
-            SELECT c.stm_summary, m.role, m.content FROM conversations c
+            SELECT c.stm_summary, m.role, m.content, m.error_code FROM conversations c
             LEFT JOIN LATERAL (
-                SELECT m.role, m.content FROM messages m
+                SELECT m.role, m.content,
+                       m.extras->'meta'->>'error_code' AS error_code
+                FROM messages m
                 WHERE m.session_id = c.session_id
                   AND m.seq_id > c.stm_up_to_seq
                   AND ($2::uuid IS NULL OR m.id <> $2)
@@ -299,8 +301,11 @@ async def _load_stm(
         if not rows:
             return [], []
         summary = rows[0]["stm_summary"]
+        # An assistant row with meta.error_code is the apology of a failed turn,
+        # not an answer of ours: the next turn must not read it as one.
         history = [{"role": r["role"], "content": r["content"]}
-                   for r in reversed(rows) if r["role"] is not None]
+                   for r in reversed(rows)
+                   if r["role"] is not None and not r.get("error_code")]
         return ([summary] if summary else [], history)
     except Exception as exc:
         logger.warning("stm_load_failed", extra={"error": str(exc)})
@@ -327,7 +332,8 @@ async def _load_latest_turns(
         await pg.connect()
         rows = await pg.fetch(
             """
-            SELECT role, content FROM messages
+            SELECT role, content, extras->'meta'->>'error_code' AS error_code
+            FROM messages
             WHERE session_id = $1
               AND ($2::uuid IS NULL OR id <> $2)
             ORDER BY seq_id DESC
@@ -335,7 +341,8 @@ async def _load_latest_turns(
             """,
             session_id, exclude_message_id, _LATEST_TURNS_MAX_ROWS,
         )
-        history = [{"role": r["role"], "content": r["content"]} for r in reversed(rows)]
+        history = [{"role": r["role"], "content": r["content"]}
+                   for r in reversed(rows) if not r.get("error_code")]
         return _latest_turns(history, history_budget())
     except Exception as exc:
         logger.warning("latest_turns_load_failed", extra={"error": str(exc)})

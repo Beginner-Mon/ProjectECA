@@ -20,11 +20,11 @@ Decisions encoded:
 from __future__ import annotations
 
 import time
-from datetime import datetime, timezone
 
 from langchain_core.messages import SystemMessage, HumanMessage
 from langchain_core.runnables import RunnableConfig
 
+from langgraph_agents.nodes._errors import error_entry
 from langgraph_agents.state import AgentState, ErrorSeverity
 from langgraph_agents.llm import get_chat_model, extract_cache_tokens
 from langgraph_agents.shared.logging import get_logger
@@ -254,12 +254,9 @@ async def retriever_agent_node(state: AgentState, config: RunnableConfig) -> dic
         }, exc_info=True)
         return {
             "retriever_rounds": current_rounds,
-            "errors": [{
-                "node": "retriever_agent",
-                "severity": ErrorSeverity.CRITICAL,
-                "message": f"Retriever LLM failed: {exc}",
-                "timestamp": datetime.now(timezone.utc).isoformat(),
-            }],
+            "errors": [error_entry(
+                "retriever_agent", exc, ErrorSeverity.CRITICAL,
+                f"Retriever LLM failed: {exc}")],
         }
 
     tokens = 0

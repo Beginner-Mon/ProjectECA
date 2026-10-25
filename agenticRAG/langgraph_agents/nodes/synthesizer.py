@@ -41,6 +41,7 @@ from langgraph_agents.evidence import (
     render_evidence,
 )
 from langgraph_agents.sources import source_for_tool
+from langgraph_agents.nodes._errors import error_entry
 from langgraph_agents.state import AgentState, ErrorSeverity
 from langgraph_agents.tag_contract import (
     closing_items_note,
@@ -897,12 +898,9 @@ async def synthesizer_node(state: AgentState, config: RunnableConfig) -> dict:
             fallback = get_ui_string(persona_id, "error_unavailable", locale)
             return {
                 "final_answer": prefix + fallback,
-                "errors": [{
-                    "node": "synthesizer",
-                    "severity": ErrorSeverity.CRITICAL,
-                    "message": f"Synthesizer LLM failed ({elapsed_ms:.0f}ms): {exc}",
-                    "timestamp": datetime.now(timezone.utc).isoformat(),
-                }],
+                "errors": [error_entry(
+                    "synthesizer", exc, ErrorSeverity.CRITICAL,
+                    f"Synthesizer LLM failed ({elapsed_ms:.0f}ms): {exc}")],
             }
 
         logger.info("llm_fallback_used", extra={

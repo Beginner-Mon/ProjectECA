@@ -235,7 +235,7 @@ export default function MemoryContent() {
         </h3>
         {loadFailed ? <div role="alert" className="text-sm">
           <p className="text-destructive">{t('memory.load_failed')}</p>
-          <button type="button" onClick={reload} className={`${ACTION} mt-2 underline underline-offset-4`}>{t('common.refresh')}</button>
+          <button type="button" onClick={reload} className="mt-2 rounded-sm text-sm text-foreground underline underline-offset-4 transition-colors hover:text-foreground/80 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring">{t('common.refresh')}</button>
         </div> : facts === null || grouped === null ? <p role="status" className="text-sm text-muted-foreground">{t('common.loading')}</p> : <>
           {facts.length === 0 && editingId !== NEW_FACT && <p className="text-sm leading-7 text-muted-foreground">{t('memory.empty_document')}</p>}
           {grouped.map((section, index) => (

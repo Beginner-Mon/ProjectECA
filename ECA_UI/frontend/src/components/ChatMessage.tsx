@@ -2,7 +2,7 @@ import { useState, useRef, useEffect, useSyncExternalStore } from 'react'
 import { useTranslation } from 'react-i18next'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
-import { Copy, ThumbsUp, ThumbsDown, Volume2, Check, Pause, Square, Loader2 } from 'lucide-react'
+import { Copy, ThumbsUp, ThumbsDown, Volume2, Check, Pause, Square, Loader2, TriangleAlert } from 'lucide-react'
 import {
   DEFAULT_PERSONA_ID,
   saveMessageFeedback,
@@ -21,6 +21,8 @@ import {
 import { cancelSpeech, liveSpeech, openSpeech } from '../lib/speechSource'
 import { useMotion } from '../hooks/useMotion'
 import { useChat } from '../hooks/useChat'
+import { useAuth } from '../contexts/AuthContext'
+import { errorAction, errorCopy, showRetry, type ChatError } from '../lib/chatErrors'
 import DislikeFeedbackModal from './feedback/DislikeFeedbackModal'
 
 export interface Message {
@@ -55,6 +57,14 @@ export interface Message {
   motionNotice?: string
   /** One line when the user's own provider failed and ECA answered instead. */
   providerNotice?: string
+  /** The user's own provider failed AND ECA could not answer either
+   *  (`provider_notice.answered_by` null): the error block then links to the key settings. */
+  providerNoticeFailed?: boolean
+  /** Why this turn failed (lib/chatErrors.ts). The words are chosen at render,
+   *  from the character on screen and the site language, never stored here. */
+  error?: ChatError
+  /** Restored turns: the reply was cut off before it finished. Shows a small note. */
+  interrupted?: boolean
   /** Restored turns only: the motion this reply rendered, and when it dies.
    *  A live turn plays its motion straight from the SSE event and needs
    *  neither. */
@@ -94,18 +104,23 @@ export default function ChatMessage({ message, isStreaming }: ChatMessageProps) 
   const isUser = message.role === 'user'
 
   if (!isUser) {
-    /* Assistant message được tạo rỗng ngay lúc user gửi (ChatContext.tsx:364)
-     * để id của nó bắt token từ stream. Chưa có text thì không render — cái
-     * shell rỗng vẫn ăn py-3 + space-y-2 của container, đẩy loading indicator
-     * xuống hơn 30px so với user message. */
-    if (!message.content) return null
+    /* Assistant message được tạo rỗng ngay lúc user gửi (ChatContext) để id của
+     * nó bắt token từ stream. Chưa có text thì không render — cái shell rỗng
+     * vẫn ăn py-3 + space-y-2 của container, đẩy loading indicator xuống hơn
+     * 30px so với user message. Trừ khi lượt này lỗi hoặc có thông báo: những
+     * thứ đó người dùng phải thấy dù bubble không có chữ. */
+    if (!message.content && !message.error && !message.providerNotice) return null
 
     const cleaned = message.content.replace(/<\/?evidence_citation>/g, '')
     return (
       <div className="px-3 desktop:px-5 py-2 desktop:py-3 animate-message-in w-full max-w-full">
-        <div className="prose dark:prose-invert prose-p:leading-relaxed prose-strong:text-foreground prose-headings:text-foreground prose-pre:bg-secondary/50 prose-pre:border prose-pre:border-border/40 max-w-none text-sm text-foreground/90">
-          <ReactMarkdown remarkPlugins={[remarkGfm]}>{cleaned}</ReactMarkdown>
-        </div>
+        {message.content && (
+          <div className="prose dark:prose-invert prose-p:leading-relaxed prose-strong:text-foreground prose-headings:text-foreground prose-pre:bg-secondary/50 prose-pre:border prose-pre:border-border/40 max-w-none text-sm text-foreground/90">
+            <ReactMarkdown remarkPlugins={[remarkGfm]}>{cleaned}</ReactMarkdown>
+          </div>
+        )}
+        {message.interrupted && !message.error && <InterruptedNote />}
+        {message.error && <ErrorBlock message={message} />}
         {message.motionNotice && (
           // Muted and small: an aside about the 3D clip, not part of the
           // answer. It disappears on its own once the avatar starts moving.
@@ -114,12 +129,15 @@ export default function ChatMessage({ message, isStreaming }: ChatMessageProps) 
           </p>
         )}
         {message.providerNotice && (
-          // Same aside slot: the user's provider failed and ECA answered.
+          // Same aside slot: the user's provider failed (and ECA answered, or
+          // — in an error turn — could not either).
           <p className="mt-1 text-[0.7rem] italic text-muted-foreground">
             {message.providerNotice}
           </p>
         )}
-        <AssistantActions message={message} isStreaming={isStreaming} />
+        {message.content && !message.error && (
+          <AssistantActions message={message} isStreaming={isStreaming} />
+        )}
       </div>
     )
   }
@@ -138,6 +156,59 @@ export default function ChatMessage({ message, isStreaming }: ChatMessageProps) 
           </div>
         )}
         <UserCopyAction content={message.content} />
+      </div>
+    </div>
+  )
+}
+
+/** Restored turn whose reply was cut off: the text stays, this says why it stops short. */
+function InterruptedNote() {
+  const { t } = useTranslation()
+  return <p className="mt-1 text-[0.7rem] italic text-muted-foreground">{t('chat.interrupted_note')}</p>
+}
+
+/**
+ * The one look of a failed turn: muted text with a destructive accent, the
+ * words from lib/chatErrors.ts, "Thử lại" when sending the same prompt again
+ * makes sense, and the single action the error asks of the user (if any).
+ * Every code renders through here; nothing per-code lives in this component.
+ */
+function ErrorBlock({ message }: { message: Message }) {
+  const { t } = useTranslation()
+  const { ui, isGenerating, latestAssistantId, retryTurn, requestUi } = useChat()
+  const { signOut } = useAuth()
+  const error = message.error!
+  const action = errorAction(error, !!message.providerNoticeFailed)
+  const retry = showRetry(error, latestAssistantId === message.id, isGenerating)
+  const linkClass = 'underline underline-offset-2 hover:text-foreground'
+
+  return (
+    <div
+      role="alert"
+      className={`${message.content ? 'mt-2 ' : ''}flex gap-2 rounded-lg border border-destructive/30 border-l-2 border-l-destructive bg-destructive/5 px-3 py-2 text-sm text-muted-foreground`}
+    >
+      <TriangleAlert className="mt-0.5 size-4 shrink-0 text-destructive" aria-hidden />
+      <div className="min-w-0">
+        <p>{errorCopy(error, ui, t)}</p>
+        {(retry || action) && (
+          <div className="mt-1.5 flex flex-wrap items-center gap-x-3 gap-y-1 text-xs">
+            {retry && (
+              <button type="button" className={`font-medium text-foreground ${linkClass}`} onClick={() => retryTurn(message.id)}>
+                {t('chat.retry')}
+              </button>
+            )}
+            {action === 'sign_in' && (
+              <button type="button" className={linkClass} onClick={() => void signOut?.()}>
+                {t('chat.sign_in_again')}
+              </button>
+            )}
+            {action === 'llm_settings' && (
+              <button type="button" className={linkClass} onClick={() => requestUi('llm_settings')}>
+                {t('chat.open_llm_settings')}
+              </button>
+            )}
+          </div>
+        )}
       </div>
     </div>
   )

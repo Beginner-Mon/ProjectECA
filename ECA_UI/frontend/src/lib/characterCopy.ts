@@ -36,7 +36,12 @@ export interface UiStrings {
   stage_web: string
   stage_video: string
   stage_composing: string
+  /** The connection broke mid-reply, or went silent. */
   error_stream: string
+  /** ECA itself failed (model out of balance, down, internal error). */
+  error_system: string
+  /** The model finished with no answer. */
+  error_unavailable: string
   /* Motion renders. The GPU worker is scaled to zero by default and switched on
    * deliberately, so `motion_unavailable` is the ordinary path rather than an
    * error — a user who asked to SEE a movement and gets only text otherwise has
@@ -74,6 +79,8 @@ export const FALLBACK_UI_STRINGS: Record<Locale, UiStrings> = {
     stage_video: 'Watching the video...',
     stage_composing: 'Almost there...',
     error_stream: 'Something went wrong. Please send that again.',
+    error_system: 'Something went wrong on our side. Please try again shortly.',
+    error_unavailable: 'I could not answer that. Try asking it another way?',
     motion_rendering: 'Building the movement...',
     motion_unavailable: 'Movement rendering is switched off right now.',
     motion_busy: 'Too many movement requests at the moment — please try again shortly.',
@@ -95,6 +102,8 @@ export const FALLBACK_UI_STRINGS: Record<Locale, UiStrings> = {
     stage_video: 'Đang xem video...',
     stage_composing: 'Sắp xong rồi...',
     error_stream: 'Đã có lỗi xảy ra. Bạn thử gửi lại nhé.',
+    error_system: 'Xin lỗi, hệ thống đang gặp sự cố. Vui lòng thử lại sau.',
+    error_unavailable: 'Mình chưa trả lời được câu này. Bạn thử hỏi cách khác nhé.',
     motion_rendering: 'Đang dựng động tác...',
     motion_unavailable: 'Tính năng dựng động tác đang tạm tắt.',
     motion_busy: 'Đang có nhiều yêu cầu dựng động tác, bạn thử lại sau nhé.',

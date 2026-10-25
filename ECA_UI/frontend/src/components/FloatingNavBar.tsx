@@ -30,6 +30,7 @@ import { useTranslation } from 'react-i18next'
 import { useMediaQuery } from '../lib/use-media-query'
 import { MOBILE_LAYOUT_QUERY } from '../lib/layoutQuery'
 import { useAvatarBg } from '../hooks/useAvatarBg'
+import { useChat } from '../hooks/useChat'
 import { PANEL_BG, PANEL_BORDER } from '../lib/utils'
 import ChatPanel from './ChatPanel'
 import ChatSessionsPanel from './panels/ChatSessionsPanel'
@@ -265,6 +266,30 @@ export default function FloatingNavBar() {
   const [isDragging, setIsDragging] = useState(false)
   const [modalType, setModalType] = useState<'profile' | 'settings' | 'notifications' | 'billing' | null>(null)
   const prevPanelRef = useRef<PanelId>(null)
+  const [settingsStartView, setSettingsStartView] = useState<'providers' | undefined>()
+
+  // The chat asks the shell to open things it cannot open itself (the shell owns
+  // the panels). One request per `seq`.
+  const { uiRequest } = useChat()
+  /* eslint-disable react-hooks/set-state-in-effect -- reacting to a request from the chat, an event rather than derived state */
+  useEffect(() => {
+    if (!uiRequest) return
+    if (uiRequest.kind === 'show_chat') {
+      // A failed turn must be visible: on a phone the dock may be closed. The
+      // desktop chat panel is the user's own to open, so it is left alone.
+      if (isMobile) setActivePanel((prev) => prev ?? 'chat')
+    } else {
+      // "Open key settings" under an error: Settings -> Providers, and Back
+      // returns to the chat.
+      prevPanelRef.current = 'chat'
+      setActivePanel(null)
+      setSettingsStartView('providers')
+      setModalType('settings')
+    }
+    // Only a new request should act; isMobile changing alone must not replay one.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [uiRequest])
+  /* eslint-enable react-hooks/set-state-in-effect */
   const barRef = useRef<HTMLDivElement>(null)
 
   // We need to measure the bar to calculate snap positions
@@ -519,9 +544,11 @@ export default function FloatingNavBar() {
         {modalType && (
           <ProfileSettingsModal
             type={modalType}
-            onClose={() => setModalType(null)}
+            initialSettingsView={settingsStartView}
+            onClose={() => { setModalType(null); setSettingsStartView(undefined) }}
             onBack={() => {
               setModalType(null)
+              setSettingsStartView(undefined)
               setActivePanel(prevPanelRef.current)
             }}
           />
@@ -637,9 +664,11 @@ export default function FloatingNavBar() {
       {modalType && (
         <ProfileSettingsModal
           type={modalType}
-          onClose={() => setModalType(null)}
+          initialSettingsView={settingsStartView}
+          onClose={() => { setModalType(null); setSettingsStartView(undefined) }}
           onBack={() => {
             setModalType(null)
+            setSettingsStartView(undefined)
             setActivePanel(prevPanelRef.current)
           }}
         />

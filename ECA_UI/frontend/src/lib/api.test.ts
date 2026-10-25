@@ -2,7 +2,7 @@ import { describe, expect, it, vi } from 'vitest'
 
 vi.mock('aws-amplify/auth', () => ({ fetchAuthSession: vi.fn(async () => ({})) }))
 
-import { StreamInterruptedError, streamChat } from './api'
+import { HttpStatusError, SSE_IDLE_TIMEOUT_MS, StreamInterruptedError, StreamTimeoutError, streamChat } from './api'
 
 /*
  * A fake /chat response: the body is a list of chunks, optionally followed by a
@@ -109,6 +109,129 @@ describe('streamChat token_limit', () => {
     for (const tokenLimit of [undefined, 0, -1, 1.5, NaN]) {
       const body = await sentBody({ llm: LLM, tokenLimit })
       expect(body).not.toHaveProperty('token_limit')
+    }
+  })
+})
+
+describe('streamChat errors (E2)', () => {
+  it('non-2xx throws HttpStatusError with the status; the body is never read', async () => {
+    const text = vi.fn(async () => 'secret echo of the request')
+    vi.stubGlobal('fetch', vi.fn(async () => ({ ok: false, status: 503, text })))
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
+    const err = await streamChat({ query: 'hi', sessionId: 's1' }, () => {}).catch((e) => e)
+    expect(err).toBeInstanceOf(HttpStatusError)
+    expect(err.status).toBe(503)
+    expect(err.message).not.toContain('secret')
+    expect(text).not.toHaveBeenCalled()
+    expect(JSON.stringify(warn.mock.calls)).not.toContain('secret')
+    warn.mockRestore()
+  })
+
+  it('delivers the error event, then done, with its payload intact', async () => {
+    const got: Array<[string, unknown]> = []
+    fakeResponse([
+      block('error', { code: 'provider_billing', retryable: true, request_id: 'r1' }),
+      block('done', {}),
+    ])
+    await streamChat({ query: 'hi', sessionId: 's1' }, (t, d) => got.push([t, d]))
+    expect(got).toEqual([
+      ['error', { code: 'provider_billing', retryable: true, request_id: 'r1' }],
+      ['done', {}],
+    ])
+  })
+
+  it('done with no token resolves and delivers no text (the caller decides no_answer)', async () => {
+    fakeResponse([block('done', {})])
+    const { events, p } = run()
+    await expect(p).resolves.toBeUndefined()
+    expect(events).toEqual(['done'])
+  })
+
+  it('a cut stream still delivers the text before it, then throws', async () => {
+    const got: string[] = []
+    fakeResponse([block('token', { content: 'half an ans' })], new Error('reset'))
+    const p = streamChat({ query: 'hi', sessionId: 's1' }, (t, d) => {
+      if (t === 'token') got.push((d as { content: string }).content)
+    })
+    await expect(p).rejects.toBeInstanceOf(StreamInterruptedError)
+    expect(got.join('')).toBe('half an ans')
+  })
+})
+
+describe('streamChat watchdog', () => {
+  const silentResponse = (firstChunk?: string) => {
+    let sent = false
+    const cancel = vi.fn(async () => {})
+    const make = () => ({
+      read: () => {
+        if (firstChunk && !sent) {
+          sent = true
+          return Promise.resolve({ done: false, value: enc.encode(firstChunk) })
+        }
+        return new Promise<never>(() => {}) // never answers
+      },
+      cancel,
+    })
+    vi.stubGlobal('fetch', vi.fn(async () => ({
+      ok: true, body: { getReader: make }, clone: () => ({ text: async () => '' }),
+    })))
+    return cancel
+  }
+
+  it('45 s without a byte rejects with StreamTimeoutError and cancels the body', async () => {
+    vi.useFakeTimers()
+    try {
+      const cancel = silentResponse()
+      const p = streamChat({ query: 'hi', sessionId: 's1' }, () => {})
+      const assertion = expect(p).rejects.toBeInstanceOf(StreamTimeoutError)
+      await vi.advanceTimersByTimeAsync(SSE_IDLE_TIMEOUT_MS - 1)
+      expect(cancel).not.toHaveBeenCalled()
+      await vi.advanceTimersByTimeAsync(1)
+      await assertion
+      expect(cancel).toHaveBeenCalled()
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('text delivered before the silence still reaches the caller', async () => {
+    vi.useFakeTimers()
+    try {
+      silentResponse(block('token', { content: 'part' }))
+      const events: string[] = []
+      const p = streamChat({ query: 'hi', sessionId: 's1' }, (t) => events.push(t))
+      const assertion = expect(p).rejects.toBeInstanceOf(StreamTimeoutError)
+      await vi.advanceTimersByTimeAsync(SSE_IDLE_TIMEOUT_MS)
+      await assertion
+      expect(events).toEqual(['token'])
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('any bytes, a ping comment included, restart the clock', async () => {
+    vi.useFakeTimers()
+    try {
+      const queue: Array<(v: { done: boolean; value?: Uint8Array }) => void> = []
+      vi.stubGlobal('fetch', vi.fn(async () => ({
+        ok: true,
+        body: { getReader: () => ({ read: () => new Promise((r) => queue.push(r)), cancel: async () => {} }) },
+        clone: () => ({ text: async () => '' }),
+      })))
+      const events: string[] = []
+      const p = streamChat({ query: 'hi', sessionId: 's1' }, (t) => events.push(t))
+      await vi.advanceTimersByTimeAsync(0)
+      await vi.advanceTimersByTimeAsync(SSE_IDLE_TIMEOUT_MS - 1_000)
+      queue.shift()!({ done: false, value: enc.encode(': ping\r\n\r\n') })
+      await vi.advanceTimersByTimeAsync(SSE_IDLE_TIMEOUT_MS - 1_000) // 2x the limit in total, no timeout
+      queue.shift()!({ done: false, value: enc.encode(block('done', {})) })
+      await vi.advanceTimersByTimeAsync(0)
+      queue.shift()?.({ done: true })
+      await vi.advanceTimersByTimeAsync(0)
+      await expect(p).resolves.toBeUndefined()
+      expect(events).toEqual(['done'])
+    } finally {
+      vi.useRealTimers()
     }
   })
 })

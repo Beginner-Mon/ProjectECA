@@ -341,6 +341,12 @@ class AgentStack(Stack):
             # Tắt emotion tag trong câu trả lời (shared/reply_emotion.py).
             # Code emotion giữ nguyên, chỉ tắt bằng cờ (plan agent-context T0).
             "VVA_REPLY_EMOTION": "0",
+            # Automatic fact extraction OFF on prod (Owner, 24/10/2026). The
+            # extraction prompt predates the memory-store rework, and migration
+            # 017 turns every candidate fact into active, so facts written now
+            # would go active unconfirmed. To turn it on: delete this entry and
+            # `cdk deploy VvaAgentStack`. Env wins over ltm_enabled in langgraph.yaml.
+            "VVA_LTM": "0",
             # No cache. Short-term memory is a cache over PostgreSQL, and
             # the plan is to run without one for a month and measure the
             # Neon CU-hours it would have saved before paying for anything.
@@ -406,7 +412,9 @@ class AgentStack(Stack):
             # 2048 buys ~1.15 vCPU and headroom for 2-3 tool results; re-measure
             # Max Memory Used after fix and consider 1536 if headroom is large.
             # Cost is still ~$0.0006/turn extra vs 1024 (20s * 1GB * $0.0000167).
-            memory_size=2048,
+            # 24/10/2026: CloudWatch 10/10-24/10 shows warm containers at
+            # 1900-1908 MB of 2048 MB. Owner approved 3008 MB.
+            memory_size=3008,
             # 300s to match vva-speechllm (D3): a turn with voice = graph
             # (5-10s) + synthesis (up to 78s measured) ~90s, near the old 120s
             # ceiling; hitting it mid-stream kills the agent and the browser

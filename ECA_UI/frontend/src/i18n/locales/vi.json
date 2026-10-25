@@ -100,6 +100,7 @@
     "delete_one": "Xóa phiên",
     "empty": "Chưa có phiên nào",
     "empty_hint": "Bắt đầu một cuộc trò chuyện để thấy lịch sử ở đây.",
+    "load_failed": "Không tải được danh sách hội thoại.",
     "recents": "Gần đây",
     "subtitle": "Lịch sử trò chuyện của bạn",
     "title": "Phiên trò chuyện",

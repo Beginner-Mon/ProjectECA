@@ -24,6 +24,7 @@ import {
   errorFromEvent, errorFromHistory, errorFromThrow, shouldRecover, type ChatError,
 } from '../lib/chatErrors'
 import { uiStringsFor, getGreetingForSlot, getTimeSlot, buildGreetingKey, type UiStrings } from '../lib/characterCopy'
+import { sessionLoadOutcome } from '../lib/sessionLoad'
 import { stageLabelFor } from '../lib/stageLabel'
 import { resolveGreeting, type CapturedGreeting } from '../lib/greeting'
 import { useLocale } from '../hooks/useLocale'
@@ -128,6 +129,14 @@ export function ChatProvider({ children }: { children: ReactNode }) {
   const [sessionsDirty, setSessionsDirty] = useState(true)
   const [isSwitching, setIsSwitching] = useState(false)
   const switchingRef = useRef(false)
+  /** The conversation in `activeSessionId` exists but could not be read. The
+   *  chat panel shows the error block instead of messages (never an empty
+   *  panel, never the new-chat greeting) and the retry reloads that session. */
+  const [sessionLoadError, setSessionLoadError] = useState(false)
+  const sessionLoadErrorRef = useRef(false)
+  sessionLoadErrorRef.current = sessionLoadError
+  /** The session list could not be fetched — distinct from an empty list. */
+  const [sessionsError, setSessionsError] = useState(false)
 
   // Voice input = dictation into the chat box (lib/dictation.ts). The mic used
   // to record a clip that was shown as an audio bubble and never reached the
@@ -414,12 +423,18 @@ export function ChatProvider({ children }: { children: ReactNode }) {
           }
         })
       } catch (e) {
-        const status = (e as { response?: { status?: number } }).response?.status
-        if (status !== 404) {
+        const outcome = sessionLoadOutcome(e)
+        if (outcome === 'missing') {
+          if (forgetMissingSession(sessionId, restoreStartedAt) && !cancelled) {
+            sessionIdRef.current = null
+            setActiveSessionId(null)
+          }
+        } else if (outcome === 'failed' && !cancelled) {
+          // The conversation is there but unreadable: keep the pointer, show
+          // the error, and leave no greeting that would pass it off as new.
           console.warn('[session] restore failed:', e)
-        } else if (forgetMissingSession(sessionId, restoreStartedAt) && !cancelled) {
-          sessionIdRef.current = null
-          setActiveSessionId(null)
+          setMessages([])
+          setSessionLoadError(true)
         }
       } finally {
         if (!cancelled) setIsRestoring(false)
@@ -451,6 +466,7 @@ export function ChatProvider({ children }: { children: ReactNode }) {
     // one (the effect below only replays on key CHANGE; an explicit new chat
     // is a new opening, including pristine-to-pristine).
     greetedKeyRef.current = null
+    setSessionLoadError(false)
     const newSlot = getTimeSlot()
     const newGreetingText = getGreetingForSlot(uiRef.current, newSlot)
     displayedGreetingRef.current = { slot: newSlot, text: newGreetingText }
@@ -468,8 +484,11 @@ export function ChatProvider({ children }: { children: ReactNode }) {
       const sessions = (data?.sessions ?? []) as SessionItem[]
       setSessionList(sessions)
       setSessionsDirty(false)
+      setSessionsError(false)
     } catch (e) {
       console.warn('[sessions] refresh failed:', e)
+      // Not an empty list: the panel must not say "No sessions yet" for this.
+      setSessionsError(true)
     }
   }, [])
 
@@ -499,9 +518,10 @@ export function ChatProvider({ children }: { children: ReactNode }) {
     void transitionTo('thinking_outro')
   }, [transitionTo])
 
-  const switchToSession = useCallback(async (sessionId: string) => {
-    if (sessionId === sessionIdRef.current || switchingRef.current) return
+  /** Load `sessionId` into the panel. The guards live in the two callers. */
+  const openSession = useCallback(async (sessionId: string) => {
     switchingRef.current = true
+    setSessionLoadError(false)
     abortControllerRef.current?.abort()
     speechPlayer.stop() // same as startNewSession
 
@@ -548,15 +568,30 @@ export function ChatProvider({ children }: { children: ReactNode }) {
         setMessages(buildInitialMessages(switchGreetingText))
       }
     } catch (e) {
-      const isAbort = (e as { name?: string })?.name === 'AbortError' || (e as { code?: string })?.code === 'ERR_CANCELED'
-      if (isAbort) return
+      if (sessionLoadOutcome(e) === 'cancelled') return
       console.warn('[session] switch failed:', e)
+      // Still on this session (the user may have clicked another meanwhile):
+      // keep it selected so "Try again" knows which one to reload.
+      if (sessionId === sessionIdRef.current) setSessionLoadError(true)
     } finally {
       // Chỉ clear nếu vẫn đang ở session này (tránh đè isSwitching của session mới)
       if (sessionId === sessionIdRef.current) setIsSwitching(false)
       switchingRef.current = false
     }
   }, [endThinking])
+
+  const switchToSession = useCallback(async (sessionId: string) => {
+    // Clicking the conversation that failed to load is a retry, not a no-op.
+    if ((sessionId === sessionIdRef.current && !sessionLoadErrorRef.current) || switchingRef.current) return
+    await openSession(sessionId)
+  }, [openSession])
+
+  /** "Try again" on the chat panel's load error: reload the selected session. */
+  const retrySessionLoad = useCallback(async () => {
+    const id = sessionIdRef.current
+    if (!id || switchingRef.current) return
+    await openSession(id)
+  }, [openSession])
 
   const deleteSessionAction = useCallback(async (sessionId: string) => {
     try {
@@ -581,6 +616,8 @@ export function ChatProvider({ children }: { children: ReactNode }) {
   /** Run one turn for `text`: the composer's message, or a retry of an earlier one. */
   const sendPrompt = useCallback(async (text: string) => {
     if (!text || isGeneratingRef.current) return
+    // Typing into a conversation that failed to load moves on from the error.
+    setSessionLoadError(false)
     // Voice mode: wake the AudioContext NOW, while this is still the click (or
     // Enter) that sent the message. The reply's audio lands seconds later, far
     // outside any user gesture; a context started here stays running, so the
@@ -1000,7 +1037,10 @@ export function ChatProvider({ children }: { children: ReactNode }) {
       sessionsDirty,
       activeSessionId,
       refreshSessions,
+      sessionsError,
       switchToSession,
+      sessionLoadError,
+      retrySessionLoad,
       deleteSessionAction,
       markSessionsClean,
       setMessageFeedback,
@@ -1015,7 +1055,7 @@ export function ChatProvider({ children }: { children: ReactNode }) {
       startRecord,
       stopRecord,
     }),
-    [messages, input, isTyping, isGenerating, stageLabel, ui, webSearch, voiceReply, isRestoring, isSwitching, startNewSession, handleSend, handleStop, imageUrls, addImage, removeImage, sessionList, sessionsDirty, activeSessionId, refreshSessions, switchToSession, deleteSessionAction, markSessionsClean, setMessageFeedback, latestAssistantId, retryTurn, uiRequest, requestUi, isRecording, recordingDuration, recordingError, dictationSupported, startRecord, stopRecord],
+    [messages, input, isTyping, isGenerating, stageLabel, ui, webSearch, voiceReply, isRestoring, isSwitching, startNewSession, handleSend, handleStop, imageUrls, addImage, removeImage, sessionList, sessionsDirty, activeSessionId, refreshSessions, sessionsError, switchToSession, sessionLoadError, retrySessionLoad, deleteSessionAction, markSessionsClean, setMessageFeedback, latestAssistantId, retryTurn, uiRequest, requestUi, isRecording, recordingDuration, recordingError, dictationSupported, startRecord, stopRecord],
   )
 
   return <ChatContext.Provider value={value}>{children}</ChatContext.Provider>

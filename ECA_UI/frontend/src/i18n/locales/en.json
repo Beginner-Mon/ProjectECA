@@ -100,6 +100,7 @@
     "delete_one": "Delete session",
     "empty": "No sessions yet",
     "empty_hint": "Start a conversation to see your chat history here.",
+    "load_failed": "Could not load your conversations.",
     "recents": "Recents",
     "subtitle": "Your conversation history",
     "title": "Chat Sessions",

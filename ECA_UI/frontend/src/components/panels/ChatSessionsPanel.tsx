@@ -14,6 +14,7 @@ export default function ChatSessionsPanel({ onSessionSelected }: { onSessionSele
     sessionsDirty,
     activeSessionId,
     refreshSessions,
+    sessionsError,
     switchToSession,
     deleteSessionAction,
   } = useChat()
@@ -88,6 +89,19 @@ export default function ChatSessionsPanel({ onSessionSelected }: { onSessionSele
             <Loader2 className="w-5 h-5 animate-spin text-muted-foreground" />
             <p className="text-xs text-muted-foreground">{t('common.wait')}</p>
           </div>
+        ) : sessionsError && sessionList.length === 0 ? (
+          // The fetch failed — not the same as having no conversations.
+          <div className="flex flex-col items-center justify-center gap-2 px-6 py-8 text-center h-full min-h-[300px]">
+            <p className="text-sm text-muted-foreground">{t('sessions.load_failed')}</p>
+            <button
+              type="button"
+              onClick={handleRefresh}
+              disabled={refreshing}
+              className="text-xs font-medium text-foreground underline underline-offset-2 hover:text-foreground/80"
+            >
+              {t('chat.retry')}
+            </button>
+          </div>
         ) : sessionList.length === 0 ? (
           <div className="flex flex-col items-center justify-center px-6 py-8 text-center h-full min-h-[300px]">
             <div className="w-14 h-14 rounded-2xl bg-primary/10 flex items-center justify-center mb-4">
@@ -100,6 +114,15 @@ export default function ChatSessionsPanel({ onSessionSelected }: { onSessionSele
           </div>
         ) : (
           <div className="px-2 py-1">
+            {sessionsError && (
+              // A refresh failed but an earlier list is still on screen.
+              <p className="px-3 py-2 text-xs text-muted-foreground">
+                {t('sessions.load_failed')}{' '}
+                <button type="button" onClick={handleRefresh} className="font-medium text-foreground underline underline-offset-2">
+                  {t('chat.retry')}
+                </button>
+              </p>
+            )}
             <p className="px-3 py-2 text-xs font-medium text-muted-foreground">{t('sessions.recents')}</p>
             {sessionList.map((s) => {
               const isActive = s.session_id === activeSessionId

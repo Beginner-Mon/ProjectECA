@@ -1365,7 +1365,7 @@ function scheduleIdle(task: () => void): { cancel: () => void } {
 export default function CharacterViewer() {
   const { t } = useTranslation()
   const { theme } = useTheme()
-  const { selectedVrmId, vrmOptions, vrmOptionsError, avatarRef, setClipInfo, currentState, isAvatarSwitching, setAvatarReady } = useMotion()
+  const { selectedVrmId, vrmOptions, vrmOptionsError, retryInitialCharacter, avatarRef, setClipInfo, currentState, isAvatarSwitching, setAvatarReady } = useMotion()
 
   const selectedVrm = vrmOptions.find((o) => o.id === selectedVrmId)
   // No local fallback any more: the models live on the CDN, so until the
@@ -1480,6 +1480,9 @@ export default function CharacterViewer() {
            when revealed. Canvas freeze does not affect these DOM overlays. */}
       {(!viewerReady || isAvatarSwitching) && (
         <LoadingOverlay
+          isError={!!vrmOptionsError}
+          onRetry={retryInitialCharacter}
+          retryLabel={t('chat.retry')}
           text={
             vrmOptionsError
               ? t('character.load_error', { error: vrmOptionsError })

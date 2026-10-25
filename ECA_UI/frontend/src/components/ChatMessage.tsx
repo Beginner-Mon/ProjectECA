@@ -1,4 +1,4 @@
-import { useState, useRef, useEffect, useSyncExternalStore } from 'react'
+import { useState, useRef, useEffect, useSyncExternalStore, type ReactNode } from 'react'
 import { useTranslation } from 'react-i18next'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
@@ -173,6 +173,48 @@ function InterruptedNote() {
  * makes sense, and the single action the error asks of the user (if any).
  * Every code renders through here; nothing per-code lives in this component.
  */
+const ERROR_LINK_CLASS = 'underline underline-offset-2 hover:text-foreground'
+
+/**
+ * The look itself, with no opinion about why it is shown. A failed turn
+ * (ErrorBlock below) and a conversation that would not load (ChatPanel) both
+ * render through it, so there is still one error style in the chat.
+ */
+export function ErrorNotice({
+  text,
+  onRetry,
+  spaced = false,
+  children,
+}: {
+  text: string
+  onRetry?: () => void
+  spaced?: boolean
+  children?: ReactNode
+}) {
+  const { t } = useTranslation()
+  return (
+    <div
+      role="alert"
+      className={`${spaced ? 'mt-2 ' : ''}flex gap-2 rounded-lg border border-destructive/30 border-l-2 border-l-destructive bg-destructive/5 px-3 py-2 text-sm text-muted-foreground`}
+    >
+      <TriangleAlert className="mt-0.5 size-4 shrink-0 text-destructive" aria-hidden />
+      <div className="min-w-0">
+        <p>{text}</p>
+        {(onRetry || !!children) && (
+          <div className="mt-1.5 flex flex-wrap items-center gap-x-3 gap-y-1 text-xs">
+            {onRetry && (
+              <button type="button" className={`font-medium text-foreground ${ERROR_LINK_CLASS}`} onClick={onRetry}>
+                {t('chat.retry')}
+              </button>
+            )}
+            {children}
+          </div>
+        )}
+      </div>
+    </div>
+  )
+}
+
 function ErrorBlock({ message }: { message: Message }) {
   const { t } = useTranslation()
   const { ui, isGenerating, latestAssistantId, retryTurn, requestUi } = useChat()
@@ -180,37 +222,29 @@ function ErrorBlock({ message }: { message: Message }) {
   const error = message.error!
   const action = errorAction(error, !!message.providerNoticeFailed)
   const retry = showRetry(error, latestAssistantId === message.id, isGenerating)
-  const linkClass = 'underline underline-offset-2 hover:text-foreground'
+  const linkClass = ERROR_LINK_CLASS
 
   return (
-    <div
-      role="alert"
-      className={`${message.content ? 'mt-2 ' : ''}flex gap-2 rounded-lg border border-destructive/30 border-l-2 border-l-destructive bg-destructive/5 px-3 py-2 text-sm text-muted-foreground`}
+    <ErrorNotice
+      text={errorCopy(error, ui, t)}
+      spaced={!!message.content}
+      onRetry={retry ? () => retryTurn(message.id) : undefined}
     >
-      <TriangleAlert className="mt-0.5 size-4 shrink-0 text-destructive" aria-hidden />
-      <div className="min-w-0">
-        <p>{errorCopy(error, ui, t)}</p>
-        {(retry || action) && (
-          <div className="mt-1.5 flex flex-wrap items-center gap-x-3 gap-y-1 text-xs">
-            {retry && (
-              <button type="button" className={`font-medium text-foreground ${linkClass}`} onClick={() => retryTurn(message.id)}>
-                {t('chat.retry')}
-              </button>
-            )}
-            {action === 'sign_in' && (
-              <button type="button" className={linkClass} onClick={() => void signOut?.()}>
-                {t('chat.sign_in_again')}
-              </button>
-            )}
-            {action === 'llm_settings' && (
-              <button type="button" className={linkClass} onClick={() => requestUi('llm_settings')}>
-                {t('chat.open_llm_settings')}
-              </button>
-            )}
-          </div>
+      {action && (
+        <>
+        {action === 'sign_in' && (
+          <button type="button" className={linkClass} onClick={() => void signOut?.()}>
+            {t('chat.sign_in_again')}
+          </button>
         )}
-      </div>
-    </div>
+        {action === 'llm_settings' && (
+          <button type="button" className={linkClass} onClick={() => requestUi('llm_settings')}>
+            {t('chat.open_llm_settings')}
+          </button>
+        )}
+        </>
+      )}
+    </ErrorNotice>
   )
 }
 

@@ -46,6 +46,8 @@ export interface MotionContextType {
   vrmOptionsLoading: boolean
   /** Set when the character could not be fetched; the picker shows it verbatim. */
   vrmOptionsError: string | null
+  /** Run the first character load again (the viewer's "Try again" on an error). */
+  retryInitialCharacter: () => void
   // catalog* = lazy lite list for AvatarsPanel grid (panel open). CharacterViewer must NOT read this.
   /** True while the lite catalog (GET /characters) is in flight — AvatarsPanel skeleton. */
   catalogLoading: boolean

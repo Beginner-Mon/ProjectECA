@@ -16,6 +16,7 @@ import { CameraController } from '../lib/CameraController'
 import { STATE_OPTIONS, isThinkingState, type CameraMode, type CharState } from '../lib/AnimationStates'
 import { MOTION_FILES, resolveMotionByName } from '../lib/motionAssets'
 import { fetchCharacters, fetchCharacter, isCompatible, type Character, type CharacterLite } from '../lib/characters'
+import { bootCandidates, resolveInitialCharacter } from '../lib/characterBoot'
 import { useAutoAfterTrigger } from '../hooks/useFsmTriggers'
 import instrumentalUrl from '../asset/audio/instrumental-ver.mp3'
 import { usePreferences } from '../hooks/usePreferences'
@@ -103,70 +104,71 @@ export function MotionProvider({ children }: { children: ReactNode }) {
   // them; that path goes through setSelectedVrmId instead.
   const didLoadInitialRef = useRef(false)
 
+  const prefsRef = useRef(prefs)
+  useEffect(() => {
+    prefsRef.current = prefs
+  }, [prefs])
+  const initialLoadAbortRef = useRef<AbortController | null>(null)
+
+  const loadInitialCharacter = useCallback(async () => {
+    initialLoadAbortRef.current?.abort()
+    const abort = new AbortController()
+    initialLoadAbortRef.current = abort
+    try {
+      // prefs → one full character (vrm_url) for <Canvas>, not the whole
+      // catalog. Null for a guest, and for anyone who has not picked one.
+      const syncedSlug = prefsRef.current?.preferences.selected_character_slug ?? null
+
+      // Synced slug, then Anne, then the first compatible in the lite list.
+      // Only a 404 moves on to the next one; any other failure throws to the
+      // catch below (lib/characterBoot.ts).
+      const character = await resolveInitialCharacter<Character | CharacterLite>(
+        bootCandidates(syncedSlug),
+        {
+          fetchOne: (slug) => fetchCharacter(slug, abort.signal),
+          fetchLites: () => fetchCharacters(abort.signal),
+          isCompatible: (c) => isCompatible(c as CharacterLite),
+          aborted: () => abort.signal.aborted,
+        },
+      )
+      if (abort.signal.aborted) return
+
+      if (character) {
+        setVrmOptions([toAssetOption(character as Character)])
+        setSelectedVrmId(character.slug)
+      }
+      setVrmOptionsError(null)
+    } catch (err) {
+      if (abort.signal.aborted || (err as Error)?.name === 'AbortError') return
+      console.error('[MotionContext] initial character failed', err)
+      setVrmOptionsError(
+        err instanceof Error ? err.message : 'Could not load the character catalog'
+      )
+    } finally {
+      if (!abort.signal.aborted) setVrmOptionsLoading(false)
+    }
+  }, [])
+
+  /** The viewer's "Try again" after the first load failed. */
+  const retryInitialCharacter = useCallback(() => {
+    setVrmOptionsError(null)
+    setVrmOptionsLoading(true)
+    void loadInitialCharacter()
+  }, [loadInitialCharacter])
+
   useEffect(() => {
     if (prefsLoading || didLoadInitialRef.current) return
     didLoadInitialRef.current = true
-
-    const abort = new AbortController()
-
-    async function load() {
-      try {
-        // prefs → one full character (vrm_url) for <Canvas>, not the whole
-        // catalog. Null for a guest, and for anyone who has not picked one.
-        const syncedSlug = prefs?.preferences.selected_character_slug ?? null
-
-        // Try synced slug first, fallback to Anne, fallback to lite list.
-        let character: Character | null = null
-        const candidates = syncedSlug ? [syncedSlug, 'anne'] : ['anne']
-        for (const slug of candidates) {
-          try {
-            character = await fetchCharacter(slug, abort.signal)
-            if (character) break
-          } catch {
-            // 404 → try next
-          }
-          if (abort.signal.aborted) return
-        }
-        if (!character) {
-          // Last resort: lite list and pick first compatible
-          const lites = await fetchCharacters(abort.signal)
-          if (lites.length > 0) {
-            // Need full for the picked one to get vrm_url
-            const pick = lites.find((c) => isCompatible(c)) ?? lites[0]
-            try {
-              character = await fetchCharacter(pick.slug, abort.signal)
-            } catch {
-              character = null
-            }
-          }
-        }
-        if (abort.signal.aborted) return
-
-        if (character) {
-          setVrmOptions([toAssetOption(character)])
-          setSelectedVrmId(character.slug)
-        }
-        setVrmOptionsError(null)
-      } catch (err) {
-        if (abort.signal.aborted || (err as Error)?.name === 'AbortError') return
-        console.error('[MotionContext] initial character failed', err)
-        setVrmOptionsError(
-          err instanceof Error ? err.message : 'Could not load the character catalog'
-        )
-      } finally {
-        if (!abort.signal.aborted) setVrmOptionsLoading(false)
-      }
-    }
-
-    void load()
-    return () => abort.abort()
-    // `prefs` is deliberately not a dependency. It changes on every optimistic
-    // write, and re-running would fire this effect's cleanup — aborting the
+    void loadInitialCharacter()
+    // `prefs` is deliberately not a dependency (read through prefsRef). It
+    // changes on every optimistic write, and re-running would abort the
     // character fetch that is still in flight — even though the guard above
     // makes the new run a no-op. `prefsLoading` goes true→false exactly once,
     // and `prefs` is already correct in that render.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [prefsLoading])
+
+  useEffect(() => () => initialLoadAbortRef.current?.abort(), [])
 
   const [isPlaying, setIsPlaying] = useState(true)
   const [speed, setSpeed] = useState(1.0)
@@ -516,6 +518,7 @@ export function MotionProvider({ children }: { children: ReactNode }) {
       vrmOptions,
       vrmOptionsLoading,
       vrmOptionsError,
+      retryInitialCharacter,
       catalogLoading,
       catalogError,
       ensureCatalogLoaded,
@@ -561,6 +564,7 @@ export function MotionProvider({ children }: { children: ReactNode }) {
       vrmOptions,
       vrmOptionsLoading,
       vrmOptionsError,
+      retryInitialCharacter,
       catalogLoading,
       catalogError,
       ensureCatalogLoaded,

@@ -47,7 +47,13 @@ export interface ChatContextType {
   sessionsDirty: boolean
   activeSessionId: string | null
   refreshSessions: () => Promise<void>
+  /** The last session-list fetch failed (so an empty list means "unknown", not "none"). */
+  sessionsError: boolean
   switchToSession: (sessionId: string) => Promise<void>
+  /** The selected conversation could not be loaded; the chat panel shows an error with a retry. */
+  sessionLoadError: boolean
+  /** Reload the selected conversation after a load error. */
+  retrySessionLoad: () => Promise<void>
   deleteSessionAction: (sessionId: string) => Promise<void>
   markSessionsClean: () => void
   /** Set (or clear, with `null`) one message's saved vote by its server id

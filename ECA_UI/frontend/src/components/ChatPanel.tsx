@@ -2,7 +2,7 @@ import { useRef, useEffect } from 'react'
 import { useTranslation } from 'react-i18next'
 import { Sparkles, SquarePen, Loader2 } from 'lucide-react'
 import { ScrollArea } from './ui/scroll-area'
-import ChatMessage from './ChatMessage'
+import ChatMessage, { ErrorNotice } from './ChatMessage'
 import ChatDivider from './ChatDivider'
 import ChatInputBar from './ChatInputBar'
 import { useChat } from '../hooks/useChat'
@@ -21,6 +21,9 @@ export default function ChatPanel({ hideInput = false, active = true }: { hideIn
     stageLabel,
     isRestoring,
     isSwitching,
+    sessionLoadError,
+    retrySessionLoad,
+    ui,
     startNewSession,
   } = useChat()
 
@@ -65,6 +68,12 @@ export default function ChatPanel({ hideInput = false, active = true }: { hideIn
             <div className="flex flex-col items-center justify-center py-16 gap-2 text-muted-foreground">
               <Loader2 className="w-5 h-5 animate-spin" />
               <p className="text-xs animate-pulse">{t('common.wait')}</p>
+            </div>
+          ) : sessionLoadError ? (
+            // The conversation exists but could not be read. Not the greeting
+            // (it would pass an old conversation off as new) and not blank.
+            <div className="px-3 desktop:px-5 py-4">
+              <ErrorNotice text={ui.error_system} onRetry={() => void retrySessionLoad()} />
             </div>
           ) : (
             <>

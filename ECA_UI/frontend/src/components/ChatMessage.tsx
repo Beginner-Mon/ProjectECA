@@ -63,8 +63,6 @@ export interface Message {
   /** Why this turn failed (lib/chatErrors.ts). The words are chosen at render,
    *  from the character on screen and the site language, never stored here. */
   error?: ChatError
-  /** Restored turns: the reply was cut off before it finished. Shows a small note. */
-  interrupted?: boolean
   /** Restored turns only: the motion this reply rendered, and when it dies.
    *  A live turn plays its motion straight from the SSE event and needs
    *  neither. */
@@ -126,7 +124,6 @@ export default function ChatMessage({ message, isStreaming }: ChatMessageProps) 
             <ReactMarkdown remarkPlugins={[remarkGfm]}>{cleaned}</ReactMarkdown>
           </div>
         )}
-        {message.interrupted && !message.error && <InterruptedNote />}
         {message.error && <ErrorBlock message={message} />}
         {message.motionNotice && (
           // Muted and small: an aside about the 3D clip, not part of the
@@ -166,12 +163,6 @@ export default function ChatMessage({ message, isStreaming }: ChatMessageProps) 
       </div>
     </div>
   )
-}
-
-/** Restored turn whose reply was cut off: the text stays, this says why it stops short. */
-function InterruptedNote() {
-  const { t } = useTranslation()
-  return <p className={`mt-1 text-[0.7rem] italic text-muted-foreground ${NOTICE_BAR_CLASS}`}>{t('chat.interrupted_note')}</p>
 }
 
 /**

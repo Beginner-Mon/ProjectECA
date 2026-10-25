@@ -61,9 +61,9 @@ const GREETING_ID = '1'
  * A failed turn's stored text is the server's apology (kept for history and
  * speech); the screen shows the error block instead, worded by the client.
  */
-function turnEndFromRow(m: SessionMessage): Pick<Message, 'content' | 'error' | 'interrupted'> {
-  const { error, interrupted } = errorFromHistory(m)
-  return { content: error ? '' : m.content, error, interrupted: interrupted || undefined }
+function turnEndFromRow(m: SessionMessage): Pick<Message, 'content' | 'error'> {
+  const error = errorFromHistory(m)
+  return { content: error ? '' : m.content, error }
 }
 
 function buildInitialMessages(text: string): Message[] {

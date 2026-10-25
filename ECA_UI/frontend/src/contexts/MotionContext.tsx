@@ -149,13 +149,6 @@ export function MotionProvider({ children }: { children: ReactNode }) {
     }
   }, [])
 
-  /** The viewer's "Try again" after the first load failed. */
-  const retryInitialCharacter = useCallback(() => {
-    setVrmOptionsError(null)
-    setVrmOptionsLoading(true)
-    void loadInitialCharacter()
-  }, [loadInitialCharacter])
-
   useEffect(() => {
     if (prefsLoading || didLoadInitialRef.current) return
     didLoadInitialRef.current = true
@@ -518,7 +511,6 @@ export function MotionProvider({ children }: { children: ReactNode }) {
       vrmOptions,
       vrmOptionsLoading,
       vrmOptionsError,
-      retryInitialCharacter,
       catalogLoading,
       catalogError,
       ensureCatalogLoaded,
@@ -564,7 +556,6 @@ export function MotionProvider({ children }: { children: ReactNode }) {
       vrmOptions,
       vrmOptionsLoading,
       vrmOptionsError,
-      retryInitialCharacter,
       catalogLoading,
       catalogError,
       ensureCatalogLoaded,

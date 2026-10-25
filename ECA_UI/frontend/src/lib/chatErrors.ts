@@ -148,11 +148,7 @@ export function shouldRecover(error: ChatError): boolean {
   return error.code === 'interrupted' || error.code === 'network'
 }
 
-/** What a stored history row says about how its turn ended. */
-export function errorFromHistory(row: {
-  error_code?: string | null
-  interrupted?: boolean | null
-}): { error?: ChatError; interrupted: boolean } {
-  if (row.error_code) return { error: make(row.error_code), interrupted: false }
-  return { interrupted: row.interrupted === true }
+/** The error a stored history row recorded, if its turn failed. */
+export function errorFromHistory(row: { error_code?: string | null }): ChatError | undefined {
+  return row.error_code ? make(row.error_code) : undefined
 }

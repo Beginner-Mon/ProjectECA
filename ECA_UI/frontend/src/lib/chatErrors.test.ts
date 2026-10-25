@@ -145,14 +145,13 @@ describe('action, retry and recovery rules', () => {
 describe('errorFromHistory', () => {
   it('an error_code row is an error', () => {
     expect(errorFromHistory({ error_code: 'provider_billing' })).toEqual({
-      error: { code: 'provider_billing', retryable: true, action: null },
-      interrupted: false,
+      code: 'provider_billing',
+      retryable: true,
+      action: null,
     })
   })
-  it('an interrupted row keeps its text and is flagged', () => {
-    expect(errorFromHistory({ error_code: null, interrupted: true })).toEqual({ interrupted: true })
-  })
-  it('a plain row is neither', () => {
-    expect(errorFromHistory({})).toEqual({ interrupted: false })
+  it('a plain row has no error', () => {
+    expect(errorFromHistory({})).toBeUndefined()
+    expect(errorFromHistory({ error_code: null })).toBeUndefined()
   })
 })

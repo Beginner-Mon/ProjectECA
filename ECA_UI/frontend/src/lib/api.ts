@@ -489,8 +489,6 @@ export interface SessionMessage {
   /** Assistant rows only: the turn failed with this code (sse-contract.md); the
    *  row's text is the apology the server stored, which the client does not show. */
   error_code?: string | null
-  /** Assistant rows only: the reply was cut off before it finished. */
-  interrupted?: boolean | null
 }
 
 /**

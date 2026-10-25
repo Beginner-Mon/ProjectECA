@@ -195,9 +195,11 @@ probes:
         - {op: UPDATE, id: f1, type: profile, groups: [["lift", "heavy", "nâng"]]}
       forbidden: []
 
-  # ── 11. User mâu thuẫn fact bị KHOÁ → ADD (không UPDATE/DELETE) ────────
+  # ── 11. User mâu thuẫn fact bị KHOÁ → ADD; DELETE item khoá được phép ──
   # v3.1 tách "sự kiện" và "tình trạng kéo dài": ADD profile (mắt cá) là bắt buộc,
-  # ADD event kèm theo cũng được chấp nhận.
+  # ADD event kèm theo cũng được chấp nhận. Item khoá bị câu mới làm cho sai rõ ràng
+  # => được phép DELETE (chủ sản phẩm chọn phương án B, 25/10), không bắt buộc.
+  # UPDATE/REPEAT item khoá không bao giờ đến được DB (enforce chặn).
   - id: c11_vi_locked_contradict
     lang: vi
     date: "2026-10-13"
@@ -213,9 +215,8 @@ probes:
         - {op: ADD, type: profile, groups: [["bong gân", "mắt cá", "sprain", "ankle"]]}
       acceptable:
         - {op: ADD, type: event, groups: [["bong gân", "mắt cá", "sprain", "ankle"]]}
-      forbidden: ["tuần trước", "last week"]
-      forbidden_ops:
         - {op: DELETE, id: f1}
+      forbidden: ["tuần trước", "last week"]
 
   # ── 12. User thay thế fact bị KHOÁ → DELETE + ADD (tiếng Anh) ────────────────────────
   - id: c12_en_locked_contradict

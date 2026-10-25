@@ -1,4 +1,4 @@
-import { Loader2, TriangleAlert } from 'lucide-react'
+import { Loader2 } from 'lucide-react'
 
 interface LoadingOverlayProps {
   text?: string
@@ -17,20 +17,20 @@ export default function LoadingOverlay({ text = 'Loading...', fullScreen = false
   return (
     <div className={containerClasses}>
       <div className="flex flex-col items-center gap-5">
-        <div className="relative flex items-center justify-center">
-          {/* Subtle glow effect behind spinner */}
-          <div className="absolute inset-0 rounded-full blur-xl bg-violet-500/30 opacity-70 animate-pulse" />
-          
-          {/* Glassmorphism circle holding the spinner */}
-          <div className="relative flex h-16 w-16 items-center justify-center rounded-full border-2 border-violet-500/20 bg-background/40 shadow-[0_0_20px_rgba(139,92,246,0.15)]">
-            {isError ? (
-              <TriangleAlert className="w-8 h-8 text-destructive" aria-hidden />
-            ) : (
+        {/* No spinner once loading has failed: it would suggest work in progress. */}
+        {!isError && (
+          <div className="relative flex items-center justify-center">
+            {/* Subtle glow effect behind spinner */}
+            <div className="absolute inset-0 rounded-full blur-xl bg-violet-500/30 opacity-70 animate-pulse" />
+
+            {/* Glassmorphism circle holding the spinner */}
+            <div className="relative flex h-16 w-16 items-center justify-center rounded-full border-2 border-violet-500/20 bg-background/40 shadow-[0_0_20px_rgba(139,92,246,0.15)]">
               <Loader2 className="w-8 h-8 animate-spin text-violet-500 drop-shadow-[0_0_8px_rgba(139,92,246,0.6)]" />
-            )}
+            </div>
           </div>
-        </div>
-        
+
+        )}
+
         {/* Animated loading text */}
         {/* text-center + side padding: a long label wraps on a phone, and its
             lines used to sit flush left (03-10). */}

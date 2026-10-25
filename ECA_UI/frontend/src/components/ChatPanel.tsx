@@ -72,7 +72,7 @@ export default function ChatPanel({ hideInput = false, active = true }: { hideIn
           ) : sessionLoadError ? (
             // The conversation exists but could not be read. Not the greeting
             // (it would pass an old conversation off as new) and not blank.
-            <div className="px-3 desktop:px-5 py-4">
+            <div className="px-3 desktop:px-5 py-2 desktop:py-3 animate-message-in w-full max-w-full">
               <ErrorNotice text={ui.error_system} onRetry={() => void retrySessionLoad()} />
             </div>
           ) : (

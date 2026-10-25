@@ -2,7 +2,7 @@ import { useState, useRef, useEffect, useSyncExternalStore, type ReactNode } fro
 import { useTranslation } from 'react-i18next'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
-import { Copy, ThumbsUp, ThumbsDown, Volume2, Check, Pause, Square, Loader2, TriangleAlert } from 'lucide-react'
+import { Copy, ThumbsUp, ThumbsDown, Volume2, Check, Pause, Square, Loader2 } from 'lucide-react'
 import {
   DEFAULT_PERSONA_ID,
   saveMessageFeedback,
@@ -86,6 +86,10 @@ interface ChatMessageProps {
   isStreaming?: boolean
 }
 
+/** How a reply's text looks. A failure line uses it too, so it reads as part of the reply. */
+const REPLY_TEXT_CLASS =
+  'prose dark:prose-invert prose-p:leading-relaxed prose-strong:text-foreground prose-headings:text-foreground prose-pre:bg-secondary/50 prose-pre:border prose-pre:border-border/40 max-w-none text-sm text-foreground/90'
+
 function useCopy(text: string) {
   const [copied, setCopied] = useState(false)
   const handleCopy = async () => {
@@ -115,7 +119,7 @@ export default function ChatMessage({ message, isStreaming }: ChatMessageProps) 
     return (
       <div className="px-3 desktop:px-5 py-2 desktop:py-3 animate-message-in w-full max-w-full">
         {message.content && (
-          <div className="prose dark:prose-invert prose-p:leading-relaxed prose-strong:text-foreground prose-headings:text-foreground prose-pre:bg-secondary/50 prose-pre:border prose-pre:border-border/40 max-w-none text-sm text-foreground/90">
+          <div className={REPLY_TEXT_CLASS}>
             <ReactMarkdown remarkPlugins={[remarkGfm]}>{cleaned}</ReactMarkdown>
           </div>
         )}
@@ -168,18 +172,18 @@ function InterruptedNote() {
 }
 
 /**
- * The one look of a failed turn: muted text with a destructive accent, the
- * words from lib/chatErrors.ts, "Thử lại" when sending the same prompt again
- * makes sense, and the single action the error asks of the user (if any).
- * Every code renders through here; nothing per-code lives in this component.
+ * A failure line is just more of the character's reply: the same text style as
+ * any answer (REPLY_TEXT_CLASS), no box, no colour, no icon. Under it, small
+ * muted text links in the style of the message action row: "Thử lại" when
+ * sending the same prompt again makes sense, plus the one action the error asks
+ * of the user, if any. `role="alert"` is for screen readers only.
+ *
+ * Used by a failed turn (ErrorBlock below) and by a conversation that would not
+ * load (ChatPanel), so there is one look. Words come from lib/chatErrors.ts;
+ * nothing per-code lives here.
  */
-const ERROR_LINK_CLASS = 'underline underline-offset-2 hover:text-foreground'
+const ERROR_LINK_CLASS = 'text-muted-foreground underline underline-offset-2 hover:text-foreground'
 
-/**
- * The look itself, with no opinion about why it is shown. A failed turn
- * (ErrorBlock below) and a conversation that would not load (ChatPanel) both
- * render through it, so there is still one error style in the chat.
- */
 export function ErrorNotice({
   text,
   onRetry,
@@ -188,29 +192,26 @@ export function ErrorNotice({
 }: {
   text: string
   onRetry?: () => void
+  /** There is reply text above: this line starts a new paragraph of it. */
   spaced?: boolean
   children?: ReactNode
 }) {
   const { t } = useTranslation()
   return (
-    <div
-      role="alert"
-      className={`${spaced ? 'mt-2 ' : ''}flex gap-2 rounded-lg border border-destructive/30 border-l-2 border-l-destructive bg-destructive/5 px-3 py-2 text-sm text-muted-foreground`}
-    >
-      <TriangleAlert className="mt-0.5 size-4 shrink-0 text-destructive" aria-hidden />
-      <div className="min-w-0">
+    <div role="alert" className={spaced ? 'mt-3' : undefined}>
+      <div className={REPLY_TEXT_CLASS}>
         <p>{text}</p>
-        {(onRetry || !!children) && (
-          <div className="mt-1.5 flex flex-wrap items-center gap-x-3 gap-y-1 text-xs">
-            {onRetry && (
-              <button type="button" className={`font-medium text-foreground ${ERROR_LINK_CLASS}`} onClick={onRetry}>
-                {t('chat.retry')}
-              </button>
-            )}
-            {children}
-          </div>
-        )}
       </div>
+      {(onRetry || !!children) && (
+        <div className="mt-1 flex flex-wrap items-center gap-x-3 gap-y-1 text-xs">
+          {onRetry && (
+            <button type="button" className={ERROR_LINK_CLASS} onClick={onRetry}>
+              {t('chat.retry')}
+            </button>
+          )}
+          {children}
+        </div>
+      )}
     </div>
   )
 }

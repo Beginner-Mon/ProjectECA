@@ -1284,4 +1284,5 @@ run_informed_refusal.py --label nr1
       `memory_design_c2-qwen.jsonl` (23) và `memory_design_m3-qwen.jsonl` (1) đã thay bằng
       `org_[redacted]`.
 - [ ] `human_labels/key.csv` chưa commit; commit sau khi Nguyen và Tri chấm xong.
-- [ ] Ghi phát hiện ở mục 8 vào `docs/tracking/tech-debt.md`, để Tri xem khi release memory v2.
+- [x] Ghi phát hiện ở mục 8 vào `docs/tracking/tech-debt.md`, để Tri xem khi release memory v2 (25/10,
+      mục "Phát hiện từ thí nghiệm paper cho memory v2").

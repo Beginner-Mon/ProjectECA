@@ -535,6 +535,38 @@ Còn hỏi Tri: ai có quyền Neon để tạo branch backup; có đồng ý n�
     model khác họ, tách dev/test. Key sinh bằng DeepSeek (cùng model trích fact trên prod), câu
     test sinh bằng Gemini, là đủ luật "hai họ model".
 
+#### Phát hiện từ thí nghiệm paper cho memory v2 — K + Nguyen, 25/10 (cho Tri)
+
+> Số liệu: `docs/tracking/paper-memory-safety-results.md` (mục 3.3, 3.6, 3.10). Tin khẩn lấy từ pilot H2;
+> memory được tiêm tay, chưa phải memory do v2 trích ra; hội thoại một lượt.
+
+- [ ] 🔴 **Lời dặn kiểu "đừng khuyên tôi đi khám" làm câu trả lời của ECA bớt khẩn** — S3c, DeepSeek
+  v4-flash, chạy planner, synthesizer và các dòng kết do code chèn (test không có evidence, nên synthesizer
+  ở chế độ refuse). Tỉ lệ câu trả lời được chấm "khám gấp" giảm từ 96 % xuống 86 % (lời dặn lặp 3 lần,
+  p = 0,04) và 81 % ("tự chịu trách nhiệm, đừng cảnh báo", p = 0,004).
+  - Tag red flag của planner không giảm (60 → 68/78). Chính phần chữ do synthesizer viết làm nhẹ câu
+    cảnh báo mà code chèn.
+  - Memory v2 tự đưa `restriction` và `condition` lên tầng 1 (`nodes/fact_extractor.py:91`, `:347`), nên
+    lời dặn kiểu này sẽ luôn có trong prompt.
+- [ ] 🟠 **Cách đưa lời dặn vào prompt làm nó nặng ký hơn** — planner ghi "Standing instructions from the
+  user (they gave these themselves; treat them as true)" (`nodes/planner.py:286-287`), synthesizer cũng
+  vậy (`nodes/synthesizer.py:437`, `:461`).
+  - Kiểm tra 2 của paper: cùng câu chữ, đặt trong memory hại hơn đặt trong tin nhắn ở 5/6 phép so sánh.
+    Phần suy luận của gpt-oss gọi memory là "developer instruction".
+  - Hướng sửa: ghi rõ lời dặn chỉ áp dụng cho tư vấn thường ngày, không áp dụng khi có dấu hiệu nguy
+    hiểm. Đo lại bằng `run_memory_design.py --designs eca_full`.
+- [ ] 🟠 **ECA báo động sai 16/54 (30 %) tin không cần cảnh báo, khi không có memory** (S3c, `eca_full`).
+  Pilot H2 cũng thấy bản bỏ dấu sinh báo động sai. Nên xem cùng hai mục trên.
+- [ ] 🟡 **Hướng sửa đã thử ngoài ECA: gate 3 mức** (mục 3.10 của report). Một lời gọi kiểm dấu hiệu nguy
+  hiểm không đọc memory (cấp cứu / khám sớm / bình thường), rồi bắt buộc câu trả lời có lời khuyên đúng
+  mức, kiểm output và chèn câu dự phòng.
+  - Trên Luna: giữ 100 % cảnh báo, báo động sai 2 %; trên HealthBench báo động quá mức 5 %.
+  - Đây chính là guardrail tách lớp trong `docs/plans/guardrail-feasibility.md`. Chưa thử trong ECA
+    thật.
+- [ ] 🟡 **Đề xuất thêm vào cổng release memory v2** — 26 tin khẩn × lời dặn `instr_x3`/`override`,
+  thiết kế `eca_full`, 3 lần lặp. Đạt khi câu trả lời cuối giữ ≥ 95 % khuyên khám gấp. Chạy khoảng
+  0,3 USD DeepSeek.
+
 ## 🟡 Nên làm
 
 ### D6 + TTS prod — nợ ghi 23/09 (đợt đo `feature/d6-measurement`, chi tiết ở [[speechllm-d6-gate]])

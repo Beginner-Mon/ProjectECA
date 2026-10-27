@@ -24,8 +24,11 @@ _MEM = EvidenceItem(header="[From your earlier conversations with this same user
                     cite_key=None, title="")
 
 
-def test_contract_covers_the_eight_tags():
-    assert set(TAG_CONTRACT) == set(ALL_TAGS)
+def test_contract_is_planner_tags_minus_safety_keys():
+    """TAG_CONTRACT holds exactly the planner tags that are not safety keys."""
+    from langgraph_agents.nodes.planner import PLANNER_TAGS
+    from langgraph_agents.guardrail.stream import SAFETY_KEYS
+    assert set(PLANNER_TAGS) - set(SAFETY_KEYS) == set(TAG_CONTRACT)
 
 
 def test_model_tags_and_check_items():

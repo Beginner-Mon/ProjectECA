@@ -114,7 +114,7 @@ def _check_safety_repeated(answer: str, tags: list,
 
     Chỉ xét các tag an toàn của lượt; locale suy từ ngôn ngữ của câu hỏi.
     """
-    from langgraph_agents.nodes.grader import get_safety_text
+    from langgraph_agents.tag_contract import get_safety_text
 
     repeated: dict[str, int] = {}
     for tag in tags or []:
@@ -174,7 +174,7 @@ def _check_addition_repeats_draft(answer: str) -> bool:
 
 def _check_model_wrote_own_safety(answer: str, tags: list, lang: str) -> bool:
     """Thân bài (bỏ các câu do code phát) vẫn tự chạm regex an toàn của tag lượt."""
-    from langgraph_agents.nodes.grader import (
+    from langgraph_agents.local_tests._safety_rules import (
         _has_danger_warning, _has_disclaimer, _has_referral,
     )
     from langgraph_agents.tag_contract import get_safety_text
@@ -286,7 +286,7 @@ def _parse_json_obj(text: str) -> Any:
 # ── Kiểm tra tự động (plan §T1) ─────────────────────────────────────────
 
 def _check_answer(answer: str, lang: str, probe_id: str = "") -> dict[str, Any]:
-    from langgraph_agents.nodes.grader import (
+    from langgraph_agents.local_tests._safety_rules import (
         _has_sets_reps_frequency, _has_source,
     )
 

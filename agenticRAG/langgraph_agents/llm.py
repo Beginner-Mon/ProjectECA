@@ -62,7 +62,6 @@ _DEFAULT_TEMPS = {
     "synthesizer": 0.7,
     "conversation": 0.7,
     "retriever": 0.0,
-    "grader": 0.0,
     "guardrail": 0.0,
     "memory": 0.0,
     "health_check": 0.0,
@@ -93,23 +92,11 @@ _TIMEOUT_FAST = 20.0
 # slow-but-succeeding call isn't retried 3x and made worse (fix #2).
 _MAX_RETRIES = 1
 
-# Per-role overrides for the grader judge (T8b, Tri 04/10): deepseek-v4-flash
-# runs hidden reasoning by default and spent 193-5417 thinking tokens on a
-# ~100-char JSON verdict (1.7-23s per judge call). A checklist verdict needs
-# no reasoning — disabled, the call drops to ~0.8s and judges more accurately.
-# Planner, retriever and synthesizer keep the default thinking mode: saving
-# 1-2s there is not worth the risk of changing tool choice (Tri 04/10).
-# The memory role (summaries, fact extraction; memory-v2) is set up the same
-# way: short structured outputs that need no hidden reasoning. It runs after the
-# reply has been sent, so a 15 s cap is enough, and it has no retry because the
-# work is retried on the next turn anyway.
 _ROLE_EXTRA_BODY: dict[str, dict] = {
-    "grader": {"thinking": {"type": "disabled"}},
     "guardrail": {"thinking": {"type": "disabled"}},
     "memory": {"thinking": {"type": "disabled"}},
 }
 _ROLE_TIMEOUT: dict[str, float] = {
-    "grader": 5.0,
     # Triage is one short JSON verdict on the critical path of every turn: no
     # hidden reasoning, and a hard cap that a stuck provider cannot hold the
     # first token past. Ten seconds rather than four: Groq gpt-oss-120b reasons
@@ -120,7 +107,6 @@ _ROLE_TIMEOUT: dict[str, float] = {
     "memory": 15.0,
 }
 _ROLE_MAX_RETRIES: dict[str, int] = {
-    "grader": 0,
     "guardrail": 0,
     "memory": 0,
 }
@@ -163,7 +149,7 @@ def role_timeout(role: str) -> float:
     httpx applies it to each read, not to the whole call: DeepSeek sends
     keep-alive lines while a request waits under load, and each one restarts
     the clock. A caller that needs a hard cap wraps the call in
-    asyncio.wait_for with this value (nodes/grader.py::_judge).
+    asyncio.wait_for with this value (guardrail/triage.py).
     """
     return _ROLE_TIMEOUT.get(role, _timeout_for_role(role))
 
@@ -365,7 +351,7 @@ def _eca_chat_model(role: str, *, temperature: float | None = None):
 
 # ── BYOK (user-supplied key replaces the ECA key for this request) ────
 
-_ECA_ONLY_ROLES = frozenset({"grader", "memory", "health_check", "guardrail"})
+_ECA_ONLY_ROLES = frozenset({"memory", "health_check", "guardrail"})
 _ROLE_NEEDS = {"synthesizer": "answer", "planner": "tools", "retriever": "tools"}  # default "text"
 
 
@@ -375,11 +361,10 @@ def get_chat_model(role: str, *, temperature: float | None = None):
     Request without ``llm`` behaves exactly as before: ``current_request_llm``
     is ``None`` and this returns the cached ECA model. With a binding, the
     planner / retriever / synthesizer run on the user's key when the probed
-    capabilities cover the role; grader, guardrail, memory and health_check
-    always stay on ECA. Grader so every user is judged by the same clinical
-    standard; guardrail because a user's key must never decide whether their
-    own message gets a safety warning; memory because a user's own key is for
-    their chat turn, not for memory written on their behalf.
+    capabilities cover the role; guardrail, memory and health_check
+    always stay on ECA. Guardrail because a user's key must never decide whether
+    their own message gets a safety warning; memory because a user's own key is
+    for their chat turn, not for memory written on their behalf.
     """
     req = current_request_llm()
     if (

@@ -107,10 +107,9 @@ class TagSpec:
 
 
 TAG_CONTRACT: dict[str, TagSpec] = {
-    "red_flag_screen": TagSpec("code", "opening"),
-    "referral_advice": TagSpec("code", "closing"),
-    "evidence_citation": TagSpec("code", "closing"),
-    "scope_disclaimer": TagSpec("code", "closing"),
+    # Quality tags the planner still emits (transition until Phase 4). The
+    # three safety keys plus emergency_screen live in guardrail/stream.py as
+    # SAFETY_KEYS; the guardrail writes those lines, not the planner.
     "exercise_protocol": TagSpec("model", "body", (
         CheckItem("exercise_protocol.amount", "how many sets or reps, or how long to hold"),
         CheckItem("exercise_protocol.frequency", "how often, per day or per week"),
@@ -119,6 +118,7 @@ TAG_CONTRACT: dict[str, TagSpec] = {
         CheckItem("exercise_steps", "the movement as two or more ordered steps"),)),
     "contraindication": TagSpec("model", "body", (
         CheckItem("contraindication", "who should not do this exercise, or should take care"),)),
+    "evidence_citation": TagSpec("code", "closing"),
     "motion_descriptor": TagSpec("model", "body", (
         CheckItem("motion_descriptor", "how the body moves and which joints are involved"),)),
 }

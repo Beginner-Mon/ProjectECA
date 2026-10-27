@@ -180,11 +180,13 @@ async def _run(args, llm, keys: list[str], state: dict) -> list[dict]:
                         acc[key] += u[key]
 
     def configure_model():
-        """Keep reasoning low/limited for the spike guard call (as the paper runs did)."""
+        """Wire the usage callback onto the production guardrail model.
+
+        No spike-only overrides (reasoning_effort / max_tokens): the spike must
+        measure the production triage() path exactly as it runs. Production
+        config is untouched.
+        """
         model = llm.get_chat_model("guardrail")
-        # Production config is untouched; these are spike-process settings.
-        object.__setattr__(model, "reasoning_effort", "low")
-        object.__setattr__(model, "max_tokens", 400)
         model.callbacks = [Usage()]
         return model
 
@@ -315,6 +317,13 @@ def _count(rows: list[dict], predicate) -> tuple[int, int]:
     return len(hits), len(rows)
 
 
+def _count_in(rows: list[dict], predicate, in_subset) -> tuple[int, int]:
+    """Hits within a level subset, with the subset size as denominator."""
+    hits = [r for r in rows if predicate(r)]
+    n = sum(1 for r in rows if in_subset(r))
+    return len(hits), n
+
+
 def _group(rows: list[dict], key) -> dict:
     out = defaultdict(list)
     for row in rows:
@@ -330,20 +339,23 @@ def _report(args, rows: list[dict], meta: dict) -> str:
     planner_p90 = meta["planner_p90"]
 
     urgent_by_repeat = {
-        rep: _count(sub, lambda r: r["level"] in _URGENT and r["predicted"] != "routine")
+        rep: _count_in(sub, lambda r: r["level"] in _URGENT and r["predicted"] != "routine",
+                       lambda r: r["level"] in _URGENT)
         for rep, sub in by_repeat.items()
     }
     urgent_avg = statistics.mean(k for k, _ in urgent_by_repeat.values()) if urgent_by_repeat else 0.0
     urgent_n = len([r for r in rows if r["level"] in _URGENT]) // max(1, len(repeats))
 
     l3_by_repeat = {
-        rep: _count(sub, lambda r: r["level"] == "L3" and r["predicted"] == "emergency")
+        rep: _count_in(sub, lambda r: r["level"] == "L3" and r["predicted"] == "emergency",
+                       lambda r: r["level"] == "L3")
         for rep, sub in by_repeat.items()
     }
     l3_avg = statistics.mean(k for k, _ in l3_by_repeat.values()) if l3_by_repeat else 0.0
 
     fa_by_repeat = {
-        rep: _count(sub, lambda r: r["level"] in _NEGATIVE and r["predicted"] != "routine")
+        rep: _count_in(sub, lambda r: r["level"] in _NEGATIVE and r["predicted"] != "routine",
+                       lambda r: r["level"] in _NEGATIVE)
         for rep, sub in by_repeat.items()
     }
     fa_avg = statistics.mean(k for k, _ in fa_by_repeat.values()) if fa_by_repeat else 0.0

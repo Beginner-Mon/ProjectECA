@@ -51,6 +51,11 @@ from langgraph_agents.api.schemas import (
 )
 from langgraph_agents.api.sse import encode_event, stream_response
 from langgraph_agents.graph import build_graph_async
+from langgraph_agents.guardrail import pipeline as guardrail
+from langgraph_agents.guardrail.stream import compose, head, safety_keys, tail
+from langgraph_agents.guardrail.types import (
+    CheckContext, InputResult, Verdict, fallback_verdict,
+)
 from langgraph_agents.sources import source_for_tool
 from langgraph_agents.nodes._persona_loader import (
     get_persona, get_ui_string, preload_personas_from_db,
@@ -104,7 +109,7 @@ _health_redis: aioredis.Redis | None = None
 # Node names that emit stage events (Phase 6.9: conversation node removed)
 _STAGE_NODES = {
     "memory", "vision", "planner", "retriever_agent", "synthesizer",
-    "grader", "error_handler",
+    "error_handler",
 }
 
 
@@ -589,6 +594,22 @@ _HOUSEKEEPING_TIMEOUT_S = 30.0
 # locals with it, and must still leave its question behind.
 _question_write_tasks: set[asyncio.Task] = set()
 
+# The input guardrail runs beside the graph, one task per turn. Same strong-
+# reference pattern: a stream cut between create_task and await must not leave
+# the task collectable while it is still the turn's verdict.
+_guardrail_tasks: set[asyncio.Task] = set()
+
+
+async def _await_guardrail(task: asyncio.Task) -> InputResult:
+    """The turn's input result; a task that died is a routine turn (policy)."""
+    try:
+        return await asyncio.shield(task)
+    except Exception as exc:                                  # noqa: BLE001
+        logger.warning("guardrail_task_failed", extra={
+            "error": type(exc).__name__,
+        })
+        return InputResult(fallback_verdict())
+
 
 async def _write_question(**row) -> bool:
     """Whether the turn's question reached the table. Never raises: it runs as
@@ -631,14 +652,18 @@ def _log_chat_error(code: str, kind=None, status=None, node=None) -> None:
     })
 
 
-def _turn_meta(req, request_id, final_state: dict, t0: float) -> dict:
-    meta = _turn_meta_base(req, request_id, final_state, t0)
+def _turn_meta(req, request_id, final_state: dict, t0: float,
+               verdict: Verdict | None = None,
+               safety: list[str] | None = None) -> dict:
+    meta = _turn_meta_base(req, request_id, final_state, t0, verdict, safety)
     if final_state.get("error_code"):
         meta["error_code"] = final_state["error_code"]
     return meta
 
 
-def _turn_meta_base(req, request_id, final_state: dict, t0: float) -> dict:
+def _turn_meta_base(req, request_id, final_state: dict, t0: float,
+                    verdict: Verdict | None = None,
+                    safety: list[str] | None = None) -> dict:
     return {
         "request_id": request_id,
         "persona_id": req.persona_id,
@@ -646,8 +671,11 @@ def _turn_meta_base(req, request_id, final_state: dict, t0: float) -> dict:
         "output_mode": req.output_mode,
         "web_search": req.web_search,
         "required_outputs": final_state.get("required_outputs"),
-        "grader_result": final_state.get("grader_result"),
-        "grader_detail": final_state.get("grader_detail"),
+        # The verdict the turn ran under, and the fixed lines it carried — the
+        # two facts a 👎 vote or an ops query needs. `source="fallback"` is the
+        # monitoring filter for a guardrail that failed open.
+        "guardrail": verdict.asdict() if verdict is not None else None,
+        "safety": list(safety or ()),
         "latency_ms": int((time.time() - t0) * 1000),
     }
 
@@ -706,6 +734,14 @@ async def _stream_chat(req, request_id, config, state, background_tasks, request
     answer_write: asyncio.Task | None = None
     error_sent = False
     done_sent = False
+    guardrail_result: InputResult | None = None
+    verdict: Verdict | None = None
+    head_text = ""
+    safety: list[str] = []
+    guardrail_stopped = False
+
+    persona_id = config["configurable"].get("persona_id", "anne")
+    locale = config["configurable"].get("locale", "en")
 
     graph = _get_graph()
     logger.info("chat_start", extra={"query": req.query[:120], "session_id": req.session_id})
@@ -735,10 +771,25 @@ async def _stream_chat(req, request_id, config, state, background_tasks, request
     _question_write_tasks.add(question_write)
     question_write.add_done_callback(_question_write_tasks.discard)
 
+    # The input guardrail starts here, beside the graph, so its one triage call
+    # overlaps the planner and the retriever instead of preceding them. Nodes
+    # read it through `guardrail.handoff.current_verdict`; this loop reads it for
+    # the head/tail, and waits only when it has a token ready to send. A triage
+    # failure is a routine turn (policy), never a failed one.
+    guardrail_task = asyncio.create_task(guardrail.run_input(CheckContext(
+        message=req.query,
+        locale=locale,
+        persona_id=persona_id,
+        user_id=resolved_user_id,
+        request_id=request_id,
+    )))
+    _guardrail_tasks.add(guardrail_task)
+    guardrail_task.add_done_callback(_guardrail_tasks.discard)
+    config["configurable"]["guardrail_task"] = guardrail_task
+
     try:
-        async for mode, payload in graph.astream(
-            state, config, stream_mode=["updates", "custom"]
-        ):
+        stream = graph.astream(state, config, stream_mode=["updates", "custom"])
+        async for mode, payload in stream:
             if mode == "updates":
                 if not isinstance(payload, dict):
                     continue
@@ -801,8 +852,6 @@ async def _stream_chat(req, request_id, config, state, background_tasks, request
                         extra["needs_clarification"] = node_output.get("needs_clarification", False)
                     if node_name == "retriever_agent" and isinstance(node_output, dict):
                         extra["sources"] = _stage_sources(node_output)
-                    if node_name == "grader" and isinstance(node_output, dict):
-                        extra["result"] = node_output.get("grader_result")
 
                     yield encode_event(
                         "stage",
@@ -813,16 +862,18 @@ async def _stream_chat(req, request_id, config, state, background_tasks, request
                         # Capture tracking fields from any node as they arrive
                         if "required_outputs" in node_output:
                             final_state["required_outputs"] = node_output["required_outputs"]
-                        if "grader_result" in node_output:
-                            final_state["grader_result"] = node_output["grader_result"]
-                        # synthesizer / error_handler / grader can set final_answer
+                        # synthesizer / error_handler can set final_answer
                         if node_output.get("final_answer"):
                             final_state.update(node_output)
 
                     # The turn ended in error_handler: tell the client with a
                     # code (the words are the client's). final_answer stays the
                     # persona's error_system line for history and speech.
-                    if node_name == "error_handler" and isinstance(node_output, dict)                             and node_output.get("error_code"):
+                    # TODO(guardrail-error-path): this answer carries no head or
+                    # tail; decide whether an error turn needs the verdict's
+                    # fixed lines (it currently skips them by design).
+                    if node_name == "error_handler" and isinstance(node_output, dict) \
+                            and node_output.get("error_code"):
                         final_state["error_code"] = node_output["error_code"]
                         error_sent = True
                         yield _error_event(node_output["error_code"], request_id)
@@ -847,9 +898,53 @@ async def _stream_chat(req, request_id, config, state, background_tasks, request
                             {"node": "synthesizer", "status": "started"},
                         )
                         conversation_stage_started = True
+
+                    # Before the first body token: the turn's verdict is known,
+                    # and its warning (if any) must be the first thing read. A
+                    # block replaces the answer entirely and ends the turn here.
+                    if guardrail_result is None:
+                        guardrail_result = await _await_guardrail(guardrail_task)
+                        if guardrail_result.blocked is not None:
+                            blocked = guardrail_result.blocked.message or ""
+                            if blocked:
+                                streamed_text += blocked
+                                yield encode_event("token", {"content": blocked})
+                            final_state["final_answer"] = blocked
+                            guardrail_stopped = True
+                            break
+                        head_text = head(guardrail_result.verdict, persona_id, locale)
+                        if head_text:
+                            streamed_text += head_text
+                            yield encode_event("token", {"content": head_text})
+
                     # Counted before the yield: a cut lands on the yield.
                     streamed_text += str(payload["content"])
                     yield encode_event("token", {"content": payload["content"]})
+
+        if guardrail_stopped:
+            # Stop the graph rather than let it finish an answer nobody will
+            # read. `aclose` runs the generator's own cleanup.
+            await stream.aclose()
+
+        # The graph read this task too; awaiting a finished task is free. A
+        # turn that streamed no content still needs the verdict for its meta.
+        if guardrail_result is None:
+            guardrail_result = await _await_guardrail(guardrail_task)
+            head_text = head(guardrail_result.verdict, persona_id, locale)
+        verdict = guardrail_result.verdict
+
+        # The answer is complete: append the fixed closing lines, then make the
+        # composed text the turn's text everywhere after this point — the
+        # mismatch check, the session row and speech all read it.
+        final_answer = final_state.get("final_answer")
+        if final_answer and not final_state.get("error_code") and not error_sent:
+            safety = safety_keys(verdict, final_state.get("required_outputs", []))
+            tail_text = tail(safety, persona_id, locale)
+            if tail_text:
+                streamed_text += tail_text
+                yield encode_event("token", {"content": tail_text})
+            final_answer = compose(head_text, final_answer, tail_text)
+            final_state["final_answer"] = final_answer
 
         if llm_req is not None and getattr(llm_req, "failure", None):
             # "eca" only when ECA really produced the answer; a turn that ended
@@ -886,8 +981,8 @@ async def _stream_chat(req, request_id, config, state, background_tasks, request
                 # Turn context snapshot — written into the assistant
                 # row's extras.meta, never logged as-is. It exists so a 👎 vote can
                 # be traced back to request_id (→ CloudWatch) without a second
-                # table, and so ops SQL can group by persona/locale/grader result.
-                meta = _turn_meta(req, request_id, final_state, t0)
+                # table, and so ops SQL can group by persona/locale/guardrail verdict.
+                meta = _turn_meta(req, request_id, final_state, t0, verdict, safety)
                 answer_write = _start_answer_write(_write_answer(
                     question_write, question,
                     _answer_row(req, final_state, final_answer, meta)))
@@ -981,7 +1076,8 @@ async def _stream_chat(req, request_id, config, state, background_tasks, request
         # marked unfinished. This generator cannot await anything now, so a task
         # does it. None if the answer write already started, or no text came.
         if answer_write is None and streamed_text.strip():
-            meta = {**_turn_meta(req, request_id, final_state, t0), "interrupted": True}
+            meta = {**_turn_meta(req, request_id, final_state, t0, verdict, safety),
+                    "interrupted": True}
             _start_answer_write(_write_partial_answer(
                 question_write, question,
                 _answer_row(req, final_state, streamed_text, meta)))
@@ -1010,6 +1106,10 @@ async def _stream_chat(req, request_id, config, state, background_tasks, request
         # running is frozen mid-flight once the response ends.
         if housekeeping is not None and not housekeeping.done():
             housekeeping.cancel()
+        # The verdict has no consumer once this stream is over. Cancelling is
+        # safe: the pipeline never writes, and the nodes handoff shields it.
+        if not guardrail_task.done():
+            guardrail_task.cancel()
         await close_request_llm(llm_req)
 
 

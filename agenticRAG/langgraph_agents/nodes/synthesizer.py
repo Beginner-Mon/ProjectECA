@@ -3,10 +3,10 @@
 Decisions encoded:
   D29:  Mode EMERGES from signals, NOT enum response_mode
   D30:  Persona applies to ALL modes (including clarify)
-  D32:  Safety warning = FIRST in output (synthesizer writes);
-        unverified disclaimer = LAST (grader appends)
-  D33:  Danger detection = PLANNER only (1 place);
-        synthesizer executes tags, does NOT re-evaluate danger
+  D32:  Safety warning = FIRST in output (the guardrail's head);
+        closing lines = LAST (the guardrail's tail)
+  D33:  Danger detection = the guardrail only;
+        synthesizer executes the verdict, does NOT re-evaluate danger
   D26:  Motion coherence via tag motion_descriptor;
         synthesizer does NOT receive motion flag
 
@@ -14,7 +14,8 @@ Mode derivation (D29 — derive, don't store):
    needs_clarification (planner only — tool ambiguous never forces it) → CLARIFY
   Has ToolMessage non-empty                   → SYNTHESIZE
   Everything else (incl. clinical tags, no tools) → CHAT
-  Clinical gating on no-evidence turns is left to a future guardrail layer.
+  An urgent verdict never clarifies: asking which knee hurts while the
+  message already reads as an emergency is the wrong first move.
 """
 
 from __future__ import annotations
@@ -40,13 +41,17 @@ from langgraph_agents.evidence import (
     evidence_messages as _evidence_messages,
     render_evidence,
 )
+from langgraph_agents.guardrail.directive import directive
+from langgraph_agents.guardrail.handoff import current_verdict
+from langgraph_agents.guardrail.stream import head, safety_keys
+from langgraph_agents.guardrail.types import Verdict
 from langgraph_agents.sources import source_for_tool
 from langgraph_agents.nodes._errors import error_entry
 from langgraph_agents.state import AgentState, ErrorSeverity
 from langgraph_agents.tag_contract import (
     closing_items_note,
     model_tags,
-    opening_line,
+    source_line,
 )
 from langgraph_agents.llm import get_chat_model, get_fallback_chat_model, extract_cache_tokens
 from langgraph_agents.nodes._persona_loader import (
@@ -106,16 +111,21 @@ def _build_tag_instructions(required_outputs: list) -> str:
     )
 
 
-def _build_contract_note(opening: str, required_outputs: list) -> str:
-    """Báo cho model câu đã hiện và các dòng sẽ được thêm; "" khi không có gì."""
+def _build_contract_note(head_text: str, closing_keys: list) -> str:
+    """Tell the model which fixed lines the user sees; "" when there are none.
+
+    The guardrail writes both ends of the turn now: `head_text` is already on
+    the screen before the model's first token, and `closing_keys` are appended
+    after it. The model writes the body between them, and none of these lines.
+    """
     blocks = []
-    if opening:
+    if head_text:
         blocks.append(
             "## Already on the user's screen\n"
             "This line was shown to the user just before your reply:\n"
-            f'"{opening}"\n'
+            f'"{head_text}"\n'
             "Start from there. Do not repeat it, quote it or rephrase it.")
-    closing = closing_items_note(required_outputs)
+    closing = closing_items_note(closing_keys)
     if closing:
         blocks.append(
             "## Added after your reply\n"
@@ -409,8 +419,8 @@ def _build_user_instructions(instructions: list[str]) -> str:
         return ""
     return (
         "\n\n## Standing instructions from this user\n"
-        "The user gave these themselves. Treat them as true and follow them "
-        "in every answer; only today's message can change one.\n"
+        "The user gave these themselves. Treat them as true and follow them; "
+        "only today's message can change one.\n"
         f"{content}"
     )
 
@@ -467,7 +477,7 @@ def _build_session_summary(chunks: list[str]) -> str:
 
 # ── Mode derivation (D29: emerge from signals, no enum) ─────────────────
 
-def _derive_mode(state: AgentState) -> str:
+def _derive_mode(state: AgentState, verdict: Verdict | None = None) -> str:
     """Derive synthesizer mode from state signals.
 
     Returns one of: 'clarify', 'synthesize', 'chat'
@@ -476,14 +486,16 @@ def _derive_mode(state: AgentState) -> str:
     ambiguity flag never forces the whole turn into clarify: the newest
     conversation is answered normally, with candidates listed for the user
     to pick from (16/10/2026 — the flag used to eat the exercise half of a
-    two-intent turn).
+    two-intent turn). An urgent verdict suppresses clarify entirely: a turn
+    that needs care now gets the warning and the advice, not a question.
     """
     needs_clarification = state.get("needs_clarification", False)
     required_outputs = state.get("required_outputs", [])
     messages = state.get("messages", [])
 
-    # 1. CLARIFY: planner-detected only
-    if needs_clarification:
+    # 1. CLARIFY: planner-detected only, and never on an urgent turn
+    urgent = verdict is not None and verdict.level != "routine"
+    if needs_clarification and not urgent:
         return "clarify"
 
     has_results = _has_tool_results(messages)
@@ -499,104 +511,13 @@ def _derive_mode(state: AgentState) -> str:
 
 # ── Node ─────────────────────────────────────────────────────────────────
 
-_ADD_MISSING_BLOCK = """
-
-## Add what is missing
-Your reply above is already on the user's screen. It left out:
-{feedback}
-Write only that part, as a short continuation in the same voice: one to four
-sentences or a short list. Do not repeat or rewrite anything you already said.
-Take it from the evidence. If the evidence does not state it, say so in one
-sentence."""
-
-
-async def _run_addition(state, config, llm, writer, msgs, previous,
-                        request_id, t0, persona_system, body_note, about_you,
-                        user_instructions, user_facts, session_summary,
-                        task_system, tool_results, history, voice_card,
-                        tag_stream) -> dict:
-    """Lượt viết thêm: chỉ nối phần thiếu vào bản đã hiện, không viết lại.
-
-    Chuỗi "\\n\\n" đi cùng chunk chữ đầu tiên của LLM. LLM lỗi: giữ đúng phần
-    đã hiện (cả đoạn viết thêm dở nếu đã stream), không fallback, không lỗi
-    CRITICAL.
-    """
-    addition = ""
-    tokens = 0
-    ai_msg = None
-    try:
-        if writer is not None:
-            async for chunk in llm.astream(msgs):
-                raw = chunk.content if hasattr(chunk, "content") else str(chunk)
-                _, content = tag_stream.feed(raw) if raw else (None, "")
-                if content:
-                    if not addition:
-                        content = f"\n\n{content}"
-                    addition += content
-                    writer({"content": content})
-                    await asyncio.sleep(0)
-                if hasattr(chunk, "usage_metadata") and chunk.usage_metadata:
-                    tokens = chunk.usage_metadata.get("total_tokens", 0)
-                    ai_msg = chunk
-                elif (getattr(chunk, "response_metadata", None) or {}).get("token_usage"):
-                    ai_msg = chunk
-            _, content = tag_stream.flush()
-            if content:
-                if not addition:
-                    content = f"\n\n{content}"
-                addition += content
-                writer({"content": content})
-        else:
-            ai_msg = await llm.ainvoke(msgs)
-            _, text = reply_emotion.parse_emotion_tag(ai_msg.content or "")
-            addition = f"\n\n{text}" if text else ""
-            tokens = 0
-            if hasattr(ai_msg, "usage_metadata") and ai_msg.usage_metadata:
-                tokens = ai_msg.usage_metadata.get("total_tokens", 0)
-    except Exception as exc:
-        elapsed_ms = round((time.perf_counter() - t0) * 1000)
-        logger.warning("addition_failed", extra={
-            "node": "synthesizer", "request_id": request_id,
-            "elapsed_ms": elapsed_ms, "error": type(exc).__name__,
-        })
-        # Phần đã stream không rút lại được: lưu đúng như màn hình.
-        return {"final_answer": previous + addition, "total_tokens": 0}
-
-    final_answer = previous + addition if addition else previous
-    cache_hit_tokens, cache_miss_tokens = extract_cache_tokens(ai_msg)
-    usage = getattr(ai_msg, "usage_metadata", None) or {}
-    history_chars = sum(len(str(getattr(m, "content", "") or "")) for m in history)
-    elapsed_ms = round((time.perf_counter() - t0) * 1000)
-    logger.info("node_complete", extra={
-        "node": "synthesizer", "request_id": request_id,
-        "elapsed_ms": elapsed_ms, "tokens": tokens, "mode": "addition",
-        "output_chars": len(addition),
-        "streamed": writer is not None,
-        "cache_hit_tokens": cache_hit_tokens,
-        "cache_miss_tokens": cache_miss_tokens,
-        "prompt_blocks": {
-            "persona": len(persona_system),
-            "body_state": len(body_note),
-            "about_you": len(about_you),
-            "user_instructions": len(user_instructions),
-            "user_facts": len(user_facts),
-            "session_summary": len(session_summary),
-            "task": len(task_system),
-            "evidence": len(tool_results),
-            "history": history_chars,
-            "voice_card": len(voice_card),
-        },
-        "input_tokens": usage.get("input_tokens", 0),
-        "output_tokens": usage.get("output_tokens", 0),
-    })
-    return {"final_answer": final_answer, "total_tokens": tokens}
-
 
 async def synthesizer_node(state: AgentState, config: RunnableConfig) -> dict:
     """Synthesizer node — universal responder (M.3b).
 
-    Derives mode from state signals (D29), applies persona voice (D30),
-    writes safety warning FIRST (D32).
+    Derives mode from state signals (D29), applies persona voice (D30).
+    The guardrail owns the warning and the closing lines (D32): this node
+    writes the body between them and never writes a safety line itself.
     """
     t0 = time.perf_counter()
     request_id = config["configurable"].get("request_id", "-")
@@ -607,29 +528,27 @@ async def synthesizer_node(state: AgentState, config: RunnableConfig) -> dict:
     user_message = (config["configurable"].get("query")
                     or state.get("resolved_query") or "")
     required_outputs = state.get("required_outputs", [])
-
-    previous = state.get("final_answer") or ""
-    feedback = state.get("grader_feedback")
-    addition_mode = (state.get("retry_count", 0) >= 1 and bool(feedback)
-                     and bool(previous.strip()))
-    is_rewrite = state.get("retry_count", 0) >= 1 and not addition_mode
+    # The same task api/main.py awaits for the head and tail; with no task
+    # (tests, local probes) it runs inline once per request id.
+    verdict = await current_verdict(config)
 
     try:
         writer = get_stream_writer()
     except RuntimeError:
         writer = None
-    if writer is not None and state.get("retry_count", 0) == 0:
+    if writer is not None:
         # Báo cho giao diện là mọi việc tra cứu đã xong và sắp có câu trả lời.
         # Gửi ngay lúc node chạy, không đợi chữ đầu tiên của LLM.
         writer({"stage": "synthesizer_started"})
         await asyncio.sleep(0)
 
-    mode = _derive_mode(state)
+    mode = _derive_mode(state, verdict)
 
     logger.info("node_start", extra={
         "node": "synthesizer", "request_id": request_id,
         "mode": mode, "persona_id": persona_id,
         "tags": required_outputs,
+        "level": verdict.level, "verdict_source": verdict.source,
         "query_preview": user_message[:80],
         "evidence": _evidence_summary(state.get("messages", [])),
     })
@@ -643,8 +562,12 @@ async def synthesizer_node(state: AgentState, config: RunnableConfig) -> dict:
     locale = config["configurable"].get("locale", "en")
     persona = get_persona(persona_id, locale)
     tool_results = _extract_tool_results(state.get("messages", []))
-    opening = opening_line(required_outputs, persona_id, locale)
-    prefix = f"{opening}\n\n" if opening else ""
+    # Both ends of the turn are fixed text the guardrail owns. The model is
+    # told what is already on the screen and what will be added, so it does
+    # not write either itself.
+    head_text = head(verdict, persona_id, locale).strip()
+    safety = safety_keys(verdict, required_outputs)
+    closing_keys = [*safety, "evidence_citation"] if "evidence_citation" in required_outputs else safety
     tags_str = ", ".join(model_tags(required_outputs)) or "(none — free response)"
 
     # Tag instructions: only the tags actually required this turn (B3)
@@ -670,7 +593,7 @@ async def synthesizer_node(state: AgentState, config: RunnableConfig) -> dict:
             user_message=user_message,
         )
 
-    contract_note = _build_contract_note(opening, required_outputs)
+    contract_note = _build_contract_note(head_text, closing_keys)
     if contract_note:
         task_system = f"{task_system}\n{contract_note}\n"
     # Persona prompt (D30: applies to ALL modes)
@@ -692,7 +615,10 @@ async def synthesizer_node(state: AgentState, config: RunnableConfig) -> dict:
                                  user_instructions, user_facts, session_summary)
                      if b]
     middle = ("\n\n".join(middle_blocks) + "\n\n") if middle_blocks else ""
-    system = f"{persona_system}\n\n---\n\n{middle}{task_system}"
+    # The safety rule goes LAST: closest to the generation point, after every
+    # memory block, where an instruction the user planted earlier cannot
+    # outrank it.
+    system = f"{persona_system}\n\n---\n\n{middle}{task_system}{directive(verdict)}"
 
     llm = get_chat_model("synthesizer")
 
@@ -717,54 +643,32 @@ async def synthesizer_node(state: AgentState, config: RunnableConfig) -> dict:
     # Reply-driven avatar emotion: the model opens with [emotion: NAME N],
     # stripped below before anything else sees the text (shared/reply_emotion).
     # Last, beside the voice card, where instructions are followed most reliably.
-    # Lượt viết thêm không gợi emotion mới: mặt hiện tại thuộc về bản đã hiện.
-    if reply_emotion.enabled() and not addition_mode:
+    if reply_emotion.enabled():
         voice_card += reply_emotion.PROMPT_RULE
-    if addition_mode:
-        msgs = [
-            SystemMessage(content=system),
-            *history,
-            HumanMessage(content=user_message),
-            AIMessage(content=previous),
-            SystemMessage(content=voice_card + _ADD_MISSING_BLOCK.format(
-                feedback=feedback)),
-        ]
-    else:
-        msgs = [
-            SystemMessage(content=system),
-            *history,
-            HumanMessage(content=user_message),
-            SystemMessage(content=voice_card),
-        ]
+    msgs = [
+        SystemMessage(content=system),
+        *history,
+        HumanMessage(content=user_message),
+        SystemMessage(content=voice_card),
+    ]
 
     ai_msg = None  # kept for prompt-cache telemetry (fix #1)
     used_fallback = False
     tag_stream = reply_emotion.EmotionTagStream()
 
     def send_emotion(emotion: dict | None) -> None:
-        # Lượt viết thêm không gửi emotion mới.
-        if addition_mode:
-            return
         # Its own custom-stream item, ahead of the text: api/main.py turns it
         # into the `emotion` SSE event. Health rules applied here, where the
-        # turn's mode and safety tags are known.
-        emotion = reply_emotion.apply_emotion_policy(emotion, mode, required_outputs)
+        # turn's mode and safety keys are known.
+        emotion = reply_emotion.apply_emotion_policy(
+            emotion, mode, [*required_outputs, *safety])
         if emotion is not None and writer is not None:
             writer({"emotion": emotion})
-
-    if addition_mode:
-        return await _run_addition(
-            state, config, llm, writer, msgs, previous,
-            request_id, t0, persona_system, body_note, about_you,
-            user_instructions, user_facts, session_summary,
-            task_system, tool_results, history, voice_card, tag_stream)
 
     try:
         if writer is not None:
             final = ""
             tokens = 0
-            if prefix and not (is_rewrite and previous.startswith(prefix)):
-                writer({"content": prefix})
             async for chunk in llm.astream(msgs):
                 raw = chunk.content if hasattr(chunk, "content") else str(chunk)
                 # Hold back only while the start could still be the emotion tag;
@@ -855,7 +759,7 @@ async def synthesizer_node(state: AgentState, config: RunnableConfig) -> dict:
             # through here rather than translating this literal.
             fallback = get_ui_string(persona_id, "error_unavailable", locale)
             return {
-                "final_answer": prefix + fallback,
+                "final_answer": fallback,
                 "errors": [error_entry(
                     "synthesizer", exc, ErrorSeverity.CRITICAL,
                     f"Synthesizer LLM failed ({elapsed_ms:.0f}ms): {exc}")],
@@ -866,6 +770,17 @@ async def synthesizer_node(state: AgentState, config: RunnableConfig) -> dict:
             "llm_fallback_used": True,
             "primary_error": str(exc),
         })
+
+    # The source line is code-written, like the head and the tail: the model
+    # cites sources inline, but the canonical line is deterministic. `final`
+    # is the body on both the streamed and the non-streamed path.
+    if "evidence_citation" in required_outputs:
+        line = source_line(evidence_items(state.get("messages", [])), final or "", locale)
+        if line:
+            suffix = f"\n\n{line}"
+            if writer is not None:
+                writer({"content": suffix})
+            final = f"{final}{suffix}"
 
     cache_hit_tokens, cache_miss_tokens = extract_cache_tokens(ai_msg)
 
@@ -902,6 +817,6 @@ async def synthesizer_node(state: AgentState, config: RunnableConfig) -> dict:
     })
 
     return {
-        "final_answer": prefix + (final or ""),
+        "final_answer": final or "",
         "total_tokens": tokens,
     }

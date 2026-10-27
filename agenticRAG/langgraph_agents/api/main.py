@@ -926,10 +926,19 @@ async def _stream_chat(req, request_id, config, state, background_tasks, request
             # read. `aclose` runs the generator's own cleanup.
             await stream.aclose()
 
-        # The graph read this task too; awaiting a finished task is free. A
-        # turn that streamed no content still needs the verdict for its meta.
+        # The graph read this task too; if it has already finished (the normal
+        # case: triage runs in parallel with the graph), reuse its verdict for
+        # the meta without blocking. If it is still running (e.g. a provider
+        # that cannot be reached), do not hold `done` behind it — fall back for
+        # the meta instead, so the turn still releases the send button.
         if guardrail_result is None:
-            guardrail_result = await _await_guardrail(guardrail_task)
+            if guardrail_task.done():
+                try:
+                    guardrail_result = guardrail_task.result()
+                except Exception:  # noqa: BLE001
+                    guardrail_result = InputResult(fallback_verdict())
+            else:
+                guardrail_result = InputResult(fallback_verdict())
             head_text = head(guardrail_result.verdict, persona_id, locale)
         verdict = guardrail_result.verdict
 

@@ -71,16 +71,6 @@ def test_binding_routes_main_roles_to_user(monkeypatch):
         _teardown(llm, byok)
 
 
-def test_grader_stays_on_eca(monkeypatch):
-    llm, byok = _setup(monkeypatch)
-    try:
-        _bind(monkeypatch)
-        m = llm.get_chat_model("grader")
-        assert getattr(m, "openai_api_base", None) != USER_BASE
-    finally:
-        _teardown(llm, byok)
-
-
 def test_missing_tools_falls_back_per_role(monkeypatch):
     llm, byok = _setup(monkeypatch)
     try:

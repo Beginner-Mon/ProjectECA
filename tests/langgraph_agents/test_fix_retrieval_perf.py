@@ -8,6 +8,8 @@ P3: S1 — selector prompt names no tool; execution guard blocks web when off
 import pytest
 from unittest.mock import AsyncMock, MagicMock, patch
 
+from langgraph_agents.guardrail.types import Verdict
+
 
 # ─────────────────────────────────────────────────────────────────────────────
 # P1 — Embedding loads offline (local_files_only)
@@ -350,6 +352,9 @@ class TestD34KbEmptyWebFallback:
         config = {"configurable": {"request_id": "r1", "web_search": True}}
 
         with patch.object(ra, "_build_retriever_system_prompt", side_effect=fake_build_prompt), \
+             patch.object(ra, "current_verdict",
+                          new=AsyncMock(return_value=Verdict("soon", False, False,
+                                                             "llm", 5))), \
              patch.object(ra, "_build_tools", AsyncMock(return_value=[])), \
              patch.object(ra, "get_chat_model", return_value=mock_llm):
             await ra.retriever_agent_node(state, config)

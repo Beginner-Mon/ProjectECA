@@ -105,6 +105,25 @@ def _fake_session_writes(monkeypatch, write_answer):
     monkeypatch.setattr(api_module, "write_turn_answer", write_answer)
 
 
+@pytest.fixture(autouse=True)
+def _no_live_triage(monkeypatch):
+    """Stub the guardrail's input call so /chat tests never reach a live model.
+
+    The guardrail's verdict comes from `guardrail.run_input` (triaging the
+    user's message). These tests exercise the SSE stream, not triage, and no
+    model key is configured locally — so return a fast routine fallback
+    verdict instead of hanging on a provider connection.
+    """
+    import langgraph_agents.api.main as api_module
+    from langgraph_agents.guardrail.pipeline import InputResult
+    from langgraph_agents.guardrail.types import fallback_verdict
+
+    async def fake_run_input(ctx):
+        return InputResult(fallback_verdict())
+
+    monkeypatch.setattr(api_module.guardrail, "run_input", fake_run_input)
+
+
 @pytest.fixture
 def api_client():
     """Fixture: mock graph + redis + a fixed authenticated user.
@@ -1256,19 +1275,17 @@ class TestSchemas:
 # ── Bất biến stream == câu lưu (grader-contract T7) ───────────────────
 
 
-def _make_fake_astream_tokens_then_grader(tokens, final_answer,
-                                          grader_detail=None):
-    """custom content... rồi updates của node grader mang final_answer."""
+def _make_fake_astream_tokens_then_synth(tokens, final_answer):
+    """custom content... rồi updates của node synthesizer mang final_answer."""
 
     async def fake_stream(state, config, stream_mode=None):
         yield ("updates", {"memory": {}})
         yield ("updates", {"planner": {"required_outputs": []}})
         for tok in tokens:
             yield ("custom", {"content": tok})
-        yield ("updates", {"grader": {
-            "grader_result": "pass",
+        yield ("updates", {"synthesizer": {
             "final_answer": final_answer,
-            "grader_detail": grader_detail if grader_detail is not None else {},
+            "total_tokens": len(final_answer),
         }})
 
     return fake_stream
@@ -1279,8 +1296,8 @@ def test_stream_matches_stored_answer(api_client, monkeypatch, caplog):
     import logging
 
     client, _, mock_graph = api_client
-    mock_graph.astream = _make_fake_astream_tokens_then_grader(
-        ["A", "B"], "AB", {"exercise_steps": "ok"})
+    mock_graph.astream = _make_fake_astream_tokens_then_synth(
+        ["A", "B"], "AB")
     _set_graph(mock_graph)
     captured = {}
 
@@ -1289,6 +1306,17 @@ def test_stream_matches_stored_answer(api_client, monkeypatch, caplog):
         return "id-1"
 
     _fake_session_writes(monkeypatch, fake_write)
+
+    # The guardrail now owns the verdict; a routine verdict adds no head/tail.
+    import langgraph_agents.api.main as api_module
+
+    async def fake_run_input(ctx):
+        from langgraph_agents.guardrail.pipeline import InputResult
+        from langgraph_agents.guardrail.types import fallback_verdict
+        return InputResult(fallback_verdict())
+
+    monkeypatch.setattr(api_module.guardrail, "run_input", fake_run_input)
+
     with caplog.at_level(logging.WARNING, logger="langgraph.api"):
         resp = client.post("/chat", json={"query": "hi"})
     assert resp.status_code == 200
@@ -1296,8 +1324,7 @@ def test_stream_matches_stored_answer(api_client, monkeypatch, caplog):
     token_events = [e for e in events if e["event"] == "token"]
     assert "".join(e["data"]["content"] for e in token_events) == "AB"
     assert captured.get("assistant_answer") == "AB"
-    assert captured.get("meta", {}).get("grader_detail") == {
-        "exercise_steps": "ok"}
+    assert "guardrail" in (captured.get("meta") or {})
     assert "stream_final_mismatch" not in caplog.text
 
 
@@ -1306,13 +1333,23 @@ def test_stream_mismatch_is_logged(api_client, monkeypatch, caplog):
     import logging
 
     client, _, mock_graph = api_client
-    mock_graph.astream = _make_fake_astream_tokens_then_grader(["A"], "AB")
+    mock_graph.astream = _make_fake_astream_tokens_then_synth(["A"], "AB")
     _set_graph(mock_graph)
 
     async def fake_write(*args, **kwargs):
         return "id-1"
 
     _fake_session_writes(monkeypatch, fake_write)
+
+    import langgraph_agents.api.main as api_module
+
+    async def fake_run_input(ctx):
+        from langgraph_agents.guardrail.pipeline import InputResult
+        from langgraph_agents.guardrail.types import fallback_verdict
+        return InputResult(fallback_verdict())
+
+    monkeypatch.setattr(api_module.guardrail, "run_input", fake_run_input)
+
     with caplog.at_level(logging.WARNING, logger="langgraph.api"):
         resp = client.post("/chat", json={"query": "hi"})
     assert resp.status_code == 200
@@ -1326,13 +1363,23 @@ def test_no_mismatch_log_without_tokens(api_client, monkeypatch, caplog):
     import logging
 
     client, _, mock_graph = api_client
-    mock_graph.astream = _make_fake_astream_tokens_then_grader([], "x")
+    mock_graph.astream = _make_fake_astream_tokens_then_synth([], "x")
     _set_graph(mock_graph)
 
     async def fake_write(*args, **kwargs):
         return "id-1"
 
     _fake_session_writes(monkeypatch, fake_write)
+
+    import langgraph_agents.api.main as api_module
+
+    async def fake_run_input(ctx):
+        from langgraph_agents.guardrail.pipeline import InputResult
+        from langgraph_agents.guardrail.types import fallback_verdict
+        return InputResult(fallback_verdict())
+
+    monkeypatch.setattr(api_module.guardrail, "run_input", fake_run_input)
+
     with caplog.at_level(logging.WARNING, logger="langgraph.api"):
         resp = client.post("/chat", json={"query": "hi"})
     assert resp.status_code == 200

@@ -74,30 +74,6 @@ async def test_synthesizer_falls_back_to_resolved_query_without_query(mode):
     assert _RESOLVED in msgs[0].content
 
 
-@pytest.mark.asyncio
-async def test_synthesizer_addition_pass_replays_the_users_message():
-    from langchain_core.messages import AIMessage
-    from langgraph_agents.nodes import synthesizer as syn_mod
-
-    state = {"resolved_query": _RESOLVED, "total_tokens": 0, "messages": [],
-             "required_outputs": [], "retry_count": 1,
-             "grader_feedback": "no greeting", "final_answer": "Hello there."}
-    config = {"configurable": {"request_id": "r", "persona_id": "anne",
-                               "locale": "en", "query": _USER}}
-    captured: dict = {}
-
-    async def fake_run_addition(state, config, llm, writer, msgs, *a, **k):
-        captured["msgs"] = msgs
-        return {}
-
-    with patch.object(syn_mod, "get_chat_model", return_value=MagicMock()), \
-            patch.object(syn_mod, "_run_addition", fake_run_addition):
-        await syn_mod.synthesizer_node(state, config)
-
-    human = [m for m in captured["msgs"] if isinstance(m, HumanMessage)]
-    assert human[-1].content == _USER
-    assert isinstance(captured["msgs"][-2], AIMessage)
-    assert all("RESOLVED-REWRITE" not in str(m.content) for m in captured["msgs"])
 
 
 # ── Retriever ────────────────────────────────────────────────────────────

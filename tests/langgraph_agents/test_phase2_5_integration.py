@@ -107,22 +107,6 @@ async def test_clarify_path():
         "Expected clarification response"
 
 
-@pytest.mark.integration
-@pytest.mark.skipif(not HAS_LLM_KEY, reason="DEEPSEEK_API_KEY not set")
-@pytest.mark.asyncio
-async def test_grader_enforces_tags():
-    """Exercise query → grader kiểm tag do model viết; dòng kết do code nối."""
-    graph = await build_graph_async()
-    state, config = _base_state_config(query="Hướng dẫn bài tập squat")
-    result = await graph.ainvoke(state, config=config)
-
-    assert result["final_answer"], "final_answer should not be empty"
-    # grader_result should be set if tags were emitted
-    if result.get("required_outputs"):
-        assert result.get("grader_result") in ("pass", "pass_with_warning")
-    assert "chưa được kiểm chứng" not in result["final_answer"]
-    assert "has not been verified" not in result["final_answer"]
-
 
 # ═══════════════════════════════════════════════════════════════════════════
 # Unit tests (no LLM needed) — planner output structure
@@ -166,60 +150,6 @@ class TestPlanOutput:
         assert "needs_motion" not in d
 
 
-# ═══════════════════════════════════════════════════════════════════════════
-# Unit tests — Grader rules (M.3, no LLM)
-# ═══════════════════════════════════════════════════════════════════════════
-
-class TestGraderRules:
-    """Verify TAG_RULES heuristic checks."""
-
-    def test_has_danger_warning_present(self):
-        from langgraph_agents.nodes.grader import _has_danger_warning
-        assert _has_danger_warning("⚠️ Đau ngực là nghiêm trọng. Bạn nên đi khám bác sĩ ngay.")
-        assert _has_danger_warning("Ngừng tập ngay lập tức nếu thấy đau.")
-        assert not _has_danger_warning("Bài tập này giúp giảm đau lưng.")
-
-    def test_has_referral_present(self):
-        from langgraph_agents.nodes.grader import _has_referral
-        assert _has_referral("Tôi khuyên bạn nên đi khám bác sĩ chuyên khoa.")
-        assert _has_referral("Bạn nên tham khảo ý kiến chuyên gia y tế.")
-        assert not _has_referral("Bài tập squat rất tốt cho cơ đùi.")
-
-    def test_has_disclaimer_present(self):
-        from langgraph_agents.nodes.grader import _has_disclaimer
-        assert _has_disclaimer("Thông tin này chỉ mang tính tham khảo wellness.")
-        assert _has_disclaimer("Không thay thế cho việc khám lâm sàng.")
-        assert not _has_disclaimer("Đây là bài tập được nhiều chuyên gia khuyên dùng.")
-
-    def test_has_sets_reps_present(self):
-        from langgraph_agents.nodes.grader import _has_sets_reps_frequency
-        assert _has_sets_reps_frequency("3 hiệp × 10 lần, 2-3 lần mỗi tuần.")
-        assert _has_sets_reps_frequency("Tập 15 reps, 3 sets, daily.")
-        assert not _has_sets_reps_frequency("Tập squat đều đặn mỗi ngày.")  # no rep count
-
-    def test_has_ordered_steps_present(self):
-        from langgraph_agents.nodes.grader import _has_ordered_steps
-        assert _has_ordered_steps("1. Đứng thẳng. 2. Từ từ hạ người xuống.")
-        assert _has_ordered_steps("Bước 1: Chuẩn bị. Bước 2: Thực hiện.")
-        assert not _has_ordered_steps("Tập squat bằng cách hạ người xuống từ từ.")
-
-    def test_has_contraindication_present(self):
-        from langgraph_agents.nodes.grader import _has_contraindication
-        assert _has_contraindication("Không nên tập nếu bạn bị thoát vị đĩa đệm.")
-        assert _has_contraindication("Chống chỉ định: người bị đau đầu gối cấp tính.")
-        assert not _has_contraindication("Bài tập này an toàn cho mọi người.")
-
-    def test_has_source_present(self):
-        from langgraph_agents.nodes.grader import _has_source
-        assert _has_source("Theo tài liệu [1], bài tập này...")
-        assert _has_source("Nguồn: https://example.com/pt-guide")
-        assert not _has_source("Bài tập này rất phổ biến.")
-
-    def test_has_motion_fields_present(self):
-        from langgraph_agents.nodes.grader import _has_motion_fields
-        assert _has_motion_fields("Giơ tay phải lên cao — động tác sử dụng khớp vai.")
-        assert _has_motion_fields("Gập đầu gối, xoay hông khi thực hiện squat.")
-        assert not _has_motion_fields("Bài tập squat rất tốt.")  # no joints
 
 
 # ═══════════════════════════════════════════════════════════════════════════
@@ -272,23 +202,3 @@ class TestModeDerivation:
         assert _derive_mode(state) == "synthesize"
 
 
-# ═══════════════════════════════════════════════════════════════════════════
-# Unit tests — TAG_RULES assertion (D7)
-# ═══════════════════════════════════════════════════════════════════════════
-
-class TestTagConsistency:
-    """Verify planner vocabulary == grader vocabulary (D7)."""
-
-    def test_planner_tags_match_grader_tags(self):
-        from langgraph_agents.nodes.planner import PLANNER_TAGS
-        from langgraph_agents.nodes.grader import TAG_RULES
-        assert PLANNER_TAGS == set(TAG_RULES.keys()), \
-            f"Drift: planner has {PLANNER_TAGS - set(TAG_RULES.keys())}, " \
-            f"grader has {set(TAG_RULES.keys()) - PLANNER_TAGS}"
-
-    def test_all_tags_have_kind_and_rule(self):
-        from langgraph_agents.nodes.grader import TAG_RULES
-        for tag, (kind, rule_fn, template) in TAG_RULES.items():
-            assert kind in ("safety", "quality"), f"{tag}: kind must be safety|quality, got {kind}"
-            assert callable(rule_fn), f"{tag}: rule_fn must be callable"
-            assert isinstance(template, str) and template, f"{tag}: template must be non-empty string"

@@ -1,9 +1,18 @@
-"""Câu an toàn và dòng nguồn do code phát (grader-contract T4)."""
+"""Câu an toàn và dòng nguồn — các chủ sở hữu mới sau khi grader bỏ.
+
+- `guardrail.stream` viết câu cảnh báo (head) trước chữ đầu tiên và dòng kết
+  (tail) sau thân bài; `synthesizer` chỉ viết phần thân giữa hai đầu.
+- `api/main.py` nối head + body + tail thành composed text, lưu và nói chính
+  văn bản đó.
+"""
+
+from __future__ import annotations
+
 import json
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
-from langchain_core.messages import AIMessage, AIMessageChunk, ToolMessage
+from langchain_core.messages import AIMessageChunk, HumanMessage, ToolMessage
 
 from langgraph_agents.tag_contract import get_safety_text
 
@@ -17,10 +26,17 @@ def _config(**kw):
     return {"configurable": base}
 
 
-def _state(tags, messages=None):
+def _state(required=None, messages=None, **kw):
     return {"messages": messages or [], "resolved_query": "đau ngực",
-            "required_outputs": tags, "needs_clarification": False,
-            "total_tokens": 0, "errors": [], "retry_count": 0}
+            "required_outputs": required or [], "needs_clarification": False,
+            "total_tokens": 0, "errors": [], **kw}
+
+
+def _config(**kw):
+    base = {"persona_id": "anne", "locale": "vi", "query": "đau ngực",
+            "request_id": "t"}
+    base.update(kw)
+    return {"configurable": base}
 
 
 def _tm(name, payload):
@@ -50,217 +66,195 @@ def _streaming_llm(captured, *parts):
     return mock_llm
 
 
-def _opening():
-    return get_safety_text("red_flag_screen", "anne", "vi")
+def _verdict(level="routine", out_of_scope=False, health_topic=False,
+             source="llm", elapsed_ms=5):
+    from langgraph_agents.guardrail.types import Verdict
+    return Verdict(level=level, out_of_scope=out_of_scope,
+                   health_topic=health_topic, source=source,
+                   elapsed_ms=elapsed_ms)
 
+
+OPENING = get_safety_text("red_flag_screen", "anne", "vi")
+
+
+# ── Synthesizer: body only between the guardrail's fixed ends ─────────────
 
 @pytest.mark.asyncio
-async def test_opening_is_streamed_first():
+async def test_synthesizer_no_longer_emits_opening_line():
+    """Synthesizer writes the body only; the guardrail's head comes first
+    (emitted by api/main.py before the first body token), never here."""
     from langgraph_agents.nodes import synthesizer as syn_mod
 
     captured: list = []
     sent: list = []
-    tags = ["red_flag_screen", "referral_advice"]
     with patch.object(syn_mod, "get_chat_model",
-                       return_value=_streaming_llm(captured, "Đau ngực cần khám.")), \
-         patch.object(syn_mod, "get_stream_writer", return_value=sent.append):
-        result = await syn_mod.synthesizer_node(_state(tags), _config())
-    opening = _opening()
+                      return_value=_streaming_llm(captured, "Đau ngực cần khám.")), \
+         patch.object(syn_mod, "get_stream_writer", return_value=sent.append), \
+         patch.object(syn_mod, "current_verdict",
+                      new=AsyncMock(return_value=_verdict("soon"))):
+        result = await syn_mod.synthesizer_node(
+            _state(["red_flag_screen"]), _config())
     contents = [p["content"] for p in sent if "content" in p]
-    assert contents[0] == opening + "\n\n"
-    assert result["final_answer"] == opening + "\n\n" + "Đau ngực cần khám."
+    assert contents and contents[0] == "Đau ngực cần khám."
+    assert not result["final_answer"].startswith(OPENING)
+    assert result["final_answer"] == "Đau ngực cần khám."
 
 
 @pytest.mark.asyncio
-async def test_synthesizer_announces_start_first():
-    from langgraph_agents.nodes import synthesizer as syn_mod
-
-    sent: list = []
-    with patch.object(syn_mod, "get_chat_model",
-                       return_value=_streaming_llm([], "ok")), \
-         patch.object(syn_mod, "get_stream_writer", return_value=sent.append):
-        await syn_mod.synthesizer_node(_state(["exercise_steps"]), _config())
-    assert sent[0] == {"stage": "synthesizer_started"}
-    first_content = next(i for i, p in enumerate(sent) if "content" in p)
-    assert first_content > 0
-
-
-@pytest.mark.asyncio
-async def test_no_start_announcement_on_second_pass():
-    from langgraph_agents.nodes import synthesizer as syn_mod
-
-    sent: list = []
-    state = _state(["exercise_steps"])
-    state["retry_count"] = 1
-    state["grader_feedback"] = "add more detail"
-    state["final_answer"] = "First answer."
-    with patch.object(syn_mod, "get_chat_model",
-                       return_value=_streaming_llm([], "More detail.")), \
-         patch.object(syn_mod, "get_stream_writer", return_value=sent.append):
-        await syn_mod.synthesizer_node(state, _config())
-    assert sent, "lượt viết thêm phải stream phần thiếu"
-    assert all("stage" not in p for p in sent)
-
-
-@pytest.mark.asyncio
-async def test_prompt_tells_model_what_is_already_said():
-    from langgraph_agents.nodes import synthesizer as syn_mod
-
-    captured: list = []
-    sent: list = []
-    tags = ["red_flag_screen", "referral_advice"]
-    with patch.object(syn_mod, "get_chat_model",
-                       return_value=_streaming_llm(captured, "Đau ngực cần khám.")), \
-         patch.object(syn_mod, "get_stream_writer", return_value=sent.append):
-        await syn_mod.synthesizer_node(_state(tags), _config())
-    opening = _opening()
-    system = captured[0][0].content
-    assert "## Already on the user's screen" in system
-    assert opening in system
-    assert "## Added after your reply" in system
-    assert "a referral to a doctor" in system
-    assert "Your FIRST sentence must warn" not in system
-
-
-@pytest.mark.asyncio
-async def test_no_contract_blocks_without_code_tags():
+async def test_directive_only_on_urgent_turns():
     from langgraph_agents.nodes import synthesizer as syn_mod
 
     captured: list = []
     sent: list = []
     with patch.object(syn_mod, "get_chat_model",
-                       return_value=_streaming_llm(captured, "ok")), \
+                      return_value=_streaming_llm(captured, "ok")), \
          patch.object(syn_mod, "get_stream_writer", return_value=sent.append):
-        await syn_mod.synthesizer_node(_state(["exercise_steps"]), _config())
-    system = captured[0][0].content
-    assert "## Already on the user's screen" not in system
-    assert "## Added after your reply" not in system
+        # routine → no safety block
+        await syn_mod.synthesizer_node(_state(), _config())
+        routine_prompt = captured[0][0].content
+        assert "## Safety rule for this turn" not in routine_prompt
+
+        captured.clear()
+        # urgent → safety block present
+        with patch.object(syn_mod, "current_verdict",
+                          new=AsyncMock(return_value=_verdict("emergency"))):
+            await syn_mod.synthesizer_node(_state(), _config())
+            urgent_prompt = captured[0][0].content
+            assert "## Safety rule for this turn" in urgent_prompt
+            assert "emergency care" in urgent_prompt.lower()
 
 
 @pytest.mark.asyncio
-async def test_deliverables_list_only_model_tags():
+async def test_urgent_verdict_never_yields_clarify_mode():
     from langgraph_agents.nodes import synthesizer as syn_mod
+
+    with patch.object(syn_mod, "current_verdict",
+                      new=lambda config: _verdict("emergency")):
+        mode = syn_mod._derive_mode(
+            {"needs_clarification": True, "required_outputs": [], "messages": []},
+            _verdict("emergency"))
+    assert mode != "clarify"
+
+
+@pytest.mark.asyncio
+async def test_source_line_appended_once_when_evidence_citation():
+    from langgraph_agents.nodes import synthesizer as syn_mod
+    from langgraph_agents.evidence import EvidenceItem
 
     captured: list = []
     sent: list = []
-    tags = ["scope_disclaimer", "exercise_steps", "evidence_citation"]
+    items = [EvidenceItem(header="[From ECA's exercise library: Elbow plank]",
+                          text="x", cite_key="exercise_db", title="Elbow plank")]
+    elbow_msg = _tm("kb_search", [{"content": "x", "similarity": 0.9,
+                                   "source_type": "exercise_db",
+                                   "document_title": "Elbow plank",
+                                   "chunk_index": 0}])
     with patch.object(syn_mod, "get_chat_model",
-                       return_value=_streaming_llm(captured, "ok")), \
-         patch.object(syn_mod, "get_stream_writer", return_value=sent.append):
-        await syn_mod.synthesizer_node(_state(tags, [_tm("kb_search", _KB)]),
-                                       _config())
-    system = captured[0][0].content
-    marker = "## Required deliverables (tags)"
-    after = system.split(marker, 1)[1].strip().splitlines()[0].strip()
-    assert after == "exercise_steps"
-
-
-@pytest.mark.asyncio
-async def test_number_rule_in_synthesize():
-    from langgraph_agents.nodes import synthesizer as syn_mod
-
-    for tags, msgs in ((["exercise_steps"], [_tm("kb_search", _KB)]),):
-        captured: list = []
-        sent: list = []
-        with patch.object(syn_mod, "get_chat_model",
-                           return_value=_streaming_llm(captured, "ok")), \
-             patch.object(syn_mod, "get_stream_writer", return_value=sent.append):
-            await syn_mod.synthesizer_node(_state(tags, msgs), _config())
-        assert "come only from the evidence" in captured[0][0].content
-
-
-@pytest.mark.asyncio
-async def test_fallback_runs_when_primary_fails_at_first_byte():
-    from langgraph_agents.nodes import synthesizer as syn_mod
-
-    async def boom(_msgs):
-        raise RuntimeError("primary down")
-        yield  # pragma: no cover
-
-    fallback = MagicMock()
-    fallback.ainvoke = AsyncMock(return_value=AIMessage(content="ok"))
-    sent: list = []
-    with patch.object(syn_mod, "get_chat_model") as mock_llm, \
-         patch.object(syn_mod, "get_fallback_chat_model",
-                      return_value=fallback) as mock_fb, \
-         patch.object(syn_mod, "get_stream_writer", return_value=sent.append):
-        mock_llm.return_value.astream = boom
+                      return_value=_streaming_llm(captured,
+                                                  "Giơ tay phải lên theo Elbow plank.")), \
+         patch.object(syn_mod, "get_stream_writer", return_value=sent.append), \
+         patch.object(syn_mod, "current_verdict",
+                      new=AsyncMock(return_value=_verdict("routine"))):
         result = await syn_mod.synthesizer_node(
-            _state(["red_flag_screen"]), _config())
-    assert mock_fb.call_count == 1
-    opening = _opening()
-    assert result["final_answer"].startswith(opening)
-    assert result["final_answer"].endswith("ok")
-
-
-@pytest.mark.asyncio
-async def test_total_failure_keeps_opening():
-    from langgraph_agents.nodes import synthesizer as syn_mod
-
-    async def boom(_msgs):
-        raise RuntimeError("primary down")
-        yield  # pragma: no cover
-
-    with patch.object(syn_mod, "get_chat_model") as mock_llm, \
-         patch.object(syn_mod, "get_fallback_chat_model", return_value=None), \
-         patch.object(syn_mod, "get_stream_writer", return_value=lambda p: None):
-        mock_llm.return_value.astream = boom
-        result = await syn_mod.synthesizer_node(
-            _state(["red_flag_screen"]), _config())
-    assert result["final_answer"].startswith(_opening())
-    assert any(e.get("severity") == "critical" for e in result.get("errors", []))
-
-
-def _kb_elbow():
-    return _tm("kb_search", [{"content": "Hold 30 seconds.", "similarity": 0.9,
-                              "source_type": "exercise_db",
-                              "document_title": "Elbow plank", "chunk_index": 0}])
-
-
-@pytest.mark.asyncio
-async def test_grader_appends_closing_lines_once():
-    from langgraph_agents.nodes import grader as grader_mod
-
-    tags = ["referral_advice", "evidence_citation", "scope_disclaimer"]
-    state = {"required_outputs": tags, "final_answer": "Tập Elbow plank nhé.",
-             "messages": [_kb_elbow()], "retry_count": 0, "total_tokens": 0}
-    sent: list = []
-    with patch.object(grader_mod, "get_stream_writer", return_value=sent.append):
-        result = await grader_mod.grader_node(state, _config())
-    referral = get_safety_text("referral_advice", "anne", "vi")
-    disclaimer = get_safety_text("scope_disclaimer", "anne", "vi")
+            _state(["evidence_citation"], [elbow_msg]), _config())
     source = "*Nguồn: thư viện bài tập của ECA — Elbow plank.*"
-    expected = "Tập Elbow plank nhé." + "".join(f"\n\n{line}" for line in
-                                               (referral, source, disclaimer))
-    assert result["final_answer"] == expected
-    tail = "".join(f"\n\n{line}" for line in (referral, source, disclaimer))
-    assert sent == [{"content": tail}]
-    for line in (referral, source, disclaimer):
-        assert result["final_answer"].count(line) == 1
+    # Appended exactly once, after the body.
+    assert result["final_answer"].count(source) == 1
+    assert result["final_answer"].endswith(source)
+    # One source token event on the wire.
+    source_events = [p for p in sent if source in p.get("content", "")]
+    assert len(source_events) == 1
 
 
-@pytest.mark.asyncio
-async def test_no_unverified_line_anywhere():
-    from langgraph_agents.nodes import grader as grader_mod
+# ── api/main.py: head before first body token, tail once, composed text ───
 
-    state = {"required_outputs": ["exercise_steps"],
-             "final_answer": "Tập nhẹ nhàng thôi.",
-             "messages": [], "retry_count": 1, "total_tokens": 0}
-    with patch.object(grader_mod, "get_stream_writer",
-                      return_value=lambda p: None):
-        result = await grader_mod.grader_node(state, _config())
-    assert "has not been verified" not in result["final_answer"]
-    assert "chưa được kiểm chứng" not in result["final_answer"]
+def _make_fake_astream_with_head_tail(tokens, final_answer):
+    """custom tokens, then synthesizer final_answer (no grader any more)."""
+
+    async def fake_stream(state, config, stream_mode=None):
+        yield ("updates", {"memory": {}})
+        yield ("updates", {"planner": {"required_outputs": []}})
+        for tok in tokens:
+            yield ("custom", {"content": tok})
+        yield ("updates", {"synthesizer": {
+            "final_answer": final_answer,
+            "total_tokens": len(final_answer),
+        }})
+
+    return fake_stream
 
 
-@pytest.mark.asyncio
-async def test_safety_tags_never_trigger_template_insertion():
-    from langgraph_agents.nodes import grader as grader_mod
+@pytest.mark.unit
+def test_head_before_first_body_token_and_tail_once(monkeypatch):
+    import langgraph_agents.api.main as api_module
+    from langgraph_agents.api.main import create_app
+    from langgraph_agents.api.auth import current_user_id, override_user
+    from fastapi.testclient import TestClient
 
-    state = {"required_outputs": ["referral_advice"],
-             "final_answer": "Tập nhẹ thôi.",
-             "messages": [], "retry_count": 0, "total_tokens": 0}
-    with patch.object(grader_mod, "get_stream_writer",
-                      return_value=lambda p: None):
-        result = await grader_mod.grader_node(state, _config())
-    assert result["final_answer"].startswith("Tập nhẹ thôi.")
+    from langgraph_agents.guardrail.pipeline import InputResult
+    from langgraph_agents.guardrail.stream import compose, head, tail
+    from langgraph_agents.guardrail.types import Verdict
+
+    mock_redis = MagicMock()
+    mock_redis.ping = AsyncMock(return_value=True)
+    mock_graph = MagicMock()
+    mock_graph.astream = _make_fake_astream_with_head_tail(
+        ["Chào ", "bạn"], "Chào bạn")
+    api_module._graph = mock_graph
+    api_module._health_redis = mock_redis
+
+    app = create_app()
+    app.dependency_overrides[current_user_id] = override_user(
+        "00000000-0000-0000-0000-000000000001")
+    client = TestClient(app)
+
+    try:
+        # Force an urgent verdict so the guardrail's head is emitted before
+        # the first body token. `run_input` is the verdict source main.py uses.
+        async def fake_run_input(ctx):
+            return InputResult(_verdict("emergency"))
+
+        monkeypatch.setattr(api_module.guardrail, "run_input", fake_run_input)
+
+        captured = {}
+
+        async def fake_write(*args, **kwargs):
+            captured.update(kwargs)
+            return "id-1"
+
+        monkeypatch.setattr(api_module, "write_turn_question", AsyncMock())
+        monkeypatch.setattr(api_module, "write_turn_answer", fake_write)
+        monkeypatch.setattr(api_module, "housekeep", AsyncMock())
+
+        resp = client.post("/chat", json={"query": "đau ngực"})
+        assert resp.status_code == 200
+
+        # Parse SSE: head must be the first token, tail the last, and the
+        # persisted/spoken text must equal compose(head, body, tail).
+        events = []
+        current_event = None
+        for line in resp.content.decode("utf-8").splitlines():
+            if line.startswith("event:"):
+                current_event = line[len("event:"):].strip()
+            elif line.startswith("data:"):
+                try:
+                    events.append((current_event,
+                                   json.loads(line[len("data:"):].strip())))
+                except json.JSONDecodeError:
+                    events.append((current_event, line[len("data:"):].strip()))
+            else:
+                current_event = None
+        token_events = [d for ev, d in events if ev == "token"]
+        joined = "".join(d.get("content", "") for d in token_events)
+
+        expected_head = head(_verdict("emergency"), "anne", "en")
+        expected_tail = tail(["referral_advice", "scope_disclaimer"], "anne",
+                             "en")
+        expected = compose(expected_head, "Chào bạn", expected_tail)
+        assert joined == expected, f"tokens={joined!r} != expected={expected!r}"
+        assert captured.get("assistant_answer") == expected
+    finally:
+        api_module._graph = None
+        api_module._health_redis = None
+        app.dependency_overrides.clear()
+

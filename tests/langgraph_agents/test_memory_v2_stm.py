@@ -364,21 +364,6 @@ async def test_prompt_blocks_log_reports_both_new_blocks(budgets, caplog):
         syn._build_session_summary(["Knee pain reported."]))
 
 
-@pytest.mark.asyncio
-async def test_prompt_blocks_log_reports_both_new_blocks_on_the_addition_pass(
-        budgets, caplog):
-    with caplog.at_level(logging.INFO, logger="langgraph.synthesizer"):
-        await _synth_messages(
-            user_instructions=["No overhead lifting"],
-            user_facts=["[2026-10-14] Vegan"],
-            session_summary=["Knee pain reported."],
-            retry_count=1, grader_feedback="- how often",
-            final_answer="Do heel slides.")
-    done = [r for r in caplog.records if r.getMessage() == "node_complete"]
-    assert len(done) == 1 and done[0].mode == "addition"
-    assert done[0].prompt_blocks["user_instructions"] > 0
-    assert done[0].prompt_blocks["user_facts"] > 0
-    assert done[0].prompt_blocks["session_summary"] > 0
 
 
 # ── Planner: facts in the user message, hint from user/assistant turns ───

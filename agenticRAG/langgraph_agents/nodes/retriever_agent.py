@@ -9,12 +9,10 @@ Decisions encoded:
   D26:   Motion NOT in retriever (Kimodo = separate node)
   D27:   Web-off + real-time = instance of no-source
   D28:   Top-k caps: kb=5, memory=3, web=3
-  D34:   Tag KHÔNG có red_flag_screen/referral_advice + web_search bật → gọi kb_search VÀ
-         search_medical SONG SONG (round 1), không chờ kb rỗng rồi mới thử web ở round 2 —
-         P2 hard-cap (route_after_retriever) drop tool_calls của round 2 vô điều kiện, nên
-         "kb rỗng → thử web" tuần tự KHÔNG BAO GIỜ chạy được trong ngân sách 2 round hiện có.
-         (Owner 23/07: đừng refuse câu hỏi PT phổ thông chỉ vì KB rỗng — vẫn giữ toggle làm
-         cổng chính, không bật web ngoài ý muốn user; không đổi MAX_RETRIEVER_ROUNDS)
+  D34:   Web fallback only on a routine, in-scope turn. A guardrail verdict of
+         EMERGENCY/SOON, or an out-of-scope message, never widens retrieval to
+         the web: the answer those turns need is the warning, and the two
+         sources must not disagree about urgency.
 """
 
 from __future__ import annotations
@@ -24,6 +22,7 @@ import time
 from langchain_core.messages import SystemMessage, HumanMessage
 from langchain_core.runnables import RunnableConfig
 
+from langgraph_agents.guardrail.handoff import current_verdict
 from langgraph_agents.nodes._errors import error_entry
 from langgraph_agents.state import AgentState, ErrorSeverity
 from langgraph_agents.llm import get_chat_model, extract_cache_tokens
@@ -190,9 +189,11 @@ async def retriever_agent_node(state: AgentState, config: RunnableConfig) -> dic
     # Web search toggle (D27): user config overrides retriever choice
     web_search_enabled = config["configurable"].get("web_search", False)
 
-    # D34: high-safety tags never get the kb-empty→web fallback, regardless of toggle.
-    _HIGH_SAFETY_TAGS = {"red_flag_screen", "referral_advice"}
-    allow_web_fallback = not (_HIGH_SAFETY_TAGS & set(required_outputs))
+    # D34: the web is a widening of retrieval, and an urgent or out-of-scope
+    # turn must not widen. The verdict decides, not planner tags: the planner
+    # stops emitting safety tags in Phase 4.
+    verdict = await current_verdict(config)
+    allow_web_fallback = verdict.level == "routine" and not verdict.out_of_scope
 
     from langgraph_agents.routing import failed_tool_names, retrieval_fault
 
@@ -218,6 +219,7 @@ async def retriever_agent_node(state: AgentState, config: RunnableConfig) -> dic
         "tags": required_outputs,
         "is_retry": is_retry,
         "web_search": web_search_enabled,
+        "level": verdict.level,
         "web_fallback_allowed": web_search_enabled and allow_web_fallback,
     })
 

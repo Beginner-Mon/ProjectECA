@@ -63,6 +63,7 @@ _DEFAULT_TEMPS = {
     "conversation": 0.7,
     "retriever": 0.0,
     "grader": 0.0,
+    "guardrail": 0.0,
     "memory": 0.0,
     "health_check": 0.0,
 }
@@ -104,14 +105,20 @@ _MAX_RETRIES = 1
 # work is retried on the next turn anyway.
 _ROLE_EXTRA_BODY: dict[str, dict] = {
     "grader": {"thinking": {"type": "disabled"}},
+    "guardrail": {"thinking": {"type": "disabled"}},
     "memory": {"thinking": {"type": "disabled"}},
 }
 _ROLE_TIMEOUT: dict[str, float] = {
     "grader": 5.0,
+    # Triage is one short JSON verdict on the critical path of every turn: no
+    # hidden reasoning, and a hard cap short enough that a stuck provider cannot
+    # hold the first token. Past it the turn runs as routine (fallback policy).
+    "guardrail": 4.0,
     "memory": 15.0,
 }
 _ROLE_MAX_RETRIES: dict[str, int] = {
     "grader": 0,
+    "guardrail": 0,
     "memory": 0,
 }
 
@@ -308,7 +315,7 @@ def _apply_circuit_breaker(model: ChatOpenAI, role: str) -> ChatOpenAI:
     return model
 
 
-@lru_cache(maxsize=8)
+@lru_cache(maxsize=16)
 def _eca_chat_model(role: str, *, temperature: float | None = None):
     """Return a LangChain ChatModel for the given node role, guarded by circuit breaker.
 
@@ -355,7 +362,7 @@ def _eca_chat_model(role: str, *, temperature: float | None = None):
 
 # ── BYOK (user-supplied key replaces the ECA key for this request) ────
 
-_ECA_ONLY_ROLES = frozenset({"grader", "memory", "health_check"})
+_ECA_ONLY_ROLES = frozenset({"grader", "memory", "health_check", "guardrail"})
 _ROLE_NEEDS = {"synthesizer": "answer", "planner": "tools", "retriever": "tools"}  # default "text"
 
 
@@ -365,10 +372,11 @@ def get_chat_model(role: str, *, temperature: float | None = None):
     Request without ``llm`` behaves exactly as before: ``current_request_llm``
     is ``None`` and this returns the cached ECA model. With a binding, the
     planner / retriever / synthesizer run on the user's key when the probed
-    capabilities cover the role; grader, memory and health_check always stay
-    on ECA. Grader so every user is judged by the same clinical standard;
-    memory because a user's own key is for their chat turn, not for memory
-    written on their behalf.
+    capabilities cover the role; grader, guardrail, memory and health_check
+    always stay on ECA. Grader so every user is judged by the same clinical
+    standard; guardrail because a user's key must never decide whether their
+    own message gets a safety warning; memory because a user's own key is for
+    their chat turn, not for memory written on their behalf.
     """
     req = current_request_llm()
     if (

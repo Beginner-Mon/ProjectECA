@@ -11,6 +11,11 @@ from langgraph_agents.sources import CITATIONS, SOURCE_LINE_PREFIX
 # ── Mẫu an toàn mặc định ─────────────────────────────────────────────────
 
 DEFAULT_SAFETY_TEMPLATES: dict[str, str] = {
+    "emergency_screen": (
+        "**Cảnh báo quan trọng:** Triệu chứng bạn mô tả có thể là tình trạng "
+        "cấp cứu. Bạn hãy NGỪNG tập ngay và đến cơ sở cấp cứu gần nhất hoặc "
+        "gọi 115."
+    ),
     "red_flag_screen": (
         "**Cảnh báo quan trọng:** Triệu chứng bạn mô tả có thể là dấu hiệu "
         "của một tình trạng nghiêm trọng. Bạn nên NGỪNG tập luyện ngay và đi "
@@ -36,6 +41,11 @@ DEFAULT_SAFETY_TEMPLATES: dict[str, str] = {
 # No emoji, matching the Vietnamese set: emphasis is carried by bold text, so a
 # terminal or screen reader that drops the glyph loses nothing.
 DEFAULT_SAFETY_TEMPLATES_EN: dict[str, str] = {
+    "emergency_screen": (
+        "**Important warning:** the symptoms you describe may be an emergency. "
+        "Please STOP exercising now and go to the nearest emergency department "
+        "or call your local emergency number."
+    ),
     "red_flag_screen": (
         "**Important warning:** the symptoms you describe may indicate a "
         "serious condition. Please STOP exercising now and see a doctor for a "

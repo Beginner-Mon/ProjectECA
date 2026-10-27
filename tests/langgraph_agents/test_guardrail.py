@@ -339,11 +339,48 @@ async def test_current_verdict_is_routine_when_the_task_failed():
     assert verdict.source == "fallback"
 
 
+async def test_current_verdict_never_caches_without_a_request_id(monkeypatch):
+    """A missing/"-" id cannot tell two turns apart; caching would leak verdicts."""
+    calls = []
+
+    async def _fake_run_input(ctx):
+        calls.append(ctx.request_id)
+        return InputResult(_verdict("soon"))
+
+    monkeypatch.setattr("langgraph_agents.guardrail.handoff.run_input", _fake_run_input)
+
+    config = {"configurable": {"request_id": "-", "query": "đau gối"}}
+    first = await current_verdict(config)
+    second = await current_verdict(config)
+    assert first.level == "soon" and second.level == "soon"
+    assert calls == ["-", "-"]
+
+
+async def test_current_verdict_never_caches_when_request_id_is_absent(monkeypatch):
+    calls = []
+
+    async def _fake_run_input(ctx):
+        calls.append(ctx.request_id)
+        return InputResult(_verdict("routine"))
+
+    monkeypatch.setattr("langgraph_agents.guardrail.handoff.run_input", _fake_run_input)
+
+    config = {"configurable": {"query": "đau gối"}}
+    await current_verdict(config)
+    await current_verdict(config)
+    assert calls == ["-", "-"]
+
+
 # ── 9. The guardrail never runs on a user's own key ──────────────────────
 
 
 def test_guardrail_is_eca_only():
     assert "guardrail" in llm_module._ECA_ONLY_ROLES
+
+
+def test_guardrail_role_timeout_is_ten_seconds():
+    """The spike measures gpt-oss-120b's classification, not the 4 s clock."""
+    assert llm_module.role_timeout("guardrail") == 10.0
 
 
 # ── Check protocol sanity ────────────────────────────────────────────────

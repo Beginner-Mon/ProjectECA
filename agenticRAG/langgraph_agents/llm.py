@@ -111,9 +111,12 @@ _ROLE_EXTRA_BODY: dict[str, dict] = {
 _ROLE_TIMEOUT: dict[str, float] = {
     "grader": 5.0,
     # Triage is one short JSON verdict on the critical path of every turn: no
-    # hidden reasoning, and a hard cap short enough that a stuck provider cannot
-    # hold the first token. Past it the turn runs as routine (fallback policy).
-    "guardrail": 4.0,
+    # hidden reasoning, and a hard cap that a stuck provider cannot hold the
+    # first token past. Ten seconds rather than four: Groq gpt-oss-120b reasons
+    # a little even at low effort, and the spikes must measure its classification,
+    # not the clock. Past it the turn runs as routine (fallback policy) and the
+    # spike counts the call as a timeout.
+    "guardrail": 10.0,
     "memory": 15.0,
 }
 _ROLE_MAX_RETRIES: dict[str, int] = {

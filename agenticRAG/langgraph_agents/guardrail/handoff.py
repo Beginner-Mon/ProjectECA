@@ -11,7 +11,10 @@ Two callers, two shapes:
 
 The cache is small on purpose: it exists for the lifetime of one graph turn,
 and the request ids are never reused. 256 entries is a generous upper bound on
-concurrent turns, not a memory strategy.
+concurrent turns, not a memory strategy. A turn with no request id (the local
+probes and older tests pass `"-"`) is never cached: without a key there is no
+way to tell two turns apart, and a cached routine verdict would silence a
+later urgent one.
 """
 
 from __future__ import annotations
@@ -50,7 +53,7 @@ def clear_cache() -> None:
 async def current_verdict(config) -> Verdict:
     """This turn's verdict. Never raises: a broken guardrail is a routine turn."""
     cfg = _configurable(config)
-    request_id = cfg.get("request_id", "-")
+    request_id = cfg.get("request_id") or "-"
 
     task = cfg.get("guardrail_task")
     if task is not None:
@@ -64,9 +67,13 @@ async def current_verdict(config) -> Verdict:
             })
             return fallback_verdict()
 
-    cached = _CACHE.get(request_id)
-    if cached is not None:
-        return cached
+    # No id, no cache: two turns must never share a verdict by accident. Local
+    # probes and older tests pass "-"; production always sets a request id.
+    cacheable = request_id != "-"
+    if cacheable:
+        cached = _CACHE.get(request_id)
+        if cached is not None:
+            return cached
 
     ctx = CheckContext(
         message=cfg.get("query") or "",
@@ -76,4 +83,4 @@ async def current_verdict(config) -> Verdict:
         request_id=request_id,
     )
     verdict = (await run_input(ctx)).verdict
-    return _remember(request_id, verdict)
+    return _remember(request_id, verdict) if cacheable else verdict

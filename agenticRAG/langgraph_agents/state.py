@@ -63,12 +63,6 @@ class AgentState(TypedDict):
     # Dynamic clarify (tool ambiguous) is handled by synthesizer — M.2b/D22
     needs_clarification: bool
 
-    # ── Grader output (tag-driven, rule-based — M.3) ───────────────────
-    grader_result: str               # "pass" | "retry" | "pass_with_warning"
-    grader_feedback: Optional[str]   # các mục thiếu, đưa cho synthesizer ở lần viết thêm
-    retry_count: int                 # 0 → max 1 (D6: safety no retry, quality retry 1)
-    grader_detail: dict              # mục kiểm → "ok" | "synth_missed" | "source_silent" | "no_evidence"
-
     # ── Synthesizer / error_handler output ─────────────────────────────
     final_answer: str
 

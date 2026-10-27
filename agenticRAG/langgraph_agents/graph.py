@@ -1,19 +1,19 @@
-"""LangGraph StateGraph — M.2 topology with 2 independent gates (D2, D15).
+"""LangGraph StateGraph — the agent graph with the retrieval gate (D2, D15).
 
-Build:  M.9 step order — memory → planner → retriever → kimodo → synthesizer → grader.
-Gates:  Cổng RETRIEVER ⟸ needs_retrieval; Cổng GRADER ⟸ required_outputs != [] (D15).
+Build:  M.9 step order — memory → planner → retriever → kimodo → synthesizer.
+Gates:  Cổng RETRIEVER ⟸ needs_retrieval. The safety decisions live outside
+        the graph, in `guardrail/`: the graph only reads the turn's verdict.
         Motion = Kimodo node riêng, hard edge (D3, D26).
         Kimodo runs after retriever (sequential — both write to messages independently;
         true parallelism via Send() is a future optimization for Phase 7).
 
-Nodes (8 total):
+Nodes (7 total):
   memory          — assemble context (M.5)
   planner         — 3-axis intent (M.1)
   retriever_agent — self-choose tools, parallel tool calls (M.2)
   tools           — ToolNode (kb_search, search_medical)
   kimodo          — Kimodo MCP motion gen (D26)
   synthesizer     — universal responder (M.3b)
-  grader          — tag-driven quality check (M.3)
   error_handler   — graceful degradation
 """
 
@@ -31,13 +31,11 @@ from langgraph_agents.nodes.planner import planner_node
 from langgraph_agents.nodes.retriever_agent import retriever_agent_node, RETRIEVER_BASE_TOOLS
 from langgraph_agents.nodes.kimodo import kimodo_node
 from langgraph_agents.nodes.synthesizer import synthesizer_node
-from langgraph_agents.nodes.grader import grader_node
 from langgraph_agents.nodes.error_handler import error_handler_node
 from langgraph_agents.routing import (
     route_after_memory,
     route_after_retriever,
     route_after_synthesizer,
-    route_after_grader,
     route_after_tools,
     check_errors,
     wants_motion,
@@ -46,7 +44,7 @@ from langgraph_agents.shared.logging import get_logger
 
 _logger = get_logger("langgraph.graph")
 
-_RECURSION_LIMIT = 20  # planner→retriever⇄tools→kimodo→synth⇄grader (viết thêm một lần)
+_RECURSION_LIMIT = 20  # planner→retriever⇄tools→kimodo→synth
 
 
 # ── Single routing function from planner (one conditional edge only) ────
@@ -181,7 +179,6 @@ async def build_graph_async():
     g.add_node("tools", _make_guarded_tools_node(ToolNode(all_tools, handle_tool_errors=_tool_error_payload)))
     g.add_node("kimodo", kimodo_node)
     g.add_node("synthesizer", synthesizer_node)
-    g.add_node("grader", grader_node)
     g.add_node("error_handler", error_handler_node)
 
     # ── Edges ─────────────────────────────────────────────────────────
@@ -228,17 +225,10 @@ async def build_graph_async():
     # ── Kimodo → synthesizer ──────────────────────────────────────────
     g.add_edge("kimodo", "synthesizer")
 
-    # ── Synthesizer → grader gate (D15: Cổng GRADER ⟸ required_outputs) ──
+    # ── Synthesizer → END (no grader gate any more; safety is the guardrail) ──
     g.add_conditional_edges("synthesizer", route_after_synthesizer, {
-        "grader": "grader",
         "end": END,
         "error_handler": "error_handler",
-    })
-
-    # ── Grader → viết thêm (synthesizer) | END ────────────────────────
-    g.add_conditional_edges("grader", route_after_grader, {
-        "synthesizer": "synthesizer",
-        "end": END,
     })
 
     # ── Error handler → END ───────────────────────────────────────────

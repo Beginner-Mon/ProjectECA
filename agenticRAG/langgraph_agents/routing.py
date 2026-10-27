@@ -144,32 +144,12 @@ def route_after_tools(state: AgentState) -> str:
     return _after_retrieval(state)
 
 
-# ── After synthesizer — GRADER GATE ───────────────────────────────────────
-# Cổng GRADER ⟸ required_outputs != [] (D2, D15)
-# Independent from retriever gate — MUST run even when retriever was skipped.
-# This closes the safety bug: "đau ngực" (no retrieval, safety tag) still gets
-# grader enforcement.
+# ── After synthesizer — no grader gate any more ──
+# Synthesizer → END (or error_handler on CRITICAL). Safety is the guardrail,
+# which reads the verdict outside the graph; nothing here enforces tags.
 
 def route_after_synthesizer(state: AgentState) -> str:
-    """Synthesizer → grader | END.
-
-    Cổng GRADER ⟸ required_outputs != [] (D2, D15).
-    Empty tags → fast-path END (D8: chat/general/clarify no contract).
-    """
+    """Synthesizer → error_handler | END."""
     if check_errors(state) == "error_handler":
         return "error_handler"
-
-    required_outputs = state.get("required_outputs", [])
-    if required_outputs:
-        return "grader"
-    return "end"
-
-
-# ── After grader ──────────────────────────────────────────────────────────
-
-def route_after_grader(state: AgentState) -> str:
-    """Grader → synthesizer (viết thêm phần thiếu, một lần) | END."""
-    result = state.get("grader_result", "pass")
-    if result == "retry":
-        return "synthesizer"
     return "end"

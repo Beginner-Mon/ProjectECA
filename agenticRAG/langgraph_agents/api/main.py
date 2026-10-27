@@ -352,7 +352,7 @@ def create_app() -> FastAPI:
         if foreign:
             raise HTTPException(400, "image_keys must be your own uploads")
 
-        state = {"messages": [], "errors": [], "retry_count": 0, "total_tokens": 0}
+        state = {"messages": [], "errors": [], "total_tokens": 0}
         if req.image_keys:
             state["image_keys"] = list(req.image_keys)
         # Whose sheet this turn may read (plan T8b). Bound here — next to the

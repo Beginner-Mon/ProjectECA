@@ -1,3 +1,5 @@
+INVALID — measured with reasoning_effort=low and max_tokens=400 forced by the runner; superseded by A5-nemotron-p4.
+
 # Spike A — guardrail triage, pilot / A1-gptoss
 
 - commit `df7b45c9ee`, **Groq openai/gpt-oss-120b**, run 2026-10-27T09:44:13+00:00, repeats 3, concurrency 4

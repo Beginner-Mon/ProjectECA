@@ -35,6 +35,10 @@ def test_every_lazy_import_is_listed():
     found: dict[str, str] = {}
 
     for path in sorted(PACKAGE_ROOT.rglob("*.py")):
+        # The paper's evaluation scripts run from their own folder with sibling
+        # imports and their own clients; the service never imports them.
+        if path.relative_to(PACKAGE_ROOT).as_posix().startswith("local_tests/safety_eval/"):
+            continue
         tree = ast.parse(path.read_text(encoding="utf-8-sig"))
         for func in ast.walk(tree):
             if not isinstance(func, (ast.FunctionDef, ast.AsyncFunctionDef)):

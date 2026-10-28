@@ -80,6 +80,10 @@ def _imported_modules() -> dict[str, list[str]]:
     imports: dict[str, list[str]] = {}
 
     for path in sorted(PACKAGE_ROOT.rglob("*.py")):
+        # The paper's evaluation scripts run from their own folder with sibling
+        # imports and their own clients; the service never imports them.
+        if path.relative_to(PACKAGE_ROOT).as_posix().startswith("local_tests/safety_eval/"):
+            continue
         try:
             tree = ast.parse(path.read_text(encoding="utf-8-sig"))
         except (SyntaxError, UnicodeDecodeError):  # pragma: no cover

@@ -125,7 +125,15 @@ _IMAGE_TAG_PARAM = "/vva/agent/image-tag"
 # CloudFormation's {{resolve:ssm-secure}} dynamic reference is not supported for
 # them. llm.py reads these at run time; see _secret_from_ssm there.
 _DEFAULT_DEEPSEEK_PARAM = "/vva/llm/deepseek-api-key"
+_DEFAULT_OPENAI_PARAM = "/vva/llm/openai-api-key"
 _DEFAULT_GEMINI_PARAM = "/vva/llm/gemini-api-keys"
+
+# ECA's model provider (LLM_PROVIDER in llm.py). Kept here and not only as a deploy
+# flag, so a later deploy done for another reason cannot switch it back by
+# accident. To move to OpenAI: store the key under _DEFAULT_OPENAI_PARAM first
+# (without it the agent answers through the Gemini fallback), then set this to
+# "openai" and `cdk deploy VvaAgentStack`. Plan: docs/plans/llm-openai-switch.md.
+_LLM_PROVIDER = "deepseek"
 
 # Same production pool the CRUD function verifies against. Public identifiers —
 # they ship inside the frontend bundle — so they are defaults rather than
@@ -231,7 +239,11 @@ class AgentStack(Stack):
         allowed_origins = resolve_origins(self.node)
         dsn_param = ctx("crud_dsn_param") or _DEFAULT_DSN_PARAM
         deepseek_param = ctx("deepseek_param") or _DEFAULT_DEEPSEEK_PARAM
+        openai_param = ctx("openai_param") or _DEFAULT_OPENAI_PARAM
         gemini_param = ctx("gemini_param") or _DEFAULT_GEMINI_PARAM
+        llm_provider = ctx("llm_provider") or _LLM_PROVIDER
+        if llm_provider not in ("deepseek", "openai"):
+            raise ValueError(f"llm_provider must be deepseek or openai, not {llm_provider!r}")
         motion_signing_key_param = (
             ctx("motion_signing_key_param") or _DEFAULT_MOTION_SIGNING_KEY_PARAM
         )
@@ -327,7 +339,9 @@ class AgentStack(Stack):
         # the fact, under `if`.
         agent_environment = {
             "VVA_PG_DSN_PARAM": dsn_param,
+            "LLM_PROVIDER": llm_provider,
             "DEEPSEEK_API_KEY_PARAM": deepseek_param,
+            "OPENAI_API_KEY_PARAM": openai_param,
             "GEMINI_API_KEYS_PARAM": gemini_param,
             # VvaUploadsStack, by name (no export): the vision node reads the
             # photos a turn carries (SCRUM-45).
@@ -450,7 +464,7 @@ class AgentStack(Stack):
             resources=[
                 f"arn:aws:ssm:{self.region}:{self.account}:parameter{param}"
                 for param in (
-                    dsn_param, deepseek_param, gemini_param,
+                    dsn_param, deepseek_param, openai_param, gemini_param,
                     motion_signing_key_param, motion_hash_secret_param,
                 )
             ],

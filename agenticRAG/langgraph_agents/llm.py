@@ -3,14 +3,20 @@
 Centralizes model selection per node role. Replaces llm_gateway.py.
 All nodes import from here instead of init-ing ChatModels ad-hoc.
 
-Provider: **DeepSeek** (OpenAI-compatible API).
+Provider: **DeepSeek** by default, **OpenAI** with LLM_PROVIDER=openai. Both are
+called through the OpenAI-compatible API.
 
 Env:
-  DEEPSEEK_API_KEY        — required for live LLM calls
+  LLM_PROVIDER            — deepseek (default) or openai
+  DEEPSEEK_API_KEY        — required for live LLM calls on DeepSeek
+                            (or DEEPSEEK_API_KEY_PARAM, an SSM SecureString name)
   DEEPSEEK_BASE_URL       — optional override (default https://api.deepseek.com)
-  DEEPSEEK_MODEL          — heavy model, used by synthesizer (default deepseek-v4-pro)
-  DEEPSEEK_MODEL_FAST     — fast model, used by planner/retriever/conversation
-                            (default deepseek-v4-flash)
+  DEEPSEEK_MODEL          — heavy model (default deepseek-v4-pro; no role uses it now)
+  DEEPSEEK_MODEL_FAST     — fast model, used by every role (default deepseek-v4-flash)
+  OPENAI_API_KEY          — the same for OpenAI (or OPENAI_API_KEY_PARAM)
+  OPENAI_BASE_URL, OPENAI_MODEL, OPENAI_MODEL_FAST — as above (default gpt-6-luna)
+  OPENAI_REASONING_EFFORT, OPENAI_REASONING_EFFORT_<ROLE>
+                          — reasoning effort on OpenAI (default none)
   GEMINI_API_KEYS         — optional, comma-separated. First key is used to build a
                             one-shot Gemini fallback model (get_fallback_chat_model)
                             for planner/synthesizer when the primary DeepSeek call
@@ -55,6 +61,49 @@ load_env()
 _DEFAULT_BASE_URL = "https://api.deepseek.com"
 _DEFAULT_HEAVY_MODEL = "deepseek-v4-pro"
 _DEFAULT_FAST_MODEL = "deepseek-v4-flash"
+
+# ECA's own model provider (BYOK users bring their own). LLM_PROVIDER picks one;
+# each keeps its own variables, so switching back is one value and the other
+# provider's key can stay where it is. Plan: docs/plans/llm-openai-switch.md.
+_PROVIDERS: dict[str, dict[str, str]] = {
+    "deepseek": {
+        "base_url": _DEFAULT_BASE_URL, "base_url_env": "DEEPSEEK_BASE_URL",
+        "heavy": _DEFAULT_HEAVY_MODEL, "heavy_env": "DEEPSEEK_MODEL",
+        "fast": _DEFAULT_FAST_MODEL, "fast_env": "DEEPSEEK_MODEL_FAST",
+        "key_env": "DEEPSEEK_API_KEY", "key_param_env": "DEEPSEEK_API_KEY_PARAM",
+    },
+    "openai": {
+        "base_url": "https://api.openai.com/v1", "base_url_env": "OPENAI_BASE_URL",
+        "heavy": "gpt-6-luna", "heavy_env": "OPENAI_MODEL",
+        "fast": "gpt-6-luna", "fast_env": "OPENAI_MODEL_FAST",
+        "key_env": "OPENAI_API_KEY", "key_param_env": "OPENAI_API_KEY_PARAM",
+    },
+}
+
+# OpenAI's reasoning models (gpt-6-luna) take reasoning_effort instead of a
+# temperature and accept only their default temperature. "none" keeps the first
+# token fast; a role gets more with OPENAI_REASONING_EFFORT_<ROLE> (every role:
+# OPENAI_REASONING_EFFORT). Reasoning tokens count against the output ceiling,
+# so a role that reasons gets this much more room.
+_REASONING_HEADROOM = 2048
+
+
+def llm_provider() -> str:
+    """ECA's provider: LLM_PROVIDER, default deepseek.
+
+    An unknown value falls back to DeepSeek with a warning instead of raising:
+    a typo in a deploy setting must not turn every chat turn into an error.
+    """
+    name = (os.getenv("LLM_PROVIDER") or "deepseek").strip().lower()
+    if name not in _PROVIDERS:
+        logger.warning("llm_provider_unknown", extra={"value": name, "using": "deepseek"})
+        return "deepseek"
+    return name
+
+
+def _reasoning_effort(role: str) -> str:
+    return (os.getenv(f"OPENAI_REASONING_EFFORT_{role.upper()}")
+            or os.getenv("OPENAI_REASONING_EFFORT") or "none").strip().lower()
 
 # Temperature per role kept as-is; DeepSeek honors the OpenAI temperature param.
 _DEFAULT_TEMPS = {
@@ -136,11 +185,13 @@ _FALLBACK_MODEL_FAST = "gemini-2.5-flash"
 
 
 def _model_for_role(role: str) -> str:
-    """Resolve model name per role. Heavy roles use DEEPSEEK_MODEL, others use
-    DEEPSEEK_MODEL_FAST. Both can be env-overridden."""
+    """Resolve model name per role for the current provider. Heavy roles use its
+    heavy variable (DEEPSEEK_MODEL / OPENAI_MODEL), others its fast one
+    (DEEPSEEK_MODEL_FAST / OPENAI_MODEL_FAST)."""
+    cfg = _PROVIDERS[llm_provider()]
     if role in _HEAVY_ROLES:
-        return os.getenv("DEEPSEEK_MODEL", _DEFAULT_HEAVY_MODEL)
-    return os.getenv("DEEPSEEK_MODEL_FAST", _DEFAULT_FAST_MODEL)
+        return os.getenv(cfg["heavy_env"], cfg["heavy"])
+    return os.getenv(cfg["fast_env"], cfg["fast"])
 
 
 def _timeout_for_role(role: str) -> float:
@@ -203,17 +254,18 @@ def _secret_from_ssm(param: str) -> str | None:
 
 
 def _resolve_api_key() -> str | None:
-    """DeepSeek key: env first, then SSM.
+    """The current provider's key (DEEPSEEK_* or OPENAI_*): env first, then SSM.
 
     Env wins so a developer exporting a scratch key is not silently overridden
     by whatever the deployment is configured with — the same precedence
     db/postgres.py applies to the DSN.
     """
-    direct = os.getenv("DEEPSEEK_API_KEY")
+    cfg = _PROVIDERS[llm_provider()]
+    direct = os.getenv(cfg["key_env"])
     if direct:
         return direct
 
-    param = os.getenv("DEEPSEEK_API_KEY_PARAM")
+    param = os.getenv(cfg["key_param_env"])
     return _secret_from_ssm(param) if param else None
 
 
@@ -312,33 +364,45 @@ def _apply_circuit_breaker(model: ChatOpenAI, role: str) -> ChatOpenAI:
 def _eca_chat_model(role: str, *, temperature: float | None = None):
     """Return a LangChain ChatModel for the given node role, guarded by circuit breaker.
 
-    Cached per (role, temperature). Build via ChatOpenAI pointing at the DeepSeek
-    OpenAI-compatible endpoint. Patches ainvoke/astream with per-role circuit breaker.
+    Cached per (role, temperature). Build via ChatOpenAI pointing at the
+    provider's OpenAI-compatible endpoint. Patches ainvoke/astream with per-role
+    circuit breaker.
     """
+    provider = llm_provider()
+    cfg = _PROVIDERS[provider]
     model_name = _model_for_role(role)
     temp = _DEFAULT_TEMPS.get(role, 0.7) if temperature is None else temperature
     timeout = role_timeout(role)
     max_retries = _ROLE_MAX_RETRIES.get(role, _MAX_RETRIES)
     max_tokens = _max_tokens_for_role(role)
+    base_url = os.getenv(cfg["base_url_env"], cfg["base_url"])
+    host = urlsplit(base_url).hostname or ""
+    # `thinking` is a DeepSeek-only field: other OpenAI-compatible hosts (Groq,
+    # used for benchmarks) reject it with 400 "property is unsupported".
+    extra_kwargs: dict[str, Any] = (
+        {"extra_body": _ROLE_EXTRA_BODY[role]}
+        if host.endswith("deepseek.com") and role in _ROLE_EXTRA_BODY
+        else {}
+    )
+    effort = None
+    if host.endswith("openai.com"):
+        effort = _reasoning_effort(role)
+        temp = None    # gpt-6-luna rejects any temperature but its default
+        extra_kwargs["reasoning_effort"] = effort
+        extra_kwargs["stream_usage"] = True    # token counts (and cache reads) in streams
+        if effort != "none" and max_tokens is not None:
+            max_tokens += _REASONING_HEADROOM
     logger.info("llm_init", extra={
-        "role": role, "model": model_name, "temperature": temp,
-        "timeout": timeout, "max_retries": max_retries, "max_tokens": max_tokens,
+        "role": role, "provider": provider, "model": model_name, "temperature": temp,
+        "reasoning_effort": effort, "timeout": timeout, "max_retries": max_retries,
+        "max_tokens": max_tokens,
     })
     api_key = _resolve_api_key()
     if not api_key:
-        logger.warning("deepseek_key_missing", extra={
+        logger.warning(f"{provider}_key_missing", extra={
             "role": role, "action": "using_gemini_fallback",
         })
         return get_fallback_chat_model(role, primary=True)
-    base_url = os.getenv("DEEPSEEK_BASE_URL", _DEFAULT_BASE_URL)
-    # `thinking` is a DeepSeek-only field: other OpenAI-compatible hosts (Groq,
-    # used for benchmarks) reject it with 400 "property is unsupported".
-    on_deepseek = (urlsplit(base_url).hostname or "").endswith("deepseek.com")
-    extra_kwargs = (
-        {"extra_body": _ROLE_EXTRA_BODY[role]}
-        if on_deepseek and role in _ROLE_EXTRA_BODY
-        else {}
-    )
     model = ChatOpenAI(
         model=model_name,
         temperature=temp,

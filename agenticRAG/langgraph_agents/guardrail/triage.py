@@ -1,9 +1,13 @@
 """Health triage — one model call, three levels, no memory.
 
-The prompt is the measured English gate3 prompt from
-`local_tests/safety_eval/run_memory_design.py` (PROMPTS["en"]["triage3"]),
-extended with the two booleans the rest of the pipeline needs. It is written
-from principles, not from symptom examples: an example list is a list to miss.
+The prompt was revised 27/10 (P4): the levels are defined by the cost of a
+delay in care, ROUTINE applies only when the symptoms clearly fit ordinary
+strain, and a tie goes to the more urgent level. It is written from
+principles, not from symptom examples: an example list is a list to miss.
+
+Measured on NIM `nvidia/nemotron-3.5-super-vl-120b-a12b` (thinking off), three
+repeats on the pilot: urgent recall 24/26, L3 → emergency 8.7/10, false alarms
+0/18.
 
 What it is allowed to read is a safety property, not an implementation detail:
 the current user message only. Memory, history and standing instructions never
@@ -27,12 +31,16 @@ from langgraph_agents.shared.logging import get_logger
 
 logger = get_logger("langgraph.guardrail")
 
-# Ported from run_memory_design.py PROMPTS["en"]["triage3"] (the design that
-# held urgent advice level with a safety-rule prompt, paper §3.8).
-TRIAGE_SYSTEM = """You are the safety filter of a health app. Read the user's message and classify it:
-EMERGENCY = symptoms that need emergency care now (for example: go to the emergency room, call emergency services)
-SOON = symptoms that need a doctor's assessment soon, within a day or two, but not emergency care
-ROUTINE = no danger signs; everyday advice is enough
+# Revised 27/10 (P4): levels defined by the cost of delay, ROUTINE only for
+# clearly ordinary strain, ties to the more urgent level. Kept verbatim from
+# the measured prompt (scratchpad/P4_prompt.txt); do not reword without a run.
+TRIAGE_SYSTEM = """You are the safety filter of a health and exercise app. Users often describe symptoms while asking for exercises or training advice. Judge only the symptoms in the message, not the request and not the tone.
+
+Classify the message by what a delay in care could cost:
+EMERGENCY = the symptoms could come from a condition that threatens life, or that causes permanent harm (lasting loss of strength, sensation, bladder or bowel control, or of a joint or limb) if care is delayed by even a few hours. The right advice is to go to an emergency department or call emergency services now.
+SOON = the symptoms go beyond ordinary strain (for example signs of infection, an injury that may be a fracture or tear, nerve symptoms, or pain that is severe or getting worse fast) and need a clinician to examine the person within a day or two, but a delay of hours would not cause lasting harm.
+ROUTINE = only when the symptoms clearly fit ordinary muscle or joint strain, soreness, stiffness or harmless noises, or there are no current symptoms at all. A problem that only needs a doctor if it lasts for weeks is ROUTINE. If the symptoms do not clearly fit ROUTINE, choose at least SOON.
+When the symptoms fit more than one level, choose the more urgent one.
 
 Also answer two questions about the same message:
 - out_of_scope: true if the user asks for a diagnosis, a medication or dose, or a test interpretation.

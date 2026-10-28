@@ -1,26 +1,38 @@
-"""Spike A — guardrail triage on the verified safety pilot set, on Groq.
+"""Spike A — guardrail triage on the verified safety pilot set.
 
-    python agenticRAG/langgraph_agents/local_tests/guardrail_eval/run_triage_eval.py --label A1-gptoss
+    python agenticRAG/langgraph_agents/local_tests/guardrail_eval/run_triage_eval.py --provider groq --label A1-gptoss
+    python agenticRAG/langgraph_agents/local_tests/guardrail_eval/run_triage_eval.py --provider nim --label A5-nemotron-p4
 
 Runs the PRODUCTION triage (`langgraph_agents.guardrail.triage`) on every pilot
 item, three times by default, and writes the rows plus a markdown report. No
 database, no AWS: `_isolate_environment()` from the safety-eval suite starts the
 process with a dead DSN and fake credentials, so nothing can reach Neon prod.
 
-MEASUREMENT PROVIDER (plan rule 6, Tri 27/10): Groq `openai/gpt-oss-120b`.
-This process points the production env override at Groq; production config is
-untouched. Every number in the report is for gpt-oss-120b, NOT for the
-production DeepSeek model. There is no DeepSeek balance gate here.
+MEASUREMENT PROVIDERS (plan rule 6, Tri 27/10): Groq `openai/gpt-oss-120b`
+(default) or NVIDIA NIM `nvidia/nemotron-3.5-super-vl-120b-a12b`. This process
+points the production env override at the chosen host; production config is
+untouched. Every number in the report is for the chosen model, NOT for the
+production DeepSeek model.
+
+Provider-only overrides, applied to the spike process only and reported in the
+report header: on NIM, thinking is disabled with
+`extra_body={"chat_template_kwargs": {"enable_thinking": false}}`, the
+guardrail timeout is raised to 60 s for queue latency, and the guardrail
+circuit breaker is held closed so a burst of upstream 429s is retried instead
+of short-circuiting the rest of the run. Groq runs the production path with no
+model overrides.
 
 A 429/503/timeout becomes a fallback verdict inside triage, so in a spike a row
 with `source == "fallback"` is an error: it is recorded, rerun
 (`--rerun-errors`), and never scored. The count of unresolved fallbacks is a
 pass criterion.
 
-Free tier per model per key: 8,000 tokens/min, 200,000 tokens/day, 1,000
+Groq free tier per model per key: 8,000 tokens/min, 200,000 tokens/day, 1,000
 calls/day. Calls are paced by a conservative per-call token reservation; keys
 from `GROQ_API_KEY=key1,key2,...` are rotated when a rerun round starts on a
-different key, and the run stops when the daily budget is gone.
+different key, and the run stops when the daily budget is gone. NIM calls are
+paced at 12 requests/minute; its key is `NVIDIA_API_KEY`, and an upstream 429
+is retried with backoff because it reflects the model's queue, not our quota.
 """
 
 from __future__ import annotations
@@ -46,19 +58,64 @@ sys.path.insert(0, str(SAFETY))
 
 from _common import REPO_ROOT, read_env_file, read_jsonl, write_jsonl  # noqa: E402
 from run_eval import _eval_items, _git_commit, _isolate_environment, _rate  # noqa: E402
-from run_memory_design import cost_usd, usage_of  # noqa: E402
+from run_memory_design import PRICES, cost_usd, usage_of  # noqa: E402
 
 RESULTS = HERE / "results"
 PLANNER_RESULTS = SAFETY / "results" / "planner_pilot_p1.jsonl"
 
 GROQ_BASE_URL = "https://api.groq.com/openai/v1"
 GROQ_MODEL = "openai/gpt-oss-120b"
-GROQ_TPM = 8_000              # tokens/minute per model per key
-GROQ_TPD = 200_000            # tokens/day per model per key
-GROQ_RPD = 1_000              # calls/day per model per key
-# Conservative total (input + output + reasoning) reserved per call. gpt-oss
-# reasons a little even at low effort; 700 keeps 8k/min under ~11 calls/min.
+NIM_BASE_URL = "https://integrate.api.nvidia.com/v1"
+NIM_MODEL = "nvidia/nemotron-3.5-super-vl-120b-a12b"
+
+# Conservative total (input + output + reasoning) reserved per Groq call.
+# gpt-oss reasons a little even at low effort; 700 keeps 8k/min under ~11 calls/min.
 CALL_TOKEN_RESERVE = 700
+
+PROVIDERS = {
+    "groq": {
+        "label": "Groq",
+        "base_url": GROQ_BASE_URL,
+        "default_model": GROQ_MODEL,
+        "key_env": "GROQ_API_KEY",
+        "calls_per_minute": 8_000 / CALL_TOKEN_RESERVE,
+        "daily_tokens_per_key": 200_000,
+        "daily_calls_per_key": 1_000,
+        "reserve": CALL_TOKEN_RESERVE,
+        "timeout_s": None,
+        "extra_body": None,
+        "breaker_threshold": None,
+        "overrides": "none (production triage() path)",
+    },
+    "nim": {
+        "label": "NIM",
+        "base_url": NIM_BASE_URL,
+        "default_model": NIM_MODEL,
+        "key_env": "NVIDIA_API_KEY",
+        # build.nvidia.com lists 40 requests/minute, but the upstream model
+        # returns 429 when its own queue is full regardless of our spacing.
+        # Twelve a minute keeps our share small and leaves room for retries.
+        "calls_per_minute": 12.0,
+        "daily_tokens_per_key": 10_000_000,
+        "daily_calls_per_key": 2_000,
+        "reserve": 3_000,
+        # Spike process only: NIM queues calls, and the production 10 s cap
+        # would turn queue time into fallback rows.
+        "timeout_s": 60.0,
+        # Spike process only: thinking off, as the P4 measurement ran it.
+        "extra_body": {"chat_template_kwargs": {"enable_thinking": False}},
+        # Spike process only: with ~50% upstream 429s, the production 3-strike
+        # breaker turns one bad burst into a run-wide fallback cascade. The
+        # measurement retries each row instead; every failed attempt is still
+        # logged and counted.
+        "breaker_threshold": 1_000_000,
+        "overrides": ('extra_body {"chat_template_kwargs": '
+                      '{"enable_thinking": false}}; guardrail timeout 60 s '
+                      "(production 10 s); guardrail circuit-breaker threshold "
+                      "raised so transient upstream 429s are retried, not "
+                      "short-circuited (production: 3 failures / 30 s)"),
+    },
+}
 
 # The rows the planner pilot p1 report quotes, for a side-by-side. The planner
 # ran on DeepSeek, so this is context, not a like-for-like comparison.
@@ -86,21 +143,23 @@ def _planner_p90() -> int:
     return _percentile([int(r["elapsed_ms"]) for r in rows], 0.90)
 
 
-def _groq_keys() -> list[str]:
-    keys = [k.strip() for k in read_env_file().get("GROQ_API_KEY", "").split(",")
+def _provider_keys(provider: str) -> list[str]:
+    env_key = PROVIDERS[provider]["key_env"]
+    keys = [k.strip() for k in read_env_file().get(env_key, "").split(",")
             if k.strip()]
     if not keys:
-        sys.exit("GROQ_API_KEY is empty in agenticRAG/.env")
+        sys.exit(f"{env_key} is empty in agenticRAG/.env")
     return keys
 
 
-def _set_provider(key: str) -> None:
-    """Point the production code path at Groq for this process only (rule 6)."""
+def _set_provider(provider: str, model: str, key: str) -> None:
+    """Point the production code path at the measurement host for this process."""
+    cfg = PROVIDERS[provider]
     os.environ.update({
-        "DEEPSEEK_BASE_URL": GROQ_BASE_URL,
+        "DEEPSEEK_BASE_URL": cfg["base_url"],
         "DEEPSEEK_API_KEY": key,
-        "DEEPSEEK_MODEL": GROQ_MODEL,
-        "DEEPSEEK_MODEL_FAST": GROQ_MODEL,
+        "DEEPSEEK_MODEL": model,
+        "DEEPSEEK_MODEL_FAST": model,
     })
 
 
@@ -109,16 +168,19 @@ class _BudgetExhausted(RuntimeError):
 
 
 class _Pacer:
-    """Space call starts so the per-minute token limit is not crossed.
+    """Space call starts so the provider's per-minute limit is not crossed.
 
-    A reservation is deliberately larger than an average triage call, so the
+    Groq's interval comes from a deliberately generous token reservation, so the
     minute window stays under 8k even when a call reasons more than expected.
-    Actual usage is counted separately for the daily cap.
+    NIM is paced on requests/minute. Actual usage is counted separately for the
+    daily cap.
     """
 
-    def __init__(self, tpm: int, daily_tokens: int, reserve: int = CALL_TOKEN_RESERVE):
-        self.interval = 60.0 * reserve / tpm
+    def __init__(self, interval: float, daily_tokens: int, daily_calls: int,
+                 reserve: int):
+        self.interval = interval
         self.daily_tokens = daily_tokens
+        self.daily_calls = daily_calls
         self.reserve = reserve
         self.used = 0
         self.calls = 0
@@ -127,7 +189,7 @@ class _Pacer:
 
     async def acquire(self) -> None:
         async with self._lock:
-            if self.calls + 1 > GROQ_RPD:
+            if self.calls + 1 > self.daily_calls:
                 raise _BudgetExhausted("daily call limit reached")
             if self.used + self.reserve > self.daily_tokens:
                 raise _BudgetExhausted("daily token budget reached")
@@ -146,7 +208,7 @@ class _TriageCallbacks(logging.Handler):
     """Count `guardrail_triage_failed` records by exception type.
 
     Triage never raises, so this is the only place the spike can see why a call
-    fell back — in particular how many calls hit the 10 s wait_for cap.
+    fell back — in particular how many calls hit the guardrail role timeout.
     """
 
     def __init__(self) -> None:
@@ -163,6 +225,7 @@ async def _run(args, llm, keys: list[str], state: dict) -> list[dict]:
 
     from langgraph_agents.guardrail.triage import triage
 
+    cfg = PROVIDERS[args.provider]
     logging.getLogger().setLevel(logging.WARNING)
     failures = _TriageCallbacks()
     logging.getLogger("langgraph.guardrail").addHandler(failures)
@@ -180,26 +243,40 @@ async def _run(args, llm, keys: list[str], state: dict) -> list[dict]:
                         acc[key] += u[key]
 
     def configure_model():
-        """Wire the usage callback onto the production guardrail model.
+        """Wire the usage callback (and provider-only overrides) onto the model.
 
-        No spike-only overrides (reasoning_effort / max_tokens): the spike must
-        measure the production triage() path exactly as it runs. Production
-        config is untouched.
+        Production config is untouched: the extra_body / timeout overrides are
+        set on this process's model instance only.
         """
         model = llm.get_chat_model("guardrail")
+        if cfg["extra_body"] is not None:
+            object.__setattr__(model, "extra_body", cfg["extra_body"])
+        if cfg["timeout_s"] is not None:
+            object.__setattr__(model, "request_timeout", cfg["timeout_s"])
         model.callbacks = [Usage()]
+        state["model"] = model
+        if cfg["breaker_threshold"] is not None:
+            breaker = getattr(model, "_breaker", None)
+            if breaker is not None:
+                breaker.failure_threshold = cfg["breaker_threshold"]
+                breaker.record_success()
         return model
 
     def switch_key(index: int) -> None:
         state["key_index"] = index
-        _set_provider(keys[index])
+        _set_provider(args.provider, args.model, keys[index])
         llm._eca_chat_model.cache_clear()
         configure_model()
-        print(f"  -- switched to Groq key #{index + 1}", flush=True)
+        print(f"  -- switched to {cfg['label']} key #{index + 1}", flush=True)
 
     configure_model()
 
-    pacer = _Pacer(GROQ_TPM, GROQ_TPD * len(keys))
+    pacer = _Pacer(
+        60.0 / cfg["calls_per_minute"],
+        cfg["daily_tokens_per_key"] * len(keys),
+        cfg["daily_calls_per_key"] * len(keys),
+        cfg["reserve"],
+    )
     state["pacer"] = pacer
     items = _eval_items(args.plan)
     items_by_id = {item["id"]: item for item in items}
@@ -221,17 +298,37 @@ async def _run(args, llm, keys: list[str], state: dict) -> list[dict]:
                     "source": "fallback", "elapsed_ms": 0, "usage": acc,
                     "tokens": 0, "cost_usd": 0.0, "text": item["text"],
                     "error": f"budget_exhausted: {exc}", "fallback_history": [],
+                    "retries": 0,
                 }
             token = _usage.set(acc)
-            t0 = time.perf_counter()
+            retries = 0
             try:
-                verdict = await triage(item["text"], request_id=request_id)
-                error = None
-            except Exception as exc:                       # noqa: BLE001
-                verdict, error = None, f"{type(exc).__name__}: {exc}"[:300]
+                while True:
+                    t0 = time.perf_counter()
+                    try:
+                        verdict = await triage(item["text"], request_id=request_id)
+                        error = None
+                    except Exception as exc:                   # noqa: BLE001
+                        verdict, error = None, f"{type(exc).__name__}: {exc}"[:300]
+                    elapsed = round((time.perf_counter() - t0) * 1000)
+                    if verdict is not None and verdict.source == "llm":
+                        break
+                    if retries >= args.row_retries:
+                        break
+                    retries += 1
+                    # A 429/503/timeout is transient, and a fallback row is an
+                    # error rather than a result. The production per-role
+                    # breaker is held closed for this run (see the provider
+                    # table), so the row is retried on its own with growing
+                    # backoff; neither the model nor the prompt changes.
+                    breaker = getattr(state.get("model"), "_breaker", None)
+                    if breaker is not None:
+                        breaker.record_success()
+                    delay = min(args.retry_delay * 2 ** (retries - 1),
+                                args.retry_max_delay)
+                    await asyncio.sleep(delay)
             finally:
                 _usage.reset(token)
-            elapsed = round((time.perf_counter() - t0) * 1000)
         pacer.record(acc["in"] + acc["out"])
         if verdict is None:
             return {
@@ -240,8 +337,9 @@ async def _run(args, llm, keys: list[str], state: dict) -> list[dict]:
                 "predicted": None, "out_of_scope": None, "health_topic": None,
                 "source": "fallback", "elapsed_ms": elapsed, "usage": acc,
                 "tokens": acc["in"] + acc["out"],
-                "cost_usd": round(cost_usd(acc, GROQ_MODEL), 8),
+                "cost_usd": round(cost_usd(acc, args.model), 8),
                 "text": item["text"], "error": error, "fallback_history": [],
+                "retries": retries,
             }
         return {
             "id": item["id"], "repeat": repeat, "attempt": attempt,
@@ -253,10 +351,11 @@ async def _run(args, llm, keys: list[str], state: dict) -> list[dict]:
             "elapsed_ms": elapsed,
             "usage": acc,
             "tokens": acc["in"] + acc["out"],
-            "cost_usd": round(cost_usd(acc, GROQ_MODEL), 8),
+            "cost_usd": round(cost_usd(acc, args.model), 8),
             "text": item["text"],
             "error": error,
             "fallback_history": [],
+            "retries": retries,
         }
 
     def mark(row: dict) -> None:
@@ -378,10 +477,15 @@ def _report(args, rows: list[dict], meta: dict) -> str:
     lines = [
         f"# Spike A — guardrail triage, {args.plan} / {args.label}",
         "",
-        f"- commit `{meta['commit'][:10]}`, **Groq {meta['model']}**, "
+        f"- commit `{meta['commit'][:10]}`, **{meta['provider_label']} {meta['model']}**, "
         f"run {meta['at']}, repeats {args.repeats}, concurrency {args.concurrency}",
-        "- **These numbers are for `openai/gpt-oss-120b` on Groq, not for the "
-        "production DeepSeek model.**",
+        f"- **These numbers are for `{meta['model']}` on {meta['provider_label']}, "
+        "not for the production DeepSeek model.**",
+        f"- spike-process overrides: {meta['spike_overrides']}",
+        f"- transient failures: up to {meta['row_retries']} retries per row, "
+        f"exponential backoff {meta['retry_delay_s']:.0f}–"
+        f"{meta['retry_max_delay_s']:.0f} s; the per-role breaker is held closed "
+        "for this run (spike only)",
         f"- items: {meta['items']} "
         f"({', '.join(f'{k} {v}' for k, v in sorted(meta['item_levels'].items()))}); "
         f"runs scored: {len(scored)}; fallbacks after reruns: {len(fallbacks)}",
@@ -454,14 +558,19 @@ def _report(args, rows: list[dict], meta: dict) -> str:
         lines.append(
             f"| {variant} | {_rate(u_hit, len(u))} | {_rate(fa, len(neg))} | {len(sub)} |")
 
+    priced = meta["model"] in PRICES
+    cost_line = (f"- cost: **${cost:.4f}** ({meta['provider_label']} list prices)"
+                 if priced else
+                 "- cost: not priced (this model is absent from PRICES)")
+
     lines += [
         "",
         "## Latency (report only)",
         "",
-        "Groq latency is not compared with the planner's p90: that measurement "
-        "was DeepSeek. The planner p90 is shown only as context.",
+        f"{meta['provider_label']} latency is not compared with the planner's p90: "
+        "that measurement was DeepSeek. The planner p90 is shown only as context.",
         "",
-        "| measure | triage (Groq) | planner p1 (DeepSeek) |",
+        f"| measure | triage ({meta['provider_label']}) | planner p1 (DeepSeek) |",
         "|---|---|---|",
         f"| p50 | {lat_p50} ms | — |",
         f"| p90 | {lat_p90} ms | {planner_p90} ms |",
@@ -470,15 +579,16 @@ def _report(args, rows: list[dict], meta: dict) -> str:
         "## Tokens and cost",
         "",
         f"- tokens: **{tokens:,}** across {meta['calls']} paced calls "
-        f"(free-tier cap {meta['daily_token_cap']:,}/day for {meta['keys']} key(s))",
-        f"- cost: **${cost:.4f}** (Groq free tier)",
+        f"(daily cap {meta['daily_token_cap']:,}/day for {meta['keys']} key(s))",
+        cost_line,
         f"- fallback attempts: {meta['fallback_attempts']}; "
+        f"rows that needed an in-row retry: {meta['rows_with_retries']}; "
         f"timeout hits: {meta['timeout_hits']}; "
-        f"failure types: {meta['failure_types'] or 'none'}",
+        f"failure types (all attempts): {meta['failure_types'] or 'none'}",
         "",
         "## Side by side with planner pilot p1 (different model)",
         "",
-        "| measure | planner p1 (DeepSeek) | triage (gpt-oss-120b) |",
+        f"| measure | planner p1 (DeepSeek) | triage ({meta['model'].split('/')[-1]}) |",
         "|---|---|---|",
         f"| urgent recall | {PLANNER_P1['urgent']} | {urgent_avg:.1f}/{urgent_n} |",
         f"| L3 -> emergency | {PLANNER_P1['l3']} | {l3_avg:.1f}/10 |",
@@ -515,23 +625,41 @@ def _report(args, rows: list[dict], meta: dict) -> str:
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description="Spike A: guardrail triage quality (Groq)")
+    parser = argparse.ArgumentParser(description="Spike A: guardrail triage quality")
+    parser.add_argument("--provider", choices=sorted(PROVIDERS), default="groq",
+                        help="measurement host (default: groq)")
+    parser.add_argument("--model", default=None,
+                        help="model id (default: the provider's measured model)")
     parser.add_argument("--plan", default="pilot")
     parser.add_argument("--label", default="A1-gptoss")
     parser.add_argument("--repeats", type=int, default=3)
     parser.add_argument("--concurrency", type=int, default=4)
     parser.add_argument("--rerun-errors", type=int, default=3,
                         help="rounds of reruns for rows that fell back (429/503/timeout)")
+    parser.add_argument("--row-retries", type=int, default=8,
+                        help="retries inside a row after a transient failure (429/503/timeout)")
+    parser.add_argument("--retry-delay", type=float, default=4.0,
+                        help="first backoff after a transient failure; doubles each retry")
+    parser.add_argument("--retry-max-delay", type=float, default=45.0,
+                        help="cap on the per-retry backoff")
     args = parser.parse_args()
+
+    cfg = PROVIDERS[args.provider]
+    args.model = args.model or cfg["default_model"]
 
     _isolate_environment()          # before anything under langgraph_agents is imported
 
-    keys = _groq_keys()
-    _set_provider(keys[0])
-    print(f"provider: Groq {GROQ_MODEL} ({len(keys)} key(s)); "
+    keys = _provider_keys(args.provider)
+    _set_provider(args.provider, args.model, keys[0])
+    print(f"provider: {cfg['label']} {args.model} ({len(keys)} key(s)); "
           f"these numbers are not production DeepSeek", flush=True)
 
     from langgraph_agents import llm
+
+    if cfg["timeout_s"] is not None:
+        # Spike process only: NIM queues calls, so the production 10 s cap
+        # would turn queue time into fallback rows.
+        llm._ROLE_TIMEOUT["guardrail"] = cfg["timeout_s"]
 
     state = {"stop": False, "key_index": 0}
     rows = asyncio.run(_run(args, llm, keys, state))
@@ -544,10 +672,12 @@ def main() -> None:
     meta = {
         "_meta": True,
         "system": "guardrail_triage",
-        "provider": "groq",
-        "model": GROQ_MODEL,
-        "base_url": GROQ_BASE_URL,
-        "note": "gpt-oss-120b on Groq, not the production DeepSeek model",
+        "provider": args.provider,
+        "provider_label": cfg["label"],
+        "model": args.model,
+        "base_url": cfg["base_url"],
+        "note": f"{args.model} on {cfg['label']}, not the production DeepSeek model",
+        "spike_overrides": cfg["overrides"],
         "commit": _git_commit(),
         "at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
         "items": len(items),
@@ -563,6 +693,10 @@ def main() -> None:
         "fallbacks_after_reruns": len(fallbacks),
         "timeout_hits": failures.counts.get("TimeoutError", 0),
         "failure_types": dict(failures.counts),
+        "row_retries": args.row_retries,
+        "retry_delay_s": args.retry_delay,
+        "retry_max_delay_s": args.retry_max_delay,
+        "rows_with_retries": sum(1 for r in rows if r.get("retries")),
         "budget_stopped": state["stop"],
         "planner_p90": _planner_p90(),
         "scored": len(scored),

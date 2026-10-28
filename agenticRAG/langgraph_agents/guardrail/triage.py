@@ -5,9 +5,9 @@ delay in care, ROUTINE applies only when the symptoms clearly fit ordinary
 strain, and a tie goes to the more urgent level. It is written from
 principles, not from symptom examples: an example list is a list to miss.
 
-Measured on NIM `nvidia/nemotron-3.5-super-vl-120b-a12b` (thinking off), three
-repeats on the pilot: urgent recall 24/26, L3 → emergency 8.7/10, false alarms
-0/18.
+Measured on NIM `nvidia/nemotron-3.5-super-vl-120b-a12b` (thinking off),
+three repeats on the pilot through this production path (28/10): urgent recall
+24/26, L3 → emergency 8.3/10, false alarms 0/18.
 
 What it is allowed to read is a safety property, not an implementation detail:
 the current user message only. Memory, history and standing instructions never

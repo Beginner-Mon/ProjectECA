@@ -209,15 +209,20 @@ class _TriageCallbacks(logging.Handler):
 
     Triage never raises, so this is the only place the spike can see why a call
     fell back — in particular how many calls hit the guardrail role timeout.
+    `last` keeps the most recent reason per request id so a fallback row can
+    record why its final attempt failed.
     """
 
     def __init__(self) -> None:
         super().__init__(level=logging.WARNING)
         self.counts: Counter[str] = Counter()
+        self.last: dict[str, str] = {}
 
     def emit(self, record: logging.LogRecord) -> None:
         if record.msg == "guardrail_triage_failed":
-            self.counts[getattr(record, "error", "unknown")] += 1
+            kind = getattr(record, "error", "unknown")
+            self.counts[kind] += 1
+            self.last[getattr(record, "request_id", "-")] = kind
 
 
 async def _run(args, llm, keys: list[str], state: dict) -> list[dict]:
@@ -307,7 +312,8 @@ async def _run(args, llm, keys: list[str], state: dict) -> list[dict]:
                     t0 = time.perf_counter()
                     try:
                         verdict = await triage(item["text"], request_id=request_id)
-                        error = None
+                        error = (None if verdict.source == "llm"
+                                 else failures.last.get(request_id))
                     except Exception as exc:                   # noqa: BLE001
                         verdict, error = None, f"{type(exc).__name__}: {exc}"[:300]
                     elapsed = round((time.perf_counter() - t0) * 1000)
@@ -578,8 +584,9 @@ def _report(args, rows: list[dict], meta: dict) -> str:
         "",
         "## Tokens and cost",
         "",
-        f"- tokens: **{tokens:,}** across {meta['calls']} paced calls "
-        f"(daily cap {meta['daily_token_cap']:,}/day for {meta['keys']} key(s))",
+        f"- tokens: **{tokens:,}** across {meta['attempts']} HTTP attempts "
+        f"({meta['calls']} paced rows; daily cap {meta['daily_token_cap']:,}/day "
+        f"for {meta['keys']} key(s))",
         cost_line,
         f"- fallback attempts: {meta['fallback_attempts']}; "
         f"rows that needed an in-row retry: {meta['rows_with_retries']}; "
@@ -689,6 +696,10 @@ def main() -> None:
         "tokens": sum(r["tokens"] for r in rows),
         "daily_token_cap": pacer.daily_tokens,
         "calls": pacer.calls,
+        # Every failed attempt is logged as one guardrail_triage_failed record;
+        # scored rows are the successes. Their sum is the real HTTP request
+        # count, which in-row retries make larger than the paced row count.
+        "attempts": sum(failures.counts.values()) + len(scored),
         "fallback_attempts": sum(1 for r in rows if r["attempt"] > 1),
         "fallbacks_after_reruns": len(fallbacks),
         "timeout_hits": failures.counts.get("TimeoutError", 0),

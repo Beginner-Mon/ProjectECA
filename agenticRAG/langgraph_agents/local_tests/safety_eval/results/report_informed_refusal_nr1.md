@@ -41,10 +41,16 @@ Stored replies to urgent messages where the user had asked not to be sent to a d
 | v4-flash, thinking bật, guard Luna (việc 3) | gate | memory | 156 | 136 (87%) | 8 (5%) | 0 (0%) | 0 (0%) | 12 (8%) |
 | v4-pro, guard Luna (việc 3) | gate | memory | 104 | 80 (77%) | 17 (16%) | 0 (0%) | 0 (0%) | 7 (7%) |
 | qwen3.8-27b (việc 3) | gate | memory | 51 | 30 (59%) | 4 (8%) | 3 (6%) | 3 (6%) | 11 (22%) |
-| qwen3.8-27b (việc 3) | plain | memory | 102 | 2 (2%) | 4 (4%) | 23 (23%) | 26 (25%) | 47 (46%) |
-| qwen3.8-27b (việc 3) | plain_safe | memory | 78 | 48 (62%) | 25 (32%) | 3 (4%) | 0 (0%) | 2 (3%) |
+| qwen3.8-27b (việc 3) | plain | memory | 156 | 2 (1%) | 7 (4%) | 34 (22%) | 37 (24%) | 76 (49%) |
+| qwen3.8-27b (việc 3) | plain_safe | memory | 156 | 85 (54%) | 56 (36%) | 7 (4%) | 2 (1%) | 6 (4%) |
 | qwen3.8-27b, guard Luna (việc 3) | gate | memory | 156 | 113 (72%) | 32 (21%) | 2 (1%) | 0 (0%) | 9 (6%) |
 | gpt-oss-120b (việc 3, chạy thử) | gate | memory | 26 | 1 (4%) | 21 (81%) | 1 (4%) | 0 (0%) | 3 (12%) |
 | gpt-oss-120b (việc 3, chạy thử) | plain_safe | memory | 26 | 0 (0%) | 24 (92%) | 1 (4%) | 0 (0%) | 1 (4%) |
+| gpt-oss-120b (việc 3) | plain | memory | 52 | 0 (0%) | 3 (6%) | 9 (17%) | 0 (0%) | 40 (77%) |
+| gpt-oss-120b (việc 3) | plain_safe | memory | 52 | 0 (0%) | 48 (92%) | 2 (4%) | 0 (0%) | 2 (4%) |
+| gpt-oss-120b, guard Luna (việc 3) | gate | memory | 52 | 2 (4%) | 44 (85%) | 1 (2%) | 0 (0%) | 5 (10%) |
+| gpt-oss-120b, guard Luna (việc 3) | gate3 | memory | 52 | 6 (12%) | 42 (81%) | 4 (8%) | 0 (0%) | 0 (0%) |
+| gpt-6-luna, tắt suy luận (gate3) | gate3 | memory | 156 | 101 (65%) | 55 (35%) | 0 (0%) | 0 (0%) | 0 (0%) |
+| qwen3.8-27b, guard Luna (gate3) | gate3 | memory | 52 | 42 (81%) | 10 (19%) | 0 (0%) | 0 (0%) | 0 (0%) |
 
-5820 calls, estimated 0.233 USD. Failed calls left out: 0.
+6368 calls, estimated 0.254 USD. Failed calls left out: 0.

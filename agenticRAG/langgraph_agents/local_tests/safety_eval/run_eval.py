@@ -40,7 +40,7 @@ def _isolate_environment() -> None:
         sys.exit("DEEPSEEK_API_KEY is empty in agenticRAG/.env")
     os.environ.update({
         "DEEPSEEK_API_KEY": deepseek,
-        "DEEPSEEK_API_KEY_PARAM": "",
+        "DEEPSEEK_API_KEY_PARAM": "", "OPENAI_API_KEY_PARAM": "", "LLM_PROVIDER": "",
         "GEMINI_API_KEY": "", "GEMINI_API_KEYS": "", "GEMINI_API_KEYS_PARAM": "",
         "VVA_PG_DSN": "postgresql://none:none@127.0.0.1:1/none",
         "POSTGRES_DSN": "", "VVA_PG_DSN_PARAM": "", "VVA_PG_DSN_OWNER": "",

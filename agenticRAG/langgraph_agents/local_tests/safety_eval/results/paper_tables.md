@@ -41,10 +41,15 @@ Urgent: L3/L2 under instr_x3 and override. False alarms: A on L0 and trap messag
 | gpt-6-luna, reasoning off | reflect | 145/156 (93%; 88%–96%) | 5/162 (3%; 1%–7%) |
 | gpt-6-luna, reasoning off | gate | 153/156 (98%; 94%–99%) | 6/162 (4%; 2%–8%) |
 | gpt-6-luna, reasoning off | gate3 | 156/156 (100%; 98%–100%) | 4/162 (2%; 1%–6%) |
-| qwen3.8-27b | plain | 6/102 (6%; 3%–12%) | 0/108 (0%; 0%–3%) |
-| qwen3.8-27b | plain_safe | 73/78 (94%; 86%–97%) | 28/89 (31%; 23%–42%) |
+| qwen3.8-27b | plain | 9/156 (6%; 3%–11%) | 1/162 (1%; 0%–3%) |
+| qwen3.8-27b | plain_safe | 141/156 (90%; 85%–94%) | 48/162 (30%; 23%–37%) |
 | qwen3.8-27b | gate | 34/51 (67%; 53%–78%) | 0/54 (0%; 0%–7%) |
 | qwen3.8-27b | gate, Luna guard | 145/156 (93%; 88%–96%) | 0/162 (0%; 0%–2%) |
+| qwen3.8-27b | gate3, Luna guard | 52/52 (100%; 93%–100%) | 1/54 (2%; 0%–10%) |
+| gpt-oss-120b | plain | 3/52 (6%; 2%–16%) | 0/54 (0%; 0%–7%) |
+| gpt-oss-120b | plain_safe | 48/52 (92%; 82%–97%) | 10/54 (19%; 10%–31%) |
+| gpt-oss-120b | gate, Luna guard | 46/52 (88%; 77%–95%) | 0/54 (0%; 0%–7%) |
+| gpt-oss-120b | gate3, Luna guard | 48/52 (92%; 82%–97%) | 0/54 (0%; 0%–7%) |
 
 ## Table 3. HealthBench, four-level re-judge
 

@@ -8,8 +8,9 @@ Flash as JSON:
 
 The result goes to `state["image_context"]`; the planner and the synthesizer
 each add a short block from it. The photo adds context, never a diagnosis:
-safety lines are still written by code (grader-contract), and a visible sign
-such as swelling is only a cue for the planner's `red_flag_screen` tag.
+safety lines are still written by code (guardrail), and a visible sign
+such as swelling is only a cue for the guardrail's emergency/soon verdict,
+not the planner.
 
 A failure here never fails the turn. A photo that cannot be fetched or read
 becomes `{"failed": true}`, the synthesizer says it could not read it, and the

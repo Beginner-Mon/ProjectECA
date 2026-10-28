@@ -61,16 +61,17 @@ async def test_chat_path_no_retrieval_no_tags():
 @pytest.mark.skipif(not HAS_LLM_KEY, reason="DEEPSEEK_API_KEY not set")
 @pytest.mark.asyncio
 async def test_safety_path_red_flag_no_retrieval():
-    """Red-flag symptom → safety tags, NO retrieval; câu mở đầu do code phát."""
+    """Red-flag symptom → guardrail verdict, NO retrieval; head emitted by code."""
     graph = await build_graph_async()
     state, config = _base_state_config(query="Tôi bị đau ngực khi tập thể dục")
     result = await graph.ainvoke(state, config=config)
 
     assert result["final_answer"], "final_answer should not be empty"
-    # Should have safety tags (D33: danger in query → planner detects)
+    # Planner now emits no safety tags; guardrail adds head/tail via verdict.
+    # Check that no planner safety tags are present.
     tags = result.get("required_outputs", [])
-    assert "red_flag_screen" in tags or "referral_advice" in tags, \
-        f"Expected safety tags, got {tags}"
+    planner_safety = {"red_flag_screen", "referral_advice", "scope_disclaimer"}
+    assert not (planner_safety & set(tags)), f"Planner must not emit safety tags: {tags}"
     assert "chưa được kiểm chứng" not in result["final_answer"]
     assert "has not been verified" not in result["final_answer"]
 
@@ -139,9 +140,9 @@ class TestPlanOutput:
         """Verify PlanOutput can serialize/deserialize (json_mode compat)."""
         from langgraph_agents.nodes.planner import PlanOutput
         plan = PlanOutput(
-            required_outputs=["red_flag_screen", "referral_advice"],
-            resolved_query="đau ngực khi tập",
-            needs_retrieval=False,
+            required_outputs=["exercise_protocol", "scope_disclaimer"],
+            resolved_query="bài tập cho đau lưng",
+            needs_retrieval=True,
         )
         d = plan.model_dump()
         plan2 = PlanOutput(**d)

@@ -150,10 +150,6 @@ async def test_triage_unknown_level_is_a_fallback(monkeypatch, caplog):
     # any planner quality tag
     (_verdict(), ["exercise_protocol"], ["scope_disclaimer"]),
     (_verdict(), ["evidence_citation"], ["scope_disclaimer"]),
-    # transitional: a safety tag the planner still emits keeps its line
-    (_verdict(), ["red_flag_screen"], ["red_flag_screen"]),
-    (_verdict(), ["referral_advice"], ["referral_advice"]),
-    (_verdict(), ["scope_disclaimer"], ["scope_disclaimer"]),
     # a routine turn with nothing to say carries nothing
     (_verdict(), [], []),
 ])

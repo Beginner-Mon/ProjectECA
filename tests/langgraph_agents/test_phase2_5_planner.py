@@ -72,17 +72,16 @@ class TestPlanOutput:
         assert plan2.required_outputs == plan.required_outputs
         assert plan2.resolved_query == plan.resolved_query
 
-    def test_all_8_tags(self):
-        """All 8 PT domain tags."""
+    def test_all_5_tags(self):
+        """All 5 PT domain tags (no safety tags)."""
         plan = PlanOutput(
             required_outputs=[
-                "red_flag_screen", "referral_advice", "scope_disclaimer",
                 "exercise_protocol", "exercise_steps", "contraindication",
                 "evidence_citation", "motion_descriptor",
             ],
             resolved_query="test",
         )
-        assert len(plan.required_outputs) == 8
+        assert len(plan.required_outputs) == 5
 
     def test_unknown_tags_filtered_during_validation(self):
         """Planner post-validates: unknown tags are filtered out.
@@ -118,11 +117,9 @@ class TestPlanOutput:
 class TestPlannerTags:
     """Verify PLANNER_TAGS vocabulary (D5: controlled vocab)."""
 
-    def test_all_8_tags_present(self):
+    def test_all_5_tags_present(self):
+        """PLANNER_TAGS has exactly 5 quality tags."""
         expected = {
-            "red_flag_screen",
-            "referral_advice",
-            "scope_disclaimer",
             "exercise_protocol",
             "exercise_steps",
             "contraindication",
@@ -170,33 +167,6 @@ class TestPlannerNode:
             result = await planner_node(state, config)
             assert "fake_tag_xyz" not in result.get("required_outputs", [])
             assert "exercise_protocol" in result.get("required_outputs", [])
-
-    @pytest.mark.asyncio
-    async def test_planner_auto_adds_referral_with_red_flag(self):
-        """D33: red_flag_screen → auto-add referral_advice."""
-        from langgraph_agents.nodes.planner import planner_node
-        from langchain_core.runnables import RunnableConfig
-
-        fake_plan = PlanOutput(
-            required_outputs=["red_flag_screen"],
-            resolved_query="dau nguc",
-            needs_retrieval=False,
-        )
-
-        with patch("langgraph_agents.nodes.planner.get_chat_model") as mock_llm:
-            mock_llm.return_value.with_structured_output.return_value.ainvoke = AsyncMock(
-                return_value=fake_plan
-            )
-            config = RunnableConfig(configurable={
-                "user_id": "test", "session_id": "test-sess",
-                "query": "dau nguc", "persona_id": "anne",
-                "request_id": "req-001",
-            })
-            state: AgentState = {"messages": [], "errors": [], "total_tokens": 0,
-                                 "retry_count": 0}
-            result = await planner_node(state, config)
-            assert "red_flag_screen" in result.get("required_outputs", [])
-            assert "referral_advice" in result.get("required_outputs", [])
 
     @pytest.mark.asyncio
     async def test_planner_llm_error_fallback(self):

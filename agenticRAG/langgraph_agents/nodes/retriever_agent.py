@@ -190,8 +190,8 @@ async def retriever_agent_node(state: AgentState, config: RunnableConfig) -> dic
     web_search_enabled = config["configurable"].get("web_search", False)
 
     # D34: the web is a widening of retrieval, and an urgent or out-of-scope
-    # turn must not widen. The verdict decides, not planner tags: the planner
-    # stops emitting safety tags in Phase 4.
+    # turn must not widen. The verdict decides; the planner only tags what
+    # the reply must contain.
     verdict = await current_verdict(config)
     allow_web_fallback = verdict.level == "routine" and not verdict.out_of_scope
 

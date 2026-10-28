@@ -363,9 +363,10 @@ class TestD34KbEmptyWebFallback:
 
     @pytest.mark.asyncio
     async def test_node_computes_allow_web_fallback_true_for_low_risk(self, monkeypatch):
-        """retriever_agent_node allows fallback when tags have no high-safety marker."""
+        """retriever_agent_node allows fallback when verdict is routine."""
         from unittest.mock import AsyncMock, MagicMock, patch
         from langgraph_agents.nodes import retriever_agent as ra
+        from langgraph_agents.guardrail.types import Verdict
 
         captured = {}
 
@@ -388,6 +389,9 @@ class TestD34KbEmptyWebFallback:
         config = {"configurable": {"request_id": "r2", "web_search": True}}
 
         with patch.object(ra, "_build_retriever_system_prompt", side_effect=fake_build_prompt), \
+             patch.object(ra, "current_verdict",
+                          new=AsyncMock(return_value=Verdict("routine", False, True,
+                                                             "llm", 5))), \
              patch.object(ra, "_build_tools", AsyncMock(return_value=[])), \
              patch.object(ra, "get_chat_model", return_value=mock_llm):
             await ra.retriever_agent_node(state, config)

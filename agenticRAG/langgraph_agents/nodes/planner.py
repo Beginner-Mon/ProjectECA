@@ -6,7 +6,8 @@ Replaces old 6-enum intent system. Decisions encoded:
   D9:  resolved_query with coreference resolution (memory ran first)
   D18: required_outputs = list[str] tag thuần — NOT list[{tag, scope}]
   D21: resolved_query keeps tool-selection cues (temporal/source/topic)
-  D33: Danger detection = PLANNER (1 place), not synthesizer
+  D33: superseded in guardrail v1 — danger detection moved to the guardrail
+       layer; the planner tags only what the reply must contain
 
 Metaphor: Planner = manager — assigns deliverables (WHAT).
          Retriever = dev — chooses tools (HOW).
@@ -36,15 +37,11 @@ logger = get_logger("langgraph.planner")
 
 # ── TAG_RULES vocabulary (M.3) — single source of truth (D7) ──────────────
 
-# Tags planner can emit. Must match TAG_RULES in grader.py exactly.
-# startup assertion in grader.py ensures planner_tags ⊆ TAG_RULES keys (D7).
+# Tags planner can emit. The safety tags left with the guardrail in Phase 4;
+# the planner tags only what the reply must contain. test_tag_contract keeps
+# this set in sync with TAG_CONTRACT (D7).
 PLANNER_TAGS = frozenset({
-    # Safety tags (thiếu → template cứng, no retry — D6)
-    "red_flag_screen",    # cảnh báo dấu hiệu nguy hiểm (đau ngực, tê, mất kiểm soát)
-    "referral_advice",    # khuyên đi gặp bác sĩ/chuyên gia khi vượt scope wellness
-    "scope_disclaimer",   # "đây là tư vấn wellness, không thay khám lâm sàng"
-
-    # Quality tags (thiếu → retry max 1 — D6)
+    # Quality tags — deliverables the reply must contain
     "exercise_protocol",  # bài tập phải có sets + reps + tần suất
     "exercise_steps",     # hướng dẫn thực hiện ≥2 bước
     "contraindication",   # nêu trường hợp KHÔNG nên tập
@@ -109,25 +106,16 @@ You do NOT specify tools. You only say WHAT needs to be delivered and WHETHER lo
 
 ### 1. required_outputs — deliverable checklist (tags)
 Tags you can assign (ONLY these, no inventing):
-  SAFETY (critical, hard enforcement):
-    red_flag_screen   — user mentions dangerous symptoms (chest pain, numbness, dizziness, loss of control)
-    referral_advice   — question is out of wellness scope, needs medical professional
-    scope_disclaimer  — any clinical/exercise answer needs wellness disclaimer
-  QUALITY (checked, retry if missing):
-    exercise_protocol — specific exercise recommendation needs sets+reps+frequency
-    exercise_steps    — movement instructions need ordered steps (≥2)
-    contraindication  — exercise has risks for certain conditions, must list warnings
-    evidence_citation — knowledge/explanation needs sources
-    motion_descriptor — motion visualization needs movement+joint description
+  exercise_protocol — specific exercise recommendation needs sets+reps+frequency
+  exercise_steps    — movement instructions need ordered steps (≥2)
+  contraindication  — exercise has risks for certain conditions, must list warnings
+  evidence_citation — knowledge/explanation needs sources
+  motion_descriptor — motion visualization needs movement+joint description
 
 Rules:
 - Empty list [] = the message asks for none of the things below (greeting,
   small talk, how the user feels, questions about you).
 - These tags depend on what the reply will CONTAIN, asked or not:
-    red_flag_screen + referral_advice — chest pain, numbness, dizziness, loss of
-      bladder/bowel control, fainting
-    referral_advice   — out of wellness scope (diagnosis, medication, test interpretation)
-    scope_disclaimer  — the reply gives exercise or health guidance
     contraindication  — the reply recommends an exercise
     evidence_citation — the reply gives exercise or health information
 - These tags depend on what the user ASKS FOR:
@@ -149,12 +137,12 @@ Rules:
 - needs_retrieval=true: answering needs a tool — looking something up,
   recalling, or doing something. The tool agent decides which.
   Examples: PT exercises, health facts, news, real-time info, recalling past sessions
-- needs_retrieval=false: greeting, casual chat, or static safety response (red_flag needs no lookup)
+- needs_retrieval=false: greeting or casual chat
 
 ### Clarify (static)
 - needs_clarification=true ONLY when planner can detect missing critical info WITHOUT querying:
   "exercises" with no body region, "it hurts" with no location, "medication" with no question
-- Do NOT clarify for: greetings, red-flag symptoms (answer with safety warning instead)
+- Do NOT clarify for: greetings
 
 ## EXAMPLES
 
@@ -169,11 +157,8 @@ Query: "hello"
 Query: "who are you" (about the character itself — the self-knowledge tool serves it)
 -> {"required_outputs":[],"resolved_query":"who are you","needs_retrieval":true,"needs_clarification":false}
 
-Query: "i get chest pain when i exercise"
--> {"required_outputs":["red_flag_screen","referral_advice"],"resolved_query":"chest pain during exercise","needs_retrieval":false,"needs_clarification":false}
-
 Query: "exercises for an L4-L5 disc herniation"
--> {"required_outputs":["scope_disclaimer","contraindication","evidence_citation"],"resolved_query":"physiotherapy exercises for an L4-L5 disc herniation","needs_retrieval":true,"needs_clarification":false}
+-> {"required_outputs":["contraindication","evidence_citation"],"resolved_query":"physiotherapy exercises for an L4-L5 disc herniation","needs_retrieval":true,"needs_clarification":false}
 
 Query: "exercises" (missing body region - critical)
 -> {"required_outputs":[],"resolved_query":"exercises","needs_retrieval":false,"needs_clarification":true}
@@ -182,19 +167,16 @@ Query: "gold price today" (outside wellness, but answerable from sources)
 -> {"required_outputs":["evidence_citation"],"resolved_query":"gold price today","needs_retrieval":true,"needs_clarification":false}
 
 Query: "show me the squat movement"
--> {"required_outputs":["scope_disclaimer","motion_descriptor"],"resolved_query":"squat movement","needs_retrieval":true,"needs_clarification":false}
+-> {"required_outputs":["motion_descriptor"],"resolved_query":"squat movement","needs_retrieval":true,"needs_clarification":false}
 
 Query: "i asked about neck exercises last week, remind me" (recall past session)
--> {"required_outputs":["scope_disclaimer","evidence_citation"],"resolved_query":"neck exercises asked about last week","needs_retrieval":true,"needs_clarification":false}
+-> {"required_outputs":["evidence_citation"],"resolved_query":"neck exercises asked about last week","needs_retrieval":true,"needs_clarification":false}
 
 Query: "i'm sleepy" (how the user feels — no tags, even after an exercise turn)
 -> {"required_outputs":[],"resolved_query":"i'm sleepy","needs_retrieval":false,"needs_clarification":false}
 
 Query: "i'm done exercising for today" (no ask — no tags)
 -> {"required_outputs":[],"resolved_query":"i'm done exercising for today","needs_retrieval":false,"needs_clarification":false}
-
-Query: "can you prescribe something for the pain" (outside wellness scope)
--> {"required_outputs":["referral_advice"],"resolved_query":"medication for pain","needs_retrieval":false,"needs_clarification":false}
 
 ## INPUT NOTE
 Users write in any language, and may omit diacritics, accents or tone marks -
@@ -284,9 +266,9 @@ async def planner_node(state: AgentState, config: RunnableConfig) -> dict:
         f"treat them as true):\n{instructions}" if instructions else ""
     )
 
-    # SCRUM-45: what the user's photos show, read by the vision node. A visible
-    # sign here (swelling, bruising…) is a cue for red_flag_screen, as if the
-    # user had written it.
+    # SCRUM-45: what the user's photos show, read by the vision node. The
+    # planner sees them as context only; classifying what they show is the
+    # guardrail's job, not the planner's.
     from langgraph_agents.nodes.vision import photo_lines
     photos = photo_lines(state.get("image_context"))
     photo_hint = ("\n\nThe user attached photos:\n" + "\n".join(photos)) if photos else ""
@@ -399,10 +381,6 @@ async def planner_node(state: AgentState, config: RunnableConfig) -> dict:
         logger.warning("unknown_tags_filtered", extra={
             "request_id": request_id, "unknown": list(unknown),
         })
-
-    # Safety override: red_flag_screen always gets referral_advice too (D33)
-    if "red_flag_screen" in valid_tags and "referral_advice" not in valid_tags:
-        valid_tags.append("referral_advice")
 
     # If needs_clarification, don't set tags — clarify is its own path
     needs_clarification = plan.needs_clarification

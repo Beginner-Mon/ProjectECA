@@ -10,9 +10,15 @@ The split is the whole point of the layer:
   tail  appended after the body, in the same order and with the same separator
         the grader's `_finish` used: referral, then disclaimer.
 
-`safety_keys` is the single mapping from a verdict to the fixed lines. The rows
-that also read planner tags are transitional and go away once the planner stops
-emitting safety tags (Phase 4).
+`head` is level-specific: emergency gets the emergency line (in the character's
+words when the persona has one, otherwise the code default), soon gets the
+red-flag line.
+
+`safety_keys` is the single mapping from a verdict to the fixed lines. Planner
+tags still contribute one thing: any quality tag means the reply is health
+guidance, which carries the disclaimer. Safety lines themselves come from the
+verdict alone — since Phase 4 the planner tags only what the reply must
+contain.
 """
 
 from __future__ import annotations
@@ -39,12 +45,6 @@ _QUALITY_TAGS = frozenset({
     "evidence_citation", "motion_descriptor",
 })
 
-# Planner safety tags kept as an input until Phase 4 removes them from the
-# planner. After that this set and the transitional block below are dead.
-_PLANNER_SAFETY_TAGS = frozenset({
-    "red_flag_screen", "referral_advice", "scope_disclaimer",
-})
-
 _TAIL_ORDER = ("referral_advice", "scope_disclaimer")
 
 
@@ -63,10 +63,6 @@ def safety_keys(verdict: Verdict, planner_tags: list[str] | None = None) -> list
 
     if verdict.health_topic or (tags & _QUALITY_TAGS) or verdict.level != "routine":
         keys.add("scope_disclaimer")
-
-    # Transitional (until Phase 4): a safety tag the planner still emits keeps
-    # its line, so the two sources never fight over the same turn.
-    keys |= tags & _PLANNER_SAFETY_TAGS
 
     return [key for key in _ORDER if key in keys]
 

@@ -92,8 +92,9 @@ async def test_synthesizer_no_longer_emits_opening_line():
          patch.object(syn_mod, "get_stream_writer", return_value=sent.append), \
          patch.object(syn_mod, "current_verdict",
                       new=AsyncMock(return_value=_verdict("soon"))):
+        # Planner no longer emits safety tags; quality tags only
         result = await syn_mod.synthesizer_node(
-            _state(["red_flag_screen"]), _config())
+            _state(["scope_disclaimer"]), _config())
     contents = [p["content"] for p in sent if "content" in p]
     assert contents and contents[0] == "Đau ngực cần khám."
     assert not result["final_answer"].startswith(OPENING)

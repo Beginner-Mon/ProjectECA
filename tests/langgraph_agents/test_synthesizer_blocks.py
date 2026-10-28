@@ -247,11 +247,11 @@ def test_anne_identity_core_claims_a_voice():
     assert "You have a voice of your own." in prompt
 
 
-def test_clinical_tags_without_results_give_chat_mode():
+def test_quality_tags_without_results_give_chat_mode():
     from langgraph_agents.nodes.synthesizer import _derive_mode
 
-    for tags in (["red_flag_screen"], ["referral_advice"], ["exercise_protocol"],
-                 ["scope_disclaimer", "contraindication"]):
+    for tags in (["exercise_protocol"], ["exercise_steps"], ["contraindication"],
+                 ["scope_disclaimer"], ["evidence_citation"]):
         state = {"needs_clarification": False, "required_outputs": tags, "messages": []}
         assert _derive_mode(state) == "chat"
 

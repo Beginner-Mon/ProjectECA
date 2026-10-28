@@ -6,15 +6,25 @@
 > Cập nhật 09-10-2026 (stage-labels): nhãn trạng thái theo tin backend
 > (thinking → nhãn nguồn → synthesizer started → chữ, không đồng hồ);
 > khối "Your body this turn" thêm câu giọng nói khi lượt đọc thành tiếng.
+> Cập nhật 28-10-2026 (guardrail v1): grader node removed; guardrail layer
+> wraps the graph in `api/main.py`; planner no longer emits safety tags.
 
 ---
 
-## 1. Tổng quan 8 node
+## 1. Tổng quan — Graph + Guardrail
 
 ```
-planner → retriever_agent → tools → [kimodo] → synthesizer → grader → END
-              ↑                │                    ↑           │
-              └── kiểm 1 ──────┘                    └── kiểm 2 ─┘
+                    ┌─────────────────────────────────────┐
+                    │        GUARDRAIL (api/main.py)      │
+                    │  run_input(CheckContext) → verdict  │
+                    │  head (emergency/soon) emitted      │
+                    │  before first body token            │
+                    └───────────────┬─────────────────────┘
+                                    │
+                                    ▼
+planner → retriever_agent → tools → [kimodo] → synthesizer → END
+              ↑                │
+              └── kiểm 1 ──────┘
 ```
 
 Kiểm 1 (sau `tools`, không tốn LLM): không gọi tool hoặc tool lỗi thì quay lại
@@ -22,10 +32,16 @@ Kiểm 1 (sau `tools`, không tốn LLM): không gọi tool hoặc tool lỗi th
 không phải lỗi (D24). Tool ném lỗi thành `ToolMessage {"error": ...}`, lượt
 không chết.
 
-Kiểm 2 (trong `grader`, một lời gọi LLM thinking-disabled): từng mục kiểm có
-trong evidence mà câu trả lời thiếu thì quay lại `synthesizer` viết thêm phần
-thiếu, tối đa một lần. Câu an toàn và dòng nguồn do code phát thẳng vào luồng
-stream — model không tự viết.
+**Grader node removed (Phase 3).** Safety lines and contract checks now live
+in the guardrail layer:
+- `guardrail.run_input` runs in parallel with the graph; its `Verdict` (level,
+  out_of_scope, health_topic) drives the head/tail lines.
+- `safety_keys(verdict, planner_tags)` maps the verdict to the fixed safety
+  lines: `emergency_screen` / `red_flag_screen` (head), `referral_advice` /
+  `scope_disclaimer` (tail).
+- The planner **no longer emits safety tags** (Phase 4). It tags only quality
+  deliverables: `exercise_protocol`, `exercise_steps`, `contraindication`,
+  `evidence_citation`, `motion_descriptor`.
 
 ```
 START
@@ -127,8 +143,7 @@ START
 | Output | PlanOutput: required_outputs, resolved_query, needs_retrieval, needs_motion, needs_clarification |
 | Persona | ❌ Không liên quan |
 
-**8 tag trong vocabulary** (PLANNER_TAGS = TAG_RULES keys):
-- Safety: `red_flag_screen`, `referral_advice`, `scope_disclaimer`
+**5 tag trong vocabulary** (PLANNER_TAGS):
 - Quality: `exercise_protocol`, `exercise_steps`, `contraindication`, `evidence_citation`, `motion_descriptor`
 
 **3-axis model (D1)**: Không còn intent enum 6 loại nữa. Planner = manager chỉ định WHAT (tags + routing bits), không HOW.
@@ -183,11 +198,14 @@ Hard edge từ planner (D3/D26): chỉ chạy khi `needs_motion=true`. Gọi Kim
 #### 2.5.1 Mode derivation (D29 — emerge from signals, không enum)
 
 ```python
-def _derive_mode(state) -> str:
-    if needs_clarification or tool_ambiguous → "clarify"
-    elif clinical/safety tags + no tool results → "refuse"  
-    elif has tool results                         → "synthesize"
-    else                                          → "chat"
+def _derive_mode(state, verdict: Verdict | None = None) -> str:
+    urgent = verdict is not None and verdict.level != "routine"
+    if state.get("needs_clarification") and not urgent:
+        return "clarify"
+    # Clinical gating belongs to guardrail layer, not mode here
+    if _has_tool_results(state.get("messages", [])):
+        return "synthesize"
+    return "chat"
 ```
 
 #### 2.5.2 Cách persona được inject
@@ -217,9 +235,10 @@ system = f"{persona_system}\n\n---\n\n{task_system}"  # ghép với task prompt
   - Contract note (câu đã hiện + dòng sẽ thêm, nếu có tag do code viết)
 ```
 
-Câu mở đầu (`red_flag_screen`) do code phát vào stream trước chunk LLM đầu;
-`final_answer` = câu mở đầu + chữ LLM. Lượt viết thêm chỉ nối phần thiếu,
-không viết lại. Bất biến: chuỗi đã stream bằng đúng `final_answer`.
+Câu mở đầu (`head` từ guardrail: `emergency_screen` hoặc `red_flag_screen`)
+do `api/main.py` phát vào stream trước chunk LLM đầu; `tail` (referral +
+disclaimer) được nối sau body. `final_answer` = head + body + tail. Synthesizer
+chỉ viết body; không viết lại head/tail.
 
 Nhãn trạng thái trên giao diện đi đúng thứ tự tin backend gửi: thinking lúc
 gửi → nhãn của mọi nguồn đã tra (chỉ ở lượt có tra cứu) → composing từ lúc
@@ -278,22 +297,23 @@ cũ giữ lại làm công cụ đo (`scripts/eval_grader_rules.py`).
 8. `_finish` nối dòng kết (referral → dòng nguồn → disclaimer) vào stream và
    `final_answer`; `grader_detail` vào `meta` API
 
-### 2.7 error_handler — `nodes/error_handler.py`
+### 2.6 error_handler — `nodes/error_handler.py`
 
 CRITICAL error ở bất kỳ node nào → route về đây → viết `final_answer` fallback tiếng Việt → END.
 
 ---
 
-## 3. Hai cổng độc lập (D2, D15)
+## 3. Ba cổng độc lập (D2, D15, Guardrail)
 
-Đây là thiết kế quan trọng nhất. **KHÔNG GỘP 2 cổng** vì sẽ tạo bug an toàn.
+Đây là thiết kế quan trọng nhất. **KHÔNG GỘP 3 cổng** vì sẽ tạo bug an toàn.
 
 | Cổng | Guard | Vị trí | Ý nghĩa |
 |------|-------|--------|---------|
 | Cổng RETRIEVER | `needs_retrieval` | Sau planner (D2) | Có cần tìm kiếm external knowledge không? |
-| Cổng GRADER | `required_outputs != []` | Sau synthesizer (D15) | Có tag contract nào cần kiểm tra không? |
+| Cổng GRADER | `required_outputs != []` | Sau synthesizer (D15) | Có tag contract nào cần kiểm tra không? (chỉ quality tags) |
+| Cổng GUARDRAIL | `verdict.level != "routine"` | Bọc toàn bộ graph (api/main.py) | Triệu chứng cần cảnh báo khẩn/soon? |
 
-**Ví dụ bug nếu gộp**: "đau ngực khi tập" → `needs_retrieval=false` (không cần tìm kiếm), nhưng `required_outputs=[red_flag_screen, referral_advice]`. Nếu gộp 2 cổng, grader bị skip → mất cảnh báo an toàn.
+**Ví dụ bug nếu gộp**: "đau ngực khi tập" → `needs_retrieval=false` (không cần tìm kiếm), `required_outputs=[]` (planner không còn safety tags), nhưng `verdict.level="emergency"`. Cổng guardrail vẫn phát head/tail đúng; nếu gộp 3 cổng, cảnh báo mất.
 
 ---
 
@@ -366,7 +386,7 @@ Persona KHÔNG ảnh hưởng đến:
 - **memory** — chỉ assemble context, không LLM
 - **planner** — dùng system prompt riêng, không persona (planner không phải user-facing)
 - **retriever_agent** — dùng system prompt riêng, persona không liên quan đến search strategy
-- **grader** — LLM chấm từng mục kiểm, không regex
+- **guardrail** — đọc chỉ tin nhắn hiện tại, không LLM cho safety (DeepSeek with thinking disabled)
 
 ### 4.6 3 persona hiện có
 
@@ -383,15 +403,11 @@ Persona KHÔNG ảnh hưởng đến:
 ```python
 class AgentState(TypedDict):
     messages:            list        # Annotated[add_messages] — carries all chat + tool results
-    required_outputs:    list[str]   # Planner set — Grader reads
+    required_outputs:    list[str]   # Planner set — quality tags only
     resolved_query:      str         # Planner set — Retriever + Synthesizer reads
     needs_retrieval:     bool        # Planner set — Routing reads
     needs_clarification: bool        # Planner set — Routing + Synthesizer reads
-    grader_result:       str         # Grader set — Routing reads ("pass"|"retry"|"pass_with_warning")
-    grader_feedback:     str|None    # Grader set — các mục thiếu, Synthesizer đọc (viết thêm)
-    retry_count:         int         # Grader set — Grader/Synthesizer reads (max 1)
-    grader_detail:       dict        # Grader set — mục kiểm → ok|synth_missed|source_silent|no_evidence
-    final_answer:        str         # Synthesizer/Grader/ErrorHandler set — API response
+    final_answer:        str         # Synthesizer/ErrorHandler set — API response (body only; head/tail added by guardrail)
     total_tokens:        int         # Accumulated via operator.add
     retriever_rounds:    int         # Retriever set — Routing reads (hard cap 2)
     errors:              list[dict]  # Annotated[operator.add] — any node can append
@@ -427,17 +443,21 @@ Frontend thêm `persona_id` vào request body → API truyền vào `configurabl
 
 | File | Vai trò |
 |---|---|
-| `graph.py` | Định nghĩa StateGraph, 8 node, edges, routing |
-| `state.py` | AgentState TypedDict |
+| `graph.py` | Định nghĩa StateGraph, 6 node, edges, routing (grader removed) |
+| `state.py` | AgentState TypedDict (grader fields removed) |
 | `routing.py` | `retrieval_fault`, `route_after_*`, `check_errors` |
-| `evidence.py` | `EvidenceItem` dùng chung (synthesizer, grader, dòng nguồn) |
-| `tag_contract.py` | `TAG_CONTRACT` + câu mở đầu/dòng kết/dòng nguồn do code phát |
+| `evidence.py` | `EvidenceItem` dùng chung (synthesizer, dòng nguồn) |
+| `tag_contract.py` | `TAG_CONTRACT` + safety templates; head/tail from `guardrail/stream.py` |
 | `nodes/memory.py` | Memory node |
-| `nodes/planner.py` | Planner node + PlanOutput + TAG vocabulary |
+| `nodes/planner.py` | Planner node + PlanOutput + TAG vocabulary (5 quality tags) |
 | `nodes/retriever_agent.py` | Retriever agent + tool list + system prompt |
 | `nodes/kimodo.py` | Kimodo motion generation node |
 | `nodes/synthesizer.py` | **Synthesizer — nơi persona được inject** |
-| `nodes/grader.py` | LLM chấm (`_judge`) + `_finish` nối dòng kết; TAG_RULES + 8 hàm `_has_*` (công cụ đo) |
 | `nodes/error_handler.py` | Error handler node |
 | `nodes/_persona_loader.py` | Load/cache persona MD, build prompt |
+| `guardrail/triage.py` | Health triage — one model call, 3 levels, no memory |
+| `guardrail/stream.py` | `head`, `tail`, `compose`, `safety_keys` |
+| `guardrail/pipeline.py` | `run_input` — input checks in parallel with graph |
+| `guardrail/checks/health_triage.py` | `HealthTriage` check |
+| `guardrail/policy.py` | `INPUT_CHECKS`, `OUTPUT_TAIL_CHECKS` |
 | `personas/*.md` | 3 persona definitions |

@@ -39,7 +39,7 @@ Key files: `agenticRAG/langgraph_agents/graph.py` (graph wiring),
 **Status**: `docs/tracking/status.md`
 **Branch**: `feature/langgraph-rewrite`
 
-### Graph as built
+### Graph as built (with Guardrail layer, Phase 3+4)
 
 The v2.2 node design below was **not** what shipped. Actual nodes
 (`graph.py:180-235`):
@@ -52,12 +52,18 @@ The v2.2 node design below was **not** what shipped. Actual nodes
 | tools            | ToolNode (pgvector, web search)                            | 0         |
 | kimodo           | Motion generation via MCP, gated on `needs_motion`         | 0         |
 | **synthesizer**  | **Universal responder — applies persona styling**          | 1         |
-| grader           | Rule-based tag check + persona safety templates            | 0         |
 | error_handler    | Writes `final_answer` directly                             | 0         |
+
+**Guardrail layer (outside the graph, in `api/main.py`):** runs in parallel with
+the graph; emits `head` (emergency/soon warning) before first body token, and
+`tail` (referral + disclaimer) after body. Reads **only the current user
+message** — no memory, no history. Three levels: `emergency` / `soon` / `routine`.
 
 The v2.2 `Manager`/`Reasoning`/`Validator`/`Dispatch`/`Conversation` nodes do
 not exist. `conversation.py` was deleted in Phase 6.9 and its persona work moved
 into `synthesizer.py`; `nodes/_persona_loader.py` is the surviving fragment.
+The `grader` node was removed in Phase 3 (its safety/contract functions moved
+to the guardrail layer).
 
 ### Key Decisions (v2.2)
 

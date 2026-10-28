@@ -1,4 +1,4 @@
-"""VvaMonitoringStack: the "vva-lambdas" dashboard (SCRUM-39) and the LLM judge alarm.
+"""VvaMonitoringStack: the "vva-lambdas" dashboard (SCRUM-39) and the guardrail alarms.
 
 Pins what the stack's docstring promises:
 - every VVA function gets its row (invocations/errors/throttles, duration,
@@ -6,7 +6,8 @@ Pins what the stack's docstring promises:
 - the stack imports nothing from the other stacks, so it never blocks their
   deploys;
 - it stays under 50 metrics, the limit for a free dashboard;
-- 3 `grader_judge_failed` lines in an hour on vva-agent alert the topic.
+- 3 `guardrail_triage_failed` lines in an hour on vva-agent alert the topic;
+- triage p90 above 1000 ms in 2 of the last 3 hours alerts the topic.
 """
 
 import json
@@ -19,7 +20,7 @@ from infra.monitoring_stack import (
     ALERT_TOPIC_NAME,
     DASHBOARD_NAME,
     FUNCTION_NAMES,
-    JUDGE_ALARM_NAME,
+    TRIAGE_ALARM_NAME,
     MonitoringStack,
 )
 
@@ -75,7 +76,7 @@ def test_dashboard_stays_under_50_metrics(template):
     metrics = sum(len(w["properties"].get("metrics", [])) for w in graphs)
     alarms = sum(len(w["properties"].get("annotations", {}).get("alarms", [])) for w in graphs)
     assert metrics == len(FUNCTION_NAMES) * 6
-    assert alarms == 2          # LLM judge + memory node latency (17/10)
+    assert alarms == 3          # triage failures + triage latency p90 + memory node latency
     assert metrics + alarms <= 50
 
 
@@ -83,26 +84,50 @@ def _resources(template: dict, type_: str) -> dict:
     return {k: r["Properties"] for k, r in template["Resources"].items() if r["Type"] == type_}
 
 
-def test_judge_failures_are_counted_from_the_agent_logs(template):
+def test_triage_failures_are_counted_from_the_agent_logs(template):
     (f,) = [f for f in _resources(template, "AWS::Logs::MetricFilter").values()
-            if f["MetricTransformations"][0]["MetricNamespace"] == "VVA/Grader"]
+            if f["MetricTransformations"][0]["MetricNamespace"] == "VVA/Guardrail"
+            and f["MetricTransformations"][0]["MetricName"] == "TriageFailed"]
     assert f["LogGroupName"] == "/aws/lambda/vva-agent"
-    assert f["FilterPattern"] == '"grader_judge_failed"'
+    assert f["FilterPattern"] == '"guardrail_triage_failed"'
     (t,) = f["MetricTransformations"]
     assert (t["MetricNamespace"], t["MetricName"], t["MetricValue"]) == (
-        "VVA/Grader", "JudgeFailed", "1")
+        "VVA/Guardrail", "TriageFailed", "1")
 
 
-def test_three_judge_failures_in_an_hour_alert_the_topic(template):
+def test_three_triage_failures_in_an_hour_alert_the_topic(template):
     (alarm,) = [a for a in _resources(template, "AWS::CloudWatch::Alarm").values()
-                if a["AlarmName"] == JUDGE_ALARM_NAME]
-    assert (alarm["Namespace"], alarm["MetricName"]) == ("VVA/Grader", "JudgeFailed")
+                if a["AlarmName"] == TRIAGE_ALARM_NAME]
+    assert (alarm["Namespace"], alarm["MetricName"]) == ("VVA/Guardrail", "TriageFailed")
     assert (alarm["Statistic"], alarm["Period"], alarm["EvaluationPeriods"]) == ("Sum", 3600, 1)
     assert alarm["Threshold"] == 3
     assert alarm["ComparisonOperator"] == "GreaterThanOrEqualToThreshold"
     assert alarm["TreatMissingData"] == "notBreaching"
     ((topic_id, topic),) = _resources(template, "AWS::SNS::Topic").items()
     assert topic["TopicName"] == ALERT_TOPIC_NAME
+    assert alarm["AlarmActions"] == [{"Ref": topic_id}]
+
+
+def test_triage_latency_is_extracted_from_triage_logs(template):
+    (f,) = [f for f in _resources(template, "AWS::Logs::MetricFilter").values()
+            if f["MetricTransformations"][0]["MetricNamespace"] == "VVA/Guardrail"
+            and f["MetricTransformations"][0]["MetricName"] == "TriageElapsedMs"]
+    assert f["LogGroupName"] == "/aws/lambda/vva-agent"
+    assert '"guardrail_triage"' in f["FilterPattern"]
+    (t,) = f["MetricTransformations"]
+    assert (t["MetricNamespace"], t["MetricName"], t["MetricValue"]) == (
+        "VVA/Guardrail", "TriageElapsedMs", "$.elapsed_ms")
+
+
+def test_triage_p90_latency_above_threshold_alerts(template):
+    (alarm,) = [a for a in _resources(template, "AWS::CloudWatch::Alarm").values()
+                if a["AlarmName"] == "vva-guardrail-triage-latency-p90"]
+    assert (alarm["Namespace"], alarm["MetricName"]) == ("VVA/Guardrail", "TriageElapsedMs")
+    assert (alarm["Statistic"], alarm["Period"], alarm["EvaluationPeriods"], alarm["DatapointsToAlarm"]) == ("p90", 3600, 3, 2)
+    assert alarm["Threshold"] == 1000
+    assert alarm["ComparisonOperator"] == "GreaterThanThreshold"
+    assert alarm["TreatMissingData"] == "notBreaching"
+    ((topic_id, topic),) = _resources(template, "AWS::SNS::Topic").items()
     assert alarm["AlarmActions"] == [{"Ref": topic_id}]
 
 
@@ -114,10 +139,11 @@ def test_topic_has_no_subscription_in_the_template(template):
     assert "Export" not in template["Outputs"]["AlertTopicArn"]
 
 
-def test_judge_row_on_the_dashboard(template):
+def test_guardrail_rows_on_the_dashboard(template):
     widgets = _widgets(template)
     titles = [w["properties"].get("title", "") for w in widgets]
-    assert "vva-agent: LLM judge failures per hour (alarm at 3)" in titles
+    assert "vva-agent: guardrail triage failures per hour (alarm at 3)" in titles
+    assert "vva-agent: guardrail triage p90 latency (alarm at 1000 ms)" in titles
     (query,) = [w["properties"]["query"] for w in widgets
-                if w["properties"].get("title") == "vva-agent: LLM judge calls and failures"]
-    assert "/aws/lambda/vva-agent'" in query and "grader_judge_failed" in query
+                if w["properties"].get("title") == "vva-agent: guardrail triage calls and failures"]
+    assert "/aws/lambda/vva-agent'" in query and "guardrail_triage_failed" in query

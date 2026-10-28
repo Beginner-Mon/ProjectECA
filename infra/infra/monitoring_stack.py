@@ -21,14 +21,18 @@ Cost: the account's first three dashboards are free and this one stays under
 50 metrics. The Logs Insights widgets are billed per GB scanned, only when
 someone opens the dashboard.
 
-LLM judge alarm. When the grader's LLM judge fails (nodes/grader.py::_judge),
-the turn passes unchecked by design, so a judge that is down for everyone looks
-the same as a healthy one from the outside. Each failure logs
-`grader_judge_failed`; a metric filter on the vva-agent log group counts them,
-and 3 in one hour sets off `vva-grader-judge-failed`, which publishes to the
-`vva-alerts` topic. One or two timeouts while DeepSeek is slow are expected and
-cost nothing but the check; three in an hour means the judge is down for
-whoever is using the app.
+Guardrail triage alarm. When the triage call fails (timeout, provider error,
+unparseable), the turn continues with a routine fallback verdict by design,
+so a triage that is down for everyone looks the same as a healthy one from
+the outside. Each failure logs `guardrail_triage_failed`; a metric filter on
+the vva-agent log group counts them, and 3 in one hour sets off
+`vva-guardrail-triage-failed`, which publishes to the `vva-alerts` topic.
+One or two timeouts while the model is slow are expected and cost nothing but
+the check; three in an hour means triage is down for whoever is using the app.
+
+Guardrail triage latency alarm. Each successful triage call logs
+`guardrail_triage` with `elapsed_ms`. A metric filter extracts this value;
+a p90 alarm fires when the hourly p90 exceeds 1000 ms in 2 of the last 3 hours.
 
 Nobody hears the alarm until someone subscribes, once, outside CDK. An email
 address does not belong in this repo, and a context flag forgotten on a later
@@ -53,8 +57,11 @@ from constructs import Construct
 
 DASHBOARD_NAME = "vva-lambdas"
 ALERT_TOPIC_NAME = "vva-alerts"
-JUDGE_ALARM_NAME = "vva-grader-judge-failed"
-JUDGE_FAILURES_PER_HOUR = 3
+# Guardrail triage alarms (replaced grader judge alarm in Phase 7).
+TRIAGE_ALARM_NAME = "vva-guardrail-triage-failed"
+TRIAGE_FAILURES_PER_HOUR = 3
+# Guardrail triage latency alarm — p90 threshold (ms).
+TRIAGE_P90_MS = 1000
 # No Redis (17/10): the memory node reads recent messages from Neon. p50 76 ms,
 # p90 123 ms on prod (15/09–17/10). Past this, revisit: skip queries, pooler,
 # then a cache — see docs/plans/reupdate-plan.md D35.
@@ -125,37 +132,39 @@ class MonitoringStack(Stack):
                 ),
             )
 
-        self._judge_alarm()
+        self._guardrail_alarms()
         self._memory_alarm()
 
-    def _judge_alarm(self) -> None:
-        """grader_judge_failed → metric → alarm → topic, plus one dashboard row."""
+    def _guardrail_alarms(self) -> None:
+        """Guardrail triage failure count + p90 latency → metric → alarm → topic."""
         agent_logs = "/aws/lambda/vva-agent"
+
+        # --- TriageFailed: counts `guardrail_triage_failed` log lines ---
         logs.MetricFilter(
-            self, "JudgeFailedFilter",
+            self, "TriageFailedFilter",
             log_group=logs.LogGroup.from_log_group_name(self, "AgentLogs", agent_logs),
-            filter_pattern=logs.FilterPattern.all_terms("grader_judge_failed"),
-            metric_namespace="VVA/Grader",
-            metric_name="JudgeFailed",
+            filter_pattern=logs.FilterPattern.all_terms("guardrail_triage_failed"),
+            metric_namespace="VVA/Guardrail",
+            metric_name="TriageFailed",
             metric_value="1",
         )
         failures = cw.Metric(
-            namespace="VVA/Grader",
-            metric_name="JudgeFailed",
+            namespace="VVA/Guardrail",
+            metric_name="TriageFailed",
             statistic="Sum",
             period=Duration.hours(1),
         )
         self.alert_topic = sns.Topic(self, "AlertTopic", topic_name=ALERT_TOPIC_NAME)
         alarm = cw.Alarm(
-            self, "JudgeFailedAlarm",
-            alarm_name=JUDGE_ALARM_NAME,
+            self, "TriageFailedAlarm",
+            alarm_name=TRIAGE_ALARM_NAME,
             alarm_description=(
-                f"{JUDGE_FAILURES_PER_HOUR}+ grader_judge_failed in one hour on vva-agent: "
-                "turns are passing without the LLM judge. Logs: /aws/lambda/vva-agent, "
-                "field `error`."
+                f"{TRIAGE_FAILURES_PER_HOUR}+ guardrail_triage_failed in one hour on vva-agent: "
+                "turns are falling back to routine without triage. Logs: /aws/lambda/vva-agent, "
+                "field `error` names the exception type."
             ),
             metric=failures,
-            threshold=JUDGE_FAILURES_PER_HOUR,
+            threshold=TRIAGE_FAILURES_PER_HOUR,
             evaluation_periods=1,
             comparison_operator=cw.ComparisonOperator.GREATER_THAN_OR_EQUAL_TO_THRESHOLD,
             treat_missing_data=cw.TreatMissingData.NOT_BREACHING,
@@ -163,17 +172,56 @@ class MonitoringStack(Stack):
         alarm.add_alarm_action(cw_actions.SnsAction(self.alert_topic))
         CfnOutput(self, "AlertTopicArn", value=self.alert_topic.topic_arn)
 
+        # --- TriageElapsedMs: extracts `elapsed_ms` from `guardrail_triage` lines ---
+        logs.MetricFilter(
+            self, "TriageLatencyFilter",
+            log_group=logs.LogGroup.from_log_group_name(self, "AgentLogsTriageLatency", agent_logs),
+            filter_pattern=logs.FilterPattern.all(
+                logs.FilterPattern.string_value("$.msg", "=", "guardrail_triage"),
+            ),
+            metric_namespace="VVA/Guardrail",
+            metric_name="TriageElapsedMs",
+            metric_value="$.elapsed_ms",
+        )
+        p90 = cw.Metric(
+            namespace="VVA/Guardrail",
+            metric_name="TriageElapsedMs",
+            statistic="p90",
+            period=Duration.hours(1),
+        )
+        latency_alarm = cw.Alarm(
+            self, "TriageLatencyAlarm",
+            alarm_name="vva-guardrail-triage-latency-p90",
+            alarm_description=(
+                f"vva-agent guardrail triage p90 above {TRIAGE_P90_MS} ms in 2 of the last 3 hours. "
+                "DeepSeek endpoint or network latency has degraded; triage is on the critical path "
+                "of every turn."
+            ),
+            metric=p90,
+            threshold=TRIAGE_P90_MS,
+            evaluation_periods=3,
+            datapoints_to_alarm=2,
+            comparison_operator=cw.ComparisonOperator.GREATER_THAN_THRESHOLD,
+            treat_missing_data=cw.TreatMissingData.NOT_BREACHING,
+        )
+        latency_alarm.add_alarm_action(cw_actions.SnsAction(self.alert_topic))
+
         self.dashboard.add_widgets(
             cw.AlarmWidget(
-                title=f"vva-agent: LLM judge failures per hour (alarm at {JUDGE_FAILURES_PER_HOUR})",
+                title=f"vva-agent: guardrail triage failures per hour (alarm at {TRIAGE_FAILURES_PER_HOUR})",
                 alarm=alarm,
                 width=8,
             ),
+            cw.AlarmWidget(
+                title=f"vva-agent: guardrail triage p90 latency (alarm at {TRIAGE_P90_MS} ms)",
+                alarm=latency_alarm,
+                width=8,
+            ),
             cw.LogQueryWidget(
-                title="vva-agent: LLM judge calls and failures",
+                title="vva-agent: guardrail triage calls and failures",
                 log_group_names=[agent_logs],
                 query_lines=[
-                    'filter msg = "grader_judge" or msg = "grader_judge_failed"',
+                    'filter msg = "guardrail_triage" or msg = "guardrail_triage_failed"',
                     'stats count(*) as calls, sum(strcontains(msg, "failed")) as failed'
                     " by bin(1h)",
                 ],

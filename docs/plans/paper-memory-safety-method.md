@@ -2,7 +2,7 @@
 tags: [paper, safety, memory, method, draft]
 date: 2026-10-26
 author: K, for Tri and Nguyen
-status: draft of the paper's Method section; numbers and settings from [[paper-memory-safety-results]]
+status: superseded on 29/10 by the full draft [[paper-memory-safety-draft]], whose section 3 continues this text
 ---
 
 # Method (draft)

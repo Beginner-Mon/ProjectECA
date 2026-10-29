@@ -2,7 +2,7 @@
 tags: [plan, llm, openai, prod, safety]
 date: 2026-10-26
 author: K, cho Nguyen và Tri
-status: code và infra đã chuẩn bị ngày 27/10 (chưa commit); prod vẫn chạy DeepSeek cho tới khi có key (mục 8)
+status: commit chuyển đổi xong ngày 29/10; prod vẫn chạy DeepSeek cho tới release push và cdk deploy (mục 8)
 ---
 
 # Chuyển model của prod từ DeepSeek sang OpenAI (gpt-6-luna)
@@ -182,16 +182,15 @@ chọn cấu hình nhanh nhất mà vẫn qua các ngưỡng an toàn.
 ### Các bước còn lại
 
 1. ~~Tạo project OpenAI riêng~~: không cần (xem trên).
-2. Lưu key hiện có vào SSM. Đây là thao tác ghi lên prod, nên K chỉ chạy khi Nguyen cho phép rõ. K đọc key từ
-   `agenticRAG/.env`, không in ra:
-   `aws ssm put-parameter --name /vva/llm/openai-api-key --type SecureString --value <key>`
-3. Commit và release push phần code theo năm bước. Đến đây prod vẫn chạy DeepSeek, vì `LLM_PROVIDER=deepseek`.
-4. **Commit chuyển đổi**, gồm bốn phần lên cùng lúc:
+2. ~~Lưu key hiện có vào SSM~~: xong ngày 28/10 (`/vva/llm/openai-api-key`, SecureString, version 1).
+3. ~~Commit phần code~~: 5b0b35d và 61828c4, đã push lên `feature/langgraph-rewrite` ngày 28/10.
+4. ~~**Commit chuyển đổi**~~ (xong ngày 29/10), gồm bốn phần lên cùng lúc:
    - `agent_stack.py`: `_LLM_PROVIDER = "openai"`;
    - Privacy (8.1);
    - `LEGAL_EFFECTIVE_DATE` trong `ECA_UI/frontend/src/legal/index.ts` đặt bằng ngày chuyển;
    - `legal.test.ts`: thêm `'OpenAI'` vào danh sách bên nhận dữ liệu.
-5. Release push, rồi chạy trong `infra/` (Nguyen ra lệnh rõ):
+5. Trước release push: DB prod phải có migration 017 của Tri. Code mới đọc cột `memory_type` khi tìm memory tầng
+   2 và ở các route `/me/memory` (worklog 29/10). Sau đó release push, rồi chạy trong `infra/` (Nguyen ra lệnh rõ):
    `npx --yes aws-cdk@2 deploy VvaAgentStack --exclusively --require-approval never --app "D:\Project_A\.venvs\eca-test\Scripts\python.exe app.py" -c motion_key_pair_id=KGUIRRSF1V55H`
    (cần `infra/build/crud_api.zip`; tạo bằng `python infra/build_crud_api.py`).
 6. Smoke test như mục 5.5.

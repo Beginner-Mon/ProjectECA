@@ -23,8 +23,8 @@ export const LEGAL_CONTACT_EMAIL = 'contact@ordinary.studio'
 
 /** Bump when either document changes in substance. */
 export const LEGAL_EFFECTIVE_DATE: Record<Locale, string> = {
-  en: '29 October 2026',
-  vi: '29/10/2026',
+  en: '30 October 2026',
+  vi: '30/10/2026',
 }
 
 const SOURCES: Record<LegalDoc, Record<Locale, string>> = {

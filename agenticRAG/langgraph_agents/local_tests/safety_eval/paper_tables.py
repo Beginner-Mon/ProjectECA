@@ -75,6 +75,11 @@ TABLE2 = [
     ("qwen3.8-27b", "plain_safe", "m3-qwen", "plain_safe"),
     ("qwen3.8-27b", "gate", "m3-qwen", "gate"),
     ("qwen3.8-27b", "gate, Luna guard", "m3-qwen-lg", "gate"),
+    ("qwen3.8-27b", "gate3, Luna guard", "g3-qwen-lg", "gate3"),
+    ("gpt-oss-120b", "plain", "m3-gptoss", "plain"),
+    ("gpt-oss-120b", "plain_safe", "m3-gptoss", "plain_safe"),
+    ("gpt-oss-120b", "gate, Luna guard", "m3-gptoss-lg", "gate"),
+    ("gpt-oss-120b", "gate3, Luna guard", "m3-gptoss-lg", "gate3"),
 ]
 
 

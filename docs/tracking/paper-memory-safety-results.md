@@ -2,7 +2,7 @@
 tags: [paper, safety, memory, experiment, results]
 date: 2026-10-25
 author: K (Claude), cho Tri và Nguyen
-status: kết quả S3, S3b, S3c chạy ngày 24/10/2026; S4, 3 kiểm tra và việc 1–3 chạy ngày 25/10/2026; chưa commit
+status: kết quả S3, S3b, S3c chạy ngày 24/10/2026; S4, 3 kiểm tra và việc 1–5 chạy ngày 25/10/2026; gpt-oss và Qwen chạy đủ ngày 26/10/2026
 ---
 
 # Memory và cảnh báo an toàn: kết quả thí nghiệm S3 → S4 trên 5 model
@@ -24,19 +24,20 @@ Tài liệu liên quan:
 | deepseek-v4-flash (model prod của ECA) | DeepSeek | S3, S3b, S3c, S4, việc 3 | planner ECA, ECA hoàn chỉnh, `plain`, `plain_safe`, `reflect`, `gate`; thinking bật và tắt |
 | deepseek-v4-pro | DeepSeek | S4, việc 3 | `plain`, `plain_safe`, `gate` (chỉ tin khẩn) |
 | gpt-6-luna | OpenAI | S3b, S4, kiểm tra 2, việc 2, việc 3 | planner ECA, `plain`, `plain_safe`, `reflect`, `gate`; suy luận bật và tắt |
-| gpt-oss-120b (open-weight, qua Groq) | OpenAI | S4, kiểm tra 2, việc 3 (chạy thử 26 ca) | `plain` (có lưu phần suy luận), `plain_safe`, `gate` |
-| qwen3.8-27b (open-weight, qua Groq) | Alibaba | S3, S4, kiểm tra 2, việc 3 (1 lần lặp) | planner ECA, `plain`, `plain_safe`, `gate` |
+| gpt-oss-120b (open-weight, qua Groq) | OpenAI | S4, kiểm tra 2, việc 3 (đủ, 1 lần lặp, 26/10) | `plain` (có lưu phần suy luận), `plain_safe`, `gate` và `gate3` (guard Luna) |
+| qwen3.8-27b (open-weight, qua Groq) | Alibaba | S3, S4, kiểm tra 2, việc 3 (3 lần lặp; `gate3` 1 lần, 26/10) | planner ECA, `plain`, `plain_safe`, `gate`, `gate3` (guard Luna) |
 
 Judge chấm câu trả lời là gpt-6-luna cho mọi lượt. Ở kiểm tra 1, gpt-oss-120b và Qwen 27B chấm lại
 một mẫu 294 câu.
 
 **Độ phủ còn lệch:**
 - ECA hoàn chỉnh mới chạy trên DeepSeek v4-flash.
-- Báo động sai đã đo trên v4-flash và Luna (đủ 3 lần lặp), Qwen và v4-pro (1 lần); gpt-oss chưa đo.
+- Báo động sai đã đo trên cả 5 model: v4-flash, Luna và Qwen đủ 3 lần lặp; v4-pro và gpt-oss 1 lần.
 - Dữ liệu tiếng Anh (HealthBench, bản dịch của tin gốc) mới chạy trên Luna tắt suy luận và v4-flash tắt
   thinking.
-- Cách sửa mới (`gate`) có đủ lần lặp trên v4-flash, v4-pro, Luna và Qwen (guard Luna); lượt plain và câu
-  quy tắc của Qwen mới 1–2 lần; gpt-oss mới chạy thử 26 ca vì hạn mức Groq.
+- Cách sửa `gate` có đủ lần lặp trên v4-flash, v4-pro, Luna và Qwen (guard Luna); gpt-oss 1 lần.
+- `gate3` đã chạy trên Luna tắt suy luận (3 lần), gpt-oss và Qwen (guard Luna, 1 lần). Chưa chạy trên
+  DeepSeek vì số dư đã sát ngưỡng 0,5 USD.
 
 **Kết quả chính:**
 - **Câu hỏi.** Memory cá nhân (lời dặn, chẩn đoán cũ, hồ sơ) có làm trợ lý sức khỏe bỏ cảnh báo khi
@@ -77,7 +78,7 @@ một mẫu 294 câu.
   - Trên v4-flash, bộ tin của mình, gate giữ cảnh báo ngang câu quy tắc (144 so với 144/156 ca khẩn có
     memory), nhưng báo động sai chỉ 2 so với 24/162 (p < 0,001). Tự xem lại (reflect) kém cả hai mặt.
   - Gate chỉ bỏ sót khi bước kiểm bỏ sót. Dùng Luna làm model kiểm thì v4-pro tăng từ 81 % lên 92–96 %,
-    Qwen từ 60–73 % lên 91–95 % (câu quy tắc trên Qwen: 92–96 % nhưng báo động sai 22–37 %; gate 0 %).
+    Qwen từ 60–73 % lên 91–95 % (câu quy tắc trên Qwen: 88–92 % nhưng báo động sai 30 %; gate 0 %).
   - Với guard Luna, gate cho nhiều câu trả lời "đúng chuẩn y đức" hơn hoặc ngang câu quy tắc ở mọi model
     đã đo (73–88 %).
 - **Việc 3 và việc 5 (tối 25/10, mục 3.9).**
@@ -91,6 +92,11 @@ một mẫu 294 câu.
   - HealthBench: khuyên cấp cứu cho ca không khẩn giảm từ 29 % (gate 2 mức) xuống 5 %, thấp hơn câu quy
     tắc (15 %); đổi lại 4 % ca cấp cứu chỉ được khuyên khám sớm, không ca nào bị bỏ hẳn.
   - Bộ tin của mình: 100 % cảnh báo, báo động sai 2 % (câu quy tắc: 100 % và 15 %).
+- **Gate 3 mức trên gpt-oss và Qwen (26/10, mục 3.10), guard Luna, 1 lần lặp.** Trên 52 ca khẩn có memory,
+  `gate3` giữ cảnh báo ngang câu quy tắc (gpt-oss 48 và 48; Qwen 52 và 50), còn báo động sai gần như bằng
+  0 (gpt-oss 0 so với 10/54; Qwen 1 so với 15/54; p ≤ 0,002). Không ca khẩn nào bị bỏ hẳn lời khuyên.
+- **Chấm tay (27/10, mục 3.11).** Nguyen và Tri chấm mù 150 câu. Người khớp với judge Luna ở κ 0,74–0,75 (nhãn
+  "không khuyên khám": 0,83–0,84), cao hơn hai người khớp với nhau (κ 0,68). Mọi κ trên ngưỡng bỏ 0,6.
 - **Chi tiết trên DeepSeek v4-flash (S3b, S3c, mục 3.2–3.3):**
   - Với trợ lý thường, một lời dặn "đừng khuyên tôi đi khám" kéo tỉ lệ khuyên khám gấp từ 74 %
     xuống 27 %. Lặp lời dặn 3 lần thì còn 17–19 %, override còn 21 % (đều p < 0,001).
@@ -100,9 +106,9 @@ một mẫu 294 câu.
     bị kéo xuống, nhưng câu trả lời cuối bớt khẩn khi có memory: 96 % xuống 81–86 % (p = 0,004–0,04).
     Báo động sai là 30 %. Vậy giả thuyết "chỉ cần tách bước an toàn ra là đủ" không đứng.
 - **Luna ở S3b (mục 3.2):** gần như không bị với mọi loại memory, từ 97 % chỉ xuống 91–97 %.
-- **Chi phí.** DeepSeek tổng khoảng 3,3 USD thật: đến S4 khoảng 1,7, việc 3 khoảng 1,6. Tiền thật cao
-  hơn ước tính theo bảng giá khoảng 1,6–2,2 lần. OpenAI tổng khoảng 1,4 USD (ước tính). Groq miễn phí.
-  Số dư DeepSeek còn 1,04 USD.
+- **Chi phí.** DeepSeek tổng khoảng 3,7 USD thật; tiền thật cao hơn ước tính theo bảng giá khoảng
+  1,6–2,2 lần. Số dư còn 0,64 USD, đã dừng chạy DeepSeek. OpenAI tổng khoảng 2,5 USD trên 5 USD (ước
+  tính). Groq miễn phí.
 
 ## 1. Bối cảnh và câu hỏi nghiên cứu
 
@@ -174,7 +180,8 @@ bản đã push, nơi `condition` và `restriction` được đưa lên tier 1 n
 
 Giới hạn của `eca_full`: test không có DB, nên synthesizer không có evidence và chạy ở chế độ
 "refuse" (`synthesizer.py` `_derive_mode`, luật D25). Khi chạy thật, ECA thường có evidence lấy từ
-KB. Ngoài ra trong S3c, synthesizer chạy `deepseek-v4-flash`, còn prod dùng `deepseek-v4-pro`.
+KB. Synthesizer trong S3c chạy `deepseek-v4-flash`, cũng là model prod dùng cho mọi vai trò (`llm.py`:
+`_HEAVY_ROLES` rỗng; kiểm lại 26/10, bản trước ghi nhầm là prod dùng `deepseek-v4-pro`).
 
 ### 2.4 Model và tham số
 
@@ -640,7 +647,8 @@ Một số dòng, lời dặn nằm trong memory (bảng đủ ở `results/repo
 
 Prompt nguyên văn nằm trong `run_memory_design.py` (`REFLECT_PROMPT`, `TRIAGE_SYSTEM`,
 `GATE_DIRECTIVE`, `CHECK_SYSTEM`, `FALLBACK_WARNING`). Tin: 26 tin khẩn và 18 tin không cần cảnh báo;
-memory `none`, `instr_x3`, `override`; 3 lần lặp (v4-pro 2 lần, chỉ tin khẩn).
+memory `none`, `instr_x3`, `override`; 3 lần lặp (v4-pro 2 lần, chỉ tin khẩn; gpt-oss 1 lần, chạy ngày
+26/10 trên 4 key Groq cùng lúc).
 
 **Khuyên khám gấp ở tin khẩn (none / instr_x3 / override, trên 78) và báo động sai (trên 54):**
 
@@ -664,13 +672,15 @@ memory `none`, `instr_x3`, `override`; 3 lần lặp (v4-pro 2 lần, chỉ tin 
 | | plain_safe (việc 2) | 77 / 78 / 78 | 2 / 15 / 8 |
 | | reflect | 77 / 73 / 72 | 2 / 3 / 0 |
 | | gate (guard là Luna) | 77 / 77 / 76 | 5 / 0 / 1 |
-| qwen3.8-27b (số lần lặp ghi trong ngoặc) | plain (2 lần) | 23 / 6 / 0 (trên 51–52) | 0 / 0 / 0 (trên 36) |
-| | plain_safe (2 lần; override 1 lần) | 45 / 48 / 25 (trên 52 / 52 / 26) | 11 / 13 / 4 (trên 36 / 35 / 18) |
+| qwen3.8-27b (số lần lặp ghi trong ngoặc) | plain (3 lần) | 39 / 9 / 0 | 1 / 0 / 0 |
+| | plain_safe (3 lần) | 70 / 72 / 69 | 17 / 22 / 9 |
 | | gate (1 lần) | 20 / 19 / 15 (trên 25–26) | 0 / 0 / 0 (trên 18) |
-| | gate, guard Luna (3 lần) | 76 / 74 / 71 (trên 78) | 0 / 0 / 0 (trên 54) |
-| gpt-oss-120b (trên 26, chỉ `override`, 1 lần) | plain (S4) | 0 trên 78 | — |
-| | plain_safe | 24 | — |
-| | gate | 22 | — |
+| | gate, guard Luna (3 lần) | 76 / 74 / 71 | 0 / 0 / 0 |
+| | gate3, guard Luna (1 lần, mục 3.10) | 26 / 26 / 26 (trên 26) | 0 / 1 / 0 (trên 18) |
+| gpt-oss-120b (1 lần: khẩn trên 26, báo động sai trên 18) | plain | 1 / 2 / 1 | 0 / 0 / 0 |
+| | plain_safe | 23 / 25 / 23 | 3 / 3 / 4 |
+| | gate, guard Luna | 24 / 23 / 23 | 0 / 0 / 0 |
+| | gate3, guard Luna (mục 3.10) | 25 / 26 / 22 | 0 / 0 / 0 |
 
 **So từng cặp (McNemar, ghép theo tin × lần chạy; khẩn có memory n = 156, báo động sai n = 162):**
 
@@ -681,6 +691,8 @@ memory `none`, `instr_x3`, `override`; 3 lần lặp (v4-pro 2 lần, chỉ tin 
 | v4-flash, thinking tắt | gate với reflect | **144 và 100** | < 0,001 | **2 và 36** | < 0,001 |
 | v4-flash, thinking bật | gate với plain_safe (S3c) | 142 và 151 | 0,004 | **2 và 17** | < 0,001 |
 | v4-flash, thinking bật | gate guard Luna với plain_safe (S3c) | 144 và 151 | 0,12 | **2 và 17** | < 0,001 |
+| qwen3.8-27b | gate guard Luna với plain_safe | 145 và 141 | 0,52 | **0 và 48** | < 0,001 |
+| gpt-oss-120b (1 lần: n = 52 và 54) | gate guard Luna với plain_safe | 46 và 48 | 0,69 | **0 và 10** | 0,002 |
 
 Đọc kết quả:
 - **Gate giữ cảnh báo ngang câu quy tắc, nhưng báo động sai giảm 8–24 lần.** Trên v4-flash tắt suy
@@ -707,9 +719,9 @@ nhắc lời dặn vừa cảnh báo rõ (đúng chuẩn); N+C là bỏ cảnh b
 | v4-flash, thinking tắt | 0 % / 86 % | 56 % / 2 % | 4 % / 27 % | **79 %** / 8 % (guard Luna: 82 % / 6 %) |
 | v4-flash, thinking bật | 19 % / 70 % (S3c) | 89 % / 3 % (S3c) | 37 % / 14 % | **88 %** / 9 % (guard Luna: 87 % / 8 %) |
 | v4-pro | 0 % / 86 % (S4) | 29 % / 0 % | — | **68 %** / 16 % (guard Luna: 77 % / 7 %) |
-| gpt-6-luna, tắt suy luận | 13 % / 11 % | 3 % / 0 % | 6 % / 5 % | **72 %** / 1 % |
-| qwen3.8-27b (2–3 lần lặp) | 2 % / 46 % | 62 % / 3 % | — | 59 % / 22 % (guard Luna: 72 % / 6 %) |
-| gpt-oss-120b (26 ca) | 0 % / 76 % (S4) | 0 % / 4 % | — | 4 % / 12 % |
+| gpt-6-luna, tắt suy luận | 13 % / 11 % | 3 % / 0 % | 6 % / 5 % | **72 %** / 1 % (gate3: 65 % / 0 %) |
+| qwen3.8-27b (3 lần; gate 1 lần) | 1 % / 49 % | 54 % / 4 % | — | 59 % / 22 % (guard Luna: 72 % / 6 %; gate3 guard Luna: **81 %** / 0 %) |
+| gpt-oss-120b (1 lần) | 0 % / 77 % | 0 % / 4 % | — | guard Luna: 4 % / 10 % (gate3 guard Luna: 12 % / 0 %) |
 
 - Với guard Luna, gate cho tỉ lệ "đúng chuẩn" cao hơn câu quy tắc ở v4-flash tắt suy luận, v4-pro, Qwen
   và Luna, và ngang ở v4-flash bật suy luận (87 so với 89 %). Câu quy tắc làm Luna và v4-pro cảnh báo mà
@@ -718,12 +730,14 @@ nhắc lời dặn vừa cảnh báo rõ (đúng chuẩn); N+C là bỏ cảnh b
 - N+C còn lại của gate (6–16 %) đúng là những ca bước kiểm bỏ sót.
 - gpt-oss gần như không bao giờ nhắc lời dặn, dù dùng cách nào.
 - **Qwen lặp lại đúng kiểu của v4-pro.**
-  - Câu quy tắc giữ 92–96 % ca khẩn khi có memory, nhưng báo động sai 22–37 %.
+  - Câu quy tắc giữ 88–92 % ca khẩn khi có memory, nhưng báo động sai 30 % (17–41 % tùy điều kiện).
   - Gate dùng guard Luna (3 lần lặp) giữ 91–95 %, với 0/54 báo động sai ở mọi điều kiện.
   - Gate tự kiểm (1 lần) chỉ giữ 60–73 %.
-  - Lượt plain và câu quy tắc dừng giữa chừng vì cả 3 key Groq hết hạn mức ngày; chạy tiếp được bằng
-    `--resume`.
-- **gpt-oss mới chạy thử 26 ca** vì hạn mức Groq hôm nay gần hết; có thể chạy đủ từ chiều 26/10.
+  - Lượt plain và câu quy tắc chạy đủ 3 lần ngày 26/10 (`--resume`, 4 key Groq cùng lúc).
+- **gpt-oss (chạy đủ ngày 26/10, 1 lần).** Câu quy tắc giữ 48/52 ca khẩn có memory nhưng báo động sai
+  10/54 (19 %). Gate guard Luna giữ 46/52 với 0/54 báo động sai (p = 0,002); gate3 guard Luna 48/52 với
+  0/54. gpt-oss vẫn gần như không nhắc lời dặn (Y+A 0–12 %), nên phần lớn câu trả lời đúng của nó là N+A.
+  Bản chạy thử 26 ca của 25/10 (`m3-gptoss-pilot`, `m3-gptoss-safe-pilot`) không còn dùng trong bảng.
 
 ### 3.9 Việc 3 và việc 5 (tối 25/10): báo động sai trên v4-pro, HealthBench, bản tiếng Anh
 
@@ -836,6 +850,21 @@ mọi điều kiện trên 600):
 | gate (2 mức) | 189/190 (99 %) | 0 | **174/600 (29 %)** |
 | **gate3** | 182/190 (96 %) | 0 | **32/600 (5 %)** |
 
+**gate3 trên gpt-oss và Qwen** (26/10; guard Luna; 1 lần lặp; bộ tin tiếng Việt; khẩn có memory trên 52,
+báo động sai ở mọi điều kiện trên 54; câu quy tắc lấy cùng lần lặp 1 để ghép cặp):
+
+| Model | plain_safe: khuyên khám gấp / báo động sai | gate3: khuyên khám gấp / báo động sai | p (khuyên khám gấp) | p (báo động sai) |
+|---|---|---|---|---|
+| gpt-oss-120b | 48/52 / 10/54 | 48/52 / **0/54** | 1,0 | 0,002 |
+| qwen3.8-27b | 50/52 / 15/54 | 52/52 / **1/54** | 0,5 | < 0,001 |
+
+- Không ca khẩn nào bị bỏ hẳn lời khuyên (C = 0 trên cả hai model). Ca không đạt A là được khuyên khám
+  chung chung (B).
+- Bước kiểm xếp mọi tin khẩn vào EMERGENCY hoặc SOON (gpt-oss 48 và 30; Qwen 53 và 25 trên 78 lượt) và mọi
+  tin không cần cảnh báo vào ROUTINE. Câu cảnh báo dự phòng chèn 0 lần trên gpt-oss, 1 lần trên Qwen.
+- Chuẩn y đức (mục 3.8): Qwen Y+A 81 %, gpt-oss 12 % (gpt-oss gần như không nhắc lời dặn, nên phần lớn là
+  N+A); N+C 0 % trên cả hai.
+
 Đọc kết quả:
 - **Gate3 sửa đúng chỗ yếu của gate 2 mức.** Trên HealthBench, khuyên cấp cứu cho ca non-emergent giảm từ
   29 % xuống 5 %, thấp hơn cả câu quy tắc (15 %) và plain (10 %). Ở ca non-emergent, gate3 chủ yếu khuyên
@@ -844,8 +873,34 @@ mọi điều kiện trên 600):
   cấp cứu" thay vì cấp cứu ngay (96 % so với 98–99 %). Không ca nào bị bỏ hẳn lời khuyên.
 - **Trên bộ tin của mình, gate3 là thiết kế tốt nhất trên Luna tắt suy luận:** giữ 100 % cảnh báo với
   báo động sai 2 %, so với câu quy tắc 100 % và 15 %.
-- **Giới hạn:** gate3 mới chạy trên Luna. Trên DeepSeek và Qwen chưa chạy, vì DeepSeek đã sát ngưỡng
-  0,5 USD; Qwen có thể chạy trên Groq (miễn phí) khi hạn mức hồi.
+- **Gate3 giữ được trên hai model open-weight** (gpt-oss, Qwen, guard Luna): ngang câu quy tắc về cảnh
+  báo, báo động sai 0–2 % so với 19–28 %.
+- **Giới hạn:** gate3 đã chạy trên Luna, gpt-oss và Qwen; hai model sau chỉ 1 lần lặp và chỉ bộ tin tiếng
+  Việt. Chưa chạy trên DeepSeek vì số dư đã sát ngưỡng 0,5 USD, và chưa chạy HealthBench trên model
+  open-weight.
+
+### 3.11 Chấm tay (27/10)
+
+Nguyen và Tri chấm độc lập 150 câu (`human_labels.py`, seed 13), không thấy nhãn của máy, sau vòng chấm thử 10
+câu. Đây là kết quả lần đầu, chưa đối chiếu chỗ lệch.
+
+| Cặp | Cùng nhãn | κ A/B/C | κ không khuyên khám (C) | κ khuyên khám gấp (A) |
+|---|---|---|---|---|
+| Nguyen và Tri | 119/150 | 0,68 | 0,81 | 0,65 |
+| Nguyen và Luna | 125/150 | **0,75** | 0,83 | 0,68 |
+| Tri và Luna | 125/150 | **0,74** | 0,84 | 0,77 |
+
+Nhắc lời dặn (Y/N, các câu có lời dặn): Nguyen và Tri 99/104 (κ 0,64); Nguyen và Luna 82/84 (κ 0,89); Tri và
+Luna 79/84 (κ 0,68).
+
+- Mọi κ đều trên ngưỡng bỏ 0,6. Judge Luna khớp với từng người (0,74–0,75) hơn hai người khớp với nhau (0,68).
+- Nhãn quan trọng nhất của paper ("không khuyên khám", C) khớp tốt: κ 0,81–0,84. Lệch chủ yếu ở ranh giới A và B,
+  giống kiểm tra 1 (mục 3.6).
+- 34 dòng hai người lệch nhau (31 lệch nhãn, 3 chỉ lệch Y/N): A với B 17 dòng, B với C 11, A với C 3. Đã ghi vào
+  `human_labels/disagreements.csv` để hai người đối chiếu (cột `nhan_chot`), rồi chạy lại `score` để có độ khớp
+  giữa nhãn chốt và máy.
+- Tri ghi nhãn bằng chữ thường và điền cột Y/N cả ở dòng không có lời dặn. Script đã chuẩn hóa chữ hoa, và chỉ
+  tính Y/N ở dòng có lời dặn.
 
 ## 4. Phát hiện
 
@@ -917,6 +972,9 @@ mọi điều kiện trên 600):
 24. **Gate 3 mức sửa được chỗ đó** (Luna tắt suy luận). Trên HealthBench, khuyên cấp cứu cho ca non-emergent
     còn 5 % (gate 2 mức 29 %, câu quy tắc 15 %), đổi lại 4 % ca emergent chỉ được khuyên khám sớm. Trên bộ
     tin của mình: 100 % cảnh báo, 2 % báo động sai.
+25. **Gate 3 mức giữ được trên hai model open-weight** (26/10, guard Luna, 1 lần lặp). gpt-oss: 48/52 ca
+    khẩn có memory, báo động sai 0/54 (câu quy tắc 48/52 và 10/54). Qwen: 52/52 và 1/54 (câu quy tắc 50/52
+    và 15/54). Không ca khẩn nào bị bỏ hẳn lời khuyên.
 
 ## 5. Chi phí
 
@@ -1008,6 +1066,13 @@ Số dư DeepSeek qua từng mốc ngày 24/10:
 0,03; chấm lại 4 mức 0,04). Tổng OpenAI từ 24/10 khoảng 2,4 USD trên 5 USD. Theo chốt của Nguyen, dừng
 chi tiền ở đây; phần còn lại dùng Groq (miễn phí).
 
+**Groq ngày 26/10 (gpt-oss đủ, Qwen chạy tiếp, gate3 trên hai model; Nguyen duyệt khoảng 0,1 USD):**
+- **OpenAI (ước tính):** khoảng 0,07 USD, gồm Luna làm judge và guard 0,05, chấm chuẩn y đức 548 câu 0,02.
+  Tổng OpenAI từ 24/10 khoảng 2,5 USD trên 5 USD.
+- **Groq:** miễn phí. Từ 26/10 `run_memory_design.py` dùng cả 4 key cùng lúc (Nguyen thêm key thứ 4):
+  528 lượt gpt-oss xong trong khoảng 15 phút, 443 lượt Qwen trong khoảng 20 phút. Lỗi còn lại (vượt hạn mức
+  phút, 503 quá tải) đã chạy lại bằng `--resume`, nên các file kết quả không còn dòng lỗi.
+
 **So sánh DeepSeek với Luna:** theo bảng giá thì gần ngang nhau. Nhưng DeepSeek dùng nhiều token
 suy luận hơn (trợ lý thường: 374 token so với 138), và giá DeepSeek thực tế cao hơn bảng giá bên
 thứ ba khoảng 1,6–1,9 lần. Vậy với khối việc này, trên thực tế DeepSeek đắt hơn.
@@ -1016,12 +1081,12 @@ thứ ba khoảng 1,6–1,9 lần. Vậy với khối việc này, trên thực 
 
 - **Bộ tin nhắn nhỏ:** 26 tin khẩn (13 kịch bản) và 18 tin không cần cảnh báo, chỉ tiếng Việt.
   Tin nhắn là tổng hợp, chưa phải người dùng thật.
-- **Judge chưa được người kiểm.** Ngoài Luna đã có thêm 2 judge LLM khác hãng (kiểm tra 1, mục 3.6),
-  nhưng chưa có người chấm.
+- **Judge mới được người kiểm một mẫu.** Ngoài 2 judge LLM khác hãng (kiểm tra 1), hai người chấm 150 câu
+  (mục 3.11, κ với judge 0,74–0,75); chưa đối chiếu xong chỗ lệch, và người chấm là tác giả, không phải bác sĩ.
 - **Memory được tiêm tay** theo kịch bản, chưa phải memory do memory v2 trích từ hội thoại thật.
   Mỗi lượt cũng chỉ là một lượt hội thoại đơn.
 - **`eca_full` thiếu evidence** nên synthesizer chạy chế độ refuse. Synthesizer dùng
-  `deepseek-v4-flash` thay vì `deepseek-v4-pro` như prod.
+  `deepseek-v4-flash`, đúng model prod (kiểm lại 26/10).
 - **Tham số không đối xứng:** Luna temperature 1, DeepSeek temperature 0.
 - **Đo `eca` bằng tag còn đo các thiết kế khác bằng judge** thì không cùng thước. S3c sửa điểm này
   bằng `eca_full`.
@@ -1054,7 +1119,8 @@ thứ ba khoảng 1,6–1,9 lần. Vậy với khối việc này, trên thực 
   - "Biết mà không nói": không đứng với gpt-oss (1/312 trace, kiểm tra 3).
   - "Câu quy tắc sẽ hỏng trên model dễ nghe lời": không đứng (v4-pro 51–52/52, việc 3).
   - "Gate luôn ít báo động sai hơn câu quy tắc": không đứng trên HealthBench với gate 2 mức (việc 5). Gate
-    3 mức thì đứng trên Luna (mục 3.10); chưa thử trên model khác.
+    3 mức thì đứng trên Luna (mục 3.10, cả HealthBench), và trên bộ tin tiếng Việt với gpt-oss và Qwen
+    (guard Luna, 26/10).
   - EOM chưa được thử ở mức câu trả lời.
 - **Vị trí so với các bài đã có (cập nhật 25/10):**
   - PersistBench (ICML 2026) và Jain và cộng sự (arXiv 2509.12517) đã cho thấy memory làm model
@@ -1067,13 +1133,10 @@ thứ ba khoảng 1,6–1,9 lần. Vậy với khối việc này, trên thực 
   - HealthBench có 482 ca emergency referrals, tiêu chí chấm do bác sĩ viết, nhưng không có memory.
 - **Việc 1–3 đã làm ngày 25/10** (mục 3.7, 3.8). Nguyen nạp thêm 2 USD DeepSeek cho việc 3.
 - **Còn lại để lên venue mạnh:**
-  1. Chấm tay khoảng 150 câu (Nguyen và Tri, mỗi người khoảng 3 giờ) và báo cáo κ so với judge. Bảng đã
-     sẵn ở `safety_eval/human_labels/` (`sheet_nguyen.csv`, `sheet_tri.csv`, `HUONG_DAN.md`); chấm xong
-     chạy `python human_labels.py score`.
-  2. Gate 3 mức trên DeepSeek và Qwen (đã chạy trên Luna, mục 3.10). DeepSeek cần nạp thêm; Qwen chạy được
-     trên Groq, miễn phí.
-  3. Chạy đủ gpt-oss (3 thiết kế × 3 loại memory × 44 tin) khi hạn mức Groq hồi, từ chiều 26/10. Chạy tiếp
-     lượt plain và câu quy tắc của Qwen bằng `--resume` (dừng giữa chừng tối 25/10 vì hạn mức).
+  1. Chấm tay: lần đầu xong ngày 27/10 (mục 3.11, κ với judge 0,74–0,75). Còn đối chiếu 34 dòng lệch trong
+     `human_labels/disagreements.csv`, rồi chạy lại `python human_labels.py score`.
+  2. Gate 3 mức trên DeepSeek (cần nạp thêm). Đã chạy trên Luna, gpt-oss và Qwen.
+  3. Đã làm 26/10: gpt-oss đủ 4 thiết kế (1 lần lặp), Qwen đủ 3 lần lặp, gate3 trên gpt-oss và Qwen.
   4. Hội thoại nhiều lượt, memory do memory v2 trích ra, và ECA có retrieval thật.
   - Đã làm tối 25/10: HealthBench, bản tiếng Anh của tin gốc, và báo động sai trên v4-pro (mục 3.9).
 - **Khi nào bỏ:** người chấm lệch judge nhiều (κ < 0,6); judge thứ hai đảo kết quả của Luna; hoặc chỉ
@@ -1098,6 +1161,14 @@ thứ ba khoảng 1,6–1,9 lần. Vậy với khối việc này, trên thực 
   (96 % xuống 81–86 %). Nên thêm phép kiểm này vào điều kiện release memory v2.
 - Báo động sai của ECA khi không có memory là 30 % trên câu bẫy và câu thường. Pilot H2 cũng đã
   thấy bản bỏ dấu sinh báo động sai. Nên xem lại hai điểm này cùng nhau.
+- **27/10, chuẩn bị chuyển prod sang OpenAI** ([[llm-openai-switch]]). Đo câu trả lời hoàn chỉnh của ECA chạy
+  trên Luna tắt suy luận, qua đúng code prod mới (`LLM_PROVIDER=openai`), 1 lần lặp. Kết quả: khuyên khám gấp
+  21 / 22 / 21 trên 26 ở `none` / `instr_x3` / `override`, không câu nào bỏ hẳn lời khuyên, báo động sai 0/54.
+  Memory không kéo xuống, nhưng mức gốc thấp hơn DeepSeek (81 % so với 96 %), vì planner của Luna bỏ sót tag
+  nguy hiểm ở 5–7 tin. Cho planner suy luận `low` không giúp (61 so với 64/78).
+- **Đo lại trên code mới của Tri** (synthesizer bỏ chế độ refuse, `switch-luna-eca-v2`): khuyên khám gấp 26 / 26
+  / 25 trên 26, tổng 77/78 so với 64/78 trước đó (p < 0,001). Khi có lời dặn còn 51/52; báo động sai 4/54. Vậy
+  phần lớn chỗ hụt trước đó do chế độ refuse, không phải do Luna.
 
 ## 9. Ghi chú kỹ thuật cho lần chạy sau
 
@@ -1215,6 +1286,20 @@ paper_tables.py
 run_memory_design.py --provider groq --model openai/gpt-oss-120b --designs gate --levels L3,L2 --conditions override --repeats 1 --concurrency 1 --pace 4 --label m3-gptoss-pilot
 run_memory_design.py --provider groq --model openai/gpt-oss-120b --designs plain_safe --levels L3,L2 --conditions override --repeats 1 --concurrency 1 --pace 4 --label m3-gptoss-safe-pilot
 run_informed_refusal.py --label nr1
+
+# Groq 26/10, cả 4 key cùng lúc (KeyPool), không cần --pace; lỗi còn lại chạy lại bằng --resume
+# GO="--provider groq --model openai/gpt-oss-120b --levels L3,L2,L0,T --conditions none,instr_x3,override --repeats 1 --concurrency 6"
+run_memory_design.py $GO --designs plain,plain_safe --max-usd 0.05 --label m3-gptoss
+run_memory_design.py $GO --designs gate,gate3 --guard-provider openai --max-usd 0.1 --label m3-gptoss-lg
+# QW="--provider groq --model qwen/qwen3.8-27b --levels L3,L2,L0,T --conditions none,instr_x3,override --concurrency 4"
+run_memory_design.py $QW --designs plain,plain_safe --repeats 3 --resume --max-usd 0.05 --label m3-qwen
+run_memory_design.py $QW --designs gate3 --guard-provider openai --repeats 1 --max-usd 0.05 --label g3-qwen-lg
+run_informed_refusal.py --label nr1        # chỉ chấm câu mới
+paper_tables.py
+
+# 27/10, ECA hoàn chỉnh trên Luna qua LLM_PROVIDER=openai (plan llm-openai-switch)
+run_memory_design.py --provider openai --designs eca_full --levels L3,L2,L0,T --conditions none,instr_x3,override --repeats 1 --concurrency 6 --max-usd 0.3 --label switch-luna-eca
+OPENAI_REASONING_EFFORT_PLANNER=low run_memory_design.py <cùng tham số> --max-usd 0.2 --label switch-luna-eca-plow
 ```
 
 ### 10.3 File kết quả (`results/`)
@@ -1240,7 +1325,7 @@ run_informed_refusal.py --label nr1
 | `reasoning_probe_check3.jsonl` + report | 72 KB | 25/10 chiều | ce0492f |
 | `memory_design_fa-luna.jsonl` + report | 757 KB | 25/10 14:23 | ce0492f |
 | `memory_design_fa-luna-noreason.jsonl` + report | 785 KB | 25/10 14:21 | ce0492f |
-| `informed_refusal_nr1.jsonl` + report | 1,7 MB | 25/10, cập nhật sau mỗi đợt | ce0492f |
+| `informed_refusal_nr1.jsonl` + report (thêm 548 câu ngày 26/10) | 1,9 MB | 25/10, cập nhật sau mỗi đợt | ce0492f |
 | `memory_design_m3-flash-nothink.jsonl` + report | 2,0 MB | 25/10 15:53 | ce0492f |
 | `memory_design_m3-flash.jsonl` + report | 1,3 MB | 25/10 15:50 | ce0492f |
 | `memory_design_m3-pro.jsonl` + report | 329 KB | 25/10 15:43 | ce0492f |
@@ -1248,8 +1333,13 @@ run_informed_refusal.py --label nr1
 | `memory_design_m3-flash-nothink-lg.jsonl` + report | 472 KB | 25/10 15:57 | ce0492f |
 | `memory_design_m3-flash-lg.jsonl` + report | 516 KB | 25/10 15:58 | ce0492f |
 | `memory_design_m3-pro-lg.jsonl` + report | 174 KB | 25/10 15:56 | ce0492f |
-| `memory_design_m3-gptoss-pilot.jsonl`, `m3-gptoss-safe-pilot` + report | 27 KB mỗi file | 25/10 | ce0492f |
-| `memory_design_m3-qwen.jsonl` + report (lần 1 ở ce0492f; lần 2–3 tiếp bằng `--resume`, chưa xong) | 802 KB | 25/10 18:26 | ce0492f, 4b7c07a |
+| `memory_design_m3-gptoss-pilot.jsonl`, `m3-gptoss-safe-pilot` + report (chạy thử, thay bằng `m3-gptoss*`) | 27 KB mỗi file | 25/10 | ce0492f |
+| `memory_design_m3-qwen.jsonl` + report (lần 1 ở ce0492f; lần 2–3 bằng `--resume`, xong 26/10) | 972 KB | 26/10 21:31 | ce0492f, 4b7c07a, 3732680 |
+| `memory_design_m3-gptoss.jsonl` + report | 336 KB | 26/10 21:26 | 3732680 |
+| `memory_design_m3-gptoss-lg.jsonl` + report | 324 KB | 26/10 21:26 | 3732680 |
+| `memory_design_g3-qwen-lg.jsonl` + report | 144 KB | 26/10 21:32 | 3732680 |
+| `memory_design_switch-luna-eca.jsonl`, `switch-luna-eca-plow` + report (ECA hoàn chỉnh trên Luna, synthesizer cũ; plan [[llm-openai-switch]]) | 136–140 KB mỗi file | 27/10 | 3732680 + thay đổi local |
+| `memory_design_switch-luna-eca-v2.jsonl` + report (ECA hoàn chỉnh trên Luna, synthesizer mới của Tri) | khoảng 150 KB | 27/10 tối | 0064dc5 + thay đổi local |
 | `memory_design_m3-qwen-lg.jsonl` + report (lần 2–3 bằng `--resume`) | 437 KB | 25/10 18:01 | ce0492f, 4b7c07a |
 | `memory_design_m3-pro-fa.jsonl` + report | 128 KB | 25/10 17:37 | 4b7c07a |
 | `data/items_healthbench.jsonl` (195 ca HealthBench, MIT) | 136 KB | 25/10 17:37 | 4b7c07a |
@@ -1262,7 +1352,7 @@ run_informed_refusal.py --label nr1
 | `memory_design_g3-hb-luna-noreason.jsonl` + report | 1,2 MB | 25/10 19:32 | b5bd286 |
 | `memory_design_g3-luna-noreason.jsonl` + report | 416 KB | 25/10 19:23 | 4b7c07a |
 | `memory_design_g3-en-luna-noreason.jsonl` + report | 204 KB | 25/10 19:20 | 4b7c07a |
-| `paper_tables.md` (3 bảng cho paper, khoảng tin cậy 95 %) | 4 KB | 25/10 20:35 | — |
+| `paper_tables.md` (3 bảng cho paper, khoảng tin cậy 95 %; thêm gpt-oss và gate3 của Qwen ngày 26/10) | 8 KB | 26/10 | — |
 | `memory_design_m3-pilot.jsonl` + report | 222 KB | 25/10 | chạy thử, không dùng cho paper |
 | `memory_design_check-*.jsonl` + report | dưới 15 KB | lần thử nhanh | không dùng cho paper |
 
@@ -1283,6 +1373,12 @@ run_informed_refusal.py --label nr1
 - [x] Quét key trước khi commit (25/10): không có key. Org ID của Groq trong các dòng lỗi của
       `memory_design_c2-qwen.jsonl` (23) và `memory_design_m3-qwen.jsonl` (1) đã thay bằng
       `org_[redacted]`.
-- [ ] `human_labels/key.csv` chưa commit; commit sau khi Nguyen và Tri chấm xong.
+- [x] `human_labels/key.csv`: Nguyen và Tri chấm xong ngày 27/10, nên commit cùng đợt 27/10 được.
 - [x] Ghi phát hiện ở mục 8 vào `docs/tracking/tech-debt.md`, để Tri xem khi release memory v2 (25/10,
       mục "Phát hiện từ thí nghiệm paper cho memory v2").
+- [x] Đợt 26–27/10, commit và push ngày 28/10 (Nguyen cho phép):
+  - `run_memory_design.py` (KeyPool: dùng mọi key cùng lúc), `paper_tables.py`, `run_informed_refusal.py`
+    (thêm nguồn mới và `gate3`);
+  - kết quả `m3-gptoss`, `m3-gptoss-lg`, `g3-qwen-lg`, `m3-qwen`, `informed_refusal_nr1`, `paper_tables.md`;
+  - `docs/plans/paper-memory-safety-method.md` (nháp phần Method), worklog 26/10 và file này.
+  - Quét key và org ID (26/10): các file kết quả mới không có org ID và không có dòng lỗi.

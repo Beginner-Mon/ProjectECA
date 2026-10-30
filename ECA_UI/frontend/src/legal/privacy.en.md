@@ -27,8 +27,8 @@ By using ECA and sharing health information in a conversation, you agree to it b
 
 To produce a reply, your message and the recent conversation are sent to an AI model provider:
 
-- **DeepSeek** (servers in China) answers by default.
-- **Google Gemini** (Google LLC, United States) answers when DeepSeek is unavailable.
+- **OpenAI** (United States) answers by default. Before {EFFECTIVE_DATE}, **DeepSeek** (servers in China) answered by default.
+- **Google Gemini** (Google LLC, United States) answers when OpenAI is unavailable.
 - If you add **your own API key** in Settings, your messages go to the provider you chose instead, under that provider's terms. Your key is stored only in your browser and is sent with each message; we do not save it on our servers or write it to our logs.
 
 Other services we rely on:
@@ -42,7 +42,7 @@ Spoken replies and 3D movements are generated on our own servers and do not go t
 
 ## 4. Where your data is stored
 
-Your data is stored in the United States, and is processed in China when DeepSeek answers. By using ECA you agree to this transfer outside Vietnam.
+Your data is stored in the United States. Before {EFFECTIVE_DATE}, it was also processed in China when DeepSeek answered. By using ECA you agree to this transfer outside Vietnam.
 
 ## 5. How long we keep it
 

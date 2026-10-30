@@ -27,8 +27,8 @@ Khi dùng ECA và chia sẻ thông tin sức khoẻ trong hội thoại, bạn �
 
 Để tạo câu trả lời, tin nhắn của bạn và phần hội thoại gần đây được gửi tới nhà cung cấp mô hình AI:
 
-- **DeepSeek** (máy chủ tại Trung Quốc) trả lời mặc định.
-- **Google Gemini** (Google LLC, Hoa Kỳ) trả lời khi DeepSeek không hoạt động.
+- **OpenAI** (Hoa Kỳ) trả lời mặc định. Trước ngày {EFFECTIVE_DATE}, **DeepSeek** (máy chủ tại Trung Quốc) trả lời mặc định.
+- **Google Gemini** (Google LLC, Hoa Kỳ) trả lời khi OpenAI không hoạt động.
 - Nếu bạn nhập **API key của riêng bạn** trong Cài đặt, tin nhắn sẽ đi tới nhà cung cấp bạn chọn, theo điều khoản của họ. Key chỉ được lưu trong trình duyệt của bạn và gửi kèm mỗi tin nhắn; chúng tôi không lưu key trên máy chủ và không ghi vào log.
 
 Các dịch vụ khác chúng tôi dùng:
@@ -42,7 +42,7 @@ Giọng đọc và chuyển động 3D được tạo trên máy chủ của ch�
 
 ## 4. Dữ liệu được lưu ở đâu
 
-Dữ liệu của bạn được lưu tại Hoa Kỳ, và được xử lý tại Trung Quốc khi DeepSeek trả lời. Khi dùng ECA, bạn đồng ý với việc chuyển dữ liệu ra ngoài Việt Nam như trên.
+Dữ liệu của bạn được lưu tại Hoa Kỳ. Trước ngày {EFFECTIVE_DATE}, dữ liệu còn được xử lý tại Trung Quốc khi DeepSeek trả lời. Khi dùng ECA, bạn đồng ý với việc chuyển dữ liệu ra ngoài Việt Nam như trên.
 
 ## 5. Chúng tôi giữ bao lâu
 

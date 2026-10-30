@@ -23,7 +23,8 @@ S4 and the paper checks (25/10) added Groq models, `--reasoning off`, and two co
 the same words at the end of the user's message instead of in memory (`msg_instr_x3`,
 `msg_override`), to tell a memory effect from plain instruction following. `--keep-reasoning`
 stores the model's reasoning text (Groq, DeepSeek), which LangChain's ChatOpenAI drops, by calling
-the OpenAI SDK directly.
+the OpenAI SDK directly. With several comma-separated keys (GROQ_API_KEY), runs use all of them at
+once: each run takes the least busy key, and a key at its daily limit rests (KeyPool).
 
 Paper next step 3 (25/10) added two designs that keep the plain prompt and memory:
 
@@ -302,6 +303,48 @@ def cost_usd(u: dict | None, model: str) -> float:
     return ((u["in"] - u["cached"]) * p["in"] + u["cached"] * p["cached"] + u["out"] * p["out"]) / 1e6
 
 
+DAILY_LIMIT = re.compile(r"(tokens|requests) per day", re.IGNORECASE)
+
+
+def retry_after(err: str) -> float | None:
+    """Seconds from a provider's "try again in 1h2m3.4s", or None when it gives no time."""
+    m = re.search(r"try again in (?:(\d+)h)?(?:(\d+)m(?!s))?(?:(\d+(?:\.\d+)?)s)?", err)
+    if not m or not any(m.groups()):
+        return None
+    h, mi, s = (float(g) if g else 0.0 for g in m.groups())
+    return h * 3600 + mi * 60 + s
+
+
+class KeyPool:
+    """Every API key works at once: a run takes the least busy key. A key at its daily limit rests
+    until the provider says it frees up (Groq's daily window rolls), or for good if it gives no time."""
+
+    def __init__(self, slots: list[dict], max_wait: float = 900.0, clock=time.monotonic, sleep=asyncio.sleep):
+        self.slots = [dict(s, n=i + 1, busy=0, used=0, until=0.0) for i, s in enumerate(slots)]
+        self.max_wait, self.clock, self.sleep = max_wait, clock, sleep
+
+    async def acquire(self) -> dict | None:
+        """The least busy key that is not resting (ties: the least used); waits up to max_wait, else None."""
+        while True:
+            now = self.clock()
+            ready = [s for s in self.slots if s["until"] <= now]
+            if ready:
+                slot = min(ready, key=lambda s: (s["busy"], s["used"], s["n"]))
+                slot["busy"] += 1
+                slot["used"] += 1
+                return slot
+            wait = min(s["until"] for s in self.slots) - now
+            if wait > self.max_wait:
+                return None
+            await self.sleep(wait)
+
+    def release(self, slot: dict) -> None:
+        slot["busy"] -= 1
+
+    def rest(self, slot: dict, seconds: float | None) -> None:
+        slot["until"] = self.clock() + (seconds + 5.0 if seconds is not None else float("inf"))
+
+
 def run(args) -> list[dict]:
     _isolate_environment()
     sut = PROVIDERS[args.provider]
@@ -313,9 +356,15 @@ def run(args) -> list[dict]:
         sys.exit(f"{sut['key']} or {judge_cfg['key']} is empty in agenticRAG/.env")
     uses_eca = any(d.startswith("eca") for d in args.designs.split(","))
     if uses_eca:
-        # The planner reads its provider from these variables (llm.py).
-        os.environ.update({"DEEPSEEK_API_KEY": sut_keys[0], "DEEPSEEK_BASE_URL": sut["base_url"],
-                           "DEEPSEEK_MODEL_FAST": args.model, "DEEPSEEK_MODEL": args.model})
+        # The planner and synthesizer read their provider from these variables (llm.py).
+        # OpenAI goes through LLM_PROVIDER=openai, the same code path production would use
+        # (no temperature, reasoning effort from OPENAI_REASONING_EFFORT*, default none).
+        if args.provider == "openai":
+            os.environ.update({"LLM_PROVIDER": "openai", "OPENAI_API_KEY": sut_keys[0],
+                               "OPENAI_MODEL_FAST": args.model, "OPENAI_MODEL": args.model})
+        else:
+            os.environ.update({"DEEPSEEK_API_KEY": sut_keys[0], "DEEPSEEK_BASE_URL": sut["base_url"],
+                               "DEEPSEEK_MODEL_FAST": args.model, "DEEPSEEK_MODEL": args.model})
     import logging
 
     from langchain_core.callbacks import AsyncCallbackHandler
@@ -330,11 +379,6 @@ def run(args) -> list[dict]:
     logging.getLogger().setLevel(logging.WARNING)
     llm._ROLE_TIMEOUT["planner"] = 120.0
     llm._ROLE_TIMEOUT["synthesizer"] = 120.0
-    if args.provider == "openai":
-        # gpt-6-luna: temperature 1 only, and `max_completion_tokens` instead of `max_tokens`.
-        llm._DEFAULT_TEMPS["planner"] = None
-        llm._DEFAULT_TEMPS["synthesizer"] = None
-        llm._max_tokens_for_role = lambda role: None
 
     class PlannerUsage(AsyncCallbackHandler):
         async def on_llm_end(self, response, **kwargs) -> None:
@@ -416,9 +460,8 @@ def run(args) -> list[dict]:
         return ChatOpenAI(model=model, api_key=guard_key or key, base_url=guard_cfg["base_url"], timeout=60,
                           max_retries=0 if provider == "groq" else 2, **kw)
 
-    keys = {"index": 0}
-    writers = {"current": make_writer(sut_keys[0])}
-    guards = {"current": make_guard(sut_keys[0])}
+    # Every key in the provider's variable works at once (Groq: one free daily budget per key).
+    pool = KeyPool([{"writer": make_writer(k), "guard": make_guard(k)} for k in sut_keys])
     judge_kwargs = ({"temperature": 0.0, "max_tokens": 5, "extra_body": {"thinking": {"type": "disabled"}}}
                     if args.judge_provider == "deepseek" else {"reasoning_effort": "none"})
     judge = ChatOpenAI(model=args.judge_model, api_key=judge_key, base_url=judge_cfg["base_url"],
@@ -437,7 +480,8 @@ def run(args) -> list[dict]:
     jobs = [(r, d, c, i) for r in range(1, args.repeats + 1) for d in designs for c in conditions for i in items
             if (r, d, c, i["id"]) not in args.done]
     print(f"{len(jobs)} runs ({len(items)} items x {len(conditions)} conditions x {len(designs)} designs "
-          f"x {args.repeats} repeats) on {args.provider} {args.model}; judge {args.judge_model}", flush=True)
+          f"x {args.repeats} repeats) on {args.provider} {args.model} with {len(sut_keys)} key(s); "
+          f"judge {args.judge_model}", flush=True)
 
     async def judge_reply(row: dict, message: str, reply: str) -> None:
         jm = await judge.ainvoke([HumanMessage(P["judge"].format(message=message, reply=reply))])
@@ -460,14 +504,24 @@ def run(args) -> list[dict]:
                "level": item["level"], "variant": item["variant"], "region": item["region"],
                "tags": None, "tag_escalate": None, "reply": None, "reasoning_text": None, "draft": None,
                "triage": None, "fallback": None, "judge": None, "escalate": None, "refer": None, "ack": None,
-               "usage": None, "guard_usage": None, "judge_usage": None, "elapsed_ms": None, "error": None}
+               "usage": None, "guard_usage": None, "judge_usage": None, "elapsed_ms": None, "error": None,
+               "key": None}
         async with semaphore:
             if state["stop"]:
                 row["error"] = f"not run: {state['why']}"
                 return row
             t0 = time.perf_counter()
-            for attempt in range(4):
+            attempt, rests = 0, 0
+            while attempt < 4:
                 row["error"] = None
+                slot = await pool.acquire()
+                if slot is None:
+                    if not state["stop"]:
+                        state["stop"], state["why"] = True, "every key is at its daily limit"
+                        print(f"  -- {state['why']}: stopping", flush=True)
+                    row["error"] = f"not run: {state['why']}"
+                    break
+                row["key"] = slot["n"]
                 try:
                     if design in ("eca", "eca_full"):
                         acc = {"in": 0, "cached": 0, "out": 0, "reasoning": 0}
@@ -505,7 +559,7 @@ def run(args) -> list[dict]:
                         usages, gusages = [], []
                         if design in ("gate", "gate3"):
                             # Memory-blind triage: the guard sees only the message.
-                            tm = await guards["current"].ainvoke([SystemMessage(
+                            tm = await slot["guard"].ainvoke([SystemMessage(
                                 P["triage"] if design == "gate" else P["triage3"]), HumanMessage(text)])
                             gusages.append(usage_of(tm))
                             said = (tm.content or "").upper()
@@ -516,17 +570,17 @@ def run(args) -> list[dict]:
                                 row["triage"] = ("EMERGENCY" if "EMERGENCY" in said
                                                  else "SOON" if "SOON" in said else "ROUTINE")
                                 system += {"EMERGENCY": P["gate_emergency"], "SOON": P["gate_soon"]}.get(row["triage"], "")
-                        msg = await writers["current"].ainvoke([SystemMessage(system), HumanMessage(text)])
+                        msg = await slot["writer"].ainvoke([SystemMessage(system), HumanMessage(text)])
                         usages.append(usage_of(msg))
                         reply = msg.content or ""
                         row["reasoning_text"] = getattr(msg, "reasoning", None)
                         if design == "reflect":
-                            rm = await writers["current"].ainvoke([SystemMessage(system), HumanMessage(text),
+                            rm = await slot["writer"].ainvoke([SystemMessage(system), HumanMessage(text),
                                                                    AIMessage(reply), HumanMessage(P["reflect"])])
                             usages.append(usage_of(rm))
                             row["draft"], reply = reply, (rm.content or reply)
                         if design == "gate" and row["triage"] == "URGENT":
-                            cm = await guards["current"].ainvoke([SystemMessage(P["check"]), HumanMessage(
+                            cm = await slot["guard"].ainvoke([SystemMessage(P["check"]), HumanMessage(
                                 P["check_input"].format(message=item["text"], reply=reply))])
                             gusages.append(usage_of(cm))
                             row["fallback"] = "YES" not in (cm.content or "").upper()
@@ -534,7 +588,7 @@ def run(args) -> list[dict]:
                                 reply += "\n\n" + P["fallback"]
                         if design == "gate3" and row["triage"] in ("EMERGENCY", "SOON"):
                             level = "emergency" if row["triage"] == "EMERGENCY" else "soon"
-                            cm = await guards["current"].ainvoke([SystemMessage(P[f"check_{level}"]), HumanMessage(
+                            cm = await slot["guard"].ainvoke([SystemMessage(P[f"check_{level}"]), HumanMessage(
                                 P["check_input"].format(message=item["text"], reply=reply))])
                             gusages.append(usage_of(cm))
                             row["fallback"] = "YES" not in (cm.content or "").upper()
@@ -546,25 +600,22 @@ def run(args) -> list[dict]:
                         await judge_reply(row, item["text"], reply)
                 except Exception as exc:      # noqa: BLE001
                     row["error"] = f"{type(exc).__name__}: {exc}"[:500]
+                finally:
+                    pool.release(slot)
                 err = row["error"] or ""
-                if args.provider == "groq" and "tokens per day" in err:
-                    # This key's daily budget is gone: next key, or stop the run.
-                    if keys["index"] + 1 < len(sut_keys):
-                        keys["index"] += 1
-                        writers["current"] = make_writer(sut_keys[keys["index"]])
-                        guards["current"] = make_guard(sut_keys[keys["index"]])
-                        print(f"  -- switched to Groq key #{keys['index'] + 1}", flush=True)
-                        continue
-                    state["stop"], state["why"] = True, "every Groq key is at its daily token limit"
-                    row["error"] = f"not run: {state['why']}"
-                    print(f"  -- {state['why']}: stopping", flush=True)
-                    break
+                if args.provider == "groq" and DAILY_LIMIT.search(err) and rests < 4 * len(pool.slots):
+                    # This key's daily budget is used up: it rests and the run moves to another key.
+                    # A daily-limit switch does not count as an attempt.
+                    rests += 1
+                    pool.rest(slot, retry_after(err))
+                    print(f"  -- Groq key #{slot['n']} at its daily limit, resting", flush=True)
+                    continue
                 if not err or not ("429" in err or "rate" in err.lower()):
                     break
                 # Per-minute limit: wait as long as the provider asks (Groq: "try again in 7.5s").
-                wait = re.search(r"try again in (?:(\d+)m)?(\d+(?:\.\d+)?)s", err)
-                await asyncio.sleep(min(90.0, int(wait.group(1) or 0) * 60 + float(wait.group(2)) + 1)
-                                    if wait else 20.0 * (attempt + 1))
+                attempt += 1
+                wait = retry_after(err)
+                await asyncio.sleep(min(90.0, wait + 1) if wait is not None else 20.0 * attempt)
             row["elapsed_ms"] = round((time.perf_counter() - t0) * 1000)
             if args.pace and not state["stop"]:
                 await asyncio.sleep(args.pace)

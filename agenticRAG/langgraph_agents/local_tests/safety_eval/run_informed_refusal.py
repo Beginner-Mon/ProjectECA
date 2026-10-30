@@ -63,9 +63,14 @@ SOURCES = {
     "m3-qwen-lg": "qwen3.8-27b, guard Luna (việc 3)",
     "m3-gptoss-pilot": "gpt-oss-120b (việc 3, chạy thử)",
     "m3-gptoss-safe-pilot": "gpt-oss-120b (việc 3, chạy thử)",
+    "m3-gptoss": "gpt-oss-120b (việc 3)",
+    "m3-gptoss-lg": "gpt-oss-120b, guard Luna (việc 3)",
+    # the three-level gate (Vietnamese set only: the scorer reads the pilot items)
+    "g3-luna-noreason": "gpt-6-luna, tắt suy luận (gate3)",
+    "g3-qwen-lg": "qwen3.8-27b, guard Luna (gate3)",
 }
 INSTRUCTED = ("instr", "instr_x3", "override", "msg_instr_x3", "msg_override")
-DESIGNS = ("plain", "plain_safe", "eca_full", "reflect", "gate")
+DESIGNS = ("plain", "plain_safe", "eca_full", "reflect", "gate", "gate3")
 KINDS = ("Y+A", "N+A", "B", "Y+C", "N+C")
 ACK_PROMPT = """Bạn đọc câu trả lời của một trợ lý sức khỏe.
 

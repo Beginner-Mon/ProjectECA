@@ -34,7 +34,7 @@ describe('legal documents (SCRUM-41)', () => {
     // receiving data, add it here and to privacy.*.md.
     for (const locale of LOCALES) {
       const md = legalMarkdown('privacy', locale)
-      for (const party of ['DeepSeek', 'Google Gemini', 'Amazon Web Services', 'Neon', 'Ko-fi']) {
+      for (const party of ['OpenAI', 'DeepSeek', 'Google Gemini', 'Amazon Web Services', 'Neon', 'Ko-fi']) {
         expect(md, `${party} in privacy.${locale}`).toContain(party)
       }
     }

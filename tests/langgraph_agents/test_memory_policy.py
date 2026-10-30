@@ -278,3 +278,32 @@ def test_update_recomputes_tier_from_new_type_and_topic(
     assert out["fields"]["memory_type"] == op_type
     assert out["fields"]["tier"] == tier
     assert out["fields"]["status"] == "active"
+
+
+# ── apply_policy: bookkeeping, DELETE and FORGET_ALL ─────────────────────
+
+def test_add_starts_the_sighting_count():
+    out = fe.apply_policy(None, _add(topic="knee rehab"), CTX)
+    fields = out["fields"]
+    assert fields["seen_count"] == 1
+    assert fields["seen_projects"] == [""]
+    assert fields["last_seen_session_id"] == "s-1"
+    assert fields["project"] == "knee rehab"
+
+
+def test_update_rewrites_the_text_and_restamps():
+    out = fe.apply_policy(_row(), _update(fact="Plays pickleball on Sundays."), CTX)
+    fields = out["fields"]
+    assert fields["fact"] == "Plays pickleball on Sundays."
+    assert fields["project"] == "routine"
+    assert fields["last_seen_session_id"] == "s-1"
+
+
+def test_delete_hides():
+    assert fe.apply_policy(_row(), {"op": "DELETE", "id": "f1"}, CTX) == {
+        "action": "hide", "fields": {}}
+
+
+def test_forget_all_hides_everything_extracted():
+    assert fe.apply_policy(None, {"op": "FORGET_ALL"}, CTX) == {
+        "action": "forget_all", "fields": {}}

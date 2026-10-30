@@ -123,7 +123,7 @@ def test_triage_p90_latency_above_threshold_alerts(template):
     (alarm,) = [a for a in _resources(template, "AWS::CloudWatch::Alarm").values()
                 if a["AlarmName"] == "vva-guardrail-triage-latency-p90"]
     assert (alarm["Namespace"], alarm["MetricName"]) == ("VVA/Guardrail", "TriageElapsedMs")
-    assert (alarm["Statistic"], alarm["Period"], alarm["EvaluationPeriods"], alarm["DatapointsToAlarm"]) == ("p90", 3600, 3, 2)
+    assert (alarm["ExtendedStatistic"], alarm["Period"], alarm["EvaluationPeriods"], alarm["DatapointsToAlarm"]) == ("p90", 3600, 3, 2)
     assert alarm["Threshold"] == 1000
     assert alarm["ComparisonOperator"] == "GreaterThanThreshold"
     assert alarm["TreatMissingData"] == "notBreaching"

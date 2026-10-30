@@ -42,6 +42,8 @@ if str(_KIMODO_ROOT) not in sys.path:
 
 import yaml  # noqa: E402
 from langchain_core.messages import AIMessage, HumanMessage  # noqa: E402
+from langgraph_agents.guardrail.handoff import current_verdict  # noqa: E402
+from langgraph_agents.guardrail.stream import safety_keys  # noqa: E402
 
 _LLM_NODES = ("planner", "retriever_agent", "synthesizer")
 
@@ -85,8 +87,6 @@ _DOSE_RE = re.compile(
     re.IGNORECASE,
 )
 
-_SAFETY_TAGS = ("red_flag_screen", "referral_advice", "scope_disclaimer")
-
 
 def _dose_clusters(answer: str) -> list[str]:
     """Mọi cụm liều lượng trong câu trả lời (nguyên văn, Task 5)."""
@@ -107,47 +107,43 @@ def _check_dose_not_in_evidence(answer: str, evidence_text: str) -> list[str]:
     return flagged
 
 
-def _check_safety_repeated(answer: str, tags: list,
+def _check_safety_repeated(answer: str, safety: list[str] | None,
                            persona_id: str = "anne",
                            lang: str = "vi") -> dict[str, int]:
     """Câu mẫu persona xuất hiện quá một lần trong câu trả lời (Task 5).
 
-    Chỉ xét các tag an toàn của lượt; locale suy từ ngôn ngữ của câu hỏi.
+    Các dòng an toàn đến từ guardrail (safety_keys), không từ planner tags.
     """
     from langgraph_agents.tag_contract import get_safety_text
 
     repeated: dict[str, int] = {}
-    for tag in tags or []:
-        if tag not in _SAFETY_TAGS:
-            continue
+    for key in safety or []:
         try:
-            template = get_safety_text(tag, persona_id, lang)
+            template = get_safety_text(key, persona_id, lang)
         except Exception:
             continue
         if not template:
             continue
         n = (answer or "").count(template)
         if n > 1:
-            repeated[tag] = n
+            repeated[key] = n
     return repeated
 
 
 # ── Grader-contract V8 (T8): stream==final, câu code, retry ───────────────
 
-def _fixed_line_count(answer: str, tags: list, lang: str) -> dict[str, int]:
+def _fixed_line_count(answer: str, safety: list[str] | None, lang: str) -> dict[str, int]:
     """Số lần mỗi câu an toàn của lượt xuất hiện trong câu trả lời (V8: đúng 1)."""
     from langgraph_agents.tag_contract import get_safety_text
 
     out: dict[str, int] = {}
-    for tag in tags or []:
-        if tag not in _SAFETY_TAGS:
-            continue
+    for key in safety or []:
         try:
-            template = get_safety_text(tag, "anne", lang)
+            template = get_safety_text(key, "anne", lang)
         except Exception:
             continue
         if template:
-            out[tag] = (answer or "").count(template)
+            out[key] = (answer or "").count(template)
     return out
 
 
@@ -172,17 +168,20 @@ def _check_addition_repeats_draft(answer: str) -> bool:
     return False
 
 
-def _check_model_wrote_own_safety(answer: str, tags: list, lang: str) -> bool:
-    """Thân bài (bỏ các câu do code phát) vẫn tự chạm regex an toàn của tag lượt."""
+def _check_model_wrote_own_safety(answer: str, safety: list[str] | None, lang: str) -> bool:
+    """Thân bài (bỏ các câu do code phát) vẫn tự chạm regex an toàn của tag lượt.
+
+    Các dòng an toàn đến từ guardrail (safety_keys), không từ planner tags.
+    """
     from langgraph_agents.local_tests._safety_rules import (
         _has_danger_warning, _has_disclaimer, _has_referral,
     )
     from langgraph_agents.tag_contract import get_safety_text
 
     body = answer or ""
-    for tag in ("red_flag_screen", "referral_advice", "scope_disclaimer"):
+    for key in safety or []:
         try:
-            template = get_safety_text(tag, "anne", lang)
+            template = get_safety_text(key, "anne", lang)
         except Exception:
             template = ""
         if template:
@@ -193,7 +192,7 @@ def _check_model_wrote_own_safety(answer: str, tags: list, lang: str) -> bool:
     checks = {"red_flag_screen": _has_danger_warning,
               "referral_advice": _has_referral,
               "scope_disclaimer": _has_disclaimer}
-    return any(fn(body) for tag, fn in checks.items() if tag in (tags or []))
+    return any(fn(body) for key, fn in checks.items() if key in (safety or []))
 
 # ── Motion override (cờ --motion-state; sau T9 trỏ sang tool show_movement) ──
 
@@ -492,21 +491,23 @@ async def _run_probe(
     result["evidence_text"] = evidence_text
     result["dose_not_in_evidence"] = _check_dose_not_in_evidence(
         final_answer, evidence_text)
+    # Safety lines come from the guardrail verdict, not planner tags (Phase 4).
+    verdict = await current_verdict(config)
+    safety = safety_keys(verdict, planner_out.get("required_outputs", []))
     result["safety_line_repeated"] = _check_safety_repeated(
-        final_answer, planner_out.get("required_outputs", []),
-        persona_id="anne", lang=lang)
+        final_answer, safety, persona_id="anne", lang=lang)
     # V8 (grader-contract T8): bất biến stream, câu code, retry.
     tags = planner_out.get("required_outputs", [])
     result["stream_equals_final"] = (streamed_answer == final_answer)
     result["retriever_runs"] = node_runs.get("retriever_agent", 0)
-    result["fixed_line_count"] = _fixed_line_count(final_answer, tags, lang)
+    result["fixed_line_count"] = _fixed_line_count(final_answer, safety, lang)
     result["source_line"] = _answer_source_line(final_answer)
     result["grader_detail"] = final_updates.get("grader_detail")
     result["retry"] = node_runs.get("synthesizer", 0) == 2
     result["addition_repeats_draft"] = bool(result["retry"]) and \
         _check_addition_repeats_draft(final_answer)
     result["model_wrote_own_safety"] = _check_model_wrote_own_safety(
-        final_answer, tags, lang)
+        final_answer, safety, lang)
     return result
 
 
@@ -789,7 +790,10 @@ async def _run_selector_probe(probe: dict, *, label: str, history: list) -> dict
         tags = plan_out.get("required_outputs", [])
         resolved = plan_out.get("resolved_query") or query
         web_on = bool(config["configurable"].get("web_search", False))
-        allow_fallback = not ({"red_flag_screen", "referral_advice"} & set(tags))
+        # D34: web fallback only on a routine, in-scope turn — decided by the
+        # guardrail verdict, not planner tags (Phase 4).
+        verdict = await current_verdict(config)
+        allow_fallback = verdict.level == "routine" and not verdict.out_of_scope
         tools = await _build_tools(web_search_enabled=web_on,
                                    persona_id="anne")
         system = _build_retriever_system_prompt(

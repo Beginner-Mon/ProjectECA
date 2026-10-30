@@ -81,7 +81,7 @@ DESIGNS = ("eca", "plain", "plain_safe")
 # eca_full: planner, then the synthesizer and the code-written closing lines, judged like plain.
 # The test has no database, so the synthesizer gets no retrieved evidence and answers in its
 # no-source mode (synthesizer.py `_derive_mode`, D25); live ECA would usually have evidence.
-ALL_DESIGNS = DESIGNS + ("eca_full", "reflect", "gate", "gate3")
+ALL_DESIGNS = DESIGNS + ("eca_full", "eca_guard", "reflect", "gate", "gate3")
 URGENT_LEVELS = ("L3", "L2")
 PROVIDERS = {
     "deepseek": {"base_url": "https://api.deepseek.com", "key": "DEEPSEEK_API_KEY", "model": "deepseek-v4-flash"},
@@ -347,6 +347,16 @@ class KeyPool:
 
 def run(args) -> list[dict]:
     _isolate_environment()
+    designs = args.designs.split(",")
+    # eca / eca_full measure the planner's red_flag_screen tag, removed in
+    # guardrail Phase 4. eca_guard uses the guardrail instead and is unaffected.
+    if any(d in ("eca", "eca_full") for d in designs):
+        from langgraph_agents.nodes.planner import PLANNER_TAGS
+        if "red_flag_screen" not in PLANNER_TAGS:
+            sys.exit("planner safety tags were removed in guardrail Phase 4; use "
+                     "local_tests/guardrail_eval/run_triage_eval.py; to reproduce the "
+                     "paper's numbers run this script on a commit of "
+                     "feature/langgraph-rewrite before the guardrail merge (ad5b05f4)")
     sut = PROVIDERS[args.provider]
     env = read_env_file()
     sut_keys = [k.strip() for k in env.get(sut["key"], "").split(",") if k.strip()]
@@ -354,7 +364,7 @@ def run(args) -> list[dict]:
     judge_key = env.get(judge_cfg["key"], "").split(",")[0].strip()
     if not sut_keys or not judge_key:
         sys.exit(f"{sut['key']} or {judge_cfg['key']} is empty in agenticRAG/.env")
-    uses_eca = any(d.startswith("eca") for d in args.designs.split(","))
+    uses_eca = any(d.startswith("eca") for d in designs)
     if uses_eca:
         # The planner and synthesizer read their provider from these variables (llm.py).
         # OpenAI goes through LLM_PROVIDER=openai, the same code path production would use
@@ -523,7 +533,7 @@ def run(args) -> list[dict]:
                     break
                 row["key"] = slot["n"]
                 try:
-                    if design in ("eca", "eca_full"):
+                    if design in ("eca", "eca_full", "eca_guard"):
                         acc = {"in": 0, "cached": 0, "out": 0, "reasoning": 0}
                         _usage.set(acc)
                         config = {"configurable": {"query": text, "persona_id": "anne", "locale": "vi",
@@ -540,6 +550,39 @@ def run(args) -> list[dict]:
                         if design == "eca":
                             row["escalate"] = row["tag_escalate"]
                             row["refer"] = row["escalate"] or "referral_advice" in tags
+                        elif design == "eca_guard":
+                            if not row["error"]:
+                                # Mirror api/main.py: guardrail task beside the graph,
+                                # then compose head + body + tail.
+                                from langgraph_agents.guardrail import pipeline as guardrail
+                                from langgraph_agents.guardrail.stream import compose, head, safety_keys, tail
+                                from langgraph_agents.guardrail.types import CheckContext
+
+                                gr_task = asyncio.create_task(guardrail.run_input(CheckContext(
+                                    message=text,
+                                    locale="vi",
+                                    persona_id="anne",
+                                    user_id=None,
+                                    request_id=config["configurable"]["request_id"],
+                                )))
+                                config["configurable"]["guardrail_task"] = gr_task
+
+                                st2 = {"messages": [HumanMessage(text)], "errors": [], "retry_count": 0,
+                                       "total_tokens": 0, "required_outputs": tags,
+                                       "needs_clarification": out.get("needs_clarification", False),
+                                       "resolved_query": out.get("resolved_query"), "user_facts": facts,
+                                       "user_instructions": instructions, "session_summary": [],
+                                       "image_context": None}
+                                so = await synthesizer_node(st2, config)
+                                final = so.get("final_answer") or ""
+
+                                verdict = (await gr_task).verdict
+                                safety = safety_keys(verdict, tags)
+                                reply = compose(head(verdict, "anne", "vi"), final,
+                                                tail(safety, "anne", "vi"))
+
+                                row["reply"], row["ack"] = reply, bool(P["ack_re"].search(reply))
+                                await judge_reply(row, item["text"], reply)
                         elif not row["error"]:
                             st2 = {"messages": [HumanMessage(text)], "errors": [], "retry_count": 0,
                                    "total_tokens": 0, "required_outputs": tags,

@@ -25,8 +25,11 @@ status: commit chuyển đổi xong ngày 29/10; prod vẫn chạy DeepSeek cho 
   - Mọi vai trò dùng một model: `DEEPSEEK_MODEL_FAST`, mặc định `deepseek-v4-flash` (`_HEAVY_ROLES` rỗng).
   - Gọi qua `ChatOpenAI` với `DEEPSEEK_BASE_URL`.
   - Key lấy từ env `DEEPSEEK_API_KEY`, hoặc từ SSM qua `DEEPSEEK_API_KEY_PARAM` (prod: `/vva/llm/deepseek-api-key`).
-  - Nhiệt độ theo vai trò: planner 0, synthesizer 0,7, grader 0, memory 0.
-  - `thinking: disabled` chỉ gửi khi host là deepseek.com (grader, memory).
+  - Nhiệt độ theo vai trò: planner 0, synthesizer 0,7, guardrail 0, memory 0.
+  - `thinking: disabled` chỉ gửi khi host là deepseek.com (guardrail, memory).
+  - (30/10) Grader node gone (guardrail Phase 4): its settings — temp 0,
+    `reasoning_effort` none, `thinking: disabled` on DeepSeek — now belong to the
+    guardrail role.
 - Khi lời gọi chính lỗi, planner và synthesizer chuyển sang Gemini 2.5 Flash.
 - BYOK đã có cơ chế `omit`: bỏ `temperature` hoặc `max_tokens` với provider không nhận các tham số này.
 - `infra/infra/agent_stack.py` đặt `DEEPSEEK_API_KEY_PARAM`. Quyền `ssm:GetParameter` chỉ mở cho đúng các param đã
@@ -44,7 +47,7 @@ status: commit chuyển đổi xong ngày 29/10; prod vẫn chạy DeepSeek cho 
   deploy hiện tại và máy dev không gãy.
 - Khi host là `api.openai.com`:
   - không gửi `temperature` (gpt-6-luna chỉ nhận giá trị mặc định 1);
-  - gửi `reasoning_effort` theo vai trò: grader và memory `none`; planner và synthesizer chọn sau khi đo (mục 4);
+  - gửi `reasoning_effort` theo vai trò: guardrail và memory `none`; planner và synthesizer chọn sau khi đo (mục 4);
   - giữ trần `max_tokens`. Vai trò nào bật suy luận thì nâng trần, vì token suy luận cũng tính vào trần;
   - bật `stream_usage=True` để log có số token.
 - Telemetry prompt cache trong planner: DeepSeek trả `prompt_cache_hit_tokens`, OpenAI trả

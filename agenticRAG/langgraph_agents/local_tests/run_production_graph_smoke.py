@@ -57,7 +57,6 @@ GRAPH_NODE_ORDER = [
     "retriever_agent",
     "tools",
     "synthesizer",
-    "grader",
     "error_handler",
 ]
 

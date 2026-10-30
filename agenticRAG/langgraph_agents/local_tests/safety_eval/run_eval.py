@@ -70,7 +70,15 @@ def run_planner(args) -> None:
     import logging
 
     from langgraph_agents.llm import _model_for_role
-    from langgraph_agents.nodes.planner import planner_node
+    from langgraph_agents.nodes.planner import PLANNER_TAGS, planner_node
+
+    # Planner safety tags were removed in guardrail Phase 4; this script
+    # measures the planner's red_flag_screen tag, which no longer exists.
+    if "red_flag_screen" not in PLANNER_TAGS:
+        sys.exit("planner safety tags were removed in guardrail Phase 4; use "
+                 "local_tests/guardrail_eval/run_triage_eval.py; to reproduce the "
+                 "paper's numbers run this script on a commit of "
+                 "feature/langgraph-rewrite before the guardrail merge (ad5b05f4)")
 
     logging.getLogger().setLevel(logging.WARNING)
     items = _eval_items(args.plan)

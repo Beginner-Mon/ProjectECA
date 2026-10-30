@@ -49,7 +49,6 @@ DEFAULT_NODES = [
     "planner",
     "retriever_agent",
     "synthesizer",
-    "grader",
     "error_handler",
 ]
 
@@ -408,29 +407,6 @@ async def run_synthesizer(args: argparse.Namespace, context: dict) -> dict:
     return out
 
 
-async def run_grader(args: argparse.Namespace, context: dict) -> dict:
-    from langgraph_agents.nodes.grader import grader_node
-
-    plan = context.get("plan") or sample_plan(args.query)
-    fallback_answer = (
-        "Pelvic tilt: do 2 sets of 10 reps. Knee-to-chest stretch: hold 20 seconds, "
-        "repeat 3 times. Stop if pain worsens."
-    )
-    state = base_state()
-    state.update(
-        {
-            "intent": context.get("intent", plan.get("intent", "exercise_recommendation")),
-            "reasoning_output": context.get("reasoning_output") or fallback_answer,
-            "final_answer": context.get("final_answer") or fallback_answer,
-            "messages": context.get("messages") or [tool_message_for_query(args.query)],
-            "retry_count": context.get("retry_count", 0),
-        }
-    )
-    out = await grader_node(state)
-    context.update(out)
-    return out
-
-
 async def run_error_handler(_args: argparse.Namespace, _context: dict) -> dict:
     from langgraph_agents.nodes.error_handler import error_handler_node
 
@@ -469,7 +445,6 @@ RUNNERS: dict[str, Callable[[argparse.Namespace, dict], Awaitable[dict]]] = {
     "planner": run_planner,
     "retriever_agent": run_retriever_agent,
     "synthesizer": run_synthesizer,
-    "grader": run_grader,
     "error_handler": run_error_handler,
     "conversation": run_legacy_conversation,
 }

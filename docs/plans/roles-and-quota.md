@@ -49,6 +49,9 @@ gateway) and rebuilt on our stack: Cognito, LangGraph `/chat`, Neon.
 
 ## Rollout (in order)
 
+Step-by-step with commands and checks: [[roles-and-quota-rollout]]
+(`docs/ops/roles-and-quota-rollout.md`). Summary:
+
 1. `alembic upgrade head` on Neon (018) — as the owner role, like every migration.
 2. Deploy Amplify (`release`) — creates the `admin` Cognito group.
 3. Add the first admin: Cognito console → user pool → Groups → `admin` → Add user

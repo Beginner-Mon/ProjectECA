@@ -35,6 +35,10 @@ Fix round 1 (fix-1.md):
         in the next request, and reasoning_passthrough_supported — true only
         when a request that carried non-empty reasoning succeeded, false when
         one was rejected, null when no request ever carried it.
+
+g0-probes additions (default off, so the reasoning matrix is unchanged):
+    extra_system   a second system message right after `system`
+    budget_line    "… about N s left" appended to the last tool message of
 """
 from __future__ import annotations
 
@@ -152,13 +156,28 @@ def run_turn(
     *,
     system: str = SYSTEM_PROMPT,
     max_rounds: int = MAX_ROUNDS,
+    extra_system: str | None = None,
+    budget_line: bool = False,
+    budget_seconds: int = 20,
 ) -> TurnResult:
-    """Run one user task to completion (or a cap) and return how it went."""
+    """Run one user task to completion (or a cap) and return how it went.
+
+    extra_system: an optional second system message, placed AFTER `system`
+    (probes: AGENT_PROMPT followed by the fixed user-facts block).
+
+    budget_line (probe option, default off — the matrix is unchanged): append
+    to the LAST tool message of every round that ran tools a line
+    `\n[Round <n> of <max_rounds> · about <s> s left]`, where <s> is
+    `budget_seconds` minus the elapsed loop time, rounded down, never below 0.
+    """
     result = TurnResult(stop_reason=ERROR)
     messages: list[dict[str, Any]] = [
         {"role": "system", "content": system},
         {"role": "user", "content": task},
     ]
+    if extra_system:
+        messages.insert(1, {"role": "system", "content": extra_system})
+    t_budget = time.perf_counter() if budget_line else 0.0
     executed_ids: set[str] = set()
     results_by_id: dict[str, Any] = {}
     rounds = 0
@@ -254,6 +273,14 @@ def run_turn(
                 "tool_call_id": item["id"],
                 "content": json.dumps(item["result"], ensure_ascii=False),
             })
+        if budget_line:
+            # the last tool message of the round carries the remaining budget
+            elapsed = time.perf_counter() - t_budget
+            left = max(0, int(budget_seconds - elapsed))
+            messages[-1]["content"] = (
+                messages[-1]["content"]
+                + f"\n[Round {rounds} of {max_rounds} · about {left} s left]"
+            )
         if not executes_something:
             # Every call was a repeat of an already-executed one and produced no new
             # information; the model still did not answer, so keep looping (bounded

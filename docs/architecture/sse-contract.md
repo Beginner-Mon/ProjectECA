@@ -25,7 +25,7 @@ Source of truth: `agenticRAG/langgraph_agents/api/main.py` (`_stream_chat`,
 
 | event | when | payload |
 | --- | --- | --- |
-| `stage` | a graph node starts (synthesizer only) or completes (`memory`, `vision`, `planner`, `retriever_agent`, `synthesizer`, `grader`, `error_handler`) | `{node, status: "started"\|"complete", ...extra}`. Extra on `planner`: `required_outputs`, `needs_retrieval`, `needs_clarification`; on `retriever_agent`: `sources` (list of source ids); on `grader`: `result` |
+| `stage` | a graph node starts (synthesizer only) or completes (`memory`, `vision`, `planner`, `retriever_agent`, `synthesizer`, `grader`, `error_handler`) | `{node, status: "started"\|"complete", ...extra}`. Extra on `planner`: `required_outputs`, `needs_retrieval`, `needs_clarification`, `user_affect` (`pain`\|`worry`\|`sad_news`\|`thanks`\|`greeting`\|`good_news`\|`neutral`, for the avatar's thinking face); on `retriever_agent`: `sources` (list of source ids); on `grader`: `result` |
 | `token` | each streamed chunk of the answer | `{content}` |
 | `emotion` | before the text, when the reply carries an emotion | the emotion object from `shared/reply_emotion.py` (name + intensity) |
 | `motion` | the kimodo node returned a job (any state: `queued`, `cache_hit`, `busy`, `unavailable`) | the job payload as returned by the tool: `{state, job_id?, prompt?, ...}` |

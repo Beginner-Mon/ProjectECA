@@ -799,6 +799,7 @@ async def _stream_chat(req, request_id, config, state, background_tasks, request
                         extra["required_outputs"] = node_output.get("required_outputs")
                         extra["needs_retrieval"] = node_output.get("needs_retrieval", False)
                         extra["needs_clarification"] = node_output.get("needs_clarification", False)
+                        extra["user_affect"] = node_output.get("user_affect", "neutral")
                     if node_name == "retriever_agent" and isinstance(node_output, dict):
                         extra["sources"] = _stage_sources(node_output)
                     if node_name == "grader" and isinstance(node_output, dict):

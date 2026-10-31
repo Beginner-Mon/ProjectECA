@@ -63,6 +63,10 @@ class AgentState(TypedDict):
     # Dynamic clarify (tool ambiguous) is handled by synthesizer — M.2b/D22
     needs_clarification: bool
 
+    # ── User affect (planner) — only for the avatar's thinking face ────
+    #   One of planner.USER_AFFECTS. Forwarded on the planner `stage` event.
+    user_affect: str
+
     # ── Grader output (tag-driven, rule-based — M.3) ───────────────────
     grader_result: str               # "pass" | "retry" | "pass_with_warning"
     grader_feedback: Optional[str]   # các mục thiếu, đưa cho synthesizer ở lần viết thêm

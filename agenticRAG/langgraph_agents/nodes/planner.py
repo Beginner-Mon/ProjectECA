@@ -55,6 +55,12 @@ PLANNER_TAGS = frozenset({
 
 # ── PlanOutput (3-axis — M.1) ─────────────────────────────────────────────
 
+# What the user's message tells about how they feel. Read by nothing in the
+# graph: api/main.py forwards it on the planner's `stage` event and the browser
+# turns it into the face the avatar holds while it thinks (lib/replyEmotion.ts).
+USER_AFFECTS = ("pain", "worry", "sad_news", "thanks", "greeting", "good_news", "neutral")
+
+
 class PlanOutput(BaseModel):
     """Planner output — 3 independent axes. No intent enum, no scope dicts.
 
@@ -85,6 +91,13 @@ class PlanOutput(BaseModel):
         default=False,
         description="True when answering needs a tool: looking something up, "
                     "recalling, or doing something. The tool agent decides which.",
+    )
+
+    # ── User affect — the avatar's face while it thinks (no routing) ──
+    user_affect: str = Field(
+        default="neutral",
+        description="How the user feels in this message. One of: "
+                    + ", ".join(USER_AFFECTS),
     )
 
     # ── Clarify (static — planner knows before retrieval) ─────────────
@@ -151,6 +164,16 @@ Rules:
   Examples: PT exercises, health facts, news, real-time info, recalling past sessions
 - needs_retrieval=false: greeting, casual chat, or static safety response (red_flag needs no lookup)
 
+### user_affect — how the user feels in THIS message (one word)
+  pain      — they hurt, or describe an injury or painful condition
+  worry     — anxious or unsure about their health or an exercise
+  sad_news  — they share something sad or discouraging
+  thanks    — they thank you or say something helped
+  greeting  — hello, goodbye, small talk opener
+  good_news — progress, relief, something went well
+  neutral   — anything else (a plain question, a request)
+It only sets the avatar's face while you prepare the answer; it changes nothing else.
+
 ### Clarify (static)
 - needs_clarification=true ONLY when planner can detect missing critical info WITHOUT querying:
   "exercises" with no body region, "it hurts" with no location, "medication" with no question
@@ -164,37 +187,37 @@ Keep `resolved_query` in the user's own language: it is their question tidied
 up, not a translation of it.
 
 Query: "hello"
--> {"required_outputs":[],"resolved_query":"hello","needs_retrieval":false,"needs_clarification":false}
+-> {"required_outputs":[],"resolved_query":"hello","needs_retrieval":false,"needs_clarification":false,"user_affect":"greeting"}
 
 Query: "who are you" (about the character itself — the self-knowledge tool serves it)
--> {"required_outputs":[],"resolved_query":"who are you","needs_retrieval":true,"needs_clarification":false}
+-> {"required_outputs":[],"resolved_query":"who are you","needs_retrieval":true,"needs_clarification":false,"user_affect":"neutral"}
 
 Query: "i get chest pain when i exercise"
--> {"required_outputs":["red_flag_screen","referral_advice"],"resolved_query":"chest pain during exercise","needs_retrieval":false,"needs_clarification":false}
+-> {"required_outputs":["red_flag_screen","referral_advice"],"resolved_query":"chest pain during exercise","needs_retrieval":false,"needs_clarification":false,"user_affect":"pain"}
 
 Query: "exercises for an L4-L5 disc herniation"
--> {"required_outputs":["scope_disclaimer","contraindication","evidence_citation"],"resolved_query":"physiotherapy exercises for an L4-L5 disc herniation","needs_retrieval":true,"needs_clarification":false}
+-> {"required_outputs":["scope_disclaimer","contraindication","evidence_citation"],"resolved_query":"physiotherapy exercises for an L4-L5 disc herniation","needs_retrieval":true,"needs_clarification":false,"user_affect":"pain"}
 
 Query: "exercises" (missing body region - critical)
--> {"required_outputs":[],"resolved_query":"exercises","needs_retrieval":false,"needs_clarification":true}
+-> {"required_outputs":[],"resolved_query":"exercises","needs_retrieval":false,"needs_clarification":true,"user_affect":"neutral"}
 
 Query: "gold price today" (outside wellness, but answerable from sources)
--> {"required_outputs":["evidence_citation"],"resolved_query":"gold price today","needs_retrieval":true,"needs_clarification":false}
+-> {"required_outputs":["evidence_citation"],"resolved_query":"gold price today","needs_retrieval":true,"needs_clarification":false,"user_affect":"neutral"}
 
 Query: "show me the squat movement"
--> {"required_outputs":["scope_disclaimer","motion_descriptor"],"resolved_query":"squat movement","needs_retrieval":true,"needs_clarification":false}
+-> {"required_outputs":["scope_disclaimer","motion_descriptor"],"resolved_query":"squat movement","needs_retrieval":true,"needs_clarification":false,"user_affect":"neutral"}
 
 Query: "i asked about neck exercises last week, remind me" (recall past session)
--> {"required_outputs":["scope_disclaimer","evidence_citation"],"resolved_query":"neck exercises asked about last week","needs_retrieval":true,"needs_clarification":false}
+-> {"required_outputs":["scope_disclaimer","evidence_citation"],"resolved_query":"neck exercises asked about last week","needs_retrieval":true,"needs_clarification":false,"user_affect":"neutral"}
 
 Query: "i'm sleepy" (how the user feels — no tags, even after an exercise turn)
--> {"required_outputs":[],"resolved_query":"i'm sleepy","needs_retrieval":false,"needs_clarification":false}
+-> {"required_outputs":[],"resolved_query":"i'm sleepy","needs_retrieval":false,"needs_clarification":false,"user_affect":"neutral"}
 
 Query: "i'm done exercising for today" (no ask — no tags)
--> {"required_outputs":[],"resolved_query":"i'm done exercising for today","needs_retrieval":false,"needs_clarification":false}
+-> {"required_outputs":[],"resolved_query":"i'm done exercising for today","needs_retrieval":false,"needs_clarification":false,"user_affect":"good_news"}
 
 Query: "can you prescribe something for the pain" (outside wellness scope)
--> {"required_outputs":["referral_advice"],"resolved_query":"medication for pain","needs_retrieval":false,"needs_clarification":false}
+-> {"required_outputs":["referral_advice"],"resolved_query":"medication for pain","needs_retrieval":false,"needs_clarification":false,"user_affect":"pain"}
 
 ## INPUT NOTE
 Users write in any language, and may omit diacritics, accents or tone marks -
@@ -412,6 +435,10 @@ async def planner_node(state: AgentState, config: RunnableConfig) -> dict:
     # Resolved query fallback
     resolved_query = plan.resolved_query.strip() or query
 
+    user_affect = plan.user_affect.strip().lower()
+    if user_affect not in USER_AFFECTS:
+        user_affect = "neutral"
+
     cache_hit_tokens, cache_miss_tokens = extract_cache_tokens(ai_msg)
 
     elapsed_ms = round((time.perf_counter() - t0) * 1000)
@@ -431,4 +458,5 @@ async def planner_node(state: AgentState, config: RunnableConfig) -> dict:
         "resolved_query": resolved_query,
         "needs_retrieval": plan.needs_retrieval and not needs_clarification,
         "needs_clarification": needs_clarification,
+        "user_affect": user_affect,
     }

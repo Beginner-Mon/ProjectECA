@@ -172,6 +172,31 @@ class TestPlannerNode:
             assert "exercise_protocol" in result.get("required_outputs", [])
 
     @pytest.mark.asyncio
+    @pytest.mark.parametrize("raw, expected", [
+        ("pain", "pain"), (" Thanks ", "thanks"), ("furious", "neutral"), ("", "neutral"),
+    ])
+    async def test_planner_returns_user_affect_from_known_set(self, raw, expected):
+        """user_affect (the avatar's thinking face) is normalised; unknown → neutral."""
+        from langgraph_agents.nodes.planner import planner_node
+        from langchain_core.runnables import RunnableConfig
+
+        fake_plan = PlanOutput(resolved_query="my knee hurts", user_affect=raw)
+
+        with patch("langgraph_agents.nodes.planner.get_chat_model") as mock_llm:
+            mock_llm.return_value.with_structured_output.return_value.ainvoke = AsyncMock(
+                return_value=fake_plan
+            )
+            config = RunnableConfig(configurable={
+                "user_id": "test", "session_id": "test-sess",
+                "query": "my knee hurts", "persona_id": "anne",
+                "request_id": "req-affect",
+            })
+            state: AgentState = {"messages": [], "errors": [], "total_tokens": 0,
+                                 "retry_count": 0}
+            result = await planner_node(state, config)
+            assert result["user_affect"] == expected
+
+    @pytest.mark.asyncio
     async def test_planner_auto_adds_referral_with_red_flag(self):
         """D33: red_flag_screen → auto-add referral_advice."""
         from langgraph_agents.nodes.planner import planner_node

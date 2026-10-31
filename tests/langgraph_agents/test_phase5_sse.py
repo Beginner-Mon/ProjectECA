@@ -313,6 +313,7 @@ def _make_fake_astream_with_tool_calls(tool_names):
             "required_outputs": ["scope_disclaimer"],
             "needs_retrieval": True,
             "needs_clarification": False,
+            "user_affect": "pain",
         }})
         calls = [{"name": n, "args": {}, "id": f"call-{i}",
                   "type": "tool_call"}
@@ -346,6 +347,15 @@ def test_planner_stage_carries_needs_retrieval(api_client, monkeypatch):
     stages = _stage_data(api_client, mock_graph, ["kb_search"])
     planner = next(s for s in stages if s.get("node") == "planner")
     assert planner["needs_retrieval"] is True
+
+
+@pytest.mark.unit
+def test_planner_stage_carries_user_affect(api_client, monkeypatch):
+    """The browser's thinking face reads user_affect off the planner stage."""
+    client, _, mock_graph = api_client
+    stages = _stage_data(api_client, mock_graph, ["kb_search"])
+    planner = next(s for s in stages if s.get("node") == "planner")
+    assert planner["user_affect"] == "pain"
 
 
 @pytest.mark.unit

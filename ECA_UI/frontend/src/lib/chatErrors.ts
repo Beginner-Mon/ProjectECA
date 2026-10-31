@@ -34,6 +34,7 @@ export const FRONTEND_CODES = [
   'timeout',
   'session_expired',
   'rate_limited',
+  'quota_exhausted',
   'bad_request',
   'server',
 ] as const
@@ -66,6 +67,7 @@ const COPY: Record<KnownErrorCode, CopySource> = {
   timeout: { kind: 'persona', key: 'error_stream' },
   session_expired: { kind: 'i18n', key: 'chat.error_session_expired' },
   rate_limited: { kind: 'i18n', key: 'chat.error_rate_limited' },
+  quota_exhausted: { kind: 'i18n', key: 'chat.error_quota_exhausted' },
   bad_request: { kind: 'i18n', key: 'chat.error_bad_request' },
   server: { kind: 'persona', key: 'error_system' },
 }
@@ -86,7 +88,7 @@ export function errorCopy(
 }
 
 /** Codes that can be sent again as they are. The rest need the user to change something. */
-const NOT_RETRYABLE = new Set<string>(['session_expired', 'bad_request'])
+const NOT_RETRYABLE = new Set<string>(['session_expired', 'bad_request', 'quota_exhausted'])
 
 function make(code: string, retryable = !NOT_RETRYABLE.has(code), action: ChatErrorAction = null): ChatError {
   return { code, retryable, action }
@@ -120,6 +122,9 @@ export function errorFromThrow(err: unknown): ChatError | null {
   const name = e?.name
   if (name === 'AbortError') return null
   if (name === 'StreamTimeoutError') return make('timeout')
+  // Today's token quota is spent (db/quota.py). Sending again will not help
+  // until the reset, so no retry button; the profile shows when it resets.
+  if (name === 'QuotaExhaustedError') return make('quota_exhausted')
   if (name === 'HttpStatusError' && typeof e?.status === 'number') return errorFromHttp(e.status)
   if (name === 'StreamInterruptedError') return make('interrupted')
   // fetch() rejects with a TypeError when it never reached the server.

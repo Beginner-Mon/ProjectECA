@@ -46,6 +46,7 @@ from langgraph_agents.api.routes_crud import router as crud_router
 from langgraph_agents.api.routes_feedback import router as feedback_router
 from langgraph_agents.api.routes_llm import router as llm_router
 from langgraph_agents.api.routes_preferences import router as preferences_router
+from langgraph_agents.api.routes_quota import router as quota_router
 from langgraph_agents.api.schemas import (
     ChatRequest, TTSRequest,
 )
@@ -274,6 +275,7 @@ def create_app() -> FastAPI:
     application.include_router(preferences_router)
     application.include_router(feedback_router)
     application.include_router(llm_router)
+    application.include_router(quota_router)
 
     @application.get("/health")
     async def health():
@@ -346,6 +348,17 @@ def create_app() -> FastAPI:
         foreign = [k for k in req.image_keys if not key_belongs_to(uid, k, "image")]
         if foreign:
             raise HTTPException(400, "image_keys must be your own uploads")
+
+        # Daily token quota (db/quota.py). Only turns ECA pays for: a BYOK turn
+        # runs on the user's own model, and admins are unlimited.
+        if req.llm is None:
+            quota_status = await _quota_status(uid)
+            if quota_status is not None and quota_status.exhausted:
+                raise HTTPException(
+                    429,
+                    detail={"code": "quota_exhausted", **quota_status.to_dict()},
+                    headers={"Retry-After": str(_seconds_until(quota_status.resets_at))},
+                )
 
         state = {"messages": [], "errors": [], "retry_count": 0, "total_tokens": 0}
         if req.image_keys:
@@ -583,6 +596,8 @@ def _clamp_context_window(value) -> int | None:
 # Upper bound on waiting for the turn's summaries after `done`. Two finished
 # sessions are two LLM calls plus two embeddings, a few seconds each.
 _HOUSEKEEPING_TIMEOUT_S = 30.0
+# One UPDATE on Neon. Bounded so a stuck quota write can never hold a turn open.
+_QUOTA_CHARGE_TIMEOUT_S = 5.0
 
 # Strong references, as for _warmup_tasks. Module-level because the write has
 # to outlive the stream that started it: a turn cut short takes its generator's
@@ -611,6 +626,48 @@ def _start_answer_write(coro) -> asyncio.Task:
     _answer_write_tasks.add(task)
     task.add_done_callback(_answer_write_tasks.discard)
     return task
+
+
+# ── Daily token quota (db/quota.py) ──────────────────────────────────────────
+
+
+async def _quota_status(uid: str):
+    """The caller's quota, or None when it cannot be read.
+
+    Fails OPEN on purpose: the quota limits cost, it is not a security
+    boundary, and a quota-table hiccup must not take chat down with it.
+    """
+    from langgraph_agents.api.auth import request_email, request_is_admin
+    from langgraph_agents.db import quota
+    try:
+        return await quota.get_status(uid, request_email(), request_is_admin())
+    except Exception as exc:
+        logger.warning("quota_check_failed", extra={"error": str(exc)})
+        return None
+
+
+def _seconds_until(when) -> int:
+    from datetime import datetime, timezone
+    return max(1, int((when - datetime.now(timezone.utc)).total_seconds()))
+
+
+def _eca_paid(llm_req, final_state: dict, error_sent: bool) -> bool:
+    """Did ECA's own model pay for this turn? BYOK turns cost us nothing,
+    unless the user's provider failed and ECA answered instead."""
+    if llm_req is None:
+        return True
+    return (bool(getattr(llm_req, "failure", None))
+            and bool(final_state.get("final_answer")) and not error_sent)
+
+
+async def _charge_quota(uid, tokens) -> None:
+    if not uid:
+        return
+    from langgraph_agents.db import quota
+    try:
+        await asyncio.wait_for(quota.charge(uid, int(tokens or 0)), timeout=_QUOTA_CHARGE_TIMEOUT_S)
+    except Exception as exc:
+        logger.warning("quota_charge_failed", extra={"error": str(exc), "tokens": tokens})
 
 
 def _error_event(code: str, request_id: str) -> dict:
@@ -701,6 +758,11 @@ async def _stream_chat(req, request_id, config, state, background_tasks, request
 
     t0 = time.time()
     final_state: dict = {}
+    # Every node's tokens, summed: the quota charge. final_state["total_tokens"]
+    # only ever holds the last answering node's own count (it is copied from
+    # that node's update), not the turn's total.
+    turn_tokens = 0
+    charge_task = None
     streamed_text = ""
     conversation_stage_started = False
     answer_write: asyncio.Task | None = None
@@ -811,6 +873,7 @@ async def _stream_chat(req, request_id, config, state, background_tasks, request
                     )
 
                     if isinstance(node_output, dict):
+                        turn_tokens += int(node_output.get("total_tokens") or 0)
                         # Capture tracking fields from any node as they arrive
                         if "required_outputs" in node_output:
                             final_state["required_outputs"] = node_output["required_outputs"]
@@ -959,6 +1022,12 @@ async def _stream_chat(req, request_id, config, state, background_tasks, request
             "total_tokens": final_state.get("total_tokens", 0),
             "required_outputs": final_state.get("required_outputs", []),
         })
+        # Started before `done`, so a client that leaves at `done` cannot skip
+        # it, and as a task, so the database never delays `done`. Awaited after
+        # it below: on Lambda a task still running when the response ends is
+        # frozen mid-write.
+        if _eca_paid(llm_req, final_state, error_sent):
+            charge_task = _start_answer_write(_charge_quota(resolved_user_id, turn_tokens))
 
         # No speech_task_id: there is no task any more, so nothing for the client
         # to look one up by. The frontend slice of this change is told not to rely
@@ -977,6 +1046,9 @@ async def _stream_chat(req, request_id, config, state, background_tasks, request
                 logger.warning("housekeeping_timeout", extra={
                     "timeout_s": _HOUSEKEEPING_TIMEOUT_S,
                 })
+        if charge_task is not None:
+            # _charge_quota bounds itself and never raises.
+            await asyncio.shield(charge_task)
     except (asyncio.CancelledError, GeneratorExit):
         # The stream was cut. What the user already saw is saved as the answer,
         # marked unfinished. This generator cannot await anything now, so a task
@@ -986,6 +1058,10 @@ async def _stream_chat(req, request_id, config, state, background_tasks, request
             _start_answer_write(_write_partial_answer(
                 question_write, question,
                 _answer_row(req, final_state, streamed_text, meta)))
+        # The tokens were spent whether or not the user stayed for them:
+        # otherwise closing the tab before `done` would be a free turn.
+        if charge_task is None and not done_sent and _eca_paid(llm_req, final_state, error_sent):
+            _start_answer_write(_charge_quota(resolved_user_id, turn_tokens))
         raise
     except Exception:
         # The turn failed with no answer. Its question must not still be on

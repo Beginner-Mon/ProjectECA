@@ -52,6 +52,25 @@ def current_request_user() -> Optional[str]:
     return _request_user_id.get()
 
 
+# The caller's role (migration 018): "admin" when the verified token carries the
+# Cognito `admin` group, else "user". Same rules as the user binding: set only
+# by api/auth.py from a verified signature, read by user_scope into
+# `app.role`, which the plans / user_plan / admin_audit policies check.
+_request_role: ContextVar[Optional[str]] = ContextVar(
+    "eca_request_role", default=None,
+)
+
+
+def bind_request_role(role: Optional[str]) -> None:
+    """Declare the verified caller's role. Called from api/auth.py only."""
+    _request_role.set(role)
+
+
+def current_request_role() -> Optional[str]:
+    """The bound role ("admin" / "user"), or None outside a request."""
+    return _request_role.get()
+
+
 # Which character is speaking this turn (plan T8b). Same shape as the user
 # binding beside it: a ContextVar set once per request, read by transaction()
 # so every statement in the block carries both identities. The value is the
@@ -446,13 +465,22 @@ class PostgresClient:
         SELECT — one statement, no extra round-trip.
         """
         character = _request_character.get()
+        # Always set, "user" when unbound: a pooled connection must never keep
+        # an earlier transaction's "admin" (set_config is_local reverts anyway,
+        # this makes the value explicit rather than relying on that).
+        role = _request_role.get() or "user"
         async with self._raw_transaction() as conn:
             if character is None:
-                await conn.execute("SELECT set_config('app.user_id', $1, true)", user_id)
+                await conn.execute(
+                    "SELECT set_config('app.user_id', $1, true), "
+                    "set_config('app.role', $2, true)",
+                    user_id, role,
+                )
             else:
                 await conn.execute(
                     "SELECT set_config('app.user_id', $1, true), "
-                    "set_config('app.character', $2, true)",
-                    user_id, character,
+                    "set_config('app.character', $2, true), "
+                    "set_config('app.role', $3, true)",
+                    user_id, character, role,
                 )
             yield conn

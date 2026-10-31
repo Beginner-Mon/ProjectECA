@@ -11,6 +11,8 @@ import './App.css'
 
 // Lazy: the two documents are ~25 KB of text most visits never open.
 const LegalPage = lazy(() => import('./pages/LegalPage'))
+// Lazy: only admins ever open it.
+const AdminPage = lazy(() => import('./pages/AdminPage'))
 
 export default function App() {
   return (
@@ -29,6 +31,7 @@ export default function App() {
             <Route path="/" element={<ChatPage />} />
           </Route>
           <Route path="/set-password" element={<SetPasswordPage />} />
+          <Route path="/admin" element={<Suspense><AdminPage /></Suspense>} />
         </Route>
 
         {/* Catch-all */}

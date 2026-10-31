@@ -1,13 +1,15 @@
 import { useState, useEffect, useRef } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { useTranslation } from 'react-i18next'
-import { IdCard, User, KeyRound, Link2, LogOut, Pen } from 'lucide-react'
+import { IdCard, User, KeyRound, Link2, LogOut, Pen, Gauge, ShieldCheck } from 'lucide-react'
 import { useAuth } from '../contexts/AuthContext'
 import { fetchAuthSession } from 'aws-amplify/auth'
 import { linkGoogleAccount, mountGoogleLinkButton } from '../lib/googleLink'
 import AvatarWithLogo from './AvatarWithLogo'
 import { useAvatarBg } from '../hooks/useAvatarBg'
 import AvatarPickerModal from './AvatarPickerModal'
+import QuotaUsage from './QuotaUsage'
+import { isAdminToken } from '../lib/quota'
 
 interface Props {
   onClose?: () => void
@@ -65,6 +67,14 @@ export default function ProfileContent({ onClose }: Props) {
   const { bg, colorId, setColorId } = useAvatarBg()
   const [showPicker, setShowPicker] = useState(false)
   const navigate = useNavigate()
+
+  // Only shows the button; the admin routes check the group themselves.
+  const isAdmin = isAdminToken(payload)
+
+  const handleOpenAdmin = () => {
+    onClose?.()
+    navigate('/admin')
+  }
 
   const handleOpenSetPassword = () => {
     onClose?.()
@@ -125,6 +135,7 @@ export default function ProfileContent({ onClose }: Props) {
 
   const navItems = [
     { id: 'profile', icon: IdCard, label: t('profile.nav_profile') },
+    { id: 'usage', icon: Gauge, label: t('profile.nav_usage') },
     { id: 'display-name', icon: User, label: t('profile.nav_display_name') },
     { id: 'security', icon: KeyRound, label: t('profile.nav_security') },
     { id: 'account-linked', icon: Link2, label: t('profile.nav_account_linked') },
@@ -178,6 +189,23 @@ export default function ProfileContent({ onClose }: Props) {
               <p className="text-sm text-muted-foreground">{email}</p>
             </div>
           </div>
+        </div>
+
+        <div className="border-b border-border/40" />
+
+        <div ref={setRef('usage')} className="scroll-mt-6 py-5 space-y-4">
+          <h3 className="text-base font-semibold text-foreground">{t('profile.usage')}</h3>
+          <p className="text-sm text-muted-foreground">{t('profile.usage_desc')}</p>
+          <QuotaUsage />
+          {isAdmin && (
+            <button
+              onClick={handleOpenAdmin}
+              className="flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium bg-secondary text-foreground hover:bg-secondary/80 transition-colors"
+            >
+              <ShieldCheck className="w-4 h-4" />
+              {t('profile.open_admin')}
+            </button>
+          )}
         </div>
 
         <div className="border-b border-border/40" />

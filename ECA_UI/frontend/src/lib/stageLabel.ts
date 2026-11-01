@@ -19,6 +19,7 @@ type StageCopyKey =
   | 'stage_recalling'
   | 'stage_web'
   | 'stage_video'
+  | 'stage_agent'
 
 const SOURCE_TO_KEY: Record<string, StageCopyKey> = {
   library: 'stage_searching',
@@ -50,6 +51,11 @@ export function stageLabelFor(
   // retriever rỗng đã xử lý ở trên; synthesizer started: composing.
   if (event.node === 'synthesizer' && event.status === 'started') {
     return copy.stage_composing
+  }
+  // agent complete: the agent finished its internal tool loop and is composing
+  // the reply (persona). Show the working-on-it label.
+  if (event.node === 'agent' && event.status === 'complete') {
+    return copy.stage_agent
   }
   return current
 }

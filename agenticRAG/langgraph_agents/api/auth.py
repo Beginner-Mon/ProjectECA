@@ -80,10 +80,19 @@ ADMIN_GROUP = "admin"
 # (/chat refreshes it on the quota row so the admin page can search by email).
 _request_email: ContextVar[Optional[str]] = ContextVar("eca_request_email", default=None)
 
+# The verified caller's Cognito groups for this request (tuple, empty outside
+# a request). Read by `request_groups()`; used by the agent-loop mode switch.
+_request_groups: ContextVar[tuple[str, ...]] = ContextVar("eca_request_groups", default=())
+
 
 def request_email() -> Optional[str]:
     """The verified caller's email for this request, or None."""
     return _request_email.get()
+
+
+def request_groups() -> tuple[str, ...]:
+    """The verified caller's Cognito groups for this request, or ()."""
+    return _request_groups.get()
 
 
 def request_is_admin() -> bool:
@@ -234,6 +243,7 @@ class AuthUser:
     id: str
     email: Optional[str]
     is_admin: bool
+    groups: tuple[str, ...] = ()
 
 
 def _authenticate(credentials: Optional[HTTPAuthorizationCredentials]) -> AuthUser:
@@ -249,7 +259,10 @@ def _authenticate(credentials: Optional[HTTPAuthorizationCredentials]) -> AuthUs
     # the return type consistent for providers whose sub is not.
     user_id = _to_uuid(claims["sub"])
     groups = claims.get("cognito:groups") or []
-    is_admin = isinstance(groups, list) and ADMIN_GROUP in groups
+    if not isinstance(groups, list):
+        groups = []
+    groups = tuple(str(g) for g in groups)
+    is_admin = ADMIN_GROUP in groups
 
     # Row-level security reads the user from the database session, and this is
     # the only place that value is allowed to originate: it has just been taken
@@ -262,7 +275,8 @@ def _authenticate(credentials: Optional[HTTPAuthorizationCredentials]) -> AuthUs
     email = claims.get("email")
     email = email if isinstance(email, str) else None
     _request_email.set(email)
-    return AuthUser(id=user_id, email=email, is_admin=is_admin)
+    _request_groups.set(groups)
+    return AuthUser(id=user_id, email=email, is_admin=is_admin, groups=groups)
 
 
 async def current_user(
@@ -302,7 +316,7 @@ async def current_user_id(
     return _authenticate(credentials).id
 
 
-def override_user(user_id: str):
+def override_user(user_id: str, *, groups: tuple[str, ...] = ()):
     """Build a replacement for current_user_id, for dependency_overrides.
 
         app.dependency_overrides[current_user_id] = override_user("0000-...-0001")
@@ -318,17 +332,23 @@ def override_user(user_id: str):
         bind_request_user(user_id)
         bind_request_role("user")
         _request_email.set(None)
+        _request_groups.set(groups)
         return user_id
 
     return _override
 
 
-def override_auth_user(user_id: str, *, email: Optional[str] = None, is_admin: bool = False):
+def override_auth_user(
+    user_id: str, *,
+    email: Optional[str] = None, is_admin: bool = False,
+    groups: tuple[str, ...] = (),
+):
     """Like override_user, for the current_user dependency (and so require_admin)."""
     async def _override() -> AuthUser:
         bind_request_user(user_id)
         bind_request_role("admin" if is_admin else "user")
         _request_email.set(email)
-        return AuthUser(id=user_id, email=email, is_admin=is_admin)
+        _request_groups.set(groups)
+        return AuthUser(id=user_id, email=email, is_admin=is_admin, groups=groups)
 
     return _override

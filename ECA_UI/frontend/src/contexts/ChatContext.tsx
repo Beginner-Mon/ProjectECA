@@ -9,7 +9,7 @@ import {
 } from 'react'
 import type { Message } from '../components/ChatMessage'
 import {
-  getSession, listSessions, deleteSession, streamChat, fetchMotionStatus, DEFAULT_PERSONA_ID,
+  getSession, listSessions, deleteSession, streamChat, fetchMotionStatus, cancelChat, DEFAULT_PERSONA_ID,
   type SessionMessage, type MessageFeedback,
 } from '../lib/api'
 import { CLIP_ABORTED, SpeechClip, speechPlayer, unlockSpeechAudio } from '../lib/speechPlayer'
@@ -605,7 +605,24 @@ export function ChatProvider({ children }: { children: ReactNode }) {
     }
   }, [startNewSession])
 
-  const handleStop = useCallback(() => {
+  const handleStop = useCallback(async () => {
+    // Ask the backend to cancel the in-progress loop turn (if any), then abort
+    // the stream locally. Give cancelChat a brief window so the cancel flag
+    // reaches the server before the stream is torn down. cancelChat never
+    // rejects; failures are ignored and the local abort proceeds either way.
+    const sessionId = sessionIdRef.current
+    if (sessionId) {
+      void (async () => {
+        try {
+          await Promise.race([
+            cancelChat(sessionId),
+            new Promise<void>((r) => setTimeout(r, 1500)),
+          ])
+        } catch {
+          // cancelChat never rejects; defensive only.
+        }
+      })()
+    }
     abortControllerRef.current?.abort()
     setIsTyping(false)
     setStageLabel(null)
@@ -781,6 +798,10 @@ export function ChatProvider({ children }: { children: ReactNode }) {
               setStageLabel((prev) => stageLabelFor({ node, status, sources }, uiRef.current, prev))
             } else if (node === 'synthesizer' && status === 'started') {
               // Nhãn cuối hiện từ lúc backend báo synthesizer bắt đầu tới chữ đầu tiên.
+              setStageLabel((prev) => stageLabelFor({ node, status }, uiRef.current, prev))
+            } else if (node === 'agent' && status === 'complete') {
+              // The agent finished its internal tool loop and is composing the
+              // reply (persona). Show the working-on-it label.
               setStageLabel((prev) => stageLabelFor({ node, status }, uiRef.current, prev))
             }
           } else if (type === 'emotion') {

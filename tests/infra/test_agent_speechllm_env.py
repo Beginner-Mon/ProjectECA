@@ -116,3 +116,18 @@ def test_trailing_slash_is_stripped():
             "VIENEU_TTS_URL": "https://example.lambda-url.us-east-1.on.aws",
         })},
     }))
+
+
+@pytest.mark.unit
+def test_agent_mode_pipeline_explicit():
+    """AGENT_MODE=pipeline is set explicitly so the legacy pipeline graph is
+    used; the read-only agent loop (AGENT_MODE=loop) is opt-in per deploy."""
+    template = _agent_template()
+    body = template.to_json()
+    fn = next(
+        r for r in body["Resources"].values()
+        if r["Type"] == "AWS::Lambda::Function"
+    )
+    env_vars = fn["Properties"]["Environment"]["Variables"]
+    assert env_vars["AGENT_MODE"] == "pipeline"
+

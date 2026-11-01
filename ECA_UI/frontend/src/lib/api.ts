@@ -315,6 +315,28 @@ export async function streamChat(
 }
 
 /**
+ * Request cancellation of the in-progress loop turn for a session.
+ *
+ * Fire-and-forget POST to `/chat/cancel`. The frontend never observes
+ * `request_id` on the wire (no token event carries it), so it sends `null`;
+ * the backend accepts cancel-by-session with a known race (a brand-new turn
+ * in the same session can slip in before the next round's cancel check).
+ * Failures are ignored on purpose: the client aborts the stream locally and
+ * does not wait for the backend.
+ */
+export async function cancelChat(sessionId: string): Promise<void> {
+  const extraHeaders = await authHeader()
+  void fetch(`${API_GATEWAY}/chat/cancel`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      ...extraHeaders,
+    },
+    body: JSON.stringify({ session_id: sessionId, request_id: null }),
+  }).catch(() => {})
+}
+
+/**
  * The stream broke after part of the reply had been delivered, or ended without
  * `done`. The server may still have finished and saved the turn — callers look
  * it up rather than treating the text on screen as complete.

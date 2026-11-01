@@ -37,7 +37,7 @@ import redis.asyncio as aioredis
 from fastapi import FastAPI, HTTPException, BackgroundTasks, Depends, Request
 from fastapi.responses import JSONResponse
 
-from langgraph_agents.api.auth import current_user_id, verify_auth_config
+from langgraph_agents.api.auth import current_user_id, request_groups, verify_auth_config
 from langgraph_agents.api.billing import router as billing_router
 from langgraph_agents.api.crud_app import add_cors
 from langgraph_agents.api.motion_status import motion_status
@@ -45,6 +45,7 @@ from langgraph_agents.api.routes_characters import router as characters_router
 from langgraph_agents.api.routes_crud import router as crud_router
 from langgraph_agents.api.routes_feedback import router as feedback_router
 from langgraph_agents.api.routes_llm import router as llm_router
+from langgraph_agents.api.routes_loop import router as loop_router
 from langgraph_agents.api.routes_preferences import router as preferences_router
 from langgraph_agents.api.routes_quota import router as quota_router
 from langgraph_agents.api.schemas import (
@@ -86,6 +87,7 @@ logger = get_logger("langgraph.api")
 # spawned later get the default None).
 
 _graph = None
+_loop_graph = None  # built in lifespan only when AGENT_MODE != pipeline
 
 # Redis used to be shared by two very different consumers: TTS task results
 # (write once, poll every 250ms for up to 130s) and this readiness probe (one
@@ -110,7 +112,7 @@ _health_redis: aioredis.Redis | None = None
 # Node names that emit stage events (Phase 6.9: conversation node removed)
 _STAGE_NODES = {
     "memory", "vision", "planner", "retriever_agent", "synthesizer",
-    "error_handler",
+    "error_handler", "agent", "persona",
 }
 
 
@@ -175,6 +177,25 @@ def _get_graph():
     return _graph
 
 
+def _get_loop_graph():
+    return _loop_graph
+
+
+async def _cancel_checker(config: dict, store) -> bool:
+    """A2: read the cancel flag from the lease store for this user/session."""
+    cfg = config.get("configurable") or {}
+    try:
+        return await store.is_cancelled(cfg.get("user_id", ""), cfg.get("session_id", ""))
+    except Exception:  # noqa: BLE001
+        return False
+
+
+async def _verdict_getter(config: dict):
+    """A1: fetch the guardrail verdict for this turn (delegate to handoff)."""
+    from langgraph_agents.guardrail.handoff import current_verdict
+    return await current_verdict(config)
+
+
 # Strong references: create_task holds only a weak one.
 _warmup_tasks: set[asyncio.Task] = set()
 
@@ -224,6 +245,21 @@ async def lifespan(application: FastAPI):
 
     global _graph
     _graph = await build_graph_async()
+
+    global _loop_graph
+    # The loop graph is built only when AGENT_MODE is not pipeline (PLAN.md
+    # II.1): with the default pipeline mode the loop code is never loaded at
+    # startup, so the pipeline is unchanged. The import lives inside this
+    # branch so a broken loop package cannot stop the pipeline (B4).
+    if os.getenv("AGENT_MODE", "pipeline") != "pipeline":
+        try:
+            from langgraph_agents.loop.graph import build_loop_graph as _build_loop_graph
+            _loop_graph = _build_loop_graph()
+            logger.info("loop_graph_loaded", extra={"event": "lifespan_loop_graph"})
+        except Exception as exc:  # noqa: BLE001
+            # A loop-graph build failure must not take the pipeline down.
+            logger.warning("loop_graph_build_failed", extra={"error": str(exc)})
+            _loop_graph = None
 
     # `_get_health_redis()` used to be called here (as `_get_redis()`). Removed
     # 21-08: it only constructed a lazy client (redis.asyncio does not dial
@@ -280,6 +316,7 @@ def create_app() -> FastAPI:
     application.include_router(preferences_router)
     application.include_router(feedback_router)
     application.include_router(llm_router)
+    application.include_router(loop_router)
     application.include_router(quota_router)
 
     @application.get("/health")
@@ -341,10 +378,71 @@ def create_app() -> FastAPI:
         background_tasks: BackgroundTasks,
         uid: str = Depends(current_user_id),
     ):
-        graph = _get_graph()
-        if graph is None:
-            raise HTTPException(503, "Graph not loaded yet")
-        request_id = str(uuid.uuid4())
+        groups = request_groups()
+        from langgraph_agents.loop.mode import select_mode as _select_mode
+        from langgraph_agents.loop.config import load_settings as _load_settings
+        settings = _load_settings()
+        mode = _select_mode(groups, settings)
+
+        if mode == "loop":
+            # B4: loop imports live inside this branch so a broken loop
+            # package cannot stop the pipeline.
+            from langgraph_agents.loop.graph import build_loop_graph as _build_loop_graph
+            from langgraph_agents.loop.limits import ensure_turn, new_turn
+            from langgraph_agents.loop.leases import get_lease_store
+
+            graph = _get_loop_graph()
+            if graph is None:
+                raise HTTPException(503, "Loop graph not loaded yet")
+            request_id = str(uuid.uuid4())
+            turn = new_turn()
+            turn.user_id = uid
+            turn.current_message = req.query
+            config = {"configurable": {
+                "user_id": uid,
+                "session_id": req.session_id,
+                "query": req.query,
+                "user_message_id": str(uuid.uuid4()),
+                "persona_id": req.persona_id,
+                "previous_persona_id": req.previous_persona_id,
+                "output_mode": req.output_mode,
+                "speaks_aloud": req.output_mode in ("speech", "both") and tts_enabled(),
+                "request_id": request_id,
+                "token_limit": req.token_limit,
+                "web_search": req.web_search,
+                "locale": req.locale,
+                # The per-turn runtime, handed to the graph through config.
+                # LangGraph re-merges config per node task, so it must be set
+                # here (before astream) rather than created inside a node.
+                "turn_ctx": turn,
+                # Lease plumbing: acquired below (after every check that can
+                # raise), released in _stream_chat's finally (B1).
+                "_lease": None,
+                # A2: cancel checker reads the lease store each round.
+                "cancel_checker": lambda cfg: _cancel_checker(cfg, get_lease_store()),
+                # A1: verdict getter fetches the guardrail verdict once per
+                # round before any egress/clinical call runs.
+                "verdict_getter": lambda cfg: _verdict_getter(cfg),
+            }}
+        else:
+            graph = _get_graph()
+            if graph is None:
+                raise HTTPException(503, "Graph not loaded yet")
+            request_id = str(uuid.uuid4())
+            config = {"configurable": {
+                "user_id": uid,
+                "session_id": req.session_id,
+                "query": req.query,
+                "user_message_id": str(uuid.uuid4()),
+                "persona_id": req.persona_id,
+                "previous_persona_id": req.previous_persona_id,
+                "output_mode": req.output_mode,
+                "speaks_aloud": req.output_mode in ("speech", "both") and tts_enabled(),
+                "request_id": request_id,
+                "token_limit": req.token_limit,
+                "web_search": req.web_search,
+                "locale": req.locale,
+            }}
 
         # Photos (SCRUM-45): only keys POST /me/uploads could have issued to this
         # user. Checked before anything reads S3, so one user cannot point the
@@ -397,33 +495,37 @@ def create_app() -> FastAPI:
                 context_window=_clamp_context_window(req.token_limit),
             )
         bind_request_llm(llm_req)
-        config = {"configurable": {
-            "user_id": uid,
-            "session_id": req.session_id,
-            "query": req.query,
-            # The row id of this turn's question. Made here because two readers
-            # must agree on it: _stream_chat writes the row as the turn starts,
-            # and the memory node leaves it out of the history it loads.
-            "user_message_id": str(uuid.uuid4()),
-            "persona_id": req.persona_id,
-            "previous_persona_id": req.previous_persona_id,
-            "output_mode": req.output_mode,
-            # Lượt này câu trả lời có được đọc thành tiếng không. Synthesizer
-            # đọc cờ này để báo cho nhân vật (không báo cơ chế).
-            "speaks_aloud": req.output_mode in ("speech", "both") and tts_enabled(),
-            "request_id": request_id,
-            "token_limit": req.token_limit,
-            "web_search": req.web_search,
-            # The site language the user chose. Selects the character voice
-            # overlay and the safety templates the grader may insert. It does
-            # NOT decide the reply language — that still mirrors the question.
-            "locale": req.locale,
-        }}
+
+        # B1: acquire the loop lease only after every check that can raise
+        # (photo, quota, BYOK) has passed. A refused turn never holds the
+        # lease, so a later request in the same session is not 409'd until
+        # TTL.
+        if mode == "loop":
+            lease = get_lease_store()
+            acquired = await lease.acquire(
+                uid, req.session_id, request_id, settings.lease_ttl_s)
+            if not acquired:
+                raise HTTPException(
+                    409, {"code": "turn_in_progress", "request_id": request_id})
+            config["configurable"]["_lease"] = (lease, request_id)
 
         async def event_generator():
             with with_request_id(request_id):
-                async for sse_event in _stream_chat(req, request_id, config, state, background_tasks, request, uid, llm_req):
-                    yield sse_event
+                try:
+                    async for sse_event in _stream_chat(req, request_id, config, state,
+                                                        background_tasks, request, uid,
+                                                        llm_req, graph=graph):
+                        yield sse_event
+                finally:
+                    # Release the loop lease when the stream ends (cut short or not).
+                    lease_info = config.get("configurable", {}).get("_lease")
+                    if lease_info is not None:
+                        lease, rid = lease_info
+                        try:
+                            await lease.release(uid, rid)
+                        except Exception as exc:  # noqa: BLE001
+                            logger.warning("lease_release_failed", extra={
+                                "request_id": request_id, "error": str(exc)})
 
         return stream_response(event_generator())
 
@@ -734,6 +836,10 @@ def _turn_meta_base(req, request_id, final_state: dict, t0: float,
         "guardrail": verdict.asdict() if verdict is not None else None,
         "safety": list(safety or ()),
         "latency_ms": int((time.time() - t0) * 1000),
+        # The loop trace (per-turn rounds, actions, turn_status, motion_jobs)
+        # rides on the answer so a 👎 vote or ops query can see how the turn
+        # ended. Empty for pipeline turns.
+        "loop": list(final_state.get("loop_trace") or []),
     }
 
 
@@ -772,7 +878,7 @@ async def _write_partial_answer(question_write, question: dict, answer: dict) ->
         logger.warning("partial_answer_persist_failed", extra={"error": str(exc)})
 
 
-async def _stream_chat(req, request_id, config, state, background_tasks, request=None, resolved_user_id=None, llm_req=None):
+async def _stream_chat(req, request_id, config, state, background_tasks, request=None, resolved_user_id=None, llm_req=None, graph=None):
     """Core SSE stream: graph execution + post-processing.
 
     Wrapped in with_request_id by the caller so every log line from this
@@ -805,7 +911,7 @@ async def _stream_chat(req, request_id, config, state, background_tasks, request
     persona_id = config["configurable"].get("persona_id", "anne")
     locale = config["configurable"].get("locale", "en")
 
-    graph = _get_graph()
+    graph = graph or _get_graph()
     logger.info("chat_start", extra={"query": req.query[:120], "session_id": req.session_id})
 
     # Summaries (long-term memory) start with the turn and are awaited after
@@ -903,6 +1009,24 @@ async def _stream_chat(req, request_id, config, state, background_tasks, request
                                         final_state["motion_prompt"] = job_payload.get("prompt")
                         except Exception as exc:
                             logger.warning("kimodo_job_id_capture_failed", extra={"error": str(exc)})
+
+                    if node_name == "tools_read" and isinstance(node_output, dict):
+                        # Loop motion events: `tools_read` captures `motion_jobs`
+                        # (request_motion builtins) into final_state and re-emits
+                        # the `motion` event, like the pipeline's kimodo branch.
+                        # Additive: the kimodo branch above is untouched.
+                        try:
+                            for job in node_output.get("motion_jobs") or []:
+                                if not isinstance(job, dict):
+                                    continue
+                                yield encode_event("motion", job)
+                                if job.get("state") in ("queued", "cache_hit"):
+                                    job_id = job.get("job_id")
+                                    if job_id:
+                                        final_state["motion_job_id"] = job_id
+                                        final_state["motion_prompt"] = job.get("prompt")
+                        except Exception as exc:  # noqa: BLE001
+                            logger.warning("loop_motion_job_capture_failed", extra={"error": str(exc)})
 
                     if node_name not in _STAGE_NODES:
                         continue
@@ -1136,6 +1260,21 @@ async def _stream_chat(req, request_id, config, state, background_tasks, request
         # No speech_task_id: there is no task any more, so nothing for the client
         # to look one up by. The frontend slice of this change is told not to rely
         # on this field.
+        # Loop mode: the `turn_status` event goes out right before `done`
+        # (normal path only), sourced from final_state (populated by the persona
+        # node's final update). actions carry {action_id, tool, status}.
+        if not error_sent and final_state.get("turn_status"):
+            turn_actions = final_state.get("actions") or []
+            yield encode_event("turn_status", {
+                "status": final_state["turn_status"],
+                "actions": [
+                    {"action_id": a.get("tool_call_id") or a.get("action_id"),
+                     "tool": a.get("tool"),
+                     "status": a.get("status")}
+                    for a in turn_actions
+                ],
+            })
+
         done_sent = True
         yield encode_event("done", {
             "request_id": request_id,

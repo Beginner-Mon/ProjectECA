@@ -17,6 +17,9 @@ langchain-core>=0.3.0
 # LLM provider — DeepSeek via OpenAI-compatible
 langchain-openai>=1.0.0,<2.0.0
 
+# Direct OpenAI SDK — imported by langgraph_agents.loop.client at module scope.
+openai>=2.0,<3
+
 # LLM fallback — Gemini. Imported lazily (inside the fallback functions), so a
 # missing install shows up as a failed fallback at 3am rather than at start-up.
 # Upper bound is deliberate: llm.py documents that response content shape is

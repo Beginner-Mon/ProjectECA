@@ -340,6 +340,9 @@ class AgentStack(Stack):
         agent_environment = {
             "VVA_PG_DSN_PARAM": dsn_param,
             "LLM_PROVIDER": llm_provider,
+            # AGENT_MODE=pipeline keeps the legacy read-only pipeline graph; the
+            # read-only agent loop (AGENT_MODE=loop) is opt-in per deployment.
+            "AGENT_MODE": "pipeline",
             "DEEPSEEK_API_KEY_PARAM": deepseek_param,
             "OPENAI_API_KEY_PARAM": openai_param,
             "GEMINI_API_KEYS_PARAM": gemini_param,

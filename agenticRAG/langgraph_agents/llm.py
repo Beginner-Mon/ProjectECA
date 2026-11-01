@@ -190,6 +190,37 @@ def _model_for_role(role: str) -> str:
     return os.getenv(cfg["fast_env"], cfg["fast"])
 
 
+def endpoint_for_role(role: str, *, reasoning_effort: str | None = None) -> dict:
+    """Resolve base URL, key env name, model and extra body for a role.
+
+    Role ``agent`` maps to ``retriever`` (the fast model on ECA's own key).
+    Returns ``{"base_url", "key_env", "key_param_env", "model", "extra_body"}``.
+
+    Reasoning effort is added to ``extra_body`` only for hosts ending
+    ``openai.com`` or ``groq.com`` (KeepClient precedent). The caller passes
+    the effort value (from `loop.config.load_settings().reasoning_effort`) so
+    shared code never imports `loop/` (PLAN.md II.1 boundary).
+    """
+    provider = llm_provider()
+    cfg = _PROVIDERS[provider]
+    # agent ≈ retriever: fast model, no role-specific extra_body by default.
+    model = os.getenv(cfg["fast_env"], cfg["fast"])
+    base_url = os.getenv(cfg["base_url_env"], cfg["base_url"])
+    extra_body: dict = {}
+    host = urlsplit(base_url).hostname or ""
+    if host.endswith("openai.com") or host.endswith("groq.com"):
+        effort = (reasoning_effort or "none").strip().lower()
+        if effort != "none":
+            extra_body = {"reasoning_effort": effort}
+    return {
+        "base_url": base_url,
+        "key_env": cfg["key_env"],
+        "key_param_env": cfg["key_param_env"],
+        "model": model,
+        "extra_body": extra_body,
+    }
+
+
 def _timeout_for_role(role: str) -> float:
     return _TIMEOUT_HEAVY if role in _HEAVY_ROLES or role in _LONG_OUTPUT_ROLES else _TIMEOUT_FAST
 

@@ -83,7 +83,7 @@ def _imported_modules() -> dict[str, list[str]]:
         # The paper's evaluation scripts run from their own folder with sibling
         # imports and their own clients; the service never imports them.
         rel = path.relative_to(PACKAGE_ROOT).as_posix()
-        if rel.startswith("local_tests/safety_eval/") or rel.startswith("local_tests/guardrail_eval/"):
+        if rel.startswith("local_tests/safety_eval/") or rel.startswith("local_tests/guardrail_eval/") or rel.startswith("local_tests/agent_loop/"):
             continue
         try:
             tree = ast.parse(path.read_text(encoding="utf-8-sig"))

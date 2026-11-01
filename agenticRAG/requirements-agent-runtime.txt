@@ -35,6 +35,9 @@ sse-starlette>=3.4,<4.0
 langgraph>=0.2.0
 langchain-core>=0.3.0
 langchain-openai>=1.0.0,<2.0.0
+
+# Direct OpenAI SDK — imported by langgraph_agents.loop.client at module scope.
+openai>=2.0,<3
 langchain-google-genai>=4.2.3,<5.0.0
 
 # MCP. Shipped despite ENABLE_MCP=false — see the note above.

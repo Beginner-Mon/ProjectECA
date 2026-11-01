@@ -35,6 +35,7 @@ export interface UiStrings {
   stage_recalling: string
   stage_web: string
   stage_video: string
+  stage_agent: string
   stage_composing: string
   /** The connection broke mid-reply, or went silent. */
   error_stream: string
@@ -77,6 +78,7 @@ export const FALLBACK_UI_STRINGS: Record<Locale, UiStrings> = {
     stage_recalling: 'Recalling...',
     stage_web: 'Searching the web...',
     stage_video: 'Watching the video...',
+    stage_agent: 'Working on it...',
     stage_composing: 'Almost there...',
     error_stream: 'Something went wrong. Please send that again.',
     error_system: 'Something went wrong on our side. Please try again shortly.',
@@ -100,6 +102,7 @@ export const FALLBACK_UI_STRINGS: Record<Locale, UiStrings> = {
     stage_recalling: 'Đang nhớ lại...',
     stage_web: 'Đang tìm trên web...',
     stage_video: 'Đang xem video...',
+    stage_agent: 'Đang thực hiện...',
     stage_composing: 'Sắp xong rồi...',
     error_stream: 'Đã có lỗi xảy ra. Bạn thử gửi lại nhé.',
     error_system: 'Xin lỗi, hệ thống đang gặp sự cố. Vui lòng thử lại sau.',

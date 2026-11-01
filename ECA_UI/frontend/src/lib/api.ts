@@ -295,7 +295,11 @@ export async function streamChat(
   if (!resp.ok) {
     // The status is all the client acts on (lib/chatErrors.ts: errorFromHttp).
     // The body is deliberately neither read nor logged: it can echo the request.
+    // One exception: a 429 is either the gateway's throttle or the daily quota
+    // (db/quota.py), and only our own quota body says which. Only its `code`
+    // is looked at, and it is not logged.
     console.warn('[chat] POST /chat answered', resp.status)
+    if (resp.status === 429 && (await isQuotaExhausted(resp))) throw new QuotaExhaustedError()
     throw new HttpStatusError(resp.status)
   }
 
@@ -319,6 +323,23 @@ export class StreamInterruptedError extends Error {
   constructor(message = 'Chat stream interrupted', options?: { cause?: unknown }) {
     super(message, options)
     this.name = 'StreamInterruptedError'
+  }
+}
+
+async function isQuotaExhausted(resp: Response): Promise<boolean> {
+  try {
+    const body = (await resp.json()) as { detail?: { code?: unknown } }
+    return body?.detail?.code === 'quota_exhausted'
+  } catch {
+    return false
+  }
+}
+
+/** POST /chat answered 429 because today's token quota is spent. */
+export class QuotaExhaustedError extends Error {
+  constructor() {
+    super('Daily token quota exhausted')
+    this.name = 'QuotaExhaustedError'
   }
 }
 
@@ -750,4 +771,93 @@ export function startSandboxCheckout() {
 
 export function openSandboxPortal() {
   return openBillingDestination('/billing/portal')
+}
+
+// ── Daily token quota and admin (api/routes_quota.py) ───────────────────────────
+// Admin routes answer 403 to anyone without the Cognito `admin` group; the UI
+// only hides them (lib/quota.ts: isAdminToken), it does not protect them.
+
+export interface QuotaStatus {
+  plan: string
+  /** null = unlimited (admin). */
+  limit: number | null
+  used: number
+  remaining: number | null
+  /** ISO time of the next reset (local midnight, server time zone). */
+  resets_at: string
+  is_admin: boolean
+}
+
+export interface Plan {
+  name: string
+  daily_token_limit: number
+  is_default: boolean
+  users: number
+}
+
+export interface AdminUserRow {
+  user_id: string
+  email: string | null
+  plan: string
+  limit_override: number | null
+  limit: number
+  used_today: number
+}
+
+export interface AuditEntry {
+  at: string
+  actor: string | null
+  action: string
+  target: string
+  detail: Record<string, unknown>
+}
+
+export async function getMyQuota(): Promise<QuotaStatus> {
+  const { data } = await http.get('/me/quota')
+  return data as QuotaStatus
+}
+
+export async function adminListPlans(): Promise<Plan[]> {
+  const { data } = await http.get('/admin/plans')
+  return (data as { plans: Plan[] }).plans
+}
+
+export async function adminCreatePlan(name: string, dailyTokenLimit: number): Promise<Plan> {
+  const { data } = await http.post('/admin/plans', { name, daily_token_limit: dailyTokenLimit })
+  return data as Plan
+}
+
+export async function adminUpdatePlan(
+  name: string,
+  patch: { daily_token_limit?: number; is_default?: true },
+): Promise<Plan> {
+  const { data } = await http.post(`/admin/plans/${encodeURIComponent(name)}`, patch)
+  return data as Plan
+}
+
+export async function adminDeletePlan(name: string): Promise<void> {
+  await http.delete(`/admin/plans/${encodeURIComponent(name)}`)
+}
+
+export async function adminFindUsers(email: string): Promise<AdminUserRow[]> {
+  const { data } = await http.get('/admin/users', { params: { email } })
+  return (data as { users: AdminUserRow[] }).users
+}
+
+export async function adminUpdateUser(
+  userId: string,
+  patch: { plan_name?: string; limit_override?: number; clear_limit_override?: true },
+): Promise<AdminUserRow> {
+  const { data } = await http.post(`/admin/users/${encodeURIComponent(userId)}`, patch)
+  return data as AdminUserRow
+}
+
+export async function adminResetUsage(userId: string): Promise<AdminUserRow> {
+  const { data } = await http.post(`/admin/users/${encodeURIComponent(userId)}/reset`)
+  return data as AdminUserRow
+}
+
+export async function adminAuditLog(): Promise<AuditEntry[]> {
+  const { data } = await http.get('/admin/audit')
+  return (data as { entries: AuditEntry[] }).entries
 }

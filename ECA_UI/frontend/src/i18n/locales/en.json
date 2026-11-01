@@ -57,7 +57,8 @@
     "record_stop": "Stop voice input",
     "show_conversation": "Show conversation",
     "resize_conversation": "Drag to resize the conversation or tap to open or close. Use arrow keys to adjust the height.",
-    "title": "ECA"
+    "title": "ECA",
+    "error_quota_exhausted": "You've used today's message allowance. It resets at midnight — see Profile → Usage for the exact time."
   },
   "motion": {
     "auto": "(auto)",
@@ -172,7 +173,17 @@
     "security_desc": "Set a password for email sign-in.",
     "set_password": "Set my Password",
     "sign_out": "Sign Out",
-    "signed_in_as": "Signed in as"
+    "signed_in_as": "Signed in as",
+    "nav_usage": "Usage",
+    "usage": "Daily usage",
+    "usage_desc": "Your plan sets how many tokens you can use each day. Messages answered by your own AI provider key do not count.",
+    "usage_plan": "Plan: {{plan}}",
+    "usage_of": "{{used}} of {{limit}} tokens",
+    "usage_unlimited": "Unlimited",
+    "usage_resets": "Resets {{time}}",
+    "usage_loading": "Loading…",
+    "usage_unavailable": "Usage is not available right now.",
+    "open_admin": "Manage tiers and quotas"
   },
   "nav": {
     "avatars": "Avatars",
@@ -331,5 +342,40 @@
     "only_for": "Only for: {{topic}}",
     "delete_all": "Delete all",
     "delete_all_confirm": "Delete every memory, including ones you added?"
+  },
+  "admin": {
+    "title": "Tiers and quotas",
+    "back": "Back",
+    "not_admin": "This page is for administrators.",
+    "tiers": "Tiers",
+    "tiers_desc": "Daily token limit per tier. A change applies to everyone on that tier from their next message.",
+    "tier": "Tier",
+    "daily_limit": "Daily limit",
+    "users": "Users",
+    "default": "default",
+    "save": "Save",
+    "make_default": "Make this the tier for new users",
+    "delete": "Delete",
+    "cancel": "Cancel",
+    "new_tier_name": "new tier name",
+    "add_tier": "Add tier",
+    "invalid_name": "Tier names use lowercase letters, digits, - and _ (up to 32).",
+    "invalid_limit": "Enter a whole number of tokens.",
+    "users_title": "Users",
+    "users_desc": "Find someone by email to change their tier, give them a personal limit, or reset today's usage. People appear here after their first message.",
+    "search_email": "Email contains…",
+    "search": "Search",
+    "no_users": "No matching users.",
+    "email": "Email",
+    "personal_limit": "Personal limit",
+    "from_tier": "from tier",
+    "used_today": "Used today",
+    "reset_usage": "Reset today's usage",
+    "audit": "Recent changes",
+    "audit_empty": "No changes yet.",
+    "delete_title": "Delete tier?",
+    "delete_message": "Delete the \"{{tier}}\" tier? Only possible when nobody is on it.",
+    "reset_title": "Reset usage?",
+    "reset_message": "Set today's usage for {{email}} back to zero?"
   }
 }

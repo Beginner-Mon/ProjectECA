@@ -85,3 +85,6 @@ stripe>=15.4.0,<16.0.0
 PyYAML>=6.0
 python-dotenv>=1.0.0
 pydantic>=2.0
+
+# Time zone data for the quota day (db/quota.py); Lambda images may lack /usr/share/zoneinfo
+tzdata>=2024.1

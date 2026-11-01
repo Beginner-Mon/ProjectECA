@@ -45,6 +45,7 @@ Configuration:
 from __future__ import annotations
 
 import os
+from contextvars import ContextVar
 from dataclasses import dataclass
 from functools import lru_cache
 from typing import Optional
@@ -54,7 +55,11 @@ from fastapi import Depends, HTTPException
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from jwt import PyJWKClient
 
-from langgraph_agents.db.postgres import bind_request_user
+from langgraph_agents.db.postgres import (
+    bind_request_role,
+    bind_request_user,
+    current_request_role,
+)
 from langgraph_agents.db.session_store import _to_uuid
 from langgraph_agents.shared.logging import get_logger
 
@@ -65,6 +70,25 @@ _UNAUTHENTICATED = HTTPException(
     detail="authentication required",
     headers={"WWW-Authenticate": "Bearer"},
 )
+
+# The Cognito group that may manage tiers and quotas (amplify/auth/resource.ts).
+# Membership is changed in the Cognito console or CLI only — no route here can
+# add anyone to it.
+ADMIN_GROUP = "admin"
+
+# The verified email, for routes that depend on current_user_id but need it
+# (/chat refreshes it on the quota row so the admin page can search by email).
+_request_email: ContextVar[Optional[str]] = ContextVar("eca_request_email", default=None)
+
+
+def request_email() -> Optional[str]:
+    """The verified caller's email for this request, or None."""
+    return _request_email.get()
+
+
+def request_is_admin() -> bool:
+    """True when this request's verified token carries the `admin` group."""
+    return current_request_role() == "admin"
 
 
 # ── Configuration ─────────────────────────────────────────────────────────────
@@ -204,6 +228,61 @@ bearer_scheme = HTTPBearer(
 )
 
 
+@dataclass(frozen=True)
+class AuthUser:
+    """The verified caller. Every field comes from the token's signed claims."""
+    id: str
+    email: Optional[str]
+    is_admin: bool
+
+
+def _authenticate(credentials: Optional[HTTPAuthorizationCredentials]) -> AuthUser:
+    """Verify the token, bind identity and role for row-level security."""
+    if credentials is None:
+        raise _UNAUTHENTICATED
+
+    claims = _verify_token(credentials.credentials)
+    if claims is None:
+        raise _UNAUTHENTICATED
+
+    # Cognito's sub is already a UUID; _to_uuid is a no-op for those and keeps
+    # the return type consistent for providers whose sub is not.
+    user_id = _to_uuid(claims["sub"])
+    groups = claims.get("cognito:groups") or []
+    is_admin = isinstance(groups, list) and ADMIN_GROUP in groups
+
+    # Row-level security reads the user from the database session, and this is
+    # the only place that value is allowed to originate: it has just been taken
+    # from a verified signature. Binding it here rather than in each handler
+    # means a handler cannot forget, and cannot substitute something the caller
+    # supplied. See db/postgres.py. The role rides along the same way
+    # (migration 018's admin policies read it).
+    bind_request_user(user_id)
+    bind_request_role("admin" if is_admin else "user")
+    email = claims.get("email")
+    email = email if isinstance(email, str) else None
+    _request_email.set(email)
+    return AuthUser(id=user_id, email=email, is_admin=is_admin)
+
+
+async def current_user(
+    credentials: Optional[HTTPAuthorizationCredentials] = Depends(bearer_scheme),
+) -> AuthUser:
+    """FastAPI dependency: the verified caller with email and admin flag.
+
+    Use where the handler needs more than the id — the quota check (email for
+    the admin page, admin = unlimited) and the admin routes.
+    """
+    return _authenticate(credentials)
+
+
+async def require_admin(user: AuthUser = Depends(current_user)) -> AuthUser:
+    """FastAPI dependency: 403 unless the token carries the `admin` group."""
+    if not user.is_admin:
+        raise HTTPException(status_code=403, detail="admin only")
+    return user
+
+
 async def current_user_id(
     credentials: Optional[HTTPAuthorizationCredentials] = Depends(bearer_scheme),
 ) -> str:
@@ -220,24 +299,7 @@ async def current_user_id(
     Raises:
         HTTPException(401): no Bearer token, or one that does not verify.
     """
-    if credentials is None:
-        raise _UNAUTHENTICATED
-
-    claims = _verify_token(credentials.credentials)
-    if claims is None:
-        raise _UNAUTHENTICATED
-
-    # Cognito's sub is already a UUID; _to_uuid is a no-op for those and keeps
-    # the return type consistent for providers whose sub is not.
-    user_id = _to_uuid(claims["sub"])
-
-    # Row-level security reads the user from the database session, and this is
-    # the only place that value is allowed to originate: it has just been taken
-    # from a verified signature. Binding it here rather than in each handler
-    # means a handler cannot forget, and cannot substitute something the caller
-    # supplied. See db/postgres.py.
-    bind_request_user(user_id)
-    return user_id
+    return _authenticate(credentials).id
 
 
 def override_user(user_id: str):
@@ -254,6 +316,19 @@ def override_user(user_id: str):
     """
     async def _override() -> str:
         bind_request_user(user_id)
+        bind_request_role("user")
+        _request_email.set(None)
         return user_id
+
+    return _override
+
+
+def override_auth_user(user_id: str, *, email: Optional[str] = None, is_admin: bool = False):
+    """Like override_user, for the current_user dependency (and so require_admin)."""
+    async def _override() -> AuthUser:
+        bind_request_user(user_id)
+        bind_request_role("admin" if is_admin else "user")
+        _request_email.set(email)
+        return AuthUser(id=user_id, email=email, is_admin=is_admin)
 
     return _override

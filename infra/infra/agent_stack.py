@@ -130,7 +130,7 @@ _DEFAULT_GEMINI_PARAM = "/vva/llm/gemini-api-keys"
 
 # ECA's model provider (LLM_PROVIDER in llm.py). Kept here and not only as a deploy
 # flag, so a later deploy done for another reason cannot switch it back by
-# accident. OpenAI since 29/10/2026, key under _DEFAULT_OPENAI_PARAM. To go back to
+# accident. OpenAI since 30/10/2026, key under _DEFAULT_OPENAI_PARAM. To go back to
 # DeepSeek, whose key stays under _DEFAULT_DEEPSEEK_PARAM: set this to "deepseek"
 # and `cdk deploy VvaAgentStack`. Plan: docs/plans/llm-openai-switch.md.
 _LLM_PROVIDER = "openai"

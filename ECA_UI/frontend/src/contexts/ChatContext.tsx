@@ -34,7 +34,7 @@ import { useTranslation } from 'react-i18next'
 
 export type { SessionItem, ChatContextType } from '../hooks/useChat'
 import { useDictation } from '../hooks/useDictation'
-import { parseReplyEmotion, REPLY_EMOTION_FADE_MS } from '../lib/replyEmotion'
+import { isSafetyTurn, listeningFace, parseReplyEmotion, REPLY_EMOTION_FADE_MS, SETBACK_FACE } from '../lib/replyEmotion'
 
 /* The pointer to the conversation lives in lib/chatSession.ts, along with the
  * reason it is written late and expires. Nothing here mints an id: a
@@ -644,6 +644,7 @@ export function ChatProvider({ children }: { children: ReactNode }) {
     setStageLabel(stageLabelFor(null, uiRef.current, null))
     setIsGenerating(true)
     thinkingRef.current = true
+    avatarRef.current?.beginTurn()
     void transitionTo('thinking_intro')
 
     const assistantMsgId = crypto.randomUUID()
@@ -672,6 +673,7 @@ export function ChatProvider({ children }: { children: ReactNode }) {
       setIsTyping(false)
       setStageLabel(null)
       endThinking()
+      avatarRef.current?.setEmotion(SETBACK_FACE.name, SETBACK_FACE.intensity, SETBACK_FACE.fadeMs)
       // On a phone the dock may be closed: the error must not happen off screen.
       requestUi('show_chat')
     }
@@ -769,6 +771,10 @@ export function ChatProvider({ children }: { children: ReactNode }) {
           if (type === 'stage') {
             const { node, status, sources } = data as { node: string; status: string; sources?: string[] }
             if (node === 'planner' && status === 'complete') {
+              // The face reacts to the message while the answer is prepared:
+              // concern for pain or worry, a smile for thanks (lib/replyEmotion.ts).
+              const { user_affect, required_outputs } = data as { user_affect?: unknown; required_outputs?: unknown }
+              avatarRef.current?.setListeningEmotion(listeningFace(user_affect), isSafetyTurn(required_outputs))
               setIsTyping(false)
               setStageLabel((prev) => stageLabelFor({ node, status }, uiRef.current, prev))
             } else if (node === 'retriever_agent' && status === 'complete') {
@@ -782,7 +788,7 @@ export function ChatProvider({ children }: { children: ReactNode }) {
             // the backend's health rules (lib/replyEmotion.ts). Unknown or
             // malformed events are dropped.
             const emotion = parseReplyEmotion(data)
-            if (emotion) avatarRef.current?.setEmotion(emotion.name, emotion.intensity, REPLY_EMOTION_FADE_MS)
+            if (emotion) avatarRef.current?.setReplyEmotion(emotion.name, emotion.intensity, REPLY_EMOTION_FADE_MS)
           } else if (type === 'token') {
             setStageLabel(null)
             setIsTyping(false)
@@ -821,11 +827,16 @@ export function ChatProvider({ children }: { children: ReactNode }) {
                   msg.id === assistantMsgId ? { ...msg, motionNotice: text } : msg
                 )
               )
+            // The movement the user asked to see will not come: a brief "sorry".
+            const setback = () =>
+              avatarRef.current?.setEmotion(SETBACK_FACE.name, SETBACK_FACE.intensity, SETBACK_FACE.fadeMs)
 
             if (m.state === 'unavailable') {
               notice(copy.motion_unavailable)
+              setback()
             } else if (m.state === 'busy') {
               notice(copy.motion_busy)
+              setback()
             } else if (m.job_id) {
               const jobId = m.job_id
               setStageLabel(copy.motion_rendering)
@@ -855,6 +866,7 @@ export function ChatProvider({ children }: { children: ReactNode }) {
                   if (!played) {
                     console.warn('[motion] avatar could not play clip', { jobId })
                     notice(copy.motion_failed)
+                    setback()
                     return
                   }
                   notice(undefined)
@@ -862,6 +874,7 @@ export function ChatProvider({ children }: { children: ReactNode }) {
                   if ((e as Error).name === 'AbortError') return
                   console.warn('[motion]', e)
                   notice(copy.motion_failed)
+                  setback()
                 }
               })()
             }

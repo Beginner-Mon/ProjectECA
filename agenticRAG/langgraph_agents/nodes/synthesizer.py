@@ -655,15 +655,27 @@ async def synthesizer_node(state: AgentState, config: RunnableConfig) -> dict:
     ai_msg = None  # kept for prompt-cache telemetry (fix #1)
     used_fallback = False
     tag_stream = reply_emotion.EmotionTagStream()
+    emotion_sent = False
 
     def send_emotion(emotion: dict | None) -> None:
+        nonlocal emotion_sent
         # Its own custom-stream item, ahead of the text: api/main.py turns it
         # into the `emotion` SSE event. Health rules applied here, where the
         # turn's mode and safety keys are known.
-        emotion = reply_emotion.apply_emotion_policy(
+        final_emotion = reply_emotion.apply_emotion_policy(
             emotion, mode, [*required_outputs, *safety])
-        if emotion is not None and writer is not None:
-            writer({"emotion": emotion})
+        # One line per reply: how often the model writes the tag and what it
+        # picks, before and after the health rules (avatar-emotion-context T0).
+        if reply_emotion.enabled():
+            logger.info("reply_emotion", extra={
+                "request_id": request_id,
+                "picked": emotion,
+                "sent": final_emotion,
+                "missing": emotion is None,
+            })
+        emotion_sent = True
+        if final_emotion is not None and writer is not None:
+            writer({"emotion": final_emotion})
 
     try:
         if writer is not None:
@@ -698,7 +710,8 @@ async def synthesizer_node(state: AgentState, config: RunnableConfig) -> dict:
             # A reply that ended while still possibly a tag (e.g. just "[1]"):
             # release what was held.
             emotion, content = tag_stream.flush()
-            if emotion is not None:
+            # No tag anywhere in the reply still gets its log line.
+            if emotion is not None or not emotion_sent:
                 send_emotion(emotion)
             if content:
                 final += content

@@ -67,13 +67,31 @@ export type Reach =
   /** Link in a fixed sequence: only from these predecessors. */
   | { after: CharState[] }
 
+/**
+ * What the face does while the body is in a state.
+ * - `wander`: may the idle wanderer change the expression?
+ * - `hold`: the expression held for the whole state. Kept at or under 0.5: a
+ *   stronger expression can mute lip-sync, blink or gaze through the model's
+ *   own VRM override flags (docs/plans/avatar-emotion-context.md).
+ * - `action`: the hold belongs to something the avatar is DOING, so it covers
+ *   the turn's face while it plays and gives it back afterwards. Without it, a
+ *   hold yields: the turn's face (reply, or the listening face from the
+ *   planner) wins over it.
+ */
+export interface FacialPolicy {
+  wander: boolean
+  hold?: { name: CanonicalEmotion; intensity: number }
+  action?: true
+}
+
 interface StateBase {
   /** `'dynamic'` = supplied at runtime via `registry.update()` (generated motion). */
   source: StaticSource | 'dynamic'
   reach: Reach
   camera: Exclude<CameraMode, 'manual'>
-  /** Facial policy for this body state (plan §9.4): may the face idle-wander? */
-  facial: { wander: boolean; hold?: CanonicalEmotion }
+  /** Facial policy for this body state (plan §9.4) — applied on entry by
+   *  AvatarController.applyFacialPolicy (avatar/TurnFace.ts has the rules). */
+  facial: FacialPolicy
   /** Present ⇒ selectable in the debug state dropdown. Absent ⇒ not manual. */
   debugLabel?: string
   /** Blend seconds (inertial decay ceiling) when LEAVING this state. Default 0.3. */
@@ -155,7 +173,7 @@ export const STATES: Record<CharState, StateDef> = {
     onFinished: 'thinking_loop',
     reach: 'anytime',
     camera: 'head',
-    facial: { wander: false, hold: 'neutral' },
+    facial: { wander: false, hold: { name: 'neutral', intensity: 1 } },
     debugLabel: 'Thinking (intro→ponder)',
     // To the loop: it starts on this clip's last frame, so a short blend.
     // To the outro (the answer came during the intro): see thinking_loop.
@@ -187,7 +205,7 @@ export const STATES: Record<CharState, StateDef> = {
     blendSecTo: { thinking_outro: 0.4 },
     reach: { after: ['thinking_intro'] },
     camera: 'head',
-    facial: { wander: false, hold: 'neutral' },
+    facial: { wander: false, hold: { name: 'neutral', intensity: 1 } },
     breathe: true,
     mood: 'thinking',
   },
@@ -213,7 +231,9 @@ export const STATES: Record<CharState, StateDef> = {
     // into idle, as the exercise → idle hand-over already does.
     blendSecTo: { idle: 0.8 },
     camera: 'head',
-    facial: { wander: false, hold: 'neutral' },
+    // No hold: the reply's emotion often arrives during the loop, and a neutral
+    // hold here would wipe it the moment the answer starts.
+    facial: { wander: false },
   },
   exercise: {
     source: 'dynamic',
@@ -221,7 +241,8 @@ export const STATES: Record<CharState, StateDef> = {
     onFinished: 'idle',
     reach: 'anytime',
     camera: 'hips',
-    facial: { wander: false, hold: 'neutral' },
+    // A light, encouraging smile while demonstrating; the turn's face returns after.
+    facial: { wander: false, hold: { name: 'happy', intensity: 0.35 }, action: true },
     blendSec: 0.8,
   },
   /**
@@ -253,7 +274,9 @@ export const STATES: Record<CharState, StateDef> = {
     // user mid-orbit would otherwise watch it from the back of the head.
     // CameraController restores whatever mode was in force when it ends.
     camera: 'face',
-    facial: { wander: false, hold: 'happy' },
+    // No hold: the gesture's face track and its reaction's emotion
+    // (AvatarProfile.reactions) already own the face for the clip.
+    facial: { wander: false },
     blendSec: 0.5,
   },
 }

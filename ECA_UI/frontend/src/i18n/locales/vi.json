@@ -57,7 +57,8 @@
     "record_stop": "Dừng nhập giọng nói",
     "show_conversation": "Hiện hội thoại",
     "resize_conversation": "Kéo để chỉnh chiều cao hội thoại hoặc bấm để mở, đóng. Dùng phím mũi tên để điều chỉnh chiều cao.",
-    "title": "ECA"
+    "title": "ECA",
+    "error_quota_exhausted": "Bạn đã dùng hết lượt tin nhắn hôm nay. Lượt sẽ được làm mới lúc nửa đêm — xem giờ cụ thể ở Hồ sơ → Mức sử dụng."
   },
   "motion": {
     "auto": "(tự động)",
@@ -172,7 +173,17 @@
     "security_desc": "Đặt mật khẩu để đăng nhập bằng email.",
     "set_password": "Đặt mật khẩu",
     "sign_out": "Đăng xuất",
-    "signed_in_as": "Đã đăng nhập với"
+    "signed_in_as": "Đã đăng nhập với",
+    "nav_usage": "Mức sử dụng",
+    "usage": "Mức sử dụng hằng ngày",
+    "usage_desc": "Gói của bạn quy định số token dùng được mỗi ngày. Tin nhắn trả lời bằng khóa AI riêng của bạn không bị tính.",
+    "usage_plan": "Gói: {{plan}}",
+    "usage_of": "{{used}} / {{limit}} token",
+    "usage_unlimited": "Không giới hạn",
+    "usage_resets": "Làm mới lúc {{time}}",
+    "usage_loading": "Đang tải…",
+    "usage_unavailable": "Hiện chưa xem được mức sử dụng.",
+    "open_admin": "Quản lý gói và hạn mức"
   },
   "nav": {
     "avatars": "Nhân vật",
@@ -331,5 +342,40 @@
     "only_for": "Chỉ áp dụng cho: {{topic}}",
     "delete_all": "Xoá tất cả",
     "delete_all_confirm": "Xoá mọi ghi nhớ, kể cả những điều bạn tự thêm?"
+  },
+  "admin": {
+    "title": "Gói và hạn mức",
+    "back": "Quay lại",
+    "not_admin": "Trang này dành cho quản trị viên.",
+    "tiers": "Các gói",
+    "tiers_desc": "Hạn mức token mỗi ngày của từng gói. Thay đổi áp dụng cho mọi người trong gói từ tin nhắn tiếp theo.",
+    "tier": "Gói",
+    "daily_limit": "Hạn mức/ngày",
+    "users": "Người dùng",
+    "default": "mặc định",
+    "save": "Lưu",
+    "make_default": "Đặt làm gói cho người dùng mới",
+    "delete": "Xóa",
+    "cancel": "Hủy",
+    "new_tier_name": "tên gói mới",
+    "add_tier": "Thêm gói",
+    "invalid_name": "Tên gói gồm chữ thường, số, - và _ (tối đa 32 ký tự).",
+    "invalid_limit": "Nhập số token là số nguyên.",
+    "users_title": "Người dùng",
+    "users_desc": "Tìm theo email để đổi gói, đặt hạn mức riêng hoặc đặt lại mức dùng hôm nay. Người dùng xuất hiện sau tin nhắn đầu tiên.",
+    "search_email": "Email chứa…",
+    "search": "Tìm",
+    "no_users": "Không có ai khớp.",
+    "email": "Địa chỉ email",
+    "personal_limit": "Hạn mức riêng",
+    "from_tier": "theo gói",
+    "used_today": "Đã dùng hôm nay",
+    "reset_usage": "Đặt lại mức dùng hôm nay",
+    "audit": "Thay đổi gần đây",
+    "audit_empty": "Chưa có thay đổi.",
+    "delete_title": "Xóa gói?",
+    "delete_message": "Xóa gói \"{{tier}}\"? Chỉ xóa được khi không còn ai dùng gói này.",
+    "reset_title": "Đặt lại mức dùng?",
+    "reset_message": "Đưa mức dùng hôm nay của {{email}} về 0?"
   }
 }

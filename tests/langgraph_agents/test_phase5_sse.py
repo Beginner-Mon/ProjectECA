@@ -332,6 +332,7 @@ def _make_fake_astream_with_tool_calls(tool_names):
             "required_outputs": ["scope_disclaimer"],
             "needs_retrieval": True,
             "needs_clarification": False,
+            "user_affect": "pain",
         }})
         calls = [{"name": n, "args": {}, "id": f"call-{i}",
                   "type": "tool_call"}
@@ -365,6 +366,15 @@ def test_planner_stage_carries_needs_retrieval(api_client, monkeypatch):
     stages = _stage_data(api_client, mock_graph, ["kb_search"])
     planner = next(s for s in stages if s.get("node") == "planner")
     assert planner["needs_retrieval"] is True
+
+
+@pytest.mark.unit
+def test_planner_stage_carries_user_affect(api_client, monkeypatch):
+    """The browser's thinking face reads user_affect off the planner stage."""
+    client, _, mock_graph = api_client
+    stages = _stage_data(api_client, mock_graph, ["kb_search"])
+    planner = next(s for s in stages if s.get("node") == "planner")
+    assert planner["user_affect"] == "pain"
 
 
 @pytest.mark.unit
@@ -1493,3 +1503,24 @@ def test_chat_error_log_has_codes_and_no_text(api_client, monkeypatch, caplog):
     assert len(lines) == 1
     assert lines[0].code == "no_answer"
     assert "secret question text" not in " ".join(str(v) for v in vars(lines[0]).values())
+
+
+@pytest.mark.unit
+def test_chat_refuses_with_429_when_daily_quota_is_spent(api_client, monkeypatch):
+    """db/quota.py: no tokens left today -> 429 with the reset time, graph never runs."""
+    from datetime import datetime, timedelta, timezone
+    import langgraph_agents.api.main as main_mod
+    from langgraph_agents.db.quota import QuotaStatus
+
+    client, _, mock_graph = api_client
+    spent = QuotaStatus("free", 20000, 20000, datetime.now(timezone.utc) + timedelta(hours=3))
+
+    async def fake_status(uid):
+        return spent
+
+    monkeypatch.setattr(main_mod, "_quota_status", fake_status)
+    mock_graph.astream = MagicMock(side_effect=AssertionError("graph must not run"))
+    resp = client.post("/chat", json={"query": "hello"})
+    assert resp.status_code == 429
+    assert resp.json()["detail"]["code"] == "quota_exhausted"
+    assert int(resp.headers["Retry-After"]) > 0

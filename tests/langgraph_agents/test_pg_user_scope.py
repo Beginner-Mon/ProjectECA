@@ -108,9 +108,12 @@ async def test_user_scope_sets_the_guc_transaction_locally_and_as_a_parameter():
     SQL means a hostile user id cannot become SQL — which is also why this uses
     set_config() instead of SET LOCAL, since SET LOCAL accepts only a literal.
     """
+    from langgraph_agents.db.postgres import bind_request_role
+
     client, _pool, conn = _client_with_fake_pool()
     uid = "11111111-1111-1111-1111-111111111111"
 
+    bind_request_role(None)
     async with client.user_scope(uid):
         pass
 
@@ -119,7 +122,8 @@ async def test_user_scope_sets_the_guc_transaction_locally_and_as_a_parameter():
 
     assert "set_config" in sql.lower(), f"expected set_config, got: {sql}"
     assert "true" in sql.lower(), "third argument must be true (transaction-local)"
-    assert params == [uid], (
+    # app.role rides along (migration 018); unbound means "user", never admin.
+    assert params == [uid, "user"], (
         f"user id must be bound as a parameter, not spliced into SQL. args={params}"
     )
     assert uid not in sql, "the user id was interpolated into the SQL text"
@@ -160,11 +164,12 @@ def test_bind_request_character_round_trip():
 @pytest.mark.asyncio
 async def test_user_scope_sets_character_in_the_same_statement():
     """app.character rides the same SELECT as app.user_id — no extra round-trip."""
-    from langgraph_agents.db.postgres import bind_request_character
+    from langgraph_agents.db.postgres import bind_request_character, bind_request_role
 
     client, _pool, conn = _client_with_fake_pool()
     uid = "11111111-1111-1111-1111-111111111111"
 
+    bind_request_role(None)
     bind_request_character("anne")
     try:
         async with client.user_scope(uid):
@@ -175,23 +180,47 @@ async def test_user_scope_sets_character_in_the_same_statement():
     conn.execute.assert_awaited_once()
     sql, *params = conn.execute.await_args.args
     assert "app.character" in sql
-    assert params == [uid, "anne"]
+    assert params == [uid, "anne", "user"]
 
 
 @pytest.mark.unit
 @pytest.mark.asyncio
 async def test_user_scope_without_character_keeps_single_user_statement():
-    """Unbound character → the old one-GUC statement, unchanged."""
+    """Unbound character → no app.character in the statement."""
+    from langgraph_agents.db.postgres import bind_request_role
+
     client, _pool, conn = _client_with_fake_pool()
     uid = "11111111-1111-1111-1111-111111111111"
 
+    bind_request_role(None)
     async with client.user_scope(uid):
         pass
 
     conn.execute.assert_awaited_once()
     sql, *params = conn.execute.await_args.args
     assert "app.character" not in sql
-    assert params == [uid]
+    assert params == [uid, "user"]
+
+
+@pytest.mark.unit
+@pytest.mark.asyncio
+async def test_user_scope_carries_a_bound_admin_role():
+    """The role bound by api/auth.py reaches app.role, as a parameter."""
+    from langgraph_agents.db.postgres import bind_request_role
+
+    client, _pool, conn = _client_with_fake_pool()
+    uid = "11111111-1111-1111-1111-111111111111"
+
+    bind_request_role("admin")
+    try:
+        async with client.user_scope(uid):
+            pass
+    finally:
+        bind_request_role(None)
+
+    sql, *params = conn.execute.await_args.args
+    assert "app.role" in sql
+    assert params == [uid, "admin"]
 
 
 @pytest.mark.unit

@@ -27,6 +27,7 @@ const TABLE: Record<KnownErrorCode, string> = {
   timeout: 'persona:error_stream',
   session_expired: 'i18n:chat.error_session_expired',
   rate_limited: 'i18n:chat.error_rate_limited',
+  quota_exhausted: 'i18n:chat.error_quota_exhausted',
   bad_request: 'i18n:chat.error_bad_request',
   server: 'persona:error_system',
 }

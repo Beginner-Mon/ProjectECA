@@ -29,4 +29,9 @@ export const auth = defineAuth({
     givenName: { required: false, mutable: true },
     familyName: { required: false, mutable: true },
   },
+  // Who may manage tiers and quotas. Membership is set in the Cognito console
+  // or CLI only — no app route can add anyone to this group, so one stolen
+  // admin login cannot mint more admins. The backend reads it from the ID
+  // token's `cognito:groups` claim (agenticRAG/langgraph_agents/api/auth.py).
+  groups: ['admin'],
 });

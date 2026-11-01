@@ -12,13 +12,15 @@ import { ThinkingGaze } from './ThinkingGaze'
 import { LipSyncController, type LipSyncMode, type LipSyncTuning } from './LipSyncController'
 import { GestureFaceController } from './GestureFaceController'
 import { GestureCameraTrack } from './GestureCameraTrack'
+import { TurnFace, type Face } from './TurnFace'
+import type { FacialPolicy } from '../lib/AnimationStates'
 
 const DEFAULT_EMOTION_DURATION_MS = 500
 const EVENT_GRACE_MS = 3000
 const TTS_GRACE_MS = 1500
 const IDLE_NEUTRAL_FADE_MS = 800
-/** Face eases to neutral when a thinking spell starts. */
-const THINKING_FACE_FADE_MS = 600
+/** Fade for a face set by the body state or the planner's listening face. */
+const STATE_FACE_FADE_MS = 600
 
 /**
  * Single facade over the avatar animation stack (facial-animation-plan.md §3).
@@ -48,6 +50,8 @@ export class AvatarController {
   private readonly partnerView = new GestureCameraTrack(0)
   private partnerHand: 'left' | 'right' = 'left'
   private readonly contributors: readonly ExpressionContributor[]
+  /** Which face the current conversation turn shows (TurnFace has the rules). */
+  private readonly turnFace = new TurnFace()
 
   constructor(vrm: VRM, profile: AvatarProfile) {
     this.profile = profile
@@ -79,6 +83,33 @@ export class AvatarController {
     }
     this.expression.setEmotion(emotion, intensity, durationMs)
     this.notifyEngaged(durationMs)
+  }
+
+  /** The user sent a message: the previous turn's faces no longer apply. */
+  beginTurn(): void {
+    this.turnFace.beginTurn()
+  }
+
+  /** The reply's emotion tag (the `emotion` SSE event). */
+  setReplyEmotion(emotion: CanonicalEmotion, intensity: number, durationMs: number): void {
+    this.setEmotion(emotion, intensity, durationMs)
+    this.turnFace.setReply({ name: emotion, intensity })
+  }
+
+  /**
+   * The planner's read of the user's message: the face to hold while thinking.
+   * `face` null = no particular feeling. `safety` = red flag / referral turn,
+   * which stays neutral throughout.
+   */
+  setListeningEmotion(face: Face | null, safety: boolean): void {
+    const show = this.turnFace.setListening(face, safety)
+    if (show) this.applyFace(show, STATE_FACE_FADE_MS)
+  }
+
+  /** The body entered a state: apply its facial policy (AnimationStates `facial`). */
+  applyFacialPolicy(policy: FacialPolicy): void {
+    const show = this.turnFace.enterState(policy)
+    if (show) this.applyFace(show, STATE_FACE_FADE_MS)
   }
 
   /** Refresh the engagement deadline (call on any backend avatar event). */
@@ -169,14 +200,14 @@ export class AvatarController {
 
   /**
    * The body entered or left a thinking state (AnimationStates `mood`). While
-   * thinking: a calm neutral face (no idle smiles while the user waits), and
-   * the eyes glance up and aside instead of following the cursor. Idempotent.
+   * thinking the eyes glance up and aside instead of following the cursor.
+   * The face itself comes from the state's facial policy (applyFacialPolicy).
+   * Idempotent.
    */
   setThinking(on: boolean): void {
     if (on === this.thinking) return
     this.thinking = on
     if (on) {
-      this.expression.setEmotion('neutral', 1, THINKING_FACE_FADE_MS)
       this.thinkingGaze.start()
     } else {
       this.eye.clearOverride()
@@ -202,13 +233,16 @@ export class AvatarController {
     if (this.lipSync.isPlaying) this.notifyEngaged(0)
 
     const wasEngaged = this.state.mode === 'engaged'
-    const engaged = this.state.isEngaged(t)
+    // A state's hold (thinking, exercise) keeps the face it set: neither the
+    // idle wanderer nor the fade below may change it underneath.
+    const engaged = this.state.isEngaged(t) || this.turnFace.holding
     this.state.mode = engaged ? 'engaged' : 'idle'
 
     if (wasEngaged && !engaged) {
-      // Entering idle: cross-fade current emotion to neutral before the
-      // wanderer takes over (§1.3), and restart wander timers.
-      this.expression.setEmotion('neutral', 1, IDLE_NEUTRAL_FADE_MS)
+      // Entering idle: cross-fade to the resting face (warm, or neutral after
+      // safety content) before the wanderer takes over (§1.3), and restart
+      // wander timers.
+      this.applyFace(this.turnFace.restingFace(), IDLE_NEUTRAL_FADE_MS)
       this.idle.reset()
     }
 
@@ -228,6 +262,16 @@ export class AvatarController {
 
     this.mixer.compose(this.state.frame, this.contributors)
     this.adapter.write(this.state.frame)
+  }
+
+  /** Set a face without refreshing engagement. Binary emotions (pure on/off
+   *  morphs) cannot show a partial weight, so they fall back to neutral. */
+  private applyFace(face: Face, durationMs: number): void {
+    if (face.name !== 'neutral' && face.intensity < 1 && this.profile.binaryEmotions?.includes(face.name)) {
+      this.expression.setEmotion('neutral', 1, durationMs)
+      return
+    }
+    this.expression.setEmotion(face.name, face.intensity, durationMs)
   }
 
   // ── Introspection ────────────────────────────────────────────────────────

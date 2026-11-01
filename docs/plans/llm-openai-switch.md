@@ -2,7 +2,7 @@
 tags: [plan, llm, openai, prod, safety]
 date: 2026-10-26
 author: K, cho Nguyen và Tri
-status: commit chuyển đổi xong ngày 29/10; prod vẫn chạy DeepSeek cho tới release push và cdk deploy (mục 8)
+status: xong; prod chạy gpt-6-luna từ 30/10 20:59 (release 213a5c4); smoke test đạt ngày 31/10 (worklog 30/10)
 ---
 
 # Chuyển model của prod từ DeepSeek sang OpenAI (gpt-6-luna)

@@ -63,6 +63,9 @@ class AgentState(TypedDict):
     # Dynamic clarify (tool ambiguous) is handled by synthesizer — M.2b/D22
     needs_clarification: bool
 
+    # ── User affect (planner) — only for the avatar's thinking face ────
+    #   One of planner.USER_AFFECTS. Forwarded on the planner `stage` event.
+    user_affect: str
     # ── Synthesizer / error_handler output ─────────────────────────────
     final_answer: str
 

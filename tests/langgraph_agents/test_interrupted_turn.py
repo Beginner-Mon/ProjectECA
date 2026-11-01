@@ -67,6 +67,8 @@ def store(monkeypatch):
     monkeypatch.setattr(api_module, "write_turn_question", fake.write_turn_question)
     monkeypatch.setattr(api_module, "write_turn_answer", fake.write_turn_answer)
     monkeypatch.setattr(api_module, "housekeep", AsyncMock())
+    # No database here: the quota write (db/quota.py) is not what these test.
+    monkeypatch.setattr(api_module, "_charge_quota", AsyncMock())
     return fake
 
 

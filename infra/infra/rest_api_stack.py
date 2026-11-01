@@ -288,6 +288,29 @@ class RestApiStack(Stack):
         llm = self.api.root.add_resource("llm")
         llm.add_resource("config").add_method("GET", crud, **authed)
 
+        # ── /me/quota and /admin/* — tiers and daily token quota ────────
+        # api/routes_quota.py, mounted in crud_app.py. The authorizer only
+        # proves a signed-in user; whether that user is an admin is decided in
+        # the application (require_admin, from cognito:groups) and again by
+        # migration 018's row-level policies. Cognito groups are NOT checked
+        # here — one place for that rule, not two that can disagree.
+        # Updates are POST, not PATCH: the preflight allows GET/POST/DELETE.
+        me.add_resource("quota").add_method("GET", crud, **authed)
+
+        admin = self.api.root.add_resource("admin")
+        plans = admin.add_resource("plans")
+        plans.add_method("GET", crud, **authed)
+        plans.add_method("POST", crud, **authed)
+        plan_name = plans.add_resource("{name}")
+        plan_name.add_method("POST", crud, **authed)
+        plan_name.add_method("DELETE", crud, **authed)
+        admin_users = admin.add_resource("users")
+        admin_users.add_method("GET", crud, **authed)
+        admin_user = admin_users.add_resource("{user_id}")
+        admin_user.add_method("POST", crud, **authed)
+        admin_user.add_resource("reset").add_method("POST", crud, **authed)
+        admin.add_resource("audit").add_method("GET", crud, **authed)
+
         # ── /chat — authenticated, and STREAMED ─────────────────────────
         #
         # The endpoint this API was chosen for. The module docstring above says

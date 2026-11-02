@@ -47,11 +47,16 @@ class Decision:
     `annotate` — add `annotations` (the triage verdict travels this way).
     `block`    — stop the turn and send `message` instead of an answer. Only an
                  input-stage check can block; an output-tail check can append.
+
+    `text` is used by the `tool_result` stage only: when set, it is the tool
+    result with the check's changes applied, and replaces what the check was
+    given. Input and output_tail checks leave it `None`.
     """
 
     action: Action
     annotations: dict = field(default_factory=dict)
     message: str | None = None
+    text: str | None = None
 
 
 @dataclass(frozen=True)
@@ -68,6 +73,9 @@ class CheckContext:
     persona_id: str = "anne"
     user_id: str | None = None
     request_id: str = "-"
+    # `tool_result` stage only: `message` then holds the tool's result text
+    # (not the user's words), and `tool` names where it came from.
+    tool: str = ""
 
 
 @dataclass(frozen=True)

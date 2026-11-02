@@ -12,6 +12,7 @@ Two properties matter here and both are deliberate:
 from __future__ import annotations
 
 import asyncio
+from dataclasses import replace
 
 from langgraph_agents.guardrail import policy
 from langgraph_agents.guardrail.types import (
@@ -54,3 +55,39 @@ async def run_input(ctx: CheckContext) -> InputResult:
     results = await asyncio.gather(
         *(check.run(ctx) for check in checks), return_exceptions=True)
     return _merge(checks, results, ctx.request_id)
+
+
+async def run_tool_result(ctx: CheckContext) -> Decision:
+    """Run the `tool_result` checks over one tool result. Never raises.
+
+    `ctx.message` is the result text. Checks run in order and each sees the text
+    the previous one returned. The answer is one `Decision`: `block` as soon as
+    a check blocks; otherwise `annotate` with the final `text` if anything
+    changed, else `allow`. A failing check is logged and skipped, as in the
+    input stage.
+    """
+    text = ctx.message
+    annotations: dict = {}
+    changed = False
+    for check in list(policy.TOOL_RESULT_CHECKS):
+        try:
+            result = await check.run(replace(ctx, message=text))
+        except Exception as exc:  # noqa: BLE001 - a check must not fail the turn
+            logger.warning("guardrail_check_failed", extra={
+                "node": "guardrail", "request_id": ctx.request_id,
+                "check": check.name, "error": type(exc).__name__,
+            })
+            continue
+        if result is None:
+            continue
+        if result.action == "block":
+            return Decision("block", {**annotations, **result.annotations},
+                            message=result.message)
+        annotations.update(result.annotations)
+        if result.text is not None and result.text != text:
+            text, changed = result.text, True
+    if changed:
+        return Decision("annotate", annotations, text=text)
+    if annotations:
+        return Decision("annotate", annotations)
+    return Decision("allow")

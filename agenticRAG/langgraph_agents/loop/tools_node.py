@@ -96,7 +96,7 @@ async def _run_one(
         result = ToolResult(ok=False, content=content, kind="failed",
                             empty=False, source_label=tool_name, provenance={})
     else:
-        result = normalize(spec, raw, remaining)
+        result = await normalize(spec, raw, remaining)
         action["result_chars"] = len(result.content)
         if result.empty:
             turn.repeat_empty_signatures.add(

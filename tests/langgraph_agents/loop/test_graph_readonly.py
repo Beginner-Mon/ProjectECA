@@ -301,3 +301,53 @@ def test_verdict_fetched_before_egress(monkeypatch):
     assert '"refused"' in by_id["t2"]
     # t3 = request_motion: refused (clinical + emergency verdict).
     assert '"refused"' in by_id["t3"]
+
+
+# R4: verdict fails safe — falls back to current_verdict when no
+# verdict_getter is injected in the config.
+def test_verdict_falls_back_to_current_verdict(monkeypatch):
+    import langgraph_agents.loop.graph as graph_mod
+    import langgraph_agents.loop.tools.builtin as builtin_mod
+    import langgraph_agents.loop.tools_node as tools_node_mod
+    monkeypatch.setattr(graph_mod, "memory_node", lambda state, config: {})
+    monkeypatch.setattr(graph_mod, "vision_node", lambda state, config: {})
+
+    monkeypatch.setattr(builtin_mod, "_retriever_tools",
+                        lambda: {"kb_search": _FakeLCTool(),
+                                 "recall_self": _FakeLCTool(),
+                                 "youtube_transcript": _FakeLCTool()})
+    monkeypatch.setattr(builtin_mod, "_request_motion_call",
+                        lambda args, config: {"job_id": "jm1", "state": "queued"})
+    monkeypatch.setattr(builtin_mod, "_web_search_call",
+                        lambda args, config: [{"title": "x", "text": "y"}])
+
+    # Patch the default verdict getter in tools_node to return an emergency
+    # verdict.
+    emergency = SimpleNamespace(level="emergency")
+    monkeypatch.setattr(tools_node_mod, "_default_verdict_getter",
+                        lambda config: emergency)
+
+    graph = build_loop_graph()
+
+    # No verdict_getter in the config — tools_node must fall back to
+    # current_verdict.
+    agent_model = _script([
+        {"tool_calls": [
+            {"id": "t1", "name": "kb_search", "arguments": '{"query": "knee"}'},
+            {"id": "t2", "name": "web_search", "arguments": '{"query": "knee"}'},
+        ], "content": ""},
+        {"content": "Done."},
+    ])
+    persona_model = _script([{"content": "Done."}])
+    state = asyncio.run(_run(graph, agent_model, persona_model,
+                             query="knee exercise"))
+
+    # Tool messages: kb_search (internal) ran; web_search was refused.
+    tool_msgs = [m for m in state.get("transcript", [])
+                 if _msg_role(m) == "tool"
+                 and _msg_tool_call_id(m) != "load_context"]
+    ids = {_msg_tool_call_id(m) for m in tool_msgs}
+    assert ids == {"t1", "t2"}
+    by_id = {_msg_tool_call_id(m): _msg_content(m) for m in tool_msgs}
+    assert '"refused"' not in by_id["t1"]
+    assert '"refused"' in by_id["t2"]

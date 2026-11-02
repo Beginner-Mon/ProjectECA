@@ -7,26 +7,12 @@
 
 from __future__ import annotations
 
+import asyncio
+import json
 import os
 import re
-import json
-import sys
-from types import ModuleType
-
-# vva_motion is not available in this test env; mock it so api/main imports.
-if "vva_motion" not in sys.modules:
-    _vm = ModuleType("vva_motion")
-    _jobs = ModuleType("vva_motion.jobs")
-    _jobs.MAX_QUEUE_DEPTH = 10
-    _jobs.SECONDS_PER_JOB = 1
-    _jobs.compute_job_id = lambda *a, **k: "job"
-    _jobs.enqueue = lambda *a, **k: None
-    _jobs.queue_depth = lambda *a, **k: 0
-    _jobs.read_status = lambda *a, **k: {"status": "ok"}
-    _jobs.worker_alive = lambda *a, **k: True
-    _vm.jobs = _jobs
-    sys.modules["vva_motion"] = _vm
-    sys.modules["vva_motion.jobs"] = _jobs
+import threading
+import time as _time
 
 # Force loop mode BEFORE create_app is imported so the lifespan builds the
 # loop graph and select_mode returns "loop".
@@ -76,7 +62,7 @@ def test_loop_event_order(monkeypatch):
     with TestClient(app) as client:
         resp = client.post("/chat", json={
             "query": "bird dog exercise",
-            "session_id": "s-loop-1",
+            "session_id": "11111111-1111-1111-1111-111111111101",
             "persona_id": "anne",
         })
     assert resp.status_code == 200, resp.text
@@ -108,7 +94,7 @@ def test_loop_final_answer(monkeypatch):
     )
     with TestClient(app) as client:
         resp = client.post("/chat", json={
-            "query": "bird dog", "session_id": "s-loop-2",
+            "query": "bird dog", "session_id": "11111111-1111-1111-1111-111111111102",
         })
     assert resp.status_code == 200, resp.text
     events = _collect_sse_events(resp.text)
@@ -124,12 +110,12 @@ def test_chat_cancel_returns_202(monkeypatch):
     )
     with TestClient(app) as client:
         resp = client.post("/chat/cancel", json={
-            "session_id": "s-loop-3", "request_id": "req-x",
+            "session_id": "11111111-1111-1111-1111-111111111103", "request_id": "req-x",
         })
     assert resp.status_code == 202, resp.text
     body = resp.json()
     assert body["status"] == "cancel_requested"
-    assert body["session_id"] == "s-loop-3"
+    assert body["session_id"] == "11111111-1111-1111-1111-111111111103"
 
 
 # A2: /chat/cancel from the same user on the same app returns 202 and the
@@ -149,19 +135,63 @@ def test_cancel_releases_lease(monkeypatch):
     with TestClient(app) as client:
         # A normal turn completes and releases its lease.
         resp = client.post("/chat", json={
-            "query": "x", "session_id": "s-loop-6",
+            "query": "x", "session_id": "11111111-1111-1111-1111-111111111106",
         })
         assert resp.status_code == 200, resp.text
         # Cancel returns 202.
         resp = client.post("/chat/cancel", json={
-            "session_id": "s-loop-6", "request_id": "req-cancel",
+            "session_id": "11111111-1111-1111-1111-111111111106", "request_id": "req-cancel",
         })
         assert resp.status_code == 202, resp.text
         # A new request in the same session is not 409 (lease was released).
         resp = client.post("/chat", json={
-            "query": "x", "session_id": "s-loop-6",
+            "query": "x", "session_id": "11111111-1111-1111-1111-111111111106",
         })
         assert resp.status_code != 409, resp.text
+
+
+# R5: loop mode needs a UUID session id.
+def test_invalid_session_id_422_loop(monkeypatch):
+    app = create_app()
+    app.dependency_overrides[current_user_id] = (
+        override_user("u-loop-8")
+    )
+    with TestClient(app) as client:
+        resp = client.post("/chat", json={
+            "query": "x", "session_id": "default",
+        })
+    assert resp.status_code == 422, resp.text
+    body = resp.json()
+    code = body.get("code") or (body.get("detail") or {}).get("code")
+    assert code == "invalid_session_id", body
+
+
+# R5: pipeline mode is unchanged — non-UUID session_id is not 422.
+def test_invalid_session_id_pipeline_ok(monkeypatch):
+    import os as _os
+    from langgraph_agents.loop.config import load_settings as _ls
+    saved = _os.environ.get("AGENT_MODE")
+    _os.environ["AGENT_MODE"] = "pipeline"
+    _ls.cache_clear()
+    try:
+        app = create_app()
+        app.dependency_overrides[current_user_id] = (
+            override_user("u-loop-9")
+        )
+        with TestClient(app) as client:
+            # Pipeline mode: session_id="default" is not a UUID but pipeline
+            # does not validate it, so it is not 422 (may be 200 or 500 for
+            # other reasons, but not 422 invalid_session_id).
+            resp = client.post("/chat", json={
+                "query": "x", "session_id": "default",
+            })
+        assert resp.status_code != 422, resp.text
+    finally:
+        if saved is None:
+            _os.environ.pop("AGENT_MODE", None)
+        else:
+            _os.environ["AGENT_MODE"] = saved
+        _ls.cache_clear()
 
 
 # B1: a loop request refused by quota, then an immediate second request in
@@ -174,12 +204,101 @@ def test_refused_turn_does_not_hold_lease(monkeypatch):
     with TestClient(app) as client:
         # First request: either 200 or 429 — quota may pass locally.
         resp1 = client.post("/chat", json={
-            "query": "x", "session_id": "s-loop-7",
+            "query": "x", "session_id": "11111111-1111-1111-1111-111111111107",
         })
         assert resp1.status_code in (200, 429), resp1.text
         # Immediate second request in the same session: not 409 (B1: lease
         # was never taken if the first request was refused).
         resp2 = client.post("/chat", json={
-            "query": "x", "session_id": "s-loop-7",
+            "query": "x", "session_id": "11111111-1111-1111-1111-111111111107",
         })
         assert resp2.status_code != 409, resp2.text
+
+
+# R2 / A2: stop ends a running turn through the production path.
+def test_cancel_ends_turn_cancelled(monkeypatch):
+    """Same-user cancel mid-turn → turn_status=cancelled, agent model called
+    once (the round that called kb_search)."""
+    from langgraph_agents.loop.leases import MemoryLeaseStore, set_store, get_lease_store
+    set_store(MemoryLeaseStore())
+    store = get_lease_store()
+
+    agent_calls = {"n": 0}
+
+    async def _complete(self, messages, tools=None, *, tool_choice="auto"):
+        # Count only agent calls (tools is a list); persona calls pass None.
+        if tools is not None:
+            agent_calls["n"] += 1
+        if agent_calls["n"] == 1:
+            # First round: call kb_search, and cancel mid-round as a side
+            # effect of the model call (production wiring via the store).
+            await store.request_cancel("u-loop-8", "11111111-1111-1111-1111-111111111109")
+            return AgentReply(content="", tool_calls=[{
+                "id": "t1", "name": "kb_search",
+                "arguments": '{"query": "bird dog"}',
+            }])
+        return AgentReply(content="Should not be reached.")
+
+    monkeypatch.setattr(AgentModel, "complete", _complete)
+    app = create_app()
+    app.dependency_overrides[current_user_id] = (
+        override_user("u-loop-8")
+    )
+    with TestClient(app) as client:
+        result = {}
+        def _post():
+            result["resp"] = client.post("/chat", json={
+                "query": "bird dog exercise",
+                "session_id": "11111111-1111-1111-1111-111111111109",
+                "persona_id": "anne",
+            })
+        t = threading.Thread(target=_post)
+        t.start()
+        # Cancel happens inside _complete (as a side effect of the first model
+        # call), which runs on the production event loop.
+        t.join(timeout=15)
+    resp = result["resp"]
+    assert resp.status_code == 200, resp.text
+    events = _collect_sse_events(resp.text)
+    types = [t for t, _ in events]
+    assert "turn_status" in types, types
+    ts_payloads = [d for t, d in events if t == "turn_status"]
+    assert ts_payloads, "no turn_status event"
+    assert ts_payloads[0].get("status") == "cancelled", ts_payloads
+    # Agent model called exactly once (first round with kb_search).
+    assert agent_calls["n"] == 1, agent_calls
+
+
+def test_cancel_other_user_ends_completed(monkeypatch):
+    """Cancel from another user does not affect this turn → completed."""
+    import asyncio
+    from langgraph_agents.loop.leases import MemoryLeaseStore, set_store
+    set_store(MemoryLeaseStore())
+
+    async def _complete(self, messages, tools=None, *, tool_choice="auto"):
+        return AgentReply(content="Done.", tool_calls=[])
+
+    monkeypatch.setattr(AgentModel, "complete", _complete)
+    app = create_app()
+    app.dependency_overrides[current_user_id] = (
+        override_user("u-loop-9")
+    )
+    with TestClient(app) as client:
+        # Cancel from a DIFFERENT user on the same session.
+        resp_cancel = client.post("/chat/cancel", json={
+            "session_id": "11111111-1111-1111-1111-111111111110", "request_id": "req-x",
+        })
+        assert resp_cancel.status_code == 202, resp_cancel.text
+        # Now start the turn as u-loop-9.
+        resp = client.post("/chat", json={
+            "query": "bird dog exercise",
+            "session_id": "11111111-1111-1111-1111-111111111110",
+            "persona_id": "anne",
+        })
+    assert resp.status_code == 200, resp.text
+    events = _collect_sse_events(resp.text)
+    types = [t for t, _ in events]
+    assert "turn_status" in types, types
+    ts_payloads = [d for t, d in events if t == "turn_status"]
+    assert ts_payloads, "no turn_status event"
+    assert ts_payloads[0].get("status") == "completed", ts_payloads

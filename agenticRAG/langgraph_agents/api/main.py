@@ -395,6 +395,13 @@ def create_app() -> FastAPI:
             if graph is None:
                 raise HTTPException(503, "Loop graph not loaded yet")
             request_id = str(uuid.uuid4())
+            # R5: loop lease columns are UUID — reject non-UUID session ids
+            # before taking the lease. Pipeline mode is unchanged.
+            try:
+                uuid.UUID(req.session_id)
+            except (ValueError, AttributeError, TypeError):
+                raise HTTPException(
+                    422, {"code": "invalid_session_id", "request_id": request_id})
             turn = new_turn()
             turn.user_id = uid
             turn.current_message = req.query

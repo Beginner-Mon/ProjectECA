@@ -133,17 +133,20 @@ async def tools_node(state: LoopState, config: RunnableConfig) -> dict:
 
     specs = build_turn_tools(config.get("configurable") or {})
 
-    # A1: fetch the guardrail verdict once for this round, but only when a
+    # A1/R4: fetch the guardrail verdict once for this round, but only when a
     # call needs it (egress_read or clinical). Internal-only rounds do not
     # wait, and the agent's model call never waits — time to first token is
     # preserved. Stored on turn.verdict so the gate sees it.
+    # Falls back to guardrail.handoff.current_verdict when no verdict_getter
+    # is injected (R4: the verdict fails safe, never silently routine).
     needs_verdict = any(
         _is_egress_or_clinical(s) for s in specs
         if s.name in {_call_name(call) for call in tool_calls}
     )
-    if needs_verdict and turn.verdict_getter is not None:
+    if needs_verdict:
+        getter = turn.verdict_getter or _default_verdict_getter
         try:
-            turn.verdict = await turn.verdict_getter(config)
+            turn.verdict = await getter(config)
         except Exception:  # noqa: BLE001
             # A broken guardrail is a routine turn (policy), never a failed one.
             from langgraph_agents.guardrail.types import fallback_verdict
@@ -207,3 +210,13 @@ async def tools_node(state: LoopState, config: RunnableConfig) -> dict:
         "total_tokens": estimate_tokens(" ".join(m.get("content", "") for m in tool_messages)),
         "turn_status": state.get("turn_status", "completed"),
     }
+
+
+def _default_verdict_getter(config: dict):
+    """Fallback verdict getter: guardrail.handoff.current_verdict.
+
+    Used when no verdict_getter is injected in the config (R4: the verdict
+    fails safe, never silently routine).
+    """
+    from langgraph_agents.guardrail.handoff import current_verdict
+    return current_verdict(config)

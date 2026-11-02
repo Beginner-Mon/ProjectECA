@@ -61,6 +61,7 @@ async def agent_node(state: LoopState, config: RunnableConfig) -> dict:
             "turn_status": "cancelled",
             "rounds": int(state.get("rounds", 0)) + 1,
             "total_tokens": 0,
+            "_route": "persona",
         }
 
     # ── 2. stop_reason: time / token caps ─────────────────────────
@@ -72,6 +73,7 @@ async def agent_node(state: LoopState, config: RunnableConfig) -> dict:
             "turn_status": "budget_exceeded",
             "rounds": int(state.get("rounds", 0)) + 1,
             "total_tokens": 0,
+            "_route": "persona",
         }
     transcript_text = " ".join(
         _msg_content(m) for m in (state.get("transcript") or [])
@@ -84,6 +86,7 @@ async def agent_node(state: LoopState, config: RunnableConfig) -> dict:
             "turn_status": "budget_exceeded",
             "rounds": int(state.get("rounds", 0)) + 1,
             "total_tokens": 0,
+            "_route": "persona",
         }
 
     # ── 3. tool_choice ────────────────────────────────────────────
@@ -110,6 +113,7 @@ async def agent_node(state: LoopState, config: RunnableConfig) -> dict:
             }],
             "rounds": int(state.get("rounds", 0)) + 1,
             "total_tokens": 0,
+            "_route": "persona",
         }
 
     # A9: the LLM usage for this round, charged to the quota.

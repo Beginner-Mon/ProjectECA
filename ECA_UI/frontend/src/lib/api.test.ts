@@ -2,7 +2,7 @@ import { describe, expect, it, vi } from 'vitest'
 
 vi.mock('aws-amplify/auth', () => ({ fetchAuthSession: vi.fn(async () => ({})) }))
 
-import { HttpStatusError, SSE_IDLE_TIMEOUT_MS, StreamInterruptedError, StreamTimeoutError, streamChat } from './api'
+import { cancelChat, HttpStatusError, SSE_IDLE_TIMEOUT_MS, StreamInterruptedError, StreamTimeoutError, streamChat } from './api'
 
 /*
  * A fake /chat response: the body is a list of chunks, optionally followed by a
@@ -233,5 +233,33 @@ describe('streamChat watchdog', () => {
     } finally {
       vi.useRealTimers()
     }
+  })
+})
+
+describe('cancelChat', () => {
+  it('sends the bearer token and the cancel body', async () => {
+    const { fetchAuthSession } = await import('aws-amplify/auth')
+    vi.mocked(fetchAuthSession).mockResolvedValueOnce({
+      tokens: { idToken: { toString: () => 'test-token-123' } },
+    })
+
+    let capturedInit: RequestInit | null = null
+    vi.stubGlobal('fetch', vi.fn(async (_input: RequestInfo | URL, init?: RequestInit) => {
+      capturedInit = init
+      return new Response(null, { status: 202 })
+    }))
+
+    await cancelChat('sess-1')
+
+    expect(capturedInit).not.toBeNull()
+    expect(capturedInit!.method).toBe('POST')
+    expect(capturedInit!.headers).toMatchObject({
+      Authorization: 'Bearer test-token-123',
+      'Content-Type': 'application/json',
+    })
+    expect(JSON.parse(capturedInit!.body as string)).toEqual({
+      session_id: 'sess-1',
+      request_id: null,
+    })
   })
 })

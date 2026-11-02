@@ -6,7 +6,7 @@ default store. `install()` makes that impossible for every test of a suite:
 * `PostgresClient.connect` raises, naming the test, unless the client carries
   `_eca_test_client = True` (only `test_pg_client` sets it);
 * `shared.get_pg_client` raises the same way;
-* the lease, rate, action and turn stores are the in-memory ones, so a test that
+* the lease, rate, action, turn and connector stores are the in-memory ones, so a test that
   forgets to install them does not fall back to Postgres.
 
 Module scope imports stdlib only (the root-conftest rule).
@@ -25,6 +25,7 @@ def install(monkeypatch, test_id: str) -> None:
     import langgraph_agents.shared as shared
     from langgraph_agents.db.postgres import PostgresClient
     from langgraph_agents.loop import actions, crypto, leases, rate, turns
+    from langgraph_agents.loop.connectors import oauth as oauth_mod, store as conn_store
 
     real_connect = PostgresClient.connect
 
@@ -47,5 +48,8 @@ def install(monkeypatch, test_id: str) -> None:
     monkeypatch.setattr(rate, "_counter", rate.MemoryRateCounter())
     monkeypatch.setattr(actions, "_store", actions.MemoryActionStore())
     monkeypatch.setattr(turns, "_store", turns.MemoryTurnStore())
+    monkeypatch.setattr(conn_store, "_connections", conn_store.MemoryConnectionStore())
+    monkeypatch.setattr(conn_store, "_pending", conn_store.MemoryPendingStore())
+    monkeypatch.setattr(oauth_mod, "_service", None)
     # No sealer unless the test installs one (fail closed, E4).
     monkeypatch.setattr(crypto, "_sealer", None)

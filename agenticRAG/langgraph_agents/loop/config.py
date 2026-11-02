@@ -59,6 +59,13 @@ class LoopSettings(BaseModel):
     # and is honoured only when AWS_LAMBDA_FUNCTION_NAME is unset.
     kms_key_id: str | None = None
     dev_seal_key: str | None = None
+    # OAuth connectors (stage 5). `oauth_redirect_uri` (env LOOP_OAUTH_REDIRECT_URI)
+    # is fixed per environment (F3). `env_name` (env LOOP_ENV) fills `<env>` in a
+    # manifest's `client_secret_ref`. `oauth_dev_localhost` lets the OAuth HTTP
+    # client reach http://localhost off Lambda (the mock server); never on Lambda.
+    oauth_redirect_uri: str | None = None
+    env_name: str | None = None
+    oauth_dev_localhost: bool = False
 
     @classmethod
     def from_env(cls) -> "LoopSettings":
@@ -106,6 +113,9 @@ class LoopSettings(BaseModel):
             google_enabled=_bool("AGENT_GOOGLE_ENABLED", False),
             kms_key_id=os.getenv("LOOP_KMS_KEY_ID") or None,
             dev_seal_key=os.getenv("LOOP_DEV_SEAL_KEY") or None,
+            oauth_redirect_uri=os.getenv("LOOP_OAUTH_REDIRECT_URI") or None,
+            env_name=os.getenv("LOOP_ENV") or None,
+            oauth_dev_localhost=_bool("LOOP_OAUTH_DEV_LOCALHOST", False),
         )
 
 

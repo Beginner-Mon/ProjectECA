@@ -54,6 +54,9 @@ class LoopSettings(BaseModel):
     plugins_disabled: bool = True
     plugins_off: list[str] = []
     google_enabled: bool = False
+    # Sealing (stage 4, E4). `kms_key_id` (env LOOP_KMS_KEY_ID) selects KmsSealer;
+    # `dev_seal_key` (env LOOP_DEV_SEAL_KEY, 32 bytes, base64) selects LocalSealer
+    # and is honoured only when AWS_LAMBDA_FUNCTION_NAME is unset.
     kms_key_id: str | None = None
     dev_seal_key: str | None = None
 
@@ -101,8 +104,8 @@ class LoopSettings(BaseModel):
             plugins_off=[p.strip() for p in os.getenv("LOOP_PLUGINS_OFF", "").split(",")
                          if p.strip()],
             google_enabled=_bool("AGENT_GOOGLE_ENABLED", False),
-            kms_key_id=os.getenv("AGENT_KMS_KEY_ID") or None,
-            dev_seal_key=os.getenv("AGENT_DEV_SEAL_KEY") or None,
+            kms_key_id=os.getenv("LOOP_KMS_KEY_ID") or None,
+            dev_seal_key=os.getenv("LOOP_DEV_SEAL_KEY") or None,
         )
 
 

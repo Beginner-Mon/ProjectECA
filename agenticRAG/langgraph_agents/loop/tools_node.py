@@ -27,7 +27,6 @@ from langgraph_agents.loop.prompts import budget_line
 from langgraph_agents.loop.state import LoopState
 from langgraph_agents.loop.tools.registry import build_turn_tools, ToolSpec
 from langgraph_agents.loop.trace import log_turn
-from langgraph_agents.shared.context import estimate_tokens
 from langgraph_agents.shared.logging import get_logger
 
 logger = get_logger("langgraph.loop.tools_node")
@@ -207,7 +206,6 @@ async def tools_node(state: LoopState, config: RunnableConfig) -> dict:
         "transcript": new_transcript,
         "actions": actions,
         "motion_jobs": motion_jobs,
-        "total_tokens": estimate_tokens(" ".join(m.get("content", "") for m in tool_messages)),
         "turn_status": state.get("turn_status", "completed"),
     }
 

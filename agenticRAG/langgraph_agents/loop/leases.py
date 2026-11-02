@@ -11,25 +11,26 @@ Resolution: `leases.get_lease_store()` returns a `PgLeaseStore` unless
 case it returns a `MemoryLeaseStore`. `set_store()` lets tests and
 `api/main.py` install a store explicitly.
 
-PG acquire is one transaction:
+PG acquire is one transaction (the S1 recipe — each step decides, no
+conditions left for the upsert):
 
     SELECT pg_advisory_xact_lock(hashtext('agent_leases'))  -- global mutex
-    -- count live leases of OTHER rows (separate statement, same connection)
+    SELECT request_id, expires_at FROM agent_leases
+     WHERE user_id = $1 AND session_id = $2
+    -- live row owned by another request → refuse (one turn per session)
     SELECT count(*) FROM agent_leases
-     WHERE user_id <> $1
+     WHERE (user_id, session_id) IS DISTINCT FROM ($1, $2)
        AND expires_at > now()
-    -- refuse when at/above the cap, unless this request owns the row or it
-    -- is expired
-    INSERT INTO agent_leases (user_id, session_id, request_id, expires_at, cancel_requested)
+    -- refuse when that count >= max_concurrent: every live row except this
+    -- exact pair counts, the caller's own other sessions included
+    INSERT INTO agent_leases (user_id, session_id, request_id, expires_at,
+                              cancel_requested)
     VALUES ($1, $2, $3, now() + $4 * interval '1 second', false)
     ON CONFLICT (user_id, session_id) DO UPDATE
     SET request_id = EXCLUDED.request_id,
         expires_at = EXCLUDED.expires_at,
         cancel_requested = false
-    WHERE (agent_leases.expires_at < now()
-           OR agent_leases.request_id = EXCLUDED.request_id)
-      AND $5 < max_concurrent
-    RETURNING request_id
+    -- unconditional: claim a free pair, or renew the row this request owns
 
 Every statement filters by `user_id` (A3): user B can never touch user A's
 lease. `pg.execute`/`pg.fetch` are called on the yielded connection inside the
@@ -143,22 +144,40 @@ class PgLeaseStore:
         async with pg.transaction() as conn:
             # Global mutex for this turn's claim (held by the transaction).
             await conn.execute("SELECT pg_advisory_xact_lock(hashtext('agent_leases'))")
-            # Count live leases of OTHER rows — a separate statement on the
-            # same connection, so the cap is enforced even for a brand-new
-            # (user_id, session_id) row that would otherwise plain-INSERT.
+            # 1. One turn per session: a live row for this (user_id, session_id)
+            #    owned by another request blocks the claim. (S1: checked first,
+            #    outside the upsert — the conflict path alone is not enough,
+            #    because Postgres evaluates the DO UPDATE WHERE clause only
+            #    when the row already exists.)
+            row = await conn.fetchrow(
+                "SELECT request_id, expires_at FROM agent_leases "
+                "WHERE user_id = $1 AND session_id = $2",
+                user_id, session_id,
+            )
+            if row is not None:
+                from datetime import datetime, timezone
+                live_here = row["expires_at"] > datetime.now(timezone.utc)
+                if live_here and row["request_id"] != request_id:
+                    return False
+            # 2. Global cap on loop turns across the whole system: every live
+            #    row except this exact pair counts, the caller's own other
+            #    sessions included (S1: WHERE user_id <> $1 let one user with
+            #    many sessions take every slot).
             live = await conn.fetchval(
                 """
                 SELECT count(*) FROM agent_leases
-                WHERE user_id <> $1
+                WHERE (user_id, session_id) IS DISTINCT FROM ($1, $2)
                   AND expires_at > now()
                 """,
-                user_id,
+                user_id, session_id,
             )
-            live_count = int(live or 0)
-            # Conditional upsert: claim when the row is expired, already owned
-            # by this request_id, or fewer than max_concurrent live leases
-            # exist (excluding this row). Refuse when at/above the cap.
-            rows = await conn.fetch(
+            if int(live or 0) >= self.max_concurrent:
+                return False
+            # 3. Unconditional upsert: claim a free (user_id, session_id) or
+            #    renew the row this request already owns (same request_id).
+            #    No WHERE on the DO UPDATE — every condition was decided in
+            #    steps 1 and 2.
+            await conn.execute(
                 """
                 INSERT INTO agent_leases (user_id, session_id, request_id, expires_at, cancel_requested)
                 VALUES ($1, $2, $3, now() + ($4 * interval '1 second'), false)
@@ -166,14 +185,10 @@ class PgLeaseStore:
                 SET request_id = EXCLUDED.request_id,
                     expires_at = EXCLUDED.expires_at,
                     cancel_requested = false
-                WHERE (agent_leases.expires_at < now()
-                       OR agent_leases.request_id = EXCLUDED.request_id)
-                  AND $5 < $6
-                RETURNING request_id
                 """,
-                user_id, session_id, request_id, ttl_s, live_count, self.max_concurrent,
+                user_id, session_id, request_id, ttl_s,
             )
-            return len(rows) == 1
+            return True
 
     async def heartbeat(self, user_id: str, request_id: str) -> None:
         pg = self._get_pg_client()

@@ -124,7 +124,45 @@ def test_total_tokens_summed_across_rounds(monkeypatch):
     persona_model = _script([{"content": "Done."}])
     state = asyncio.run(_run(graph, agent_model, persona_model, query="x"))
 
-    # Two agent calls: total_tokens accumulates across rounds (14 + 11 = 25
-    # from the model usages, plus tool-message tokens from tools_node).
+    # Two agent calls: total_tokens is the model usages only (14 + 11 = 25),
+    # persona usage is 0 here; tool-message text is charged to the NEXT
+    # agent round's prompt_tokens, never a second time (S2).
     assert len(agent_model.calls) == 2
-    assert state.get("total_tokens") >= 25
+    assert state.get("total_tokens") == 25
+
+
+# S2: tool results are sent to the model in the next agent round and charged
+# there as prompt_tokens. tools_node must not charge them a second time:
+# only nodes that call a model (agent, persona, reused memory/vision)
+# return total_tokens.
+def test_tool_results_not_double_charged(monkeypatch):
+    import langgraph_agents.loop.graph as graph_mod
+    import langgraph_agents.loop.tools.builtin as builtin_mod
+    monkeypatch.setattr(graph_mod, "memory_node", lambda state, config: {})
+    monkeypatch.setattr(graph_mod, "vision_node", lambda state, config: {})
+    monkeypatch.setattr(builtin_mod, "_retriever_tools",
+                        lambda: {"kb_search": _FakeLCTool(),
+                                 "recall_self": _FakeLCTool(),
+                                 "youtube_transcript": _FakeLCTool()})
+
+    graph = build_loop_graph()
+    agent_model = _script([
+        {"tool_calls": [{"id": "t1", "name": "kb_search",
+                         "arguments": '{"query": "x"}'}],
+         "content": "",
+         "usage": {"prompt_tokens": 60, "completion_tokens": 40,
+                   "total_tokens": 100}},
+        {"content": "Done.",
+         "usage": {"prompt_tokens": 90, "completion_tokens": 60,
+                   "total_tokens": 150}},
+    ])
+    persona_model = _script([{"content": "Done.",
+                              "usage": {"prompt_tokens": 4,
+                                        "completion_tokens": 3,
+                                        "total_tokens": 7}}])
+    state = asyncio.run(_run(graph, agent_model, persona_model, query="x"))
+
+    assert len(agent_model.calls) == 2
+    # 100 (agent round 1) + 150 (agent round 2) + 7 (persona). The tool
+    # result text is NOT added again — double charging would exceed this.
+    assert state.get("total_tokens") == 250 + 7

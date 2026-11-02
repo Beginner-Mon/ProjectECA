@@ -69,8 +69,10 @@ def store(request):
     request.addfinalizer(cleanup)
 
     # Attach a helper that acquires + records the request_id for cleanup.
-    async def acquire(user_id: str, session_id: str, ttl_s: float = 120.0):
-        request_id = str(uuid.uuid4())
+    async def acquire(user_id: str, session_id: str, ttl_s: float = 120.0,
+                      request_id: str | None = None):
+        if request_id is None:
+            request_id = str(uuid.uuid4())
         created.append(request_id)
         ok = await store.acquire(user_id, session_id, request_id, ttl_s)
         return ok, request_id
@@ -113,16 +115,48 @@ def test_release_then_acquire_succeeds(store):
     assert ok2 is True
 
 
-def test_different_sessions_concurrent_up_to_max_concurrent(store):
-    # R1: different users AND sessions — this matches the PG global-count
-    # statement (COUNT … WHERE user_id <> this user), so the cap is proven
-    # global across users, not only across this user's other sessions.
-    pairs = [(_uid(i), _uid(100 + i)) for i in range(20, 24)]
+def test_same_user_four_sessions_fourth_refused(store):
+    # S1: the cap counts the caller's own other sessions — one user with
+    # many sessions cannot take every slot.
+    u = _uid(50)
     results = []
-    for uid, sid in pairs:
-        ok, _ = asyncio.run(store.acquire_with_id(uid, sid))
+    for i in range(4):
+        ok, _ = asyncio.run(store.acquire_with_id(u, _uid(500 + i)))
         results.append(ok)
-    assert results == [True, True, True, False]  # 4th refused (A5)
+    assert results == [True, True, True, False]  # 4th refused
+
+
+def test_cap_shared_across_users_release_frees_slot(store):
+    # S1: the cap is on loop turns running across the whole system. Three
+    # users fill it, a fourth user is refused; when one releases, the
+    # fourth gets in.
+    users = [_uid(60 + i) for i in range(3)]
+    sessions = [_uid(600 + i) for i in range(3)]
+    reqs = []
+    for uid, sid in zip(users, sessions):
+        ok, req = asyncio.run(store.acquire_with_id(uid, sid))
+        assert ok is True
+        reqs.append(req)
+    ok, _ = asyncio.run(store.acquire_with_id(_uid(63), _uid(603)))
+    assert ok is False  # cap full (fourth user refused)
+    asyncio.run(store.release(users[0], reqs[0]))  # one slot frees
+    ok, _ = asyncio.run(store.acquire_with_id(_uid(63), _uid(603)))
+    assert ok is True  # the fourth user gets in
+
+
+def test_renewal_same_request_id_when_cap_full(store):
+    # S1: renewal by the same request_id succeeds while the cap is full —
+    # the count excludes the renewing pair's own row.
+    pairs = [(_uid(70 + i), _uid(700 + i)) for i in range(3)]  # cap = 3
+    first = None
+    for uid, sid in pairs:
+        ok, req = asyncio.run(store.acquire_with_id(uid, sid))
+        assert ok is True
+        if first is None:
+            first = (uid, sid, req)
+    uid, sid, req = first
+    ok, _ = asyncio.run(store.acquire_with_id(uid, sid, request_id=req))
+    assert ok is True  # same request renews
 
 
 def test_expired_lease_reclaimed(store):

@@ -6,15 +6,11 @@ from __future__ import annotations
 import asyncio
 from types import SimpleNamespace
 
-from tests.langgraph_agents.loop.fakes import FakeAgentModel, AgentReply
+from tests.langgraph_agents.loop.fakes import FakeAgentModel, AgentReply, FakeLCTool
 from langgraph_agents.loop.graph import build_loop_graph
 from langgraph_agents.loop.limits import new_turn
 
 
-class _FakeLCTool:
-    """Fake LangChain tool whose ainvoke returns empty."""
-    async def ainvoke(self, args, config):
-        return {"found": False}
 
 
 def _msg_role(m):
@@ -71,9 +67,9 @@ def test_reasoning_not_in_content(monkeypatch):
     monkeypatch.setattr(graph_mod, "memory_node", lambda state, config: {})
     monkeypatch.setattr(graph_mod, "vision_node", lambda state, config: {})
     monkeypatch.setattr(builtin_mod, "_retriever_tools",
-                        lambda: {"kb_search": _FakeLCTool(),
-                                 "recall_self": _FakeLCTool(),
-                                 "youtube_transcript": _FakeLCTool()})
+                        lambda: {"kb_search": FakeLCTool("kb_search"),
+                                 "recall_self": FakeLCTool("recall_self"),
+                                 "youtube_transcript": FakeLCTool("youtube_transcript")})
 
     graph = build_loop_graph()
     agent_model = _script([
@@ -109,9 +105,9 @@ def test_total_tokens_summed_across_rounds(monkeypatch):
     monkeypatch.setattr(graph_mod, "memory_node", lambda state, config: {})
     monkeypatch.setattr(graph_mod, "vision_node", lambda state, config: {})
     monkeypatch.setattr(builtin_mod, "_retriever_tools",
-                        lambda: {"kb_search": _FakeLCTool(),
-                                 "recall_self": _FakeLCTool(),
-                                 "youtube_transcript": _FakeLCTool()})
+                        lambda: {"kb_search": FakeLCTool("kb_search"),
+                                 "recall_self": FakeLCTool("recall_self"),
+                                 "youtube_transcript": FakeLCTool("youtube_transcript")})
 
     graph = build_loop_graph()
     agent_model = _script([
@@ -141,9 +137,9 @@ def test_tool_results_not_double_charged(monkeypatch):
     monkeypatch.setattr(graph_mod, "memory_node", lambda state, config: {})
     monkeypatch.setattr(graph_mod, "vision_node", lambda state, config: {})
     monkeypatch.setattr(builtin_mod, "_retriever_tools",
-                        lambda: {"kb_search": _FakeLCTool(),
-                                 "recall_self": _FakeLCTool(),
-                                 "youtube_transcript": _FakeLCTool()})
+                        lambda: {"kb_search": FakeLCTool("kb_search"),
+                                 "recall_self": FakeLCTool("recall_self"),
+                                 "youtube_transcript": FakeLCTool("youtube_transcript")})
 
     graph = build_loop_graph()
     agent_model = _script([

@@ -17,7 +17,7 @@ from pathlib import Path
 
 import pytest
 
-from tests.langgraph_agents.loop.fakes import FakeAgentModel, AgentReply
+from tests.langgraph_agents.loop.fakes import FakeAgentModel, AgentReply, FakeLCTool
 from langgraph_agents.loop.skills import discover, file_sha256, load_skill
 from langgraph_agents.loop.skills import loader as loader_mod
 from langgraph_agents.loop.skills.pin import compute_pins, write_pins
@@ -25,11 +25,6 @@ from langgraph_agents.loop.tools import builtin as builtin_mod
 from langgraph_agents.loop.tools.registry import build_turn_tools
 
 
-class _FakeLCTool:
-    """Fake LangChain tool whose ainvoke returns empty."""
-
-    async def ainvoke(self, args, config):
-        return {"found": False}
 
 
 def _msg_role(m):
@@ -55,9 +50,9 @@ def _msg_tool_call_id(m):
 @pytest.fixture()
 def fake_retriever_tools(monkeypatch):
     monkeypatch.setattr(builtin_mod, "_retriever_tools",
-                        lambda: {"kb_search": _FakeLCTool(),
-                                 "recall_self": _FakeLCTool(),
-                                 "youtube_transcript": _FakeLCTool()})
+                        lambda: {"kb_search": FakeLCTool("kb_search"),
+                                 "recall_self": FakeLCTool("recall_self"),
+                                 "youtube_transcript": FakeLCTool("youtube_transcript")})
 
 
 def _packaged_skills_dir() -> Path:

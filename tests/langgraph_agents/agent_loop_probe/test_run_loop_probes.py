@@ -163,7 +163,7 @@ def test_production_wiring_does_not_set_the_hooks():
 
     assert inspect.signature(build_loop_graph).parameters["memory"].default is None
     # without `turn_tools` the registry returns the builtins
-    names = {s.name for s in build_turn_tools({"web_search": False})}
+    names = {s.name for s in build_turn_tools({"web_search": False, "persona_id": "anne"})}
     assert {"kb_search", "recall_self", "load_skill"} <= names
 
 

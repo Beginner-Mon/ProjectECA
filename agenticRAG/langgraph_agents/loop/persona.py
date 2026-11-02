@@ -262,6 +262,9 @@ async def persona_node(state: LoopState, config: RunnableConfig) -> dict:
     return {
         "final_answer": final_answer,
         "turn_status": turn_status,
+        # Re-emitted whole on purpose: api/main.py builds `final_state` from the
+        # persona node's update alone (stream_mode="updates"), and the turn_status
+        # event reads its actions from there. The reducer drops the repeats.
         "actions": actions,
         "loop_trace": loop_trace,
         "motion_jobs": state.get("motion_jobs") or [],

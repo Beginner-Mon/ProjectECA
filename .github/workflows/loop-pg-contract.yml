@@ -1,0 +1,124 @@
+name: Loop PG contract
+
+# The agent loop's Postgres stores (leases, rate counters; plugins, actions,
+# turns and connectors later) are tested against a throwaway Postgres with
+# every migration applied. No Neon branch: branches live 7 days, so a build
+# must not depend on one. The tests run as `eca_user` (NOBYPASSRLS), the role
+# the app uses in production, not as the superuser.
+#
+# No AWS credentials, no secrets, no LLM keys, no deploy.
+
+on:
+  push:
+    branches:
+      - feature/agent-loop
+    paths:
+      - "agenticRAG/langgraph_agents/loop/**"
+      - "agenticRAG/langgraph_agents/alembic/versions/**"
+      - "tests/langgraph_agents/loop/**"
+      - ".github/workflows/loop-pg-contract.yml"
+  workflow_dispatch:
+
+concurrency:
+  group: loop-pg-contract-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  # CI-only throwaway values for a container that lives for this job. Not secrets.
+  CI_PG_SUPERUSER_PASSWORD: ci-superuser-only
+  CI_PG_APP_PASSWORD: ci-eca-user-only
+
+jobs:
+  pg-contract:
+    name: "Loop PG contract"
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    services:
+      postgres:
+        image: pgvector/pgvector:pg18
+        env:
+          POSTGRES_PASSWORD: ci-superuser-only
+          POSTGRES_DB: eca
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres -d eca"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 12
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python 3.12
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: "pip"
+          cache-dependency-path: requirements-langgraph.txt
+
+      # Same install as the "LangGraph Service" entry of release-tests.yml.
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements-langgraph.txt
+          pip install pytest pytest-asyncio
+
+      # Migration 007 grants to eca_user but does not create it (007_rls.py:19).
+      - name: Create the app role
+        env:
+          PGPASSWORD: ${{ env.CI_PG_SUPERUSER_PASSWORD }}
+        run: |
+          psql -h localhost -U postgres -d eca -v ON_ERROR_STOP=1 \
+            -c "CREATE ROLE eca_user LOGIN PASSWORD '${CI_PG_APP_PASSWORD}' NOSUPERUSER NOBYPASSRLS"
+
+      # env.py reads VVA_PG_DSN_OWNER first (env.py:37): the owner DSN is the
+      # service's superuser. alembic.ini's script_location is relative, so run
+      # from its directory.
+      - name: Apply all migrations
+        working-directory: agenticRAG/langgraph_agents
+        env:
+          VVA_PG_DSN_OWNER: postgresql://postgres:${{ env.CI_PG_SUPERUSER_PASSWORD }}@localhost:5432/eca
+          PYTHONPATH: ${{ github.workspace }}/agenticRAG
+        run: alembic upgrade head
+
+      # ECA_TEST_PG_DSN is the eca_user DSN. VVA_PG_DSN is deliberately unset,
+      # so the conftest guard (test DSN host != app DSN host) passes.
+      - name: Run the PG contract tests
+        env:
+          ECA_TEST_PG_DSN: postgresql://eca_user:${{ env.CI_PG_APP_PASSWORD }}@localhost:5432/eca
+          PYTHONPATH: ${{ github.workspace }}/agenticRAG
+        run: |
+          mkdir -p test-results
+          python -m pytest tests/langgraph_agents/loop -m integration -rs \
+            -W ignore::PendingDeprecationWarning -p no:cacheprovider \
+            --junitxml=test-results/loop-pg-contract.xml
+
+      # A green run in which every PG test skipped proves nothing. The junit
+      # file lists each selected test (only integration tests are selected);
+      # fail when none ran or any was skipped.
+      - name: Fail on skipped or missing tests
+        run: |
+          python - <<'PY'
+          import sys
+          import xml.etree.ElementTree as ET
+          root = ET.parse("test-results/loop-pg-contract.xml").getroot()
+          cases = list(root.iter("testcase"))
+          skipped = [c.get("classname", "") + "::" + c.get("name", "")
+                     for c in cases if c.find("skipped") is not None]
+          ran = len(cases) - len(skipped)
+          print(f"integration tests: {len(cases)} collected, {ran} ran, {len(skipped)} skipped")
+          if ran == 0:
+              sys.exit("no integration test ran")
+          if skipped:
+              sys.exit("skipped integration tests:\n  " + "\n  ".join(skipped))
+          PY
+
+      - name: Upload test results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: loop-pg-contract-results
+          path: test-results/loop-pg-contract.xml

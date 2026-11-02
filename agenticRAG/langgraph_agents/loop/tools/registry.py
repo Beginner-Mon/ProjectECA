@@ -75,7 +75,7 @@ def build_turn_tools(ctx: Any) -> list[ToolSpec]:
     `ctx` is a `TurnContext`-carrying object; the real caller passes the
     LangGraph config's `configurable`, which holds `web_search` and the
     `turn_ctx`. Builtins are chosen by risk and by the `web_search` flag:
-    kb_search + recall_self (internal) are always on; load_skill (internal,
+    kb_search (internal) is always on; recall_self (internal) only when the persona has a sheet; load_skill (internal,
     the agent-loop skills, stage 2) is always on; youtube_transcript
     (egress_read) and request_motion (clinical egress_read) are always on;
     web_search (egress_read) only when `web_search` is true.
@@ -88,12 +88,18 @@ def build_turn_tools(ctx: Any) -> list[ToolSpec]:
 
     from . import builtin  # lazy
 
-    config = getattr(ctx, "config", None) or {}
-    web_search = bool(config.get("web_search", False))
+    from langgraph_agents.nodes._persona_loader import _persona_has_sheet
 
-    specs = [
-        builtin.kb_search_spec(),
-        builtin.recall_self_spec(),
+    cfg = ctx if isinstance(ctx, dict) else (getattr(ctx, "config", None) or {})
+    web_search = bool(cfg.get("web_search", False))
+    persona_id = str(cfg.get("persona_id") or "")
+
+    specs = [builtin.kb_search_spec()]
+    # recall_self searches the character's sheet, so it is offered only to a
+    # persona that has one (same rule as the pipeline's retriever_agent).
+    if _persona_has_sheet(persona_id):
+        specs.append(builtin.recall_self_spec())
+    specs += [
         builtin.load_skill_spec(),
         builtin.youtube_transcript_spec(),
         builtin.request_motion_spec(),

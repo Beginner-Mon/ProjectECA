@@ -53,83 +53,52 @@ async def _langchain_call(tool, args: dict, config: dict) -> Any:
     return await tool.ainvoke(args, config)
 
 
-def _make_lc_spec(name: str, description: str, parameters: dict,
-                  risk: str, clinical: bool, data_class: str) -> ToolSpec:
-    """Bind the LangChain tool into the spec's callable via closure."""
+def _tool_parameters(tool: Any) -> dict:
+    """The tool's own JSON schema for the model.
+
+    `get_input_jsonschema()` carries the tool's docstring as a top-level
+    `description` and a `title`; the description already sits in the spec's
+    own field, so both are dropped here.
+    """
+    schema = dict(tool.get_input_jsonschema())
+    schema.pop("description", None)
+    schema.pop("title", None)
+    return schema
+
+
+def _make_lc_spec(name: str, risk: str, clinical: bool,
+                  data_class: str) -> ToolSpec:
+    """Wrap a LangChain tool. Name, description and parameters come from the
+    tool object itself (tools describe themselves); the spec adds only the
+    loop's own fields: risk, clinical, data_class."""
     tool = _retriever_tools()[name]
 
     async def _call(args: dict, config: dict) -> Any:
         return await tool.ainvoke(args, config)
 
     return ToolSpec(
-        name=name, description=description, parameters=parameters,
+        name=tool.name, description=tool.description,
+        parameters=_tool_parameters(tool),
         risk=risk, source="builtin", call=_call,
         clinical=clinical, data_class=data_class,
     )
 
 
 def kb_search_spec() -> ToolSpec:
-    return _make_lc_spec(
-        "kb_search",
-        ("Search ECA's exercise and health knowledge base. Use for "
-         "questions about exercises, stretches, anatomy, physiotherapy "
-         "techniques and health facts. Returns chunks with content and "
-         "similarity score. Empty list (not an error) when nothing matches."),
-        {
-            "type": "object",
-            "properties": {
-                "query": {"type": "string",
-                          "description": "Search query in Vietnamese or English."},
-                "top_k": {"type": "integer",
-                          "description": "Max results (default 5, capped at 5).",
-                          "default": 5, "minimum": 1, "maximum": 5},
-            },
-            "required": ["query"],
-            "additionalProperties": False,
-        },
-        risk="internal", clinical=False, data_class="none",
-    )
+    return _make_lc_spec("kb_search", risk="internal", clinical=False,
+                         data_class="none")
 
 
 def recall_self_spec() -> ToolSpec:
-    return _make_lc_spec(
-        "recall_self",
-        ("Search this user's own saved memories (facts and standing "
-         "instructions). Use when the answer may depend on what this "
-         "particular user has said before. Returns matching memory rows."),
-        {
-            "type": "object",
-            "properties": {
-                "query": {"type": "string",
-                          "description": "What to look for in the user's memory."},
-                "top_k": {"type": "integer",
-                          "description": "Max results (default 5).",
-                          "default": 5, "minimum": 1, "maximum": 5},
-            },
-            "required": ["query"],
-            "additionalProperties": False,
-        },
-        risk="internal", clinical=False, data_class="personal",
-    )
+    # The character's own sheet (appearance, clothes, tastes), not the user's
+    # memory. Offered only when the persona has a sheet (build_turn_tools).
+    return _make_lc_spec("recall_self", risk="internal", clinical=False,
+                         data_class="none")
 
 
 def youtube_transcript_spec() -> ToolSpec:
-    return _make_lc_spec(
-        "youtube_transcript",
-        ("Fetch the transcript of a YouTube video. Use when the user asks "
-         "about a specific video's content. Returns the transcript text "
-         "(capped)."),
-        {
-            "type": "object",
-            "properties": {
-                "video_id": {"type": "string",
-                             "description": "YouTube video ID (the v= value)."},
-            },
-            "required": ["video_id"],
-            "additionalProperties": False,
-        },
-        risk="egress_read", clinical=False, data_class="none",
-    )
+    return _make_lc_spec("youtube_transcript", risk="egress_read",
+                         clinical=False, data_class="none")
 
 
 # ── request_motion ────────────────────────────────────────────────────────

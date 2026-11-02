@@ -367,3 +367,64 @@ def test_cancel_other_user_ends_completed(monkeypatch):
     ts_payloads = [d for t, d in events if t == "turn_status"]
     assert ts_payloads, "no turn_status event"
     assert ts_payloads[0].get("status") == "completed", ts_payloads
+
+
+# L2: the production config built by api/main.py carries `web_search`, and the
+# loop offers `web_search` only then. Also L3 through the SSE `turn_status`.
+def _offered_tools(monkeypatch, web_search):
+    seen = {}
+
+    async def _complete(self, messages, tools=None, *, tool_choice="auto"):
+        if tools:   # the persona call passes none; keep the agent's
+            seen["tools"] = [t["function"]["name"] for t in tools]
+        return AgentReply(content="Done.", tool_calls=[])
+
+    monkeypatch.setattr(AgentModel, "complete", _complete)
+    app = create_app()
+    app.dependency_overrides[current_user_id] = override_user("u-loop-ws")
+    with TestClient(app) as client:
+        resp = client.post("/chat", json={
+            "query": "news today",
+            "session_id": "11111111-1111-1111-1111-111111111130",
+            "web_search": web_search,
+        })
+    assert resp.status_code == 200, resp.text
+    return seen["tools"]
+
+
+def test_web_search_offered_when_request_enables_it(monkeypatch):
+    assert "web_search" in _offered_tools(monkeypatch, True)
+
+
+def test_web_search_not_offered_when_request_disables_it(monkeypatch):
+    assert "web_search" not in _offered_tools(monkeypatch, False)
+
+
+def test_turn_status_event_lists_every_round_once(monkeypatch):
+    import langgraph_agents.loop.tools.builtin as builtin_mod
+    from tests.langgraph_agents.loop.fakes import FakeLCTool
+    monkeypatch.setattr(builtin_mod, "_retriever_tools", lambda: {
+        n: FakeLCTool(n) for n in ("kb_search", "recall_self", "youtube_transcript")})
+    script = [
+        AgentReply(tool_calls=[{"id": "t1", "name": "kb_search",
+                                "arguments": '{"query": "a"}'}]),
+        AgentReply(tool_calls=[{"id": "t2", "name": "kb_search",
+                                "arguments": '{"query": "b"}'}]),
+        AgentReply(content="Done."),
+    ]
+
+    async def _complete(self, messages, tools=None, *, tool_choice="auto"):
+        return script.pop(0) if script else AgentReply(content="Done.")
+
+    monkeypatch.setattr(AgentModel, "complete", _complete)
+    app = create_app()
+    app.dependency_overrides[current_user_id] = override_user("u-loop-ts")
+    with TestClient(app) as client:
+        resp = client.post("/chat", json={
+            "query": "two lookups",
+            "session_id": "11111111-1111-1111-1111-111111111131",
+        })
+    assert resp.status_code == 200, resp.text
+    status = [d for t, d in _collect_sse_events(resp.text) if t == "turn_status"]
+    assert len(status) == 1
+    assert [a["action_id"] for a in status[0]["actions"]] == ["t1", "t2"]

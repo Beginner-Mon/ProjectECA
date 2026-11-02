@@ -2,7 +2,10 @@
 
 `LoopState` is a TypedDict with the keys of plan §II.2. Fields without a
 reducer are overwritten by each node's update; `total_tokens` and `errors`
-use the `add` reducer so every round accumulates.
+use the `add` reducer so every round accumulates. `actions` uses
+`merge_actions`: it appends like `add` but skips a record whose
+`tool_call_id` is already there, so a node that returns the whole list again
+(the persona node does, for `api/main.py`) cannot duplicate it.
 """
 
 from __future__ import annotations
@@ -11,6 +14,20 @@ import operator
 from typing import Annotated, Optional, TypedDict
 
 from langgraph.graph.message import add_messages
+
+
+def merge_actions(left: list[dict] | None, right: list[dict] | None) -> list[dict]:
+    """Reducer for `actions`: append, skipping records already present."""
+    out = list(left or [])
+    seen = {a.get("tool_call_id") for a in out if a.get("tool_call_id")}
+    for a in right or []:
+        key = a.get("tool_call_id")
+        if key and key in seen:
+            continue
+        if key:
+            seen.add(key)
+        out.append(a)
+    return out
 
 
 class LoopState(TypedDict, total=False):
@@ -42,7 +59,7 @@ class LoopState(TypedDict, total=False):
     agent_result: str
     final_answer: str
     turn_status: str
-    actions: list[dict]
+    actions: Annotated[list[dict], merge_actions]
     taint: dict
     resume: Optional[dict]
     total_tokens: Annotated[int, operator.add]

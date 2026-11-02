@@ -15,7 +15,7 @@ from types import SimpleNamespace
 
 import pytest
 
-from tests.langgraph_agents.loop.fakes import FakeAgentModel, AgentReply
+from tests.langgraph_agents.loop.fakes import FakeAgentModel, AgentReply, FakeLCTool
 from langgraph_agents.loop.graph import build_loop_graph
 from langgraph_agents.loop.limits import new_turn
 from langgraph_agents.loop.outcome import EMPTY_ANSWER
@@ -46,10 +46,6 @@ def _msg_role(m):
     return {"human": "user", "ai": "assistant"}.get(role, role)
 
 
-class _FakeLCTool:
-    """Fake LangChain tool whose ainvoke returns empty."""
-    async def ainvoke(self, args, config):
-        return {"found": False}
 
 
 def _msg_content(m):
@@ -254,9 +250,9 @@ def test_verdict_fetched_before_egress(monkeypatch):
 
     # Mock the retriever tools and request_motion so no network/DB is used.
     monkeypatch.setattr(builtin_mod, "_retriever_tools",
-                        lambda: {"kb_search": _FakeLCTool(),
-                                 "recall_self": _FakeLCTool(),
-                                 "youtube_transcript": _FakeLCTool()})
+                        lambda: {"kb_search": FakeLCTool("kb_search"),
+                                 "recall_self": FakeLCTool("recall_self"),
+                                 "youtube_transcript": FakeLCTool("youtube_transcript")})
     monkeypatch.setattr(builtin_mod, "_request_motion_call",
                         lambda args, config: {"job_id": "jm1", "state": "queued"})
     monkeypatch.setattr(builtin_mod, "_web_search_call",
@@ -313,9 +309,9 @@ def test_verdict_falls_back_to_current_verdict(monkeypatch):
     monkeypatch.setattr(graph_mod, "vision_node", lambda state, config: {})
 
     monkeypatch.setattr(builtin_mod, "_retriever_tools",
-                        lambda: {"kb_search": _FakeLCTool(),
-                                 "recall_self": _FakeLCTool(),
-                                 "youtube_transcript": _FakeLCTool()})
+                        lambda: {"kb_search": FakeLCTool("kb_search"),
+                                 "recall_self": FakeLCTool("recall_self"),
+                                 "youtube_transcript": FakeLCTool("youtube_transcript")})
     monkeypatch.setattr(builtin_mod, "_request_motion_call",
                         lambda args, config: {"job_id": "jm1", "state": "queued"})
     monkeypatch.setattr(builtin_mod, "_web_search_call",

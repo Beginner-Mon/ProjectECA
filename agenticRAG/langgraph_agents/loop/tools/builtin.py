@@ -13,6 +13,10 @@ Five builtins:
 - `web_search` — **egress_read**, stage 1 only: calls the SearXNG search of
   `mcp/web_search_server._search_searxng`, built only when the turn's
   `web_search` flag is true.
+- `load_skill` — **internal**, stage 2: the agent-loop skills
+  (`loop/skills/`). Names and descriptions sit in the tool description; the
+  body loads only when the tool is called (plan §8). A skill file changed
+  without a re-pin is skipped with a warning.
 
 Each builtin exposes `spec() -> ToolSpec` and an async `call(args, config)`.
 """
@@ -209,5 +213,46 @@ def web_search_spec() -> ToolSpec:
             "additionalProperties": False,
         },
         risk="egress_read", source="builtin", call=_web_search_call,
+        clinical=False, data_class="none",
+    )
+
+
+# ── load_skill (stage 2: loop/skills) ─────────────────────────────────────
+
+def _skill_catalog() -> str:
+    """The skills listed in `load_skill`'s description (plan §8 / II.2):
+    name and description only — the body loads when the tool is called."""
+    from langgraph_agents.loop.skills import discover
+    infos = discover()
+    lines = [f"- {info.id}: {info.description}" for info in infos]
+    if not lines:
+        return "No skills are available right now."
+    return (
+        "Knowledge-base working skills. When a skill fits the task, call "
+        "this tool with its id BEFORE you start, then follow its body:\n"
+        + "\n".join(lines)
+    )
+
+
+async def _load_skill_call(args: dict, config: dict) -> dict:
+    """Run `load_skill(name)` through the hashed loader (loop/skills)."""
+    from langgraph_agents.loop.skills import load_skill
+    return load_skill(str(args.get("name", "")))
+
+
+def load_skill_spec() -> ToolSpec:
+    return ToolSpec(
+        name="load_skill",
+        description=_skill_catalog(),
+        parameters={
+            "type": "object",
+            "properties": {
+                "name": {"type": "string",
+                         "description": "Skill id to load (from the list in this description)."},
+            },
+            "required": ["name"],
+            "additionalProperties": False,
+        },
+        risk="internal", source="builtin", call=_load_skill_call,
         clinical=False, data_class="none",
     )

@@ -75,7 +75,8 @@ def build_turn_tools(ctx: Any) -> list[ToolSpec]:
     `ctx` is a `TurnContext`-carrying object; the real caller passes the
     LangGraph config's `configurable`, which holds `web_search` and the
     `turn_ctx`. Builtins are chosen by risk and by the `web_search` flag:
-    kb_search + recall_self (internal) are always on; youtube_transcript
+    kb_search + recall_self (internal) are always on; load_skill (internal,
+    the agent-loop skills, stage 2) is always on; youtube_transcript
     (egress_read) and request_motion (clinical egress_read) are always on;
     web_search (egress_read) only when `web_search` is true.
     """
@@ -87,6 +88,7 @@ def build_turn_tools(ctx: Any) -> list[ToolSpec]:
     specs = [
         builtin.kb_search_spec(),
         builtin.recall_self_spec(),
+        builtin.load_skill_spec(),
         builtin.youtube_transcript_spec(),
         builtin.request_motion_spec(),
     ]

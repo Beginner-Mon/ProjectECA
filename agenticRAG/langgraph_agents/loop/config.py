@@ -49,7 +49,10 @@ class LoopSettings(BaseModel):
     reasoning_effort: str = "low"
 
     # Stage-3 toggles, present so the settings shape survives later stages.
+    # Kill switches (D8). `plugins_disabled` offers no plugin tool at all;
+    # `plugins_off` (env LOOP_PLUGINS_OFF=id1,id2) turns off single plugins.
     plugins_disabled: bool = True
+    plugins_off: list[str] = []
     google_enabled: bool = False
     kms_key_id: str | None = None
     dev_seal_key: str | None = None
@@ -95,6 +98,8 @@ class LoopSettings(BaseModel):
             rate_window_s=_int("AGENT_RATE_WINDOW_S", 60),
             reasoning_effort=os.getenv("AGENT_REASONING_EFFORT", "low"),
             plugins_disabled=_bool("AGENT_PLUGINS_DISABLED", True),
+            plugins_off=[p.strip() for p in os.getenv("LOOP_PLUGINS_OFF", "").split(",")
+                         if p.strip()],
             google_enabled=_bool("AGENT_GOOGLE_ENABLED", False),
             kms_key_id=os.getenv("AGENT_KMS_KEY_ID") or None,
             dev_seal_key=os.getenv("AGENT_DEV_SEAL_KEY") or None,

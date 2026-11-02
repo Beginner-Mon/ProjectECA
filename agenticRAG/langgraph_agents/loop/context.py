@@ -99,6 +99,29 @@ def _recent_loop_traces(config: dict) -> list[dict]:
         return []
 
 
+async def _prepare_plugins(turn, configurable: dict, request_id: str) -> None:
+    """Stage 3: decide the plugin tools of this turn (D1, D3). One store query
+    and cached definitions; never raises, never fails the turn. Skipped when a
+    test or probe injected `turn_tools` (that list replaces every tool)."""
+    if configurable.get("turn_tools") is not None:
+        return
+    try:
+        from langgraph_agents.loop.config import load_settings
+        from langgraph_agents.loop.plugins import runtime
+
+        settings = configurable.get("loop_settings") or load_settings()
+        turn.plugins = await runtime.prepare_turn(
+            user_id=str(configurable.get("user_id", "-")),
+            request_id=request_id,
+            settings=settings,
+            catalog=configurable.get("plugin_catalog"),
+            web_search=bool(configurable.get("web_search", False)),
+        )
+    except Exception as exc:  # noqa: BLE001 - plugins are optional
+        logger.warning("plugins_prepare_failed", extra={
+            "request_id": request_id, "error": type(exc).__name__})
+
+
 async def load_context_node(state: LoopState, config: RunnableConfig) -> dict:
     t0 = time.perf_counter()
     turn = ensure_turn(config)
@@ -107,6 +130,8 @@ async def load_context_node(state: LoopState, config: RunnableConfig) -> dict:
     user_id = configurable.get("user_id", "-")
     session_id = configurable.get("session_id", "-")
     query = configurable.get("query", "")
+
+    await _prepare_plugins(turn, configurable, request_id)
 
     # Memory-node outputs (reused verbatim).
     user_instructions = state.get("user_instructions") or []
@@ -165,7 +190,12 @@ async def load_context_node(state: LoopState, config: RunnableConfig) -> dict:
     })
 
     elapsed_ms = round((time.perf_counter() - t0) * 1000)
-    log_turn(request_id, {"node": "load_context", "elapsed_ms": elapsed_ms})
+    plugins = getattr(turn, "plugins", None)
+    fields: dict = {"node": "load_context", "elapsed_ms": elapsed_ms}
+    if plugins is not None and (plugins.unavailable or plugins.changed):
+        fields["plugins_unavailable"] = list(plugins.unavailable)
+        fields["plugins_definition_changed"] = list(plugins.changed)
+    log_turn(request_id, fields)
 
     return {
         "transcript": transcript,

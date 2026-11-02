@@ -123,6 +123,12 @@ LAZY_DEPENDENCIES: tuple[LazyDependency, ...] = (
     ),
     LazyDependency("dotenv", "loading .env (real env vars still work)", critical=False),
     LazyDependency(
+        "uvicorn",
+        "serving the web-search MCP server over HTTP (`web_search_server --http`) "
+        "— nothing else imports it lazily",
+        critical=False,
+    ),
+    LazyDependency(
         "boto3",
         "reading the database DSN from SSM — only used when VVA_PG_DSN_PARAM is "
         "set, which is the deployed path; a local run with VVA_PG_DSN needs none "

@@ -6,6 +6,12 @@ returns low-quality results or when planner explicitly requests web search.
 
 Run standalone: python -m langgraph_agents.mcp.web_search_server
 Run via stdio (default in tests): spawned by MultiServerMCPClient
+Run over streamable HTTP (agent-loop plugin `web-search`, stage 3):
+    python -m langgraph_agents.mcp.web_search_server --http [--host H] [--port P]
+The endpoint is /mcp. Stateless and JSON-only, so any number of replicas can
+sit behind a load balancer. It binds 127.0.0.1 unless told otherwise, and it
+has no authentication: expose it only inside the private network and point
+`LOOP_WEB_SEARCH_MCP_URL` at it.
 """
 
 import asyncio
@@ -16,7 +22,10 @@ from typing import Any
 import httpx
 from mcp.server import Server
 from mcp.server.stdio import stdio_server
+from mcp.server.streamable_http_manager import StreamableHTTPSessionManager
 from mcp.types import Tool, TextContent
+from starlette.applications import Starlette
+from starlette.routing import Route
 
 from langgraph_agents.shared.logging import get_logger
 
@@ -137,5 +146,43 @@ async def main():
         await server.run(r, w, server.create_initialization_options())
 
 
+def build_http_app():
+    """The same server as an ASGI app on streamable HTTP (route `/mcp`).
+
+    Additive: `main()` (stdio) is unchanged. Stateless with JSON responses, so
+    no session is kept between requests.
+    """
+    from contextlib import asynccontextmanager
+
+    manager = StreamableHTTPSessionManager(
+        app=server, json_response=True, stateless=True)
+
+    class _Endpoint:
+        async def __call__(self, scope, receive, send) -> None:
+            await manager.handle_request(scope, receive, send)
+
+    @asynccontextmanager
+    async def lifespan(app):
+        async with manager.run():
+            yield
+
+    return Starlette(routes=[Route("/mcp", endpoint=_Endpoint())], lifespan=lifespan)
+
+
+def run_http(host: str = "127.0.0.1", port: int = 8765) -> None:
+    import uvicorn
+
+    uvicorn.run(build_http_app(), host=host, port=port, log_level="info")
+
+
 if __name__ == "__main__":
-    asyncio.run(main())
+    import sys
+
+    if "--http" in sys.argv:
+        def _opt(name: str, default: str) -> str:
+            return sys.argv[sys.argv.index(name) + 1] if name in sys.argv else default
+
+        run_http(_opt("--host", os.getenv("WEB_SEARCH_MCP_HOST", "127.0.0.1")),
+                 int(_opt("--port", os.getenv("WEB_SEARCH_MCP_PORT", "8765"))))
+    else:
+        asyncio.run(main())

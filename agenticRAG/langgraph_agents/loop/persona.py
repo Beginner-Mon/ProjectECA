@@ -99,6 +99,17 @@ def _internal_evidence(transcript: list[dict], limit_chars: int,
 
 
 async def persona_node(state: LoopState, config: RunnableConfig) -> dict:
+    """The persona node. Every path ends here, so the plugin sessions of the
+    turn are closed here (D2), after the answer has been produced."""
+    try:
+        return await _persona_body(state, config)
+    finally:
+        plugins = getattr(ensure_turn(config), "plugins", None)
+        if plugins is not None:
+            await plugins.close()
+
+
+async def _persona_body(state: LoopState, config: RunnableConfig) -> dict:
     t0 = time.perf_counter()
     turn = ensure_turn(config)
     configurable = config.get("configurable") or {}
@@ -245,6 +256,10 @@ async def persona_node(state: LoopState, config: RunnableConfig) -> dict:
         "turn_status": turn_status,
         "motion_jobs": state.get("motion_jobs") or [],
     }
+    plugins = getattr(turn, "plugins", None)
+    if plugins is not None and (plugins.unavailable or plugins.changed):
+        trace["plugins_unavailable"] = list(plugins.unavailable)
+        trace["plugins_definition_changed"] = list(plugins.changed)
     loop_trace = list(state.get("loop_trace") or [])
     loop_trace.append({**trace, "request_id": request_id})
 

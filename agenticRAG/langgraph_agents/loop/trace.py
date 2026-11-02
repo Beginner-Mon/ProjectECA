@@ -20,3 +20,17 @@ def log_turn(request_id: str, fields: dict[str, Any]) -> None:
     text and token counts are deliberately excluded.
     """
     logger.info("agent_loop_turn", extra={"request_id": request_id, **fields})
+
+
+def log_plugin_call(request_id: str, *, plugin_id: str, tool: str, outcome: str,
+                    duration_ms: int, result_chars: int, args_sha256: str) -> None:
+    """One `agent_loop_plugin_call` audit line per plugin call (D9).
+
+    Only identifiers, counts and a hash of the arguments. Never the argument
+    text, the result text or a token.
+    """
+    logger.info("agent_loop_plugin_call", extra={
+        "request_id": request_id, "plugin_id": plugin_id, "tool": tool,
+        "outcome": outcome, "duration_ms": duration_ms,
+        "result_chars": result_chars, "args_sha256": args_sha256,
+    })

@@ -1,0 +1,26 @@
+{
+  "id": "web-search",
+  "name": "Web search",
+  "version": "1.0.0",
+  "publisher": "ECA",
+  "description": "Searches the web for current events, prices and facts outside exercise and health. Replaces the built-in web search when the deployment hosts the server.",
+  "mcp_server": {
+    "url": "",
+    "url_env": "LOOP_WEB_SEARCH_MCP_URL",
+    "transport": "streamable_http",
+    "allowed_hosts": []
+  },
+  "auth": null,
+  "tools": {
+    "search_medical": {"egress": true, "risk": "read"}
+  },
+  "skills": [],
+  "reviewed": {
+    "by": "K",
+    "tool_definitions_sha256": "UNPINNED"
+  },
+  "data_class": "none",
+  "enabled_by_default": true,
+  "requires_gate": false,
+  "replaces": "web_search"
+}

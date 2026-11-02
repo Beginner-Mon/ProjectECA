@@ -63,7 +63,9 @@ async def test_checks_run_in_order_and_chain_their_text(monkeypatch):
     assert d.text == "ABC!" and d.annotations == {"u": 1}
 
 
-async def test_a_failing_check_is_skipped_and_the_rest_still_run(monkeypatch):
+async def test_a_failing_check_fails_closed(monkeypatch):
+    """The text is untrusted: a check that raises blocks the result (the
+    unstripped text must not reach the agent), and later checks do not matter."""
     class Boom:
         name, stage = "boom", "tool_result"
 
@@ -72,7 +74,22 @@ async def test_a_failing_check_is_skipped_and_the_rest_still_run(monkeypatch):
 
     monkeypatch.setattr(policy, "TOOL_RESULT_CHECKS", [Boom(), HiddenText()])
     d = await run_tool_result(_ctx("a​b"))
-    assert d.text == "ab"
+    assert d.action == "block"
+    assert d.annotations == {"check_failed": "boom"}
+    assert d.text is None
+
+
+async def test_the_input_stage_still_skips_a_failing_check(monkeypatch):
+    """Fail-open stays on the input stage: one broken check cannot fail a turn."""
+    class Boom:
+        name, stage = "boom", "input"
+
+        async def run(self, ctx):
+            raise RuntimeError("x")
+
+    monkeypatch.setattr(policy, "INPUT_CHECKS", [Boom()])
+    result = await run_input(CheckContext(message="hello"))
+    assert result.blocked is None
 
 
 async def test_a_block_wins_and_carries_its_message(monkeypatch):

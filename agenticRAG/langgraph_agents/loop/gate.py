@@ -7,6 +7,8 @@ Checks in this exact order (plan §II.2):
 
   (1) unknown tool or bad arguments → invalid_args
       (own small validator: required keys, JSON types, enums — not jsonschema)
+  (1b) stage 3: a plugin tool whose plugin was switched off or changed
+      mid-turn (`turn.plugins.invalidate`) → refused_by_policy
   (2) cancel flag → cancelled
   (3) caps → budget, plus one_action_per_round for the write cap
   (4) verdict: egress and clinical tools wait for the guardrail verdict
@@ -16,8 +18,10 @@ Checks in this exact order (plan §II.2):
       `approval_unavailable` in stage 1; rule 2 (egress_read argument names
       a memory/instruction term) refuses, naming the terms
   (6) repeat-empty → repeat_empty
-  (7) rate limit → budget kind (resolved via `rate.get_rate_counter()`)
-  (8) breaker open → refuse kind `transient`
+  (7) rate limit → budget kind (resolved via `rate.get_rate_counter()`);
+      a plugin call counts against bucket `plugin:<id>` (D7)
+  (8) breaker open → refuse kind `transient`; a plugin has its own breaker,
+      per process (D7)
   (9) write → needs_approval → refuse `approval_unavailable` before stage 4
 
 Every refused call is still answered: the tools node emits exactly one
@@ -146,6 +150,13 @@ async def check(call: dict[str, Any], spec: ToolSpec, turn: Any) -> GateDecision
     if bad:
         return GateDecision.refuse(INVALID_ARGS, bad)
 
+    # ── (1b) plugin lifecycle (stage 3) ───────────────────────────
+    plugin_id = getattr(spec, "plugin_id", None)
+    plugins = getattr(turn, "plugins", None)
+    if plugin_id and plugins is not None and not plugins.is_active(plugin_id):
+        return GateDecision.refuse(
+            REFUSED_BY_POLICY, f"plugin {plugin_id} is off for this turn")
+
     # ── (2) cancel flag ───────────────────────────────────────────
     if getattr(turn, "cancelled", False):
         return GateDecision.refuse(CANCELLED, "turn cancelled")
@@ -207,7 +218,7 @@ async def check(call: dict[str, Any], spec: ToolSpec, turn: Any) -> GateDecision
     # A6: rate-limit only egress_read and plugin tools. Internal tools
     # (kb_search, recall_self, load_skill later) skip the counter.
     if spec.risk == "egress_read" or spec.source == "plugin":
-        bucket = spec.name if spec.risk == "egress_read" else spec.name
+        bucket = f"plugin:{plugin_id}" if plugin_id else spec.name
         rate = get_rate_counter()
         allowed = await rate.hit(turn.user_id, bucket, caps.rate_limit, caps.rate_window_s)
         if not allowed:
@@ -215,11 +226,16 @@ async def check(call: dict[str, Any], spec: ToolSpec, turn: Any) -> GateDecision
 
     # ── (8) breaker open ──────────────────────────────────────────
     # B2: check only the breaker of this call's source, not every breaker.
-    breaker = (turn.breakers or {}).get(spec.source)
+    if plugin_id:
+        from langgraph_agents.loop.plugins.runtime import get_breaker
+        breaker = get_breaker(plugin_id)
+    else:
+        breaker = (turn.breakers or {}).get(spec.source)
     if breaker is not None:
         try:
             if not breaker.allow():
-                return GateDecision.refuse(TRANSIENT, f"breaker open: {spec.source}")
+                return GateDecision.refuse(
+                    TRANSIENT, f"breaker open: {plugin_id or spec.source}")
         except Exception:
             pass
 

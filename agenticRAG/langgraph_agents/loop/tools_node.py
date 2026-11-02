@@ -10,14 +10,16 @@ turn-registry updates.
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import json
+import time
 from typing import Any
 
 from langchain_core.runnables import RunnableConfig
 
 from langgraph_agents.loop.errors import (
     APPROVAL_UNAVAILABLE, BUDGET, CANCELLED, INVALID_ARGS, REFUSED_BY_POLICY,
-    ToolResult, normalize,
+    ToolResult, classify, normalize,
 )
 from langgraph_agents.loop.gate import GateDecision, check, _call_args, _call_id, _call_name, _is_egress_or_clinical
 from langgraph_agents.loop.limits import (
@@ -26,7 +28,7 @@ from langgraph_agents.loop.limits import (
 from langgraph_agents.loop.prompts import budget_line
 from langgraph_agents.loop.state import LoopState
 from langgraph_agents.loop.tools.registry import build_turn_tools, ToolSpec
-from langgraph_agents.loop.trace import log_turn
+from langgraph_agents.loop.trace import log_plugin_call, log_turn
 from langgraph_agents.shared.logging import get_logger
 
 logger = get_logger("langgraph.loop.tools_node")
@@ -48,6 +50,8 @@ async def _run_one(
     tool_call_id = _call_id(call)
     tool_name = _call_name(call) or "?"
     args = _call_args(call)
+    plugin_id = getattr(spec, "plugin_id", None) if spec is not None else None
+    started = time.perf_counter()
 
     round_n = max(1, int(turn.round_calls or 0))
     action: dict[str, Any] = {
@@ -71,6 +75,9 @@ async def _run_one(
                              ensure_ascii=False)
         result = ToolResult(ok=False, content=content, kind="failed",
                             empty=False, source_label=tool_name, provenance={})
+        if plugin_id:
+            _audit(config, plugin_id, tool_name, args, f"refused:{decision.kind}",
+                   started, 0)
         return {"action": action, "tool_message": _tool_msg(tool_call_id, tool_name, content)}
 
     # ── call (read retries) ───────────────────────────────────────
@@ -88,9 +95,18 @@ async def _run_one(
                 break
             await asyncio.sleep(0.1 * (attempt + 1))
 
+    if plugin_id:
+        # D7: only a transport or protocol fault counts against the plugin's
+        # breaker; a tool-level error answer (`{"error": ...}`) does not.
+        from langgraph_agents.loop.plugins.runtime import get_breaker
+        if exc is not None:
+            get_breaker(plugin_id).record_failure()
+        else:
+            get_breaker(plugin_id).record_success()
+
     if exc is not None:
         action["status"] = "failed"
-        action["kind"] = "error"
+        action["kind"] = classify(exc)["kind"] if plugin_id else "error"
         action["error"] = type(exc).__name__
         content = json.dumps({"error": type(exc).__name__}, ensure_ascii=False)
         result = ToolResult(ok=False, content=content, kind="failed",
@@ -106,7 +122,25 @@ async def _run_one(
             action["kind"] = "error"
 
     content = result.content
+    if plugin_id:
+        outcome = "ok" if action["status"] == "ok" else (
+            f"failed:{action['kind']}" if action["kind"] else "failed")
+        _audit(config, plugin_id, tool_name, args, outcome, started,
+               int(action.get("result_chars") or 0))
     return {"action": action, "tool_message": _tool_msg(tool_call_id, tool_name, content)}
+
+
+def _audit(config: dict, plugin_id: str, tool: str, args: dict, outcome: str,
+           started: float, result_chars: int) -> None:
+    """D9: one audit line per plugin call. A hash of the arguments, never text."""
+    digest = hashlib.sha256(
+        json.dumps(args, sort_keys=True, ensure_ascii=False).encode("utf-8")
+    ).hexdigest()
+    log_plugin_call(
+        (config.get("configurable") or {}).get("request_id", "-"),
+        plugin_id=plugin_id, tool=tool, outcome=outcome,
+        duration_ms=round((time.perf_counter() - started) * 1000),
+        result_chars=result_chars, args_sha256=digest)
 
 
 def _tool_msg(tool_call_id: str, tool_name: str, content: str) -> dict:

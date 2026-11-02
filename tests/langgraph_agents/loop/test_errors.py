@@ -132,3 +132,49 @@ async def test_a_blocking_tool_result_check_fails_the_result(monkeypatch):
     monkeypatch.setattr(policy, "TOOL_RESULT_CHECKS", [_Block()])
     r = await normalize(_Spec("web_search", "egress_read"), "text", remaining=100)
     assert r.ok is False and "blocked_by_guardrail" in r.content
+
+
+async def test_a_raising_tool_result_check_fails_closed_through_normalize(monkeypatch):
+    """3A follow-up: a check that raises must not let the unstripped text through."""
+    from langgraph_agents.guardrail import policy
+
+    class _Boom:
+        name = "boom"
+        stage = "tool_result"
+
+        async def run(self, ctx):
+            raise RuntimeError("x")
+
+    monkeypatch.setattr(policy, "TOOL_RESULT_CHECKS", [_Boom()])
+    r = await normalize(_Spec("web_search", "egress_read"), "text\u200b", remaining=100)
+    assert r.ok is False and "blocked_by_guardrail" in r.content
+    assert "text" not in r.content.replace("blocked_by_guardrail", "")
+    # an internal tool never reaches the stage
+    r2 = await normalize(_Spec("kb_search", "internal"), "text", remaining=100)
+    assert r2.ok is True and r2.content == "text"
+
+
+# ── Stage 3B: the errors loop/http.py raises ─────────────────────────────
+
+
+def test_classify_maps_egress_blocked_and_response_too_large():
+    from langgraph_agents.loop.errors import PERMANENT
+    from langgraph_agents.loop.http import EgressBlocked, ResponseTooLarge
+
+    blocked = classify(EgressBlocked("address_not_public", "x -> 10.0.0.1"))
+    assert blocked["kind"] == REFUSED_BY_POLICY
+    assert blocked["reason"] == "address_not_public"
+    too_big = classify(ResponseTooLarge("over"))
+    assert too_big["kind"] == PERMANENT
+    assert too_big["reason"] == "response_too_large"
+    # no exception text leaks into the classification
+    assert "10.0.0.1" not in str(blocked)
+
+
+async def test_plugin_result_is_labelled_with_the_plugin_id():
+    class _PluginSpec(_Spec):
+        plugin_id = "deepwiki"
+
+    r = await normalize(_PluginSpec("deepwiki__ask_question", "egress_read",
+                                    source="plugin"), "hello", remaining=100)
+    assert r.source_label == "deepwiki"

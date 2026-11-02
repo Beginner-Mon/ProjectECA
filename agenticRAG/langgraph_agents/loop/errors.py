@@ -18,6 +18,7 @@ from typing import Any
 from langgraph_agents.evidence import classify_tool_result
 from langgraph_agents.guardrail.pipeline import run_tool_result
 from langgraph_agents.guardrail.types import CheckContext
+from langgraph_agents.loop.http import EgressBlocked, ResponseTooLarge
 from langgraph_agents.nodes._errors import classify_error
 
 
@@ -31,6 +32,7 @@ REFUSED_BY_POLICY = "refused_by_policy"
 REPEAT_EMPTY = "repeat_empty"
 APPROVAL_UNAVAILABLE = "approval_unavailable"
 TRANSIENT = "transient"
+PERMANENT = "permanent"
 
 # Result kinds.
 OK = "ok"
@@ -47,6 +49,12 @@ def classify(exc: BaseException) -> dict:
     `openai`). Unreachable / server errors become `transient`; auth errors
     become `auth_expired`.
     """
+    # Stage 3: the two errors `loop/http.py` raises. They are httpx errors, so
+    # they are checked before the pipeline mapper sees them.
+    if isinstance(exc, EgressBlocked):
+        return {"kind": REFUSED_BY_POLICY, "status": None, "reason": exc.reason}
+    if isinstance(exc, ResponseTooLarge):
+        return {"kind": PERMANENT, "status": None, "reason": "response_too_large"}
     return classify_error(exc)
 
 
@@ -87,7 +95,9 @@ async def normalize(spec: Any, raw: Any, remaining: int) -> ToolResult:
     source) first goes through the guardrail `tool_result` stage, before the
     empty check and truncation. Internal tools skip it.
     """
-    source_label = getattr(spec, "name", None) or getattr(spec, "source", None) or "tool"
+    # D4: a plugin's results are labelled with the plugin id.
+    source_label = (getattr(spec, "plugin_id", None) or getattr(spec, "name", None)
+                    or getattr(spec, "source", None) or "tool")
     if isinstance(raw, str):
         content = raw
     else:

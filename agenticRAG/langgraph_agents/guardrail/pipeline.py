@@ -63,8 +63,12 @@ async def run_tool_result(ctx: CheckContext) -> Decision:
     `ctx.message` is the result text. Checks run in order and each sees the text
     the previous one returned. The answer is one `Decision`: `block` as soon as
     a check blocks; otherwise `annotate` with the final `text` if anything
-    changed, else `allow`. A failing check is logged and skipped, as in the
-    input stage.
+    changed, else `allow`.
+
+    A check that raises FAILS CLOSED here (unlike the input stage, which logs
+    and skips): the text is untrusted and from outside ECA, so the result is
+    `block` with `{"check_failed": <name>}` and the caller drops the result.
+    Skipping would hand the agent the unstripped text.
     """
     text = ctx.message
     annotations: dict = {}
@@ -72,12 +76,14 @@ async def run_tool_result(ctx: CheckContext) -> Decision:
     for check in list(policy.TOOL_RESULT_CHECKS):
         try:
             result = await check.run(replace(ctx, message=text))
-        except Exception as exc:  # noqa: BLE001 - a check must not fail the turn
+        except Exception as exc:  # noqa: BLE001 - fail closed on untrusted text
             logger.warning("guardrail_check_failed", extra={
                 "node": "guardrail", "request_id": ctx.request_id,
                 "check": check.name, "error": type(exc).__name__,
+                "stage": "tool_result",
             })
-            continue
+            return Decision("block", {"check_failed": check.name},
+                            message="a safety check could not run on this result")
         if result is None:
             continue
         if result.action == "block":

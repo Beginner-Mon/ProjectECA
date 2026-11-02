@@ -1,0 +1,26 @@
+{
+  "id": "deepwiki",
+  "name": "DeepWiki",
+  "version": "1.0.0",
+  "publisher": "Cognition",
+  "description": "Reads the documentation of public GitHub repositories. Public server, no sign-in.",
+  "mcp_server": {
+    "url": "https://mcp.deepwiki.com/mcp",
+    "transport": "streamable_http",
+    "allowed_hosts": ["mcp.deepwiki.com"]
+  },
+  "auth": null,
+  "tools": {
+    "read_wiki_structure": {"egress": true, "risk": "read"},
+    "read_wiki_contents": {"egress": true, "risk": "read"},
+    "ask_question": {"egress": true, "risk": "read"}
+  },
+  "skills": [],
+  "reviewed": {
+    "by": "",
+    "tool_definitions_sha256": "UNPINNED"
+  },
+  "data_class": "none",
+  "enabled_by_default": false,
+  "requires_gate": false
+}

@@ -80,6 +80,12 @@ def build_turn_tools(ctx: Any) -> list[ToolSpec]:
     (egress_read) and request_motion (clinical egress_read) are always on;
     web_search (egress_read) only when `web_search` is true.
     """
+    # Probe and test hook: `configurable["turn_tools"]` (a list of ToolSpec)
+    # replaces the builtins for this turn. Production never sets it
+    # (`api/main.py` builds no such key).
+    if isinstance(ctx, dict) and ctx.get("turn_tools") is not None:
+        return list(ctx["turn_tools"])
+
     from . import builtin  # lazy
 
     config = getattr(ctx, "config", None) or {}

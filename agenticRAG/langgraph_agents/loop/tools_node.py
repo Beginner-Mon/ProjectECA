@@ -163,6 +163,17 @@ async def tools_node(state: LoopState, config: RunnableConfig) -> dict:
           for call in tool_calls]
     )
 
+    # Taint rule 1: a source with data_class="personal" that was actually read
+    # (the call ran and returned) marks the turn, so later egress or clinical
+    # calls go to the gate's rule 1. Calls in the same round are already past
+    # the gate; only later rounds see it.
+    personal = {s.name for s in specs if s.data_class == "personal"}
+    for res in results:
+        act = res["action"]
+        if act["tool"] in personal and act["status"] == "ok":
+            turn.personal_sources.append(
+                {"tool": act["tool"], "data_class": "personal"})
+
     # Build tool messages; budget line on the LAST one.
     tool_messages: list[dict] = []
     actions: list[dict] = []

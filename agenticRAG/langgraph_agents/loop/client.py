@@ -14,6 +14,7 @@ transient error.
 
 from __future__ import annotations
 
+import json
 import os
 from dataclasses import dataclass, field
 from typing import Any
@@ -40,6 +41,52 @@ class AgentReply:
     usage: dict[str, Any] | None = None
 
 
+def to_wire_messages(messages: list[Any]) -> list[dict[str, Any]]:
+    """Render a transcript as OpenAI wire dicts.
+
+    The graph's `transcript` key goes through LangGraph's `add_messages`
+    reducer, so by the time a node reads it the dicts are LangChain message
+    objects (`AIMessage.tool_calls` as `{name, args, id}`, the echoed
+    reasoning in `additional_kwargs`). The provider needs plain dicts, so this
+    puts them back: tool calls as `{id, type, function: {name, arguments}}`
+    and the reasoning field under its original key. Dicts pass through.
+    """
+    out: list[dict[str, Any]] = []
+    for m in messages:
+        if isinstance(m, dict):
+            out.append(m)
+            continue
+        kind = getattr(m, "type", None)
+        role = {"human": "user", "ai": "assistant"}.get(kind, kind)
+        wire: dict[str, Any] = {"role": role, "content": getattr(m, "content", "") or ""}
+        if role == "tool":
+            wire["tool_call_id"] = getattr(m, "tool_call_id", None)
+        if role == "assistant":
+            calls = []
+            for tc in getattr(m, "tool_calls", None) or []:
+                args = tc.get("args", {})
+                calls.append({
+                    "id": tc.get("id"), "type": "function",
+                    "function": {"name": tc.get("name"),
+                                 "arguments": args if isinstance(args, str)
+                                 else json.dumps(args, ensure_ascii=False)},
+                })
+            for tc in getattr(m, "invalid_tool_calls", None) or []:
+                calls.append({
+                    "id": tc.get("id"), "type": "function",
+                    "function": {"name": tc.get("name"),
+                                 "arguments": tc.get("args") or "{}"},
+                })
+            if calls:
+                wire["tool_calls"] = calls
+            extra = getattr(m, "additional_kwargs", None) or {}
+            for key in ("reasoning", "reasoning_content"):
+                if extra.get(key) is not None:
+                    wire[key] = extra[key]
+        out.append(wire)
+    return out
+
+
 class _TransientError(RuntimeError):
     """A retryable provider error (unreachable / server / 5xx)."""
 
@@ -57,9 +104,22 @@ class AgentModel:
         role: str = "agent",
         client: Any = None,
         breaker: CircuitBreaker | None = None,
+        base_url: str | None = None,
+        api_key: str | None = None,
+        model: str | None = None,
+        extra_body: dict[str, Any] | None = None,
     ) -> None:
         self.role = role
         self._client = client
+        # Probe hook: an explicit endpoint replaces `endpoint_for_role` and
+        # BYOK. Production callers pass none of these.
+        self._explicit_endpoint: dict | None = None
+        if base_url is not None:
+            self._explicit_endpoint = {
+                "base_url": base_url, "key_env": None, "key_param_env": None,
+                "model": model, "extra_body": dict(extra_body or {}),
+                "byok": False, "api_key": api_key,
+            }
         self._breaker = breaker or CircuitBreaker(
             name=f"loop:{role}", failure_threshold=3, cool_down_seconds=30.0,
         )
@@ -69,6 +129,8 @@ class AgentModel:
 
     def _resolve_endpoint(self) -> dict:
         """BYOK when bound and capable of tools, else ECA endpoint_for_role."""
+        if self._explicit_endpoint is not None:
+            return dict(self._explicit_endpoint)
         req = current_request_llm()
         if (req is not None and req.failure is None
                 and "tools" in getattr(req, "capabilities", frozenset())):
@@ -158,7 +220,7 @@ class AgentModel:
 
         create_kwargs: dict[str, Any] = {
             "model": ep["model"],
-            "messages": messages,
+            "messages": to_wire_messages(messages),
         }
         if tools:
             create_kwargs["tools"] = tools
@@ -203,6 +265,10 @@ class AgentModel:
                 "completion_tokens": getattr(response.usage, "completion_tokens", None),
                 "total_tokens": getattr(response.usage, "total_tokens", None),
             }
+            details = getattr(response.usage, "completion_tokens_details", None)
+            reasoning_tokens = getattr(details, "reasoning_tokens", None)
+            if isinstance(reasoning_tokens, int):
+                usage["reasoning_tokens"] = reasoning_tokens
 
         return AgentReply(
             content=content,

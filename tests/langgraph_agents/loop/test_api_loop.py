@@ -59,6 +59,25 @@ def _no_database_no_housekeeping(monkeypatch):
     return scheduled
 
 
+@pytest.fixture(autouse=True)
+def _no_live_triage(monkeypatch):
+    """Stub the guardrail's input call so /chat tests never reach a live model.
+
+    Same stub as `test_phase5_sse.py`: every `/chat` turn runs the guardrail
+    triage (`guardrail.run_input`), which calls the real triage model and logs
+    `guardrail_triage_failed` when no key or network is there. A test that
+    needs another verdict overrides this with its own monkeypatch.
+    """
+    import langgraph_agents.api.main as api_module
+    from langgraph_agents.guardrail.pipeline import InputResult
+    from langgraph_agents.guardrail.types import fallback_verdict
+
+    async def fake_run_input(ctx):
+        return InputResult(fallback_verdict())
+
+    monkeypatch.setattr(api_module.guardrail, "run_input", fake_run_input)
+
+
 def _patch_agent_model(monkeypatch, reply_content):
     async def _complete(self, messages, tools=None, *, tool_choice="auto"):
         return AgentReply(content=reply_content, tool_calls=[])

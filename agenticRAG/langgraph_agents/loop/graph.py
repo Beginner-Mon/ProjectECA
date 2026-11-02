@@ -66,11 +66,16 @@ def route_after_agent(state: LoopState) -> str:
     return state.get("_route", "persona")
 
 
-def build_loop_graph():
-    """Build (sync) and compile the read-only loop graph. No checkpointer."""
+def build_loop_graph(memory=None):
+    """Build (sync) and compile the read-only loop graph. No checkpointer.
+
+    `memory` is a probe and test hook: a node function used in place of the
+    real `memory_node` (the probe runner seeds the user's facts with it and
+    touches no database). Production calls `build_loop_graph()` with none.
+    """
     g = StateGraph(LoopState)  # type: ignore[arg-type]
 
-    g.add_node("memory", memory_node)
+    g.add_node("memory", memory if memory is not None else memory_node)
     g.add_node("vision", vision_node)
     g.add_node("load_context", load_context_node)
     g.add_node("agent", agent_node)

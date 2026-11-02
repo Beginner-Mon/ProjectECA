@@ -52,6 +52,7 @@ from aws_cdk import (
     Stack,
     aws_ecr as ecr,
     aws_iam as iam,
+    aws_kms as kms,
     aws_lambda as lambda_,
     aws_ssm as ssm,
 )
@@ -236,6 +237,23 @@ class AgentStack(Stack):
 
         # ── Function ────────────────────────────────────────────────────
 
+        # Key that seals the agent loop's paused turns and proposed write
+        # payloads (stage 4, E4: loop/crypto.py KmsSealer). Envelope encryption:
+        # the function asks KMS for a data key and encrypts locally, so it needs
+        # GenerateDataKey to seal and Decrypt to open, and nothing else. RETAIN:
+        # a sealed row is unreadable without its key, so deleting this stack
+        # must not delete the key with it. The key policy is the default (the
+        # account root), which lets IAM grant it; the function role gets the two
+        # actions on this one key below. Every call carries an encryption
+        # context (user, plugin/thread, action), which KMS logs in CloudTrail.
+        self.loop_seal_key = kms.Key(
+            self, "LoopSealKey",
+            alias="alias/vva-loop-seal",
+            description="Seals agent-loop paused turns and proposed write payloads",
+            enable_key_rotation=True,
+            removal_policy=RemovalPolicy.RETAIN,
+        )
+
         allowed_origins = resolve_origins(self.node)
         dsn_param = ctx("crud_dsn_param") or _DEFAULT_DSN_PARAM
         deepseek_param = ctx("deepseek_param") or _DEFAULT_DEEPSEEK_PARAM
@@ -385,6 +403,9 @@ class AgentStack(Stack):
             "MOTION_SIGNING_KEY_PARAM": motion_signing_key_param,
             "MOTION_KEY_PAIR_ID": motion_key_pair_id,
             "ASSET_BASE_URL": asset_base_url or "",
+            # Selects KmsSealer in loop/config.py. Without it a loop write is
+            # refused (approval_unavailable): fail closed.
+            "LOOP_KMS_KEY_ID": self.loop_seal_key.key_arn,
         }
         if speechllm_url:
             # VIENEU_TTS_URL (D3) — presence is the on-switch, so this key is
@@ -478,6 +499,14 @@ class AgentStack(Stack):
             actions=["kms:Decrypt"],
             resources=[f"arn:aws:kms:{self.region}:{self.account}:key/*"],
             conditions={"StringEquals": {"kms:ViaService": f"ssm.{self.region}.amazonaws.com"}},
+        ))
+
+        # ── IAM: seal and open agent-loop state (stage 4) ───────────────
+        # This key only, and these two actions only: no Encrypt, ReEncrypt,
+        # DescribeKey, CreateGrant or key administration.
+        self.fn.add_to_role_policy(iam.PolicyStatement(
+            actions=["kms:GenerateDataKey", "kms:Decrypt"],
+            resources=[self.loop_seal_key.key_arn],
         ))
 
         # ── IAM: motion job table (Task 9, ruling R3) ───────────────────

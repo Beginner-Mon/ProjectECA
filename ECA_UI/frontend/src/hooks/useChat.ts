@@ -2,6 +2,7 @@ import { createContext, useContext } from 'react'
 import type { Message } from '../components/ChatMessage'
 import type { UiStrings } from '../lib/characterCopy'
 import type { MessageFeedback } from '../lib/api'
+import type { ApprovalDecision } from '../lib/approvalCard'
 
 export interface SessionItem {
   session_id: string
@@ -69,6 +70,8 @@ export interface ChatContextType {
   latestAssistantId: string | null
   /** Send the prompt behind a failed assistant message again, as a new turn. */
   retryTurn: (assistantMessageId: string) => void
+  /** Answer the approval card on an assistant message; the rest of the turn streams back into it. */
+  answerApproval: (assistantMessageId: string, decision: ApprovalDecision) => Promise<void>
   /** The latest request to the app shell (FloatingNavBar acts on it). */
   uiRequest: ChatUiRequest | null
   requestUi: (kind: ChatUiRequest['kind']) => void

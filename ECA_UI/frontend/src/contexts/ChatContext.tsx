@@ -10,8 +10,13 @@ import {
 import type { Message } from '../components/ChatMessage'
 import {
   getSession, listSessions, deleteSession, streamChat, fetchMotionStatus, cancelChat, DEFAULT_PERSONA_ID,
+  resumeChat, listPendingActions,
   type SessionMessage, type MessageFeedback,
 } from '../lib/api'
+import {
+  canAnswer, parsePayload, stateAfterTurn, stateFromPending,
+  type ApprovalCardData, type ApprovalDecision, type ApprovalState,
+} from '../lib/approvalCard'
 import { CLIP_ABORTED, SpeechClip, speechPlayer, unlockSpeechAudio } from '../lib/speechPlayer'
 import { routeSpeechEvent } from '../lib/speechSource'
 import { createTurnLifecycle } from '../lib/turnLifecycle'
@@ -64,6 +69,14 @@ const GREETING_ID = '1'
 function turnEndFromRow(m: SessionMessage): Pick<Message, 'content' | 'error'> {
   const error = errorFromHistory(m)
   return { content: error ? '' : m.content, error }
+}
+
+/** Every card still waiting for an answer becomes invalidated: a new message cancels it (the server does the same). */
+function invalidateOpenCards(list: Message[]): Message[] {
+  if (!list.some((m) => m.approval && canAnswer(m.approval.state))) return list
+  return list.map((m) =>
+    m.approval && canAnswer(m.approval.state) ? { ...m, approval: { ...m.approval, state: 'invalidated' as const } } : m,
+  )
 }
 
 function buildInitialMessages(text: string): Message[] {
@@ -333,6 +346,26 @@ export function ChatProvider({ children }: { children: ReactNode }) {
     setImageUrls(next)
   }, [])
 
+  /** Put back the approval card a reload (or a session switch) took off the screen.
+   *  A paused turn is always the last one — a new message cancels it — so the
+   *  card goes under the last assistant message. Failures leave the chat as it is. */
+  const restoreApproval = useCallback(async (sessionId: string) => {
+    try {
+      const { actions } = await listPendingActions(sessionId)
+      if (sessionIdRef.current !== sessionId || actions.length === 0) return
+      const { status, ...payload } = actions[actions.length - 1]
+      const card: ApprovalCardData = { payload, state: status === 'expired' ? 'expired' : 'pending' }
+      setMessages((prev) => {
+        let at = prev.length - 1
+        while (at >= 0 && prev[at].role !== 'assistant') at--
+        if (at < 0 || prev[at].approval) return prev
+        return prev.map((m, i) => (i === at ? { ...m, approval: card } : m))
+      })
+    } catch (e) {
+      console.warn('[approval] could not read the pending cards:', e)
+    }
+  }, [])
+
   /* ── Restore the conversation this browser was last in ──────────────────
    *
    * Runs once on mount. A 404 means the pointer outlived its conversation — the
@@ -388,6 +421,7 @@ export function ChatProvider({ children }: { children: ReactNode }) {
             feedback: m.feedback ?? null,
           })),
         )
+        void restoreApproval(sessionId)
 
         // Motions the GPU already rendered for this conversation. Two outcomes
         // and no third: still fetchable, or gone.
@@ -444,7 +478,7 @@ export function ChatProvider({ children }: { children: ReactNode }) {
     return () => {
       cancelled = true
     }
-  }, [registerSessionMotion])
+  }, [registerSessionMotion, restoreApproval])
 
   /** Abandon this conversation and start a clean one.
    *
@@ -561,6 +595,7 @@ export function ChatProvider({ children }: { children: ReactNode }) {
             feedback: m.feedback ?? null,
           })),
         )
+        void restoreApproval(sessionId)
       } else {
         const switchSlot = getTimeSlot()
         const switchGreetingText = getGreetingForSlot(uiRef.current, switchSlot)
@@ -578,7 +613,7 @@ export function ChatProvider({ children }: { children: ReactNode }) {
       if (sessionId === sessionIdRef.current) setIsSwitching(false)
       switchingRef.current = false
     }
-  }, [endThinking])
+  }, [endThinking, restoreApproval])
 
   const switchToSession = useCallback(async (sessionId: string) => {
     // Clicking the conversation that failed to load is a retry, not a no-op.
@@ -653,7 +688,7 @@ export function ChatProvider({ children }: { children: ReactNode }) {
     setMessages((prev) => {
       const isPristine = prev.length === 1 && prev[0].id === GREETING_ID
       if (isPristine) return [userMsg]
-      return [...prev, userMsg]
+      return [...invalidateOpenCards(prev), userMsg]
     })
     // Hiển thị stage ngay để tránh 3 chấm đầu, dùng text pulse thay vì dots.
     // Trung tính (thinking) — nhãn nguồn thật tới sau qua sự kiện stage (T6).
@@ -899,6 +934,17 @@ export function ChatProvider({ children }: { children: ReactNode }) {
                 }
               })()
             }
+          } else if (type === 'approval_required') {
+            // The agent proposed a write and the turn is paused for the user.
+            const payload = parsePayload(data)
+            if (payload) {
+              setMessages((prev) =>
+                prev.map((msg) => (msg.id === assistantMsgId ? { ...msg, approval: { payload, state: 'pending' } } : msg)),
+              )
+              requestUi('show_chat')
+            }
+          } else if (type === 'turn_status') {
+            // Nothing to show: a paused turn is already on screen as a card.
           } else if (type === 'error') {
             // The turn failed. The server sends a code, never words
             // (docs/architecture/sse-contract.md); `done` still follows.
@@ -1031,6 +1077,137 @@ export function ChatProvider({ children }: { children: ReactNode }) {
     if (prompt) void sendPrompt(prompt)
   }, [sendPrompt])
 
+  /** Change one message's approval card. A no-op when the message is gone (session switched). */
+  const patchApproval = useCallback((messageId: string, state: ApprovalState) => {
+    setMessages((prev) =>
+      prev.map((m) => (m.id === messageId && m.approval ? { ...m, approval: { ...m.approval, state } } : m)),
+    )
+  }, [])
+
+  /**
+   * Answer an approval card (POST /chat/resume) and stream the rest of the turn
+   * into the same message: its first token replaces the "waiting for your
+   * approval" line, exactly as the server replaces the saved answer.
+   *
+   * Stop works as for any turn: it aborts this stream and asks the server to
+   * cancel. When the answer is refused (404/409) or the stream breaks, the
+   * pending route says what the card is now; the card never guesses "done".
+   */
+  const answerApproval = useCallback(async (messageId: string, decision: ApprovalDecision) => {
+    if (isGeneratingRef.current) return
+    const card = messagesRef.current.find((m) => m.id === messageId)?.approval
+    if (!card || !canAnswer(card.state)) return
+    const { thread_id: threadId, action_id: actionId } = card.payload
+
+    patchApproval(messageId, 'approving')
+    setIsGenerating(true)
+    setStageLabel(stageLabelFor(null, uiRef.current, null))
+
+    const controller = new AbortController()
+    abortControllerRef.current = controller
+    const isCurrent = () => abortControllerRef.current === controller
+
+    /** Nothing of the resumed answer has arrived yet: the first token replaces the waiting line. */
+    let fresh = true
+    /** The resumed turn proposed again: a new card is on screen and this one is replaced. */
+    let proposedAgain = false
+    let finalActions: Array<{ action_id?: unknown; status?: unknown }> | null = null
+
+    const lifecycle = createTurnLifecycle(undefined, {
+      isCurrent,
+      releaseComposing: () => {
+        setStageLabel(null)
+        setIsGenerating(false)
+      },
+      markSessionsDirty: () => setSessionsDirty(true),
+      routeSpeech: () => {},
+      playSpeech: () => {},
+      attachServerId: (id) =>
+        setMessages((prev) => prev.map((msg) => (msg.id === messageId ? { ...msg, serverId: id } : msg))),
+    })
+
+    /** What the pending route says about this card now; `whenGone` is used if it is no longer listed. */
+    const readCardState = async (whenGone: ApprovalState | null, whenListed: ApprovalState): Promise<ApprovalState> => {
+      const sid = sessionIdRef.current
+      if (!sid) return 'error'
+      try {
+        const { actions } = await listPendingActions(sid)
+        const state = stateFromPending(actionId, actions)
+        if (state === 'invalidated') return whenGone ?? 'invalidated'
+        return state === 'pending' ? whenListed : state
+      } catch {
+        return 'error'
+      }
+    }
+
+    try {
+      await resumeChat(
+        { threadId, actionId, decision },
+        (type, data) => {
+          if (lifecycle(type, data)) return
+          if (type === 'stage') {
+            const { node, status } = data as { node: string; status: string }
+            if ((node === 'synthesizer' && status === 'started') || (node === 'agent' && status === 'complete')) {
+              setStageLabel((prev) => stageLabelFor({ node, status }, uiRef.current, prev))
+            }
+          } else if (type === 'token') {
+            setStageLabel(null)
+            avatarRef.current?.notifyEngaged()
+            const content = (data as { content: string }).content
+            const replace = fresh
+            fresh = false
+            setMessages((prev) =>
+              prev.map((msg) =>
+                msg.id === messageId ? { ...msg, content: replace ? content : msg.content + content } : msg,
+              ),
+            )
+          } else if (type === 'approval_required') {
+            const payload = parsePayload(data)
+            if (payload) {
+              proposedAgain = true
+              setMessages((prev) =>
+                prev.map((msg) => (msg.id === messageId ? { ...msg, approval: { payload, state: 'pending' } } : msg)),
+              )
+            }
+          } else if (type === 'turn_status') {
+            const actions = (data as { actions?: unknown }).actions
+            finalActions = Array.isArray(actions) ? (actions as typeof finalActions) : null
+          } else if (type === 'error') {
+            const error = errorFromEvent(data)
+            setMessages((prev) => prev.map((msg) => (msg.id === messageId ? { ...msg, error } : msg)))
+          }
+          // emotion, motion, provider_notice and speech_*: not part of a resumed turn here.
+        },
+        controller.signal,
+      )
+      if (!proposedAgain) patchApproval(messageId, stateAfterTurn(actionId, decision, finalActions))
+    } catch (e) {
+      if (proposedAgain) return
+      const name = (e as Error)?.name
+      const status = name === 'HttpStatusError' ? (e as { status?: number }).status : undefined
+      let next: ApprovalState
+      if (status === 404 || status === 409 || name === 'AbortError') {
+        // Not answerable (any more), or stopped: the server knows what the card is.
+        next = await readCardState(null, 'pending')
+      } else if (status !== undefined) {
+        // 401, 429, 5xx: the answer was not taken. Both buttons stay.
+        next = 'error'
+      } else {
+        // The stream broke. Before the server took the answer the card is still
+        // listed (offer it again); after, it is gone and the choice stands.
+        next = await readCardState(decision === 'approve' ? 'done' : 'declined', 'error')
+        if (next !== 'error') setSessionsDirty(true)
+      }
+      patchApproval(messageId, next)
+    } finally {
+      if (isCurrent()) {
+        setIsTyping(false)
+        setStageLabel(null)
+        setIsGenerating(false)
+      }
+    }
+  }, [patchApproval, avatarRef])
+
   const latestAssistantId = useMemo(() => {
     for (let i = messages.length - 1; i >= 0; i--) {
       if (messages[i].role === 'assistant') return messages[i].id
@@ -1080,6 +1257,7 @@ export function ChatProvider({ children }: { children: ReactNode }) {
       setMessageFeedback,
       latestAssistantId,
       retryTurn,
+      answerApproval,
       uiRequest,
       requestUi,
       isRecording,
@@ -1089,7 +1267,7 @@ export function ChatProvider({ children }: { children: ReactNode }) {
       startRecord,
       stopRecord,
     }),
-    [messages, input, isTyping, isGenerating, stageLabel, ui, webSearch, voiceReply, isRestoring, isSwitching, startNewSession, handleSend, handleStop, imageUrls, addImage, removeImage, sessionList, sessionsDirty, activeSessionId, refreshSessions, sessionsError, switchToSession, sessionLoadError, retrySessionLoad, deleteSessionAction, markSessionsClean, setMessageFeedback, latestAssistantId, retryTurn, uiRequest, requestUi, isRecording, recordingDuration, recordingError, dictationSupported, startRecord, stopRecord],
+    [messages, input, isTyping, isGenerating, stageLabel, ui, webSearch, voiceReply, isRestoring, isSwitching, startNewSession, handleSend, handleStop, imageUrls, addImage, removeImage, sessionList, sessionsDirty, activeSessionId, refreshSessions, sessionsError, switchToSession, sessionLoadError, retrySessionLoad, deleteSessionAction, markSessionsClean, setMessageFeedback, latestAssistantId, retryTurn, answerApproval, uiRequest, requestUi, isRecording, recordingDuration, recordingError, dictationSupported, startRecord, stopRecord],
   )
 
   return <ChatContext.Provider value={value}>{children}</ChatContext.Provider>

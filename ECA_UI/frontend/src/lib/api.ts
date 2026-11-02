@@ -36,6 +36,7 @@ import { fetchAuthSession } from 'aws-amplify/auth'
  */
 import { API_GATEWAY } from './apiBase'
 import type { MotionStatus } from './motionJob'
+import { parsePayload, type PendingAction } from './approvalCard'
 
 /**
  * The character used when none is chosen — the backend's own default for
@@ -334,6 +335,62 @@ export async function cancelChat(sessionId: string): Promise<void> {
     },
     body: JSON.stringify({ session_id: sessionId, request_id: null }),
   }).catch(() => {})
+}
+
+/**
+ * POST /chat/resume: answer an approval card, and stream the rest of the turn.
+ *
+ * The same SSE stream as /chat. A non-2xx answer throws HttpStatusError with
+ * the status: 404 (not yours / unknown) and 409 (already answered, expired,
+ * cancelled by a new message) both mean the card can no longer be answered, so
+ * the caller re-reads the pending route instead of retrying.
+ */
+export async function resumeChat(
+  options: { threadId: string; actionId: string; decision: 'approve' | 'decline' },
+  onEvent: SSEEventCallback,
+  signal?: AbortSignal,
+): Promise<void> {
+  const extraHeaders = await authHeader()
+  const resp = await fetch(`${API_GATEWAY}/chat/resume`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      Accept: 'text/event-stream',
+      ...extraHeaders,
+    },
+    body: JSON.stringify({
+      thread_id: options.threadId,
+      action_id: options.actionId,
+      decision: options.decision,
+    }),
+    signal,
+  })
+  if (!resp.ok) {
+    console.warn('[chat] POST /chat/resume answered', resp.status)
+    throw new HttpStatusError(resp.status)
+  }
+  let sawDone = false
+  await consumeSSE(resp, (type, data) => {
+    if (type === 'done') sawDone = true
+    onEvent(type, data)
+  })
+  if (!sawDone && !signal?.aborted) throw new StreamInterruptedError()
+}
+
+/** Approval cards still waiting in a session (`loop` is false for pipeline users). */
+export async function listPendingActions(
+  sessionId: string,
+): Promise<{ loop: boolean; actions: PendingAction[] }> {
+  const { data } = await http.get('/me/actions/pending', { params: { session_id: sessionId } })
+  const body = (data ?? {}) as { loop?: unknown; actions?: unknown }
+  const actions: PendingAction[] = []
+  if (Array.isArray(body.actions)) {
+    for (const a of body.actions) {
+      const payload = parsePayload(a)
+      if (payload) actions.push({ ...payload, status: String((a as { status?: unknown }).status ?? '') })
+    }
+  }
+  return { loop: body.loop === true, actions }
 }
 
 /**

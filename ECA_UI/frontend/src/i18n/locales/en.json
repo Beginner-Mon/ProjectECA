@@ -393,5 +393,21 @@
     "status_unavailable": "Not responding",
     "status_web_search_off": "Web search is off",
     "status_unknown": "Unknown"
+  },
+  "approval": {
+    "title": "Needs your approval",
+    "approve": "Send",
+    "decline": "Decline",
+    "note": "Press Send to go ahead. A new message cancels this card.",
+    "recipients": "Recipients",
+    "based_on": "Based on: {{sources}}",
+    "flag_domains": "Addresses outside the app: {{domains}}",
+    "flag_bidi": "Contains hidden text-direction characters, shown here as [U+XXXX].",
+    "flag_homoglyph": "Contains look-alike letters from different alphabets, or an encoded (xn--) address.",
+    "state_done": "Approved",
+    "state_declined": "Declined",
+    "state_expired": "Expired",
+    "state_invalidated": "Cancelled",
+    "error": "Your answer did not go through. Check your connection and try again."
   }
 }

@@ -393,5 +393,21 @@
     "status_unavailable": "Không phản hồi",
     "status_web_search_off": "Tìm kiếm web đang tắt",
     "status_unknown": "Không rõ"
+  },
+  "approval": {
+    "title": "Cần bạn duyệt",
+    "approve": "Gửi",
+    "decline": "Từ chối",
+    "note": "Bấm Gửi để thực hiện. Nhắn tin mới sẽ hủy thẻ này.",
+    "recipients": "Người nhận",
+    "based_on": "Dựa trên: {{sources}}",
+    "flag_domains": "Địa chỉ bên ngoài ứng dụng: {{domains}}",
+    "flag_bidi": "Có ký tự ẩn đổi chiều chữ, hiện ở đây dạng [U+XXXX].",
+    "flag_homoglyph": "Có chữ trông giống nhau từ các bảng chữ cái khác nhau, hoặc địa chỉ đã mã hóa (xn--).",
+    "state_done": "Đã duyệt",
+    "state_declined": "Đã từ chối",
+    "state_expired": "Hết hạn",
+    "state_invalidated": "Đã hủy",
+    "error": "Chưa gửi được câu trả lời của bạn. Kiểm tra kết nối rồi thử lại."
   }
 }

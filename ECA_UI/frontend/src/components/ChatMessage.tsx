@@ -24,6 +24,8 @@ import { useChat } from '../hooks/useChat'
 import { useAuth } from '../contexts/AuthContext'
 import { errorAction, errorCopy, showRetry, type ChatError } from '../lib/chatErrors'
 import DislikeFeedbackModal from './feedback/DislikeFeedbackModal'
+import ApprovalCard from './ApprovalCard'
+import { replyIsPlainText, type ApprovalCardData } from '../lib/approvalCard'
 
 export interface Message {
   id: string
@@ -77,6 +79,8 @@ export interface Message {
   serverId?: string
   /** The caller's saved vote on this message, when one exists. */
   feedback?: MessageFeedback | null
+  /** A write the assistant proposed in this turn, waiting for the user (or settled). */
+  approval?: ApprovalCardData
 }
 
 interface ChatMessageProps {
@@ -114,16 +118,24 @@ export default function ChatMessage({ message, isStreaming }: ChatMessageProps) 
      * vẫn ăn py-3 + space-y-2 của container, đẩy loading indicator xuống hơn
      * 30px so với user message. Trừ khi lượt này lỗi hoặc có thông báo: những
      * thứ đó người dùng phải thấy dù bubble không có chữ. */
-    if (!message.content && !message.error && !message.providerNotice) return null
+    if (!message.content && !message.error && !message.providerNotice && !message.approval) return null
 
     const cleaned = message.content.replace(/<\/?evidence_citation>/g, '')
     return (
       <div className="px-3 desktop:px-5 py-2 desktop:py-3 animate-message-in w-full max-w-full">
         {message.content && (
-          <div className={REPLY_TEXT_CLASS}>
-            <ReactMarkdown remarkPlugins={[remarkGfm]}>{cleaned}</ReactMarkdown>
-          </div>
+          message.approval && replyIsPlainText(message.approval.state) ? (
+            // The waiting line carries a summary of the proposed payload: plain text, never markdown.
+            <div className={REPLY_TEXT_CLASS}>
+              <p className="whitespace-pre-wrap break-words">{message.content}</p>
+            </div>
+          ) : (
+            <div className={REPLY_TEXT_CLASS}>
+              <ReactMarkdown remarkPlugins={[remarkGfm]}>{cleaned}</ReactMarkdown>
+            </div>
+          )
         )}
+        {message.approval && <ApprovalCardFor message={message} />}
         {message.error && <ErrorBlock message={message} />}
         {message.motionNotice && (
           // Muted and small: an aside about the 3D clip, not part of the
@@ -139,7 +151,7 @@ export default function ChatMessage({ message, isStreaming }: ChatMessageProps) 
             {message.providerNotice}
           </p>
         )}
-        {message.content && !message.error && (
+        {message.content && !message.error && (!message.approval || !replyIsPlainText(message.approval.state)) && (
           <AssistantActions message={message} isStreaming={isStreaming} />
         )}
       </div>
@@ -208,6 +220,11 @@ export function ErrorNotice({
       )}
     </div>
   )
+}
+
+function ApprovalCardFor({ message }: { message: Message }) {
+  const { answerApproval } = useChat()
+  return <ApprovalCard card={message.approval!} onAnswer={(decision) => answerApproval(message.id, decision)} />
 }
 
 function ErrorBlock({ message }: { message: Message }) {

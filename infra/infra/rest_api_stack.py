@@ -405,6 +405,53 @@ class RestApiStack(Stack):
             billing = self.api.root.add_resource("billing")
             billing.add_resource("{proxy+}").add_method("ANY", agent, **authed)
 
+            # ── Agent-loop routes (stages 3 to 5) ─────────────────────────
+            #
+            # Until now only /chat and /tts reached the agent, so the loop's own
+            # routes answered 403 "Missing Authentication Token" in production:
+            # Stop's POST /chat/cancel had never arrived, and neither would the
+            # approval card's POST /chat/resume. Every route below goes to the
+            # agent function with /chat's integration options copied verbatim
+            # (STREAM + 120s: the Lambda runs with AWS_LWA_INVOKE_MODE=
+            # response_stream, so a BUFFERED integration answers 502 even for a
+            # small JSON body; see /motion above) and the Cognito authorizer.
+            #
+            # `me` is the resource created for /me/memory above; children are
+            # added to it, never a second "me".
+            def loop_integration() -> apigw.LambdaIntegration:
+                return apigw.LambdaIntegration(
+                    agent_fn,
+                    response_transfer_mode=apigw.ResponseTransferMode.STREAM,
+                    timeout=Duration.seconds(120),
+                )
+
+            # Stage 3-4: Stop, the approval card, the plugin switches, pending cards.
+            chat.add_resource("cancel").add_method("POST", loop_integration(), **authed)
+            chat.add_resource("resume").add_method("POST", loop_integration(), **authed)
+
+            plugins = me.add_resource("plugins")
+            plugins.add_method("GET", loop_integration(), **authed)
+            plugins.add_resource("{plugin_id}").add_method("POST", loop_integration(), **authed)
+
+            me.add_resource("actions").add_resource("pending").add_method(
+                "GET", loop_integration(), **authed,
+            )
+
+            # Stage 5 (OAuth connectors). The app does not serve these yet, so
+            # until stage 5 ships a call answers 404 from the function; routing
+            # them now keeps the next stage from needing a gateway change.
+            connectors = self.api.root.add_resource("connectors")
+            connectors.add_resource("{plugin_id}").add_resource("start").add_method(
+                "POST", loop_integration(), **authed,
+            )
+            connectors.add_resource("callback").add_method("POST", loop_integration(), **authed)
+
+            me_connectors = me.add_resource("connectors")
+            me_connectors.add_method("GET", loop_integration(), **authed)
+            me_connectors.add_resource("{connector_id}").add_method(
+                "DELETE", loop_integration(), **authed,
+            )
+
         CfnOutput(
             self, "RestApiUrl",
             value=self.api.url,

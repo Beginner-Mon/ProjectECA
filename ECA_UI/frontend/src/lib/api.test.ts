@@ -2,7 +2,7 @@ import { describe, expect, it, vi } from 'vitest'
 
 vi.mock('aws-amplify/auth', () => ({ fetchAuthSession: vi.fn(async () => ({})) }))
 
-import { cancelChat, HttpStatusError, SSE_IDLE_TIMEOUT_MS, StreamInterruptedError, StreamTimeoutError, streamChat } from './api'
+import { cancelChat, HttpStatusError, resumeChat, SSE_IDLE_TIMEOUT_MS, StreamInterruptedError, StreamTimeoutError, streamChat } from './api'
 
 /*
  * A fake /chat response: the body is a list of chunks, optionally followed by a
@@ -261,5 +261,47 @@ describe('cancelChat', () => {
       session_id: 'sess-1',
       request_id: null,
     })
+  })
+})
+
+describe('resumeChat', () => {
+  const opts = { threadId: 't-1', actionId: 'a-1', decision: 'approve' as const }
+
+  it('posts the decision with the bearer token and streams the events', async () => {
+    const { fetchAuthSession } = await import('aws-amplify/auth')
+    vi.mocked(fetchAuthSession).mockResolvedValueOnce({
+      tokens: { idToken: { toString: () => 'tok' } },
+    })
+    const full = block('token', { content: 'ok' }) + block('done', {})
+    const resp = { ok: true, body: { getReader: () => {
+      let sent = false
+      return { read: async () => (sent ? { done: true, value: undefined } : ((sent = true), { done: false, value: enc.encode(full) })) }
+    } }, clone: () => ({ text: async () => full }) }
+    let url = ''
+    let init: RequestInit | undefined
+    vi.stubGlobal('fetch', vi.fn(async (u: RequestInfo | URL, i?: RequestInit) => {
+      url = String(u)
+      init = i
+      return resp
+    }))
+
+    const events: string[] = []
+    await resumeChat(opts, (t) => events.push(t))
+
+    expect(url.endsWith('/chat/resume')).toBe(true)
+    expect(init!.method).toBe('POST')
+    expect(init!.headers).toMatchObject({ Authorization: 'Bearer tok', Accept: 'text/event-stream' })
+    expect(JSON.parse(init!.body as string)).toEqual({ thread_id: 't-1', action_id: 'a-1', decision: 'approve' })
+    expect(events).toEqual(['token', 'done'])
+  })
+
+  it.each([404, 409, 500])('throws HttpStatusError with the status %i', async (status) => {
+    vi.stubGlobal('fetch', vi.fn(async () => new Response('{}', { status })))
+    await expect(resumeChat(opts, () => {})).rejects.toMatchObject({ name: 'HttpStatusError', status })
+  })
+
+  it('reports a stream that ended without done as interrupted', async () => {
+    fakeResponse([block('token', { content: 'a' })])
+    await expect(resumeChat(opts, () => {})).rejects.toBeInstanceOf(StreamInterruptedError)
   })
 })

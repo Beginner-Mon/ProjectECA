@@ -59,8 +59,12 @@ def _read_frontmatter(path: Path) -> tuple[str, str, str]:
 
 
 def file_sha256(path: Path) -> str:
-    """sha256 of the file bytes — what PINS.json stores."""
-    return hashlib.sha256(path.read_bytes()).hexdigest()
+    """sha256 of the file with CRLF folded to LF — what PINS.json stores.
+
+    A Windows checkout (`core.autocrlf=true`) rewrites SKILL.md with CRLF;
+    the pin must not depend on which line ending git wrote."""
+    data = path.read_bytes().replace(chr(13).encode() + b"\n", b"\n")
+    return hashlib.sha256(data).hexdigest()
 
 
 def _pins(skills_dir: Path) -> dict[str, str]:
@@ -78,9 +82,15 @@ def _pins(skills_dir: Path) -> dict[str, str]:
     return {str(k): str(v) for k, v in data.items()}
 
 
-def discover(skills_dir: Path | None = None) -> list[SkillInfo]:
-    """List every `<id>/SKILL.md` with usable frontmatter, sorted by id."""
+def discover(skills_dir: Path | None = None, *,
+             pinned_only: bool = False) -> list[SkillInfo]:
+    """List every `<id>/SKILL.md` with usable frontmatter, sorted by id.
+
+    `pinned_only=True` keeps only skills whose current hash matches
+    PINS.json (what the model may see); the pin CLI uses the default.
+    """
     root = skills_dir or SKILLS_DIR
+    pins = _pins(root) if pinned_only else {}
     out: list[SkillInfo] = []
     if not root.is_dir():
         return out
@@ -92,6 +102,10 @@ def discover(skills_dir: Path | None = None) -> list[SkillInfo]:
         if not name or not description:
             logger.warning(
                 "skill_invalid_frontmatter", extra={"skill": child.name})
+            continue
+        if pinned_only and pins.get(child.name) != file_sha256(md):
+            logger.warning(
+                "skill_unpinned_hidden", extra={"skill": child.name})
             continue
         out.append(SkillInfo(id=child.name, name=name,
                              description=description, path=md))
@@ -108,8 +122,11 @@ def load_skill(name: str, skills_dir: Path | None = None) -> dict[str, Any]:
       (edited without a re-pin) all skip with a warning.
     """
     root = skills_dir or SKILLS_DIR
+    # The name comes from the model: only a discovered id may reach the file
+    # system, so "../x" never builds a path.
+    known = {info.id for info in discover(root)}
     path = root / name / "SKILL.md"
-    if not (root.is_dir() and path.is_file()):
+    if name not in known:
         warning = f"Skill '{name}' does not exist."
         logger.warning("skill_load_skipped",
                        extra={"skill": name, "reason": "unknown"})

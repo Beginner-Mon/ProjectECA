@@ -6,14 +6,14 @@ description: Find an exercise in ECA's knowledge base and explain it — purpose
 # Explaining one exercise
 
 Work through these steps in order. Everything factual comes from a
-`kb_search` result; never invent steps, numbers or anatomy.
+`kb_search` result.
 
 1. Name the exercise precisely. Keep the user's word for it, but find its
    standard name in the KB and use that for the search.
 2. Search: `kb_search` with the exercise name plus "technique" or the body
    region. If nothing matches, retry once with the body region alone; if
    that still fails, say the exercise is not in the library and offer the
-   closest one you found. Do not describe the exercise from memory.
+   closest one you found.
 3. Build the explanation in this order, each part only as far as the KB
    supports it:
    - what it is for (purpose, the muscles it works);

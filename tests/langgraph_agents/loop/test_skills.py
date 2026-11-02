@@ -97,7 +97,7 @@ def test_skills_listed_in_tool_description(fake_retriever_tools):
     # The BODIES stay out: only the call loads them (plan §8).
     assert "Day N: <focus>" not in spec.description
     assert "Work through these steps in order" not in spec.description
-    assert "Do not describe the exercise from memory" not in spec.description
+    assert "Keep every number exactly as the KB states" not in spec.description
 
 
 # ── body loads only when the skill is called ──────────────────────────────
@@ -268,3 +268,117 @@ def test_scripted_turn_loads_skill_then_follows_it(fake_retriever_tools,
     # missing details), and the persona carried it out.
     assert "Day 1: core" in (final.get("agent_result") or "")
     assert "Day 1: core" in (final.get("final_answer") or "")
+
+
+# ── F1: line endings do not change the pin ────────────────────────────────
+
+CRLF = b"\r\n"
+LF = b"\n"
+
+
+def test_pin_survives_crlf_checkout(tmp_path):
+    root = _tmp_skills_dir(tmp_path)  # LF files, pinned
+    for md in root.glob("*/SKILL.md"):
+        text = md.read_bytes().replace(CRLF, LF)
+        md.write_bytes(text.replace(LF, CRLF))  # what autocrlf writes
+        assert CRLF in md.read_bytes()
+    assert load_skill("weekly-plan", skills_dir=root)["loaded"] is True
+    assert load_skill("explain-exercise", skills_dir=root)["loaded"] is True
+    assert [i.id for i in discover(root, pinned_only=True)] == [
+        "explain-exercise", "weekly-plan"]
+
+
+# ── F2: the catalog lists only pinned skills ──────────────────────────────
+
+def test_catalog_hides_unpinned_skill(fake_retriever_tools, tmp_path,
+                                      monkeypatch):
+    root = _tmp_skills_dir(tmp_path)
+    path = root / "weekly-plan" / "SKILL.md"
+    path.write_text(path.read_text(encoding="utf-8") + "\nedited\n",
+                    encoding="utf-8")
+    monkeypatch.setattr(loader_mod, "SKILLS_DIR", root)
+    spec = _load_skill_spec()
+    assert "weekly-plan" not in spec.description
+    assert "explain-exercise" in spec.description
+    assert spec.parameters["properties"]["name"]["enum"] == ["explain-exercise"]
+    # pin.py still sees every discoverable skill.
+    assert set(compute_pins(root)) == {"weekly-plan", "explain-exercise"}
+
+
+def test_no_pinned_skill_means_no_enum(fake_retriever_tools, tmp_path,
+                                       monkeypatch):
+    root = tmp_path / "s"
+    root.mkdir()
+    shutil.copytree(_packaged_skills_dir() / "weekly-plan",
+                    root / "weekly-plan")  # no PINS.json
+    monkeypatch.setattr(loader_mod, "SKILLS_DIR", root)
+    spec = _load_skill_spec()
+    assert "enum" not in spec.parameters["properties"]["name"]
+    assert "No skills are available" in spec.description
+
+
+# ── F3: the model's skill name never builds a path ────────────────────────
+
+def test_gate_refuses_unknown_skill_name(fake_retriever_tools):
+    from langgraph_agents.loop.gate import check
+    from langgraph_agents.loop.limits import new_turn
+    spec = _load_skill_spec()
+    call = {"id": "c1", "name": "load_skill",
+            "arguments": json.dumps({"name": "../weekly-plan"})}
+    decision = asyncio.run(check(call, spec, new_turn()))
+    assert decision.refusal is True
+    assert decision.kind == "invalid_args"
+    ok = asyncio.run(check(
+        {"id": "c2", "name": "load_skill",
+         "arguments": json.dumps({"name": "weekly-plan"})},
+        spec, new_turn()))
+    assert ok.refusal is False
+
+
+def test_load_skill_does_not_open_files_for_unknown_names(tmp_path,
+                                                          monkeypatch):
+    root = _tmp_skills_dir(tmp_path / "skills")
+    # A SKILL.md outside the skills dir that a "../" name would reach.
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    (outside / "SKILL.md").write_text(
+        "---\nname: X\ndescription: y\n---\nbody\n", encoding="utf-8")
+    opened: list[str] = []
+    real_read_text = Path.read_text
+    real_read_bytes = Path.read_bytes
+
+    def spy_text(self, *a, **k):
+        opened.append(str(self))
+        return real_read_text(self, *a, **k)
+
+    def spy_bytes(self, *a, **k):
+        opened.append(str(self))
+        return real_read_bytes(self, *a, **k)
+
+    monkeypatch.setattr(Path, "read_text", spy_text)
+    monkeypatch.setattr(Path, "read_bytes", spy_bytes)
+    out = load_skill("../outside", skills_dir=root)
+    assert out["loaded"] is False
+    assert "does not exist" in out["warning"]
+    assert not any("outside" in p for p in opened)
+
+
+# ── F4/F5: skill text ─────────────────────────────────────────────────────
+
+def test_skill_text_rules():
+    weekly = (_packaged_skills_dir() / "weekly-plan" / "SKILL.md").read_text(
+        encoding="utf-8")
+    explain = (_packaged_skills_dir() / "explain-exercise" / "SKILL.md"
+               ).read_text(encoding="utf-8")
+    assert "recall_self" not in weekly
+    assert "saved details at the top of the conversation" in " ".join(
+        weekly.split())
+    for text in (weekly, explain):
+        low = text.lower()
+        assert "never invent" not in low
+        assert "from memory" not in low
+        assert "never guess" not in low
+    # Grounding rules tied to retrieved material stay.
+    assert "must come from a `kb_search` result" in weekly
+    assert "only numbers the KB states" in weekly
+    assert "Keep every number exactly as the KB states it" in explain

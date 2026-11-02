@@ -12,7 +12,6 @@ fixture finalizer.
 from __future__ import annotations
 
 import asyncio
-import os
 import uuid
 
 import pytest
@@ -33,10 +32,13 @@ _U1, _UA, _UB = _uid(1), _uid(2), _uid(3)
 _S1, _SA = _uid(101), _uid(102)
 
 
-def _new_store(kind: str, max_concurrent=3):
+def _new_store(kind: str, max_concurrent=3, pg_client=None):
     if kind == "memory":
         return MemoryLeaseStore(max_concurrent=max_concurrent)
-    return PgLeaseStore(max_concurrent=max_concurrent)
+    # The test database only: the factory returns the `test_pg_client`
+    # fixture's client, never `get_pg_client()` (that is the app database).
+    return PgLeaseStore(max_concurrent=max_concurrent,
+                        get_pg_client=pg_client.get_client)
 
 
 _STORE_PARAMS = [
@@ -53,11 +55,9 @@ def store(request):
     the test's own rows by request_id. PG is skipped when unavailable.
     """
     kind = request.param
-    if kind == "pg":
-        ok, reason = _pg_available()
-        if not ok:
-            pytest.skip(reason or "PG unavailable")
-    store = _new_store(kind)
+    pg_client = (request.getfixturevalue("test_pg_client")
+                 if kind == "pg" else None)
+    store = _new_store(kind, pg_client=pg_client)
     created: list[str] = []
 
     def cleanup():
@@ -200,31 +200,71 @@ def test_cross_user_cancel_does_not_touch_other_user(store):
     assert asyncio.run(store.is_cancelled(_UA, _SA)) is True
 
 
-# ── PG availability ───────────────────────────────────────────────────────
+# ── Test-DSN guard (unit: runs without any database) ─────────────────────
 
-# Two separate skip reasons:
-#  * ECA_TEST_PG_DSN unset / connection fails → "PG unreachable: <type>"
-#    (unset → "ECA_TEST_PG_DSN not set")
-#  * connection works but agent_leases missing → "migration 019 not applied"
+from tests.langgraph_agents.loop.conftest import resolve_test_dsn  # noqa: E402
+
+_APP = "postgresql://u:p@ep-snowy-sky-123.us-east-1.aws.neon.tech/db"
+_TEST = "postgresql://u:p@ep-other-branch-456.us-east-1.aws.neon.tech/db"
 
 
-def _pg_available() -> tuple[bool, str | None]:
-    """Return (ok, skip_reason). skip_reason is set when PG can't be used."""
-    if not os.getenv("ECA_TEST_PG_DSN"):
-        return False, "ECA_TEST_PG_DSN not set"
-    try:
-        from langgraph_agents.shared import get_pg_client
+def test_resolve_test_dsn_unset():
+    dsn, reason = resolve_test_dsn({"VVA_PG_DSN": _APP})
+    assert dsn is None
+    assert reason == "ECA_TEST_PG_DSN not set"
 
-        async def _check() -> bool:
-            pg = get_pg_client()
-            async with pg.transaction():
-                row = await pg.fetchval(
-                    "SELECT to_regclass('agent_leases')")
-            return bool(row)
 
-        tables_ok = asyncio.run(_check())
-        if not tables_ok:
-            return False, "migration 019 not applied"
-        return True, None
-    except Exception as exc:  # noqa: BLE001
-        return False, f"PG unreachable: {type(exc).__name__}"
+def test_resolve_test_dsn_same_host_as_app_is_refused():
+    dsn, reason = resolve_test_dsn(
+        {"VVA_PG_DSN": _APP, "ECA_TEST_PG_DSN": _APP.replace("/db", "/other")})
+    assert dsn is None
+    assert reason == "ECA_TEST_PG_DSN points at the app database"
+
+
+def test_resolve_test_dsn_pooler_of_app_host_is_refused():
+    pooled = "postgresql://u:p@ep-snowy-sky-123-pooler.us-east-1.aws.neon.tech/db"
+    dsn, reason = resolve_test_dsn(
+        {"VVA_PG_DSN": _APP, "ECA_TEST_PG_DSN": pooled})
+    assert dsn is None
+    assert reason == "ECA_TEST_PG_DSN points at the app database"
+
+
+def test_resolve_test_dsn_different_host_is_returned():
+    dsn, reason = resolve_test_dsn(
+        {"VVA_PG_DSN": _APP, "ECA_TEST_PG_DSN": _TEST})
+    assert dsn == _TEST
+    assert reason is None
+
+
+
+# ── F7: asyncpg returns UUID objects; a renewal compares as strings ──────
+
+def test_pg_acquire_renewal_compares_uuid_with_str():
+    """A live row owned by this request (UUID object from the driver) is a
+    renewal, not a conflict, when the caller passes the id as a string."""
+    from contextlib import asynccontextmanager
+    from datetime import datetime, timedelta, timezone
+
+    req = uuid.uuid4()
+    live = datetime.now(timezone.utc) + timedelta(seconds=60)
+
+    class _Conn:
+        async def execute(self, *a, **k):
+            return None
+
+        async def fetchrow(self, *a, **k):
+            return {"request_id": req, "expires_at": live}  # UUID, not str
+
+        async def fetchval(self, *a, **k):
+            return 0
+
+    class _Pg:
+        @asynccontextmanager
+        async def transaction(self):
+            yield _Conn()
+
+    store = PgLeaseStore(max_concurrent=3, get_pg_client=lambda: _Pg())
+    assert asyncio.run(store.acquire(_U1, _S1, str(req), 120.0)) is True
+    # Another request on the same live session is still refused.
+    other = str(uuid.uuid4())
+    assert asyncio.run(store.acquire(_U1, _S1, other, 120.0)) is False

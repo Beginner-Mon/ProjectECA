@@ -157,7 +157,7 @@ class PgLeaseStore:
             if row is not None:
                 from datetime import datetime, timezone
                 live_here = row["expires_at"] > datetime.now(timezone.utc)
-                if live_here and row["request_id"] != request_id:
+                if live_here and str(row["request_id"]) != str(request_id):
                     return False
             # 2. Global cap on loop turns across the whole system: every live
             #    row except this exact pair counts, the caller's own other

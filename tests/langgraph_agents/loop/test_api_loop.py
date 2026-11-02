@@ -14,6 +14,8 @@ import re
 import threading
 import time as _time
 
+import pytest
+
 # Force loop mode BEFORE create_app is imported so the lifespan builds the
 # loop graph and select_mode returns "loop".
 os.environ["AGENT_MODE"] = "loop"
@@ -28,6 +30,33 @@ from langgraph_agents.loop.leases import MemoryLeaseStore, set_store  # noqa: E4
 
 load_settings.cache_clear()  # pick up AGENT_MODE=loop
 set_store(MemoryLeaseStore())  # tests run without the PG lease tables
+
+
+@pytest.fixture(autouse=True)
+def _no_database_no_housekeeping(monkeypatch):
+    """Keep these tests off the network and off the app database.
+
+    Each turn used to run for real: a Neon pool opened from `VVA_PG_DSN`
+    (the app database) and every query failed on the non-UUID test user, and
+    `housekeep` ran its compaction and fact extraction after `done`
+    (about 8 s of a 20-25 s test). Here the database refuses at once, and
+    `housekeep` is a recorder that the production wiring must still call.
+    Yields the list of `(user_id, session_id)` the turn scheduled.
+    """
+    from langgraph_agents.api import main as api_main
+    from langgraph_agents.db.postgres import PostgresClient
+
+    async def _refuse(self, *a, **k):
+        raise ConnectionRefusedError("test: database disabled")
+
+    scheduled: list[tuple[str, str]] = []
+
+    async def _housekeep(user_id, session_id, **kwargs):
+        scheduled.append((user_id, session_id))
+
+    monkeypatch.setattr(PostgresClient, "connect", _refuse)
+    monkeypatch.setattr(api_main, "housekeep", _housekeep)
+    return scheduled
 
 
 def _patch_agent_model(monkeypatch, reply_content):
@@ -84,6 +113,23 @@ def test_loop_event_order(monkeypatch):
     nodes = [d.get("node") for d in stage_payloads]
     assert "memory" in nodes
     assert "agent" in nodes
+
+
+def test_loop_turn_schedules_housekeeping(monkeypatch,
+                                          _no_database_no_housekeeping):
+    """Production path: a loop turn still starts `housekeep` for the user and
+    session (the autouse fixture only replaces its body)."""
+    _patch_agent_model(monkeypatch, "Bird dog works the core.")
+    app = create_app()
+    app.dependency_overrides[current_user_id] = override_user("u-loop-hk")
+    with TestClient(app) as client:
+        resp = client.post("/chat", json={
+            "query": "bird dog",
+            "session_id": "11111111-1111-1111-1111-111111111120",
+        })
+    assert resp.status_code == 200, resp.text
+    assert _no_database_no_housekeeping == [
+        ("u-loop-hk", "11111111-1111-1111-1111-111111111120")]
 
 
 def test_loop_final_answer(monkeypatch):

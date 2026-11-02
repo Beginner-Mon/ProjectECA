@@ -223,7 +223,7 @@ def _skill_catalog() -> str:
     """The skills listed in `load_skill`'s description (plan §8 / II.2):
     name and description only — the body loads when the tool is called."""
     from langgraph_agents.loop.skills import discover
-    infos = discover()
+    infos = discover(pinned_only=True)
     lines = [f"- {info.id}: {info.description}" for info in infos]
     if not lines:
         return "No skills are available right now."
@@ -241,14 +241,20 @@ async def _load_skill_call(args: dict, config: dict) -> dict:
 
 
 def load_skill_spec() -> ToolSpec:
+    from langgraph_agents.loop.skills import discover
+    ids = [info.id for info in discover(pinned_only=True)]
+    name_prop: dict = {
+        "type": "string",
+        "description": "Skill id to load (from the list in this description)."}
+    if ids:
+        name_prop["enum"] = ids
     return ToolSpec(
         name="load_skill",
         description=_skill_catalog(),
         parameters={
             "type": "object",
             "properties": {
-                "name": {"type": "string",
-                         "description": "Skill id to load (from the list in this description)."},
+                "name": name_prop,
             },
             "required": ["name"],
             "additionalProperties": False,

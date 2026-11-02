@@ -2,6 +2,8 @@
 import { useTranslation } from 'react-i18next'
 import { X, ChevronLeft } from 'lucide-react'
 import type { LlmPreset } from '@/lib/llmPresets'
+import { listPlugins, type PluginInfo, type PluginsResponse } from '@/lib/api'
+import { replacePlugin } from '@/lib/plugins'
 
 const ProfileContent = lazy(() => import('./ProfileContent'))
 const SettingsContent = lazy(() => import('./SettingsContent'))
@@ -11,6 +13,7 @@ const AboutUsContent = lazy(() => import('./AboutUsContent'))
 const BillingContent = lazy(() => import('./BillingContent'))
 const LegalContent = lazy(() => import('./LegalContent'))
 const MemoryContent = lazy(() => import('./MemoryContent'))
+const PluginsContent = lazy(() => import('./PluginsContent'))
 
 interface ProfileSettingsModalProps {
   type: 'profile' | 'settings' | 'notifications' | 'graphics' | 'about' | 'billing'
@@ -24,10 +27,22 @@ const ROOT_VIEW = 'main' as const
 
 export default function ProfileSettingsModal({ type, onClose, onBack, initialSettingsView }: ProfileSettingsModalProps) {
   const { t } = useTranslation()
-  const [settingsView, setSettingsView] = useState<'main' | 'providers' | 'provider-detail' | 'graphics' | 'about' | 'language' | 'legal' | 'memory'>(
+  const [settingsView, setSettingsView] = useState<'main' | 'providers' | 'provider-detail' | 'graphics' | 'about' | 'language' | 'legal' | 'memory' | 'plugins'>(
     type === 'settings' && initialSettingsView ? initialSettingsView : ROOT_VIEW,
   )
   const [selectedProvider, setSelectedProvider] = useState<LlmPreset | undefined>()
+  // Only agent-loop users have plugins: the entry stays hidden until the server says so.
+  const [plugins, setPlugins] = useState<PluginsResponse | null>(null)
+
+  useEffect(() => {
+    if (type !== 'settings') return
+    let alive = true
+    listPlugins().then((answer) => { if (alive) setPlugins(answer) }).catch(() => {})
+    return () => { alive = false }
+  }, [type])
+
+  const handlePluginChange = (updated: PluginInfo) =>
+    setPlugins((prev) => (prev ? { ...prev, plugins: replacePlugin(prev.plugins, updated) } : prev))
 
   useEffect(() => {
     // eslint-disable-next-line react-hooks/set-state-in-effect -- reset view when type changes
@@ -57,7 +72,7 @@ export default function ProfileSettingsModal({ type, onClose, onBack, initialSet
       setSelectedProvider(undefined)
     } else if (type === 'settings' && settingsView === 'providers') {
       setSettingsView(ROOT_VIEW)
-    } else if (settingsView === 'graphics' || settingsView === 'about' || settingsView === 'language' || settingsView === 'legal' || settingsView === 'memory') {
+    } else if (settingsView === 'graphics' || settingsView === 'about' || settingsView === 'language' || settingsView === 'legal' || settingsView === 'memory' || settingsView === 'plugins') {
       setSettingsView(ROOT_VIEW)
     } else {
       // `onBack ?? onClose()` read onBack and discarded it: when a parent
@@ -90,6 +105,8 @@ export default function ProfileSettingsModal({ type, onClose, onBack, initialSet
                 ? t('legal.title')
               : settingsView === 'memory'
                 ? t('memory.title')
+              : settingsView === 'plugins'
+                ? t('plugins.title')
               : settingsView === 'graphics'
                 ? t('modal.graphics')
                 : settingsView === 'about'
@@ -161,6 +178,8 @@ export default function ProfileSettingsModal({ type, onClose, onBack, initialSet
             <LegalContent />
           ) : settingsView === 'memory' ? (
             <MemoryContent />
+          ) : settingsView === 'plugins' && plugins ? (
+            <PluginsContent plugins={plugins.plugins} onChange={handlePluginChange} />
           ) : (
             <SettingsContent
               onNavigateToProviders={() => setSettingsView('providers')}
@@ -169,6 +188,7 @@ export default function ProfileSettingsModal({ type, onClose, onBack, initialSet
               onNavigateToLanguage={() => setSettingsView('language')}
               onNavigateToLegal={() => setSettingsView('legal')}
               onNavigateToMemory={() => setSettingsView('memory')}
+              onNavigateToPlugins={plugins?.loop ? () => setSettingsView('plugins') : undefined}
             />
           )}
         </Suspense>

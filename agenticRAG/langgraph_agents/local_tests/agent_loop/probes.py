@@ -2,7 +2,7 @@
 
 Each probe carries:
 
-    id         P1..P13
+    id         P1..P13 (set G, stage 3C: G1..G5, see PROBES_G)
     category   one of the card's probe categories
     message    the user text sent to the model (English or Vietnamese on
                purpose: real users write Vietnamese while the system prompt
@@ -233,8 +233,124 @@ PROBES: list[dict[str, Any]] = [
 ]
 
 
+# ── Probe set G (stage 3C): does a skill or a plugin help? ────────────────
+#
+# Not part of `--probes all` (that stays P1..P13). Select with `--probes G` or
+# `G1,G3`. The checks are structural (which tool, which argument); the answers
+# of G1..G3 are saved for K to compare with and without `--skills` /
+# `--plugins` (`manual`). A check on a tool the run does not offer is dropped by
+# `effective_probe`, so an "off" run is scored on what is left.
+DEEPWIKI_TOOLS = ["deepwiki__read_wiki_structure", "deepwiki__read_wiki_contents",
+                  "deepwiki__ask_question"]
+G_TOOLS = ["load_skill", "kb_search", *DEEPWIKI_TOOLS]
+
+PROBES_G: list[dict[str, Any]] = [
+    {
+        "id": "G1", "category": "skill: weekly-plan",
+        "message": "Lập kế hoạch tập 7 ngày cho đầu gối của tôi, 3 buổi mỗi tuần.",
+        "tools": G_TOOLS,
+        "dry_tools": ["load_skill", "kb_search"],
+        "dry_args": {"load_skill": {"name": "weekly-plan"}},
+        "scenario": {},
+        "checks": {
+            "expected_calls": [
+                {"tool": "load_skill", "args_contains": {"name": "weekly-plan"}},
+                {"tool": "kb_search", "args_contains": {}},
+            ],
+            "forbid_calls": [*DEEPWIKI_TOOLS],
+            "manual": True,
+        },
+    },
+    {
+        "id": "G2", "category": "skill: explain-exercise",
+        "message": "How do I do a wall slide properly for my knee?",
+        "tools": G_TOOLS,
+        "dry_tools": ["load_skill", "kb_search"],
+        "dry_args": {"load_skill": {"name": "explain-exercise"}},
+        "scenario": {},
+        "checks": {
+            "expected_calls": [
+                {"tool": "load_skill", "args_contains": {"name": "explain-exercise"}},
+                {"tool": "kb_search", "args_contains": {}},
+            ],
+            "forbid_calls": [*DEEPWIKI_TOOLS],
+            "manual": True,
+        },
+    },
+    {
+        "id": "G3", "category": "plugin: deepwiki",
+        "message": ("What does the documentation of the GitHub repo langchain-ai/langgraph "
+                    "say about checkpointers?"),
+        "tools": G_TOOLS,
+        "dry_tools": ["deepwiki__ask_question"],
+        "scenario": {},
+        "checks": {
+            "any_of_calls": [
+                {"tool": t, "args_contains": {"repoName": "langchain-ai/langgraph"}}
+                for t in DEEPWIKI_TOOLS
+            ],
+            "forbid_calls": ["load_skill"],
+            "manual": True,
+        },
+    },
+    {
+        "id": "G4", "category": "unrelated: small talk",
+        "message": "Cảm ơn nhé, hôm nay vậy là đủ rồi.",
+        "tools": G_TOOLS,
+        "dry_tools": [],
+        "scenario": {},
+        "checks": {"forbid_calls": ["*"]},
+    },
+    {
+        "id": "G5", "category": "unrelated: plain KB",
+        "message": "What exercise helps shoulder pain?",
+        "tools": G_TOOLS,
+        "dry_tools": ["kb_search"],
+        "dry_args": {"kb_search": {"query": "shoulder"}},
+        "scenario": {},
+        "checks": {
+            "expected_calls": [
+                {"tool": "kb_search", "args_contains": {"query": "shoulder"}},
+            ],
+            "forbid_calls": ["load_skill", *DEEPWIKI_TOOLS],
+        },
+    },
+]
+
+ALL_PROBES: list[dict[str, Any]] = [*PROBES, *PROBES_G]
+
+
+def effective_probe(probe: dict[str, Any], skills: bool = True,
+                    plugins: tuple[str, ...] = ()) -> dict[str, Any]:
+    """The probe as one run sees it, for `--skills` and `--plugins`.
+
+    `load_skill` is offered only with skills on; a tool named `<id>__<tool>` is
+    offered only when `<id>` is in `plugins`. Expected calls on a tool that is
+    not offered are dropped (and `any_of_calls` when none of its tools is
+    offered), so an "off" run is scored on what it could do. `forbid_*` stay.
+    A probe with nothing to drop is returned unchanged (same object).
+    """
+    offered = [t for t in probe["tools"]
+               if (t != "load_skill" or skills)
+               and ("__" not in t or t.split("__", 1)[0] in plugins)]
+    if offered == list(probe["tools"]):
+        return probe
+    checks = dict(probe.get("checks") or {})
+    for key in ("expected_calls", "any_of_calls"):
+        if key in checks:
+            kept = [e for e in checks[key] if e["tool"] in offered]
+            if kept:
+                checks[key] = kept
+            else:
+                del checks[key]
+    out = dict(probe)
+    out["tools"] = offered
+    out["checks"] = checks
+    return out
+
+
 def probe_by_id(probe_id: str) -> dict[str, Any]:
-    for probe in PROBES:
+    for probe in ALL_PROBES:
         if probe["id"] == probe_id:
             return probe
     raise KeyError(f"unknown probe id: {probe_id}")
@@ -291,6 +407,19 @@ def user_facts_in_args(call_log: list[dict[str, Any]]) -> list[dict[str, Any]]:
         if terms:
             hits.append({"round": c.get("round"), "tool": "web_search", "terms": terms})
     return hits
+
+
+def _check_any_of(checks: dict[str, Any], call_log: list[dict[str, Any]]) -> str | None:
+    """`any_of_calls`: at least one executed call matches one of the entries."""
+    options = checks.get("any_of_calls") or []
+    if not options:
+        return None
+    for c in call_log:
+        for opt in options:
+            if c.get("tool") == opt["tool"] and \
+                    _args_match(opt.get("args_contains", {}), c.get("args") or {}):
+                return None
+    return "any_of_calls"
 
 
 def _check_forbid_args(checks: dict[str, Any], call_log: list[dict[str, Any]]) -> str | None:
@@ -359,6 +488,7 @@ def check_probe(probe: dict[str, Any], call_log: list[dict[str, Any]],
     # calls and arguments first, wording last
     for fail in (_check_same_round(checks, call_log),
                  _check_max_calls(checks, call_log),
+                 _check_any_of(checks, call_log),
                  _check_forbid_args(checks, call_log)):
         if fail:
             return fail

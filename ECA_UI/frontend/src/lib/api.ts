@@ -883,3 +883,32 @@ export async function adminAuditLog(): Promise<AuditEntry[]> {
   const { data } = await http.get('/admin/audit')
   return (data as { entries: AuditEntry[] }).entries
 }
+
+// ── Plugins (agent-loop users only) ─────────────────────────────────────────
+
+/** One plugin as the settings panel shows it. */
+export interface PluginInfo {
+  id: string
+  name: string
+  publisher: string
+  description: string
+  enabled: boolean
+  /** active | disabled | off | unconfigured | definition_changed | unavailable | web_search_off */
+  status: string
+}
+
+/** `loop` is false for users on the classic pipeline: they have no plugins. */
+export interface PluginsResponse {
+  loop: boolean
+  plugins: PluginInfo[]
+}
+
+export async function listPlugins(): Promise<PluginsResponse> {
+  const { data } = await http.get('/me/plugins')
+  return data as PluginsResponse
+}
+
+export async function setPluginEnabled(id: string, enabled: boolean): Promise<PluginInfo> {
+  const { data } = await http.post(`/me/plugins/${encodeURIComponent(id)}`, { enabled })
+  return data as PluginInfo
+}

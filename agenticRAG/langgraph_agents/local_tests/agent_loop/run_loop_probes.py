@@ -20,8 +20,17 @@ What is real and what is not:
   a probe runs. Attempts are counted in the row (`db_access_attempts`).
 
 CLI (exactly one of --dry-run / --live):
-    --probes all|P1,P3   --repeats N   --label NAME   --pace-sec N
+    --probes all|G|P1,P3,G2   --repeats N   --label NAME   --pace-sec N
     --effort low|medium|high   [--out-dir DIR]
+    --skills on|off     whether `load_skill` is offered (default on)
+    --plugins ID,ID     plugins on for the run (default none); a probe tool named
+                        `<id>__<tool>` is offered only for a listed id
+
+`--probes all` is P1..P13; set G (G1..G5, skills and plugins) is `--probes G`.
+A check on a tool the run does not offer is dropped, so an off run is scored on
+what it could do. `--dry-run` uses fake plugin tools; with `--live` a listed
+plugin is the real catalog entry (its tools come from the server, and the run
+stops before any model call if the plugin is not active, e.g. not pinned).
 
 `--dry-run` scripts a `FakeAgentModel` (no network). `--live` needs
 GROQ_API_KEY (one key or a comma-separated list; also read from
@@ -57,7 +66,8 @@ from langgraph_agents.local_tests.agent_loop.fake_tools import (  # noqa: E402
     bind_tools, schemas_for,
 )
 from langgraph_agents.local_tests.agent_loop.probes import (  # noqa: E402
-    PROBES, check_probe, probe_by_id, user_facts_in_args,
+    ALL_PROBES, PROBES, PROBES_G, check_probe, effective_probe, probe_by_id,
+    user_facts_in_args,
 )
 from langgraph_agents.local_tests.agent_loop.prompts import USER_FACTS  # noqa: E402
 from langgraph_agents.local_tests.agent_loop.run_probes import (  # noqa: E402
@@ -81,6 +91,10 @@ TOOL_RISK: dict[str, dict[str, Any]] = {
     "web_search": {"risk": "egress_read"},
     "read_inbox": {"risk": "egress_read", "data_class": "personal"},
     "create_reminder": {"risk": "write"},
+    # fake stand-ins for the DeepWiki plugin's tools (set G)
+    "deepwiki__read_wiki_structure": {"risk": "egress_read", "plugin": "deepwiki"},
+    "deepwiki__read_wiki_contents": {"risk": "egress_read", "plugin": "deepwiki"},
+    "deepwiki__ask_question": {"risk": "egress_read", "plugin": "deepwiki"},
 }
 
 _NOTES_RE = re.compile(
@@ -107,7 +121,13 @@ def build_probe_specs(probe: dict[str, Any], state: dict[str, Any]) -> list[Any]
 
     fakes = bind_tools(state, probe.get("scenario"))
     specs: list[Any] = []
-    for schema in schemas_for(list(probe["tools"])):
+    for tool_name in probe["tools"]:
+        if tool_name == "load_skill":
+            # the real tool over the real skill files (no network, no model)
+            from langgraph_agents.loop.tools import builtin
+            specs.append(builtin.load_skill_spec())
+            continue
+        schema = schemas_for([tool_name])[0]
         fn = schema["function"]
         name = fn["name"]
         fake = fakes[name]
@@ -118,10 +138,38 @@ def build_probe_specs(probe: dict[str, Any], state: dict[str, Any]) -> list[Any]
 
         specs.append(ToolSpec(
             name=name, description=fn["description"], parameters=fn["parameters"],
-            risk=opts["risk"], source="builtin", call=_call,
+            risk=opts["risk"],
+            source="plugin" if opts.get("plugin") else "builtin", call=_call,
             data_class=opts.get("data_class", "none"),
+            plugin_id=opts.get("plugin"),
         ))
     return specs
+
+
+def plugin_ids(text: str | None) -> tuple[str, ...]:
+    return tuple(p.strip() for p in (text or "").split(",") if p.strip())
+
+
+async def real_plugin_turn(ids: tuple[str, ...], request_id: str) -> Any:
+    """`--live --plugins ...`: the real catalog entries, prepared the way a
+    turn prepares them (listing, pin check). Every listed id is switched on in
+    an in-memory store; nothing is written anywhere."""
+    from langgraph_agents.loop.config import LoopSettings
+    from langgraph_agents.loop.plugins import runtime
+    from langgraph_agents.loop.plugins.manifest import load_catalog
+    from langgraph_agents.loop.plugins.store import MemoryPluginStore
+
+    catalog = [m for m in load_catalog() if m.id in ids]
+    missing = sorted(set(ids) - {m.id for m in catalog})
+    if missing:
+        raise SystemExit(f"unknown plugin id(s): {', '.join(missing)}")
+    store = MemoryPluginStore()
+    for m in catalog:
+        await store.set_enabled("probe-user", m.id, True)
+    return await runtime.prepare_turn(
+        user_id="probe-user", request_id=request_id,
+        settings=LoopSettings(plugins_disabled=False), catalog=catalog,
+        store=store, web_search=True)
 
 
 class PassthroughPersona:
@@ -365,7 +413,8 @@ def empty_row(probe: dict[str, Any], mode: str, effort: str, repeat: int) -> dic
 
 async def run_probe(probe: dict[str, Any], repeat: int, *, agent_model: Any,
                     mode: str, effort: str = "low",
-                    timeout_s: float = 120.0) -> dict[str, Any]:
+                    timeout_s: float = 120.0, skills: bool = True,
+                    plugins: tuple[str, ...] = ()) -> dict[str, Any]:
     """One row: one loop turn on this probe, scored with `check_probe`.
 
     `agent_model` is the model the agent node calls (a `FakeAgentModel`, or an
@@ -376,9 +425,20 @@ async def run_probe(probe: dict[str, Any], repeat: int, *, agent_model: Any,
     from langgraph_agents.loop.graph import build_loop_graph
     from langgraph_agents.loop.limits import Budget, new_turn
 
+    probe = effective_probe(probe, skills=skills, plugins=plugins)
     row = empty_row(probe, mode, effort, repeat)
+    row.update({"skills": "on" if skills else "off", "plugins": list(plugins),
+                "offered_tools": list(probe["tools"])})
     state: dict[str, Any] = {}
     specs = build_probe_specs(probe, state)
+    plugin_turn = None
+    if mode == MODE_LIVE and plugins:
+        # a real plugin replaces the fake tools of the same id
+        plugin_turn = await real_plugin_turn(plugins, f"probe-{probe['id']}-{repeat}")
+        specs = [sp for sp in specs if getattr(sp, "plugin_id", None) not in plugins]
+        specs += plugin_turn.specs
+        row["plugin_status"] = dict(plugin_turn.statuses)
+        row["offered_tools"] = [sp.name for sp in specs]
     recorder = RecordingModel(agent_model)
     persona = PassthroughPersona()
 
@@ -387,6 +447,8 @@ async def run_probe(probe: dict[str, Any], repeat: int, *, agent_model: Any,
     turn.budget = Budget(time_fn=lambda: time.monotonic() - recorder.paused_seconds())
     turn.user_id = "probe-user"
     turn.current_message = probe["message"]
+    if plugin_turn is not None:
+        turn.plugins = plugin_turn
 
     routine = SimpleNamespace(verdict=fallback_verdict())
     done = asyncio.get_running_loop().create_future()
@@ -422,6 +484,9 @@ async def run_probe(probe: dict[str, Any], repeat: int, *, agent_model: Any,
             error = "timeout"
         except Exception as exc:  # noqa: BLE001  (e.g. ScriptExhausted)
             error = f"{type(exc).__name__}: {exc}"
+        finally:
+            if plugin_turn is not None:
+                await plugin_turn.close()
     elapsed = time.perf_counter() - t0
     error = error or _agent_error(final)
 
@@ -480,16 +545,23 @@ DRY_ARGS: dict[str, dict[str, Any]] = {
     "kb_search": {"query": "knee"},
     "web_search": {"query": "gentle knee exercises"},
     "read_inbox": {},
+    "load_skill": {"name": "weekly-plan"},
+    "deepwiki__read_wiki_structure": {"repoName": "langchain-ai/langgraph"},
+    "deepwiki__read_wiki_contents": {"repoName": "langchain-ai/langgraph"},
+    "deepwiki__ask_question": {"repoName": "langchain-ai/langgraph",
+                               "question": "How do checkpointers work?"},
 }
 
 
-def _fake_replies(tool_names: list[str]) -> list[AgentReply]:
-    """Dry-run script: call every offered tool once (one round), then answer."""
+def _fake_replies(tool_names: list[str],
+                  args: dict[str, dict[str, Any]] | None = None) -> list[AgentReply]:
+    """Dry-run script: call every listed tool once (one round), then answer."""
+    args = {**DRY_ARGS, **(args or {})}
     replies: list[AgentReply] = []
     if tool_names:
         replies.append(AgentReply(content="", tool_calls=[
             {"id": f"tc_{i}", "name": name,
-             "arguments": json.dumps(DRY_ARGS.get(name, {}))}
+             "arguments": json.dumps(args.get(name, {}))}
             for i, name in enumerate(tool_names)]))
     replies.append(AgentReply(content="Here is what I found."))
     return replies
@@ -497,7 +569,11 @@ def _fake_replies(tool_names: list[str]) -> list[AgentReply]:
 
 def make_dry_model(probe: dict[str, Any]):
     from tests.langgraph_agents.loop.fakes import FakeAgentModel
-    return FakeAgentModel(_fake_replies(list(probe["tools"])))
+    # A probe may name the tools its dry script calls (set G); the others call
+    # every offered tool. Only offered tools are called.
+    offered = list(probe["tools"])
+    names = [t for t in probe.get("dry_tools", offered) if t in offered]
+    return FakeAgentModel(_fake_replies(names, probe.get("dry_args")))
 
 
 def make_live_model(api_key: str, effort: str):
@@ -512,7 +588,9 @@ def make_live_model(api_key: str, effort: str):
     )
 
 
-async def run_live_probe(probe, repeat, keys: list[str], effort: str) -> dict[str, Any]:
+async def run_live_probe(probe, repeat, keys: list[str], effort: str, *,
+                         skills: bool = True,
+                         plugins: tuple[str, ...] = ()) -> dict[str, Any]:
     """Live run with key rotation: a key's daily token limit moves to the
     next key; with none left the row carries `daily_stop`."""
     row: dict[str, Any] = {}
@@ -520,7 +598,8 @@ async def run_live_probe(probe, repeat, keys: list[str], effort: str) -> dict[st
         model = make_live_model(key, effort)
         try:
             row = await run_probe(probe, repeat, agent_model=model,
-                                  mode=MODE_LIVE, effort=effort)
+                                  mode=MODE_LIVE, effort=effort,
+                                  skills=skills, plugins=plugins)
         finally:
             # each probe runs in its own asyncio.run(): close the client
             # before its loop does
@@ -557,11 +636,25 @@ def _summary(rows: list[dict[str, Any]], probe_ids: list[str]) -> list[str]:
     return lines
 
 
+async def _preflight_plugins(ids: tuple[str, ...]) -> dict[str, str]:
+    pt = await real_plugin_turn(ids, "probe-preflight")
+    try:
+        return {i: pt.statuses.get(i, "unknown") for i in ids}
+    finally:
+        await pt.close()
+
+
 def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(description=__doc__,
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--probes", default="all",
-                    help="all or a comma-separated list of probe ids (P1,P3)")
+                    help="all (P1..P13), G (set G), or a comma-separated list of "
+                         "probe ids (P1,P3,G2)")
+    ap.add_argument("--skills", default="on", choices=["on", "off"],
+                    help="whether load_skill is offered (default on)")
+    ap.add_argument("--plugins", default="",
+                    help="comma-separated plugin ids switched on for the run "
+                         "(default none)")
     ap.add_argument("--repeats", type=int, default=1)
     ap.add_argument("--label", default="loop-probes")
     ap.add_argument("--pace-sec", dest="pace_sec", type=float, default=0.0,
@@ -576,10 +669,26 @@ def main(argv: list[str] | None = None) -> int:
                        help="production AgentModel against Groq (needs GROQ_API_KEY)")
     args = ap.parse_args(argv)
 
-    probe_ids = [p["id"] for p in PROBES] if args.probes == "all" \
-        else [t.strip() for t in args.probes.split(",") if t.strip()]
+    if args.probes == "all":
+        probe_ids = [p["id"] for p in PROBES]
+    elif args.probes.strip().upper() == "G":
+        probe_ids = [p["id"] for p in PROBES_G]
+    else:
+        probe_ids = [t.strip() for t in args.probes.split(",") if t.strip()]
     probes = [probe_by_id(t) for t in probe_ids]
     mode = MODE_LIVE if args.live else MODE_DRY
+    skills = args.skills == "on"
+    plugins = plugin_ids(args.plugins)
+    if args.live and plugins:
+        # stop before any model call when a real plugin is not usable
+        pt = asyncio.run(_preflight_plugins(plugins))
+        bad = {k: v for k, v in pt.items() if v != "active"}
+        print(f"plugins: {pt}", flush=True)
+        if bad:
+            print(f"plugin(s) not active: {bad} (a plugin with an unpinned or changed "
+                  "definition list stays off until K pins it with review.py)",
+                  file=sys.stderr)
+            return 3
 
     keys: list[str] = []
     if args.live:
@@ -592,26 +701,30 @@ def main(argv: list[str] | None = None) -> int:
               flush=True)
 
     out_path = Path(args.out_dir) / f"{args.label}.jsonl"
-    done: set[tuple[str, str, str, int]] = set()
+    done: set[tuple[str, str, str, int, str, tuple[str, ...]]] = set()
     if args.live and out_path.exists():
         for line in out_path.read_text(encoding="utf-8").splitlines():
             if line.strip():
                 r = json.loads(line)
-                done.add((r["probe"], r["mode"], r["effort"], int(r["repeat"])))
+                done.add((r["probe"], r["mode"], r["effort"], int(r["repeat"]),
+                          r.get("skills", "on"), tuple(r.get("plugins") or ())))
         print(f"{out_path.name}: {len(done)} run(s) already recorded; skipping them",
               flush=True)
 
     plan = [(r, probe) for r in range(1, args.repeats + 1) for probe in probes
-            if (probe["id"], mode, args.effort, r) not in done]
+            if (probe["id"], mode, args.effort, r, args.skills, plugins) not in done]
     print(f"{len(plan)} run(s) planned: probes {probe_ids}, repeats {args.repeats}, "
-          f"{mode}, effort {args.effort}, pace {args.pace_sec}s -> {out_path}", flush=True)
+          f"{mode}, effort {args.effort}, skills {args.skills}, "
+          f"plugins {list(plugins) or 'none'}, pace {args.pace_sec}s -> {out_path}",
+          flush=True)
 
     rows: list[dict[str, Any]] = []
     for i, (repeat, probe) in enumerate(plan, 1):
         if i > 1 and args.pace_sec > 0:
             time.sleep(args.pace_sec)
         if args.live:
-            row = asyncio.run(run_live_probe(probe, repeat, keys, args.effort))
+            row = asyncio.run(run_live_probe(probe, repeat, keys, args.effort,
+                                             skills=skills, plugins=plugins))
             if row.get("daily_stop"):
                 print("daily token limit reached; rerun the same command to resume",
                       flush=True)
@@ -621,8 +734,10 @@ def main(argv: list[str] | None = None) -> int:
                       flush=True)
                 break
         else:
-            row = asyncio.run(run_probe(probe, repeat, agent_model=make_dry_model(probe),
-                                        mode=mode, effort=args.effort))
+            row = asyncio.run(run_probe(
+                probe, repeat,
+                agent_model=make_dry_model(effective_probe(probe, skills, plugins)),
+                mode=mode, effort=args.effort, skills=skills, plugins=plugins))
         mark = "." if row["pass"] else "!"
         print(f"  {mark} [{i}/{len(plan)}] r{repeat} {mode} {args.effort} {probe['id']}: "
               f"{'pass' if row['pass'] else (row['failed_check'] or row['error'] or row['stop_reason'])} "

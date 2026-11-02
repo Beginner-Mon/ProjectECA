@@ -354,7 +354,7 @@ def test_run_live_probe_closes_the_model_client(monkeypatch):
     model = AgentModel(base_url="http://x", api_key="k", model="m")
     model._clients["http://x|k"] = _Client()          # as _call_once caches it
 
-    async def _fake_run_probe(probe, repeat, *, agent_model, mode, effort):
+    async def _fake_run_probe(probe, repeat, *, agent_model, mode, effort, **_flags):
         assert agent_model is model
         return {"pass": True, "error": ""}
 

@@ -122,6 +122,8 @@
     "memory_desc": "What ECA remembers about you",
     "notifications": "Notifications",
     "official": "Official",
+    "plugins": "Plugins",
+    "plugins_desc": "Choose which plugins the assistant may use",
     "profile": "Profile",
     "providers": "Select Providers",
     "providers_desc": "Configure your LLM API providers and keys",
@@ -377,5 +379,19 @@
     "delete_message": "Delete the \"{{tier}}\" tier? Only possible when nobody is on it.",
     "reset_title": "Reset usage?",
     "reset_message": "Set today's usage for {{email}} back to zero?"
+  },
+  "plugins": {
+    "title": "Plugins",
+    "empty": "No plugins are available.",
+    "by": "By {{publisher}}",
+    "save_failed": "Could not save. Try again.",
+    "status_active": "Ready",
+    "status_disabled": "Off",
+    "status_off": "Switched off by the administrator",
+    "status_unconfigured": "Not set up on this server",
+    "status_definition_changed": "Waiting for review",
+    "status_unavailable": "Not responding",
+    "status_web_search_off": "Web search is off",
+    "status_unknown": "Unknown"
   }
 }

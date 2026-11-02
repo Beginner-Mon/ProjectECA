@@ -167,9 +167,41 @@ READ_INBOX_SCHEMA: dict[str, Any] = {
     },
 }
 
+# Stage 3C: stand-ins for the tools the DeepWiki plugin declares (names as the
+# model sees them, D4). Dry runs and plugin-less runs use these; `--live
+# --plugins deepwiki` replaces them with the real catalog entry.
+def _deepwiki_schema(tool: str, description: str, props: dict[str, Any],
+                     required: list[str]) -> dict[str, Any]:
+    return {
+        "type": "function",
+        "function": {
+            "name": f"deepwiki__{tool}",
+            "description": description,
+            "parameters": {"type": "object", "properties": props,
+                           "required": required, "additionalProperties": False},
+        },
+    }
+
+
+_REPO = {"type": "string", "description": "GitHub repository as owner/name"}
+DEEPWIKI_SCHEMAS: list[dict[str, Any]] = [
+    _deepwiki_schema("read_wiki_structure",
+                     "List the documentation topics of a public GitHub repository.",
+                     {"repoName": _REPO}, ["repoName"]),
+    _deepwiki_schema("read_wiki_contents",
+                     "Read the documentation of a public GitHub repository.",
+                     {"repoName": _REPO}, ["repoName"]),
+    _deepwiki_schema("ask_question",
+                     "Ask a question about a public GitHub repository and get an "
+                     "answer grounded in its documentation.",
+                     {"repoName": _REPO, "question": {"type": "string"}},
+                     ["repoName", "question"]),
+]
+
 SCHEMAS_BY_NAME: dict[str, dict[str, Any]] = {
     schema["function"]["name"]: schema
-    for schema in [*TOOL_SCHEMAS, KB_SEARCH_SCHEMA, WEB_SEARCH_SCHEMA, READ_INBOX_SCHEMA]
+    for schema in [*TOOL_SCHEMAS, KB_SEARCH_SCHEMA, WEB_SEARCH_SCHEMA, READ_INBOX_SCHEMA,
+                   *DEEPWIKI_SCHEMAS]
 }
 
 
@@ -262,6 +294,20 @@ def bind_tools(state: dict[str, Any],
     def read_inbox() -> dict[str, Any]:
         return {"messages": [dict(m) for m in scenario.get("inbox", [])]}
 
+    def deepwiki_structure(repoName: str) -> dict[str, Any]:
+        return {"repo": repoName, "topics": ["Overview", "Persistence and checkpointers",
+                                             "Graph API"]}
+
+    def deepwiki_contents(repoName: str) -> dict[str, Any]:
+        return {"repo": repoName,
+                "text": "Checkpointers save the graph state after each step so a run "
+                        "can resume or be replayed."}
+
+    def deepwiki_ask(repoName: str, question: str) -> dict[str, Any]:
+        return {"repo": repoName, "question": question,
+                "answer": "A checkpointer stores a snapshot of the graph state at every "
+                          "step, keyed by thread id."}
+
     def scenario_layer(name: str, fn: Callable[..., dict[str, Any]]):
         # each layer captures the CURRENT inner by value (`inner = run`),
         # never the rebinding variable
@@ -295,4 +341,13 @@ def bind_tools(state: dict[str, Any],
         "kb_search": wrap("kb_search", scenario_layer("kb_search", kb_search)),
         "web_search": wrap("web_search", scenario_layer("web_search", web_search)),
         "read_inbox": wrap("read_inbox", scenario_layer("read_inbox", read_inbox)),
+        "deepwiki__read_wiki_structure": wrap(
+            "deepwiki__read_wiki_structure",
+            scenario_layer("deepwiki__read_wiki_structure", deepwiki_structure)),
+        "deepwiki__read_wiki_contents": wrap(
+            "deepwiki__read_wiki_contents",
+            scenario_layer("deepwiki__read_wiki_contents", deepwiki_contents)),
+        "deepwiki__ask_question": wrap(
+            "deepwiki__ask_question",
+            scenario_layer("deepwiki__ask_question", deepwiki_ask)),
     }

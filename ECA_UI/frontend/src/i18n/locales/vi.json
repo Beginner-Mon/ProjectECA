@@ -122,6 +122,8 @@
     "memory_desc": "ECA nhớ gì về bạn",
     "notifications": "Thông báo",
     "official": "Chính thức",
+    "plugins": "Tiện ích mở rộng",
+    "plugins_desc": "Chọn những tiện ích trợ lý được phép dùng",
     "profile": "Hồ sơ",
     "providers": "Chọn nhà cung cấp",
     "providers_desc": "Cấu hình nhà cung cấp LLM và khóa API của bạn",
@@ -377,5 +379,19 @@
     "delete_message": "Xóa gói \"{{tier}}\"? Chỉ xóa được khi không còn ai dùng gói này.",
     "reset_title": "Đặt lại mức dùng?",
     "reset_message": "Đưa mức dùng hôm nay của {{email}} về 0?"
+  },
+  "plugins": {
+    "title": "Tiện ích mở rộng",
+    "empty": "Chưa có tiện ích nào.",
+    "by": "Của {{publisher}}",
+    "save_failed": "Không lưu được. Hãy thử lại.",
+    "status_active": "Sẵn sàng",
+    "status_disabled": "Đang tắt",
+    "status_off": "Quản trị viên đã tắt",
+    "status_unconfigured": "Máy chủ chưa thiết lập",
+    "status_definition_changed": "Đang chờ duyệt",
+    "status_unavailable": "Không phản hồi",
+    "status_web_search_off": "Tìm kiếm web đang tắt",
+    "status_unknown": "Không rõ"
   }
 }

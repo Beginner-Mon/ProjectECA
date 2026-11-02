@@ -239,6 +239,7 @@ def _build_specs(pt: PluginTurn, manifest: Manifest, tools: list[ToolDef]
             idempotency_arg=decl.idempotency_arg,
             data_class=manifest.data_class,
             plugin_id=manifest.id,
+            remote_name=remote_name,
         ))
     return specs
 

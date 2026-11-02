@@ -40,7 +40,7 @@ class LoopState(TypedDict, total=False):
     - `rounds`, `agent_result`, `final_answer`, `turn_status`.
     - `actions`: per-call records `{tool, tool_call_id, status, risk, kind, round}`.
     - `taint`: snapshot of banned / allowed terms, refreshed each round.
-    - `resume`: stage-4 placeholder, None in stage 1.
+    - `resume`: `{decision, action_id, thread_id}` on a resumed turn, else None.
     - `total_tokens`, `errors`, `error_code`: accumulators.
     - `motion_jobs`: motion jobs enqueued this turn (added in stage 1 — small
       deviation from the plan's state list, needed to deliver the `motion`
@@ -68,3 +68,9 @@ class LoopState(TypedDict, total=False):
     motion_jobs: list[dict]
     loop_trace: list[dict]
     _route: str
+    # Stage 4. `pending_write`: the one write call of this round that passed the
+    # gate and waits for the `propose` node ({tool_call_id, tool, arguments}).
+    # `pending_action_id` / `approval`: set by `propose` for api/main.py.
+    pending_write: Optional[dict]
+    pending_action_id: str
+    approval: Optional[dict]

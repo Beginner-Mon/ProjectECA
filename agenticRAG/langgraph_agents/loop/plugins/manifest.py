@@ -40,6 +40,10 @@ class ToolDecl(BaseModel):
     egress: bool = True
     risk: Literal["read", "write"] = "read"
     idempotency_arg: str | None = None
+    # Stage 4 (E2): the argument names shown on the approval card (all of
+    # them when empty), and the argument that names the recipients.
+    display: list[str] = Field(default_factory=list)
+    recipients_arg: str | None = None
 
 
 class Reviewed(BaseModel):
@@ -68,6 +72,8 @@ class Manifest(BaseModel):
     requires_gate: bool = False
     # Name of a builtin tool this plugin stands in for when it is offered.
     replaces: str | None = None
+    # Loaded only when `dev_fake_write_enabled()` (E9).
+    dev_only: bool = False
 
     def resolved_url(self, env: Mapping[str, str] | None = None) -> str:
         """The endpoint: the env var when the manifest names one, else `url`.
@@ -103,9 +109,12 @@ def _shipped_catalog() -> tuple[Manifest, ...]:
 
 
 def load_catalog(directory: Path | None = None) -> list[Manifest]:
-    """The manifests under `catalog/*.json` (cached for the shipped folder)."""
+    """The manifests under `catalog/*.json` (cached for the shipped folder).
+    A `dev_only` manifest is left out unless the dev fake-write switch is on."""
     if directory is None:
-        return list(_shipped_catalog())
+        from langgraph_agents.loop.dev_fake import dev_fake_write_enabled
+        allow_dev = dev_fake_write_enabled()
+        return [m for m in _shipped_catalog() if allow_dev or not m.dev_only]
     return [load_manifest_file(p) for p in sorted(directory.glob("*.json"))]
 
 

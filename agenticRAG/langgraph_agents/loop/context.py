@@ -175,6 +175,18 @@ async def load_context_node(state: LoopState, config: RunnableConfig) -> dict:
     for tr in traces:
         trace_parts.append(f"[source:loop_trace:{tr.get('request_id','?')}]\n"
                            f"rounds={tr.get('rounds')} status={tr.get('turn_status')}")
+    # E8: approval cards that were still pending when this message arrived.
+    # `api/main.py` invalidated them before the turn; nothing ran. The earlier
+    # turn's saved answer ("Waiting for your approval: ...") is in the history,
+    # so the agent can propose again if the user meant it.
+    cancelled_cards = [str(a) for a in (configurable.get("invalidated_actions") or [])]
+    if cancelled_cards:
+        trace_parts.append(
+            "[source:loop_trace:approval_cards]\n"
+            f"status=invalidated count={len(cancelled_cards)} "
+            f"action_ids={','.join(cancelled_cards)}\n"
+            "The user wrote a new message while these cards were waiting, so "
+            "they were cancelled. Nothing ran.")
     tool_result_content = "\n\n".join(trace_parts) if trace_parts else '{"found": false}'
 
     transcript.append({

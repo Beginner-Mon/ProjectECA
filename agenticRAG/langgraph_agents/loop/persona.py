@@ -67,6 +67,7 @@ logger = get_logger("langgraph.loop.persona")
 
 
 _INTERNAL_TOOLS = ("kb_search", "recall_self")
+_PARTIAL_WRITE = frozenset({"failed", "unknown", "declined", "expired", "invalidated"})
 
 
 def _internal_evidence(transcript: list[dict], limit_chars: int,
@@ -120,6 +121,11 @@ async def _persona_body(state: LoopState, config: RunnableConfig) -> dict:
     agent_result = state.get("agent_result") or ""
     turn_status = state.get("turn_status", "completed")
     actions = state.get("actions") or []
+    # A write action that did not succeed leaves the turn `partial` (plan §3).
+    if turn_status == "completed" and any(
+            a.get("risk") == "write" and a.get("status") in _PARTIAL_WRITE
+            for a in actions):
+        turn_status = "partial"
 
     # Verdict for this turn (fetched by the agent node; read here for the
     # safety keys and the contract note).
@@ -248,6 +254,12 @@ async def _persona_body(state: LoopState, config: RunnableConfig) -> dict:
     final_answer = final
     if outcome:
         final_answer = f"{final}\n\n{outcome}".strip()
+    # E7: the result of a write action reaches the user as code wrote it, right
+    # after the body. (The lines for read calls stay in the saved answer only.)
+    write_lines = outcome_lines(
+        [a for a in actions if a.get("risk") == "write"], locale)
+    if write_lines and writer is not None:
+        writer({"content": f"\n\n{write_lines}"})
 
     # ── Turn trace for meta["loop"] ───────────────────────────────
     trace = {

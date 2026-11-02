@@ -1,0 +1,33 @@
+{
+  "id": "dev-reminders",
+  "name": "Dev reminders (fake write)",
+  "version": "1.0.0",
+  "publisher": "ECA",
+  "description": "Development only. A fake reminders server so the approval path can be tested without a real write tool. Never loaded on Lambda.",
+  "mcp_server": {
+    "url": "",
+    "url_env": "LOOP_DEV_REMINDERS_MCP_URL",
+    "transport": "streamable_http",
+    "allowed_hosts": []
+  },
+  "auth": null,
+  "tools": {
+    "list_reminders": {"egress": true, "risk": "read"},
+    "create_reminder": {
+      "egress": true,
+      "risk": "write",
+      "idempotency_arg": "request_id",
+      "display": ["title", "when"],
+      "recipients_arg": null
+    }
+  },
+  "skills": [],
+  "reviewed": {
+    "by": "K",
+    "tool_definitions_sha256": "7f8b8eaa85134065c3dc98122e0e48732a6f79b28ced5b20fe976d172d179638"
+  },
+  "data_class": "none",
+  "enabled_by_default": true,
+  "requires_gate": false,
+  "dev_only": true
+}

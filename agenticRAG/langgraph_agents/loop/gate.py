@@ -11,9 +11,10 @@ Checks in this exact order (plan §II.2):
       mid-turn (`turn.plugins.invalidate`) → refused_by_policy
   (2) cancel flag → cancelled
   (3) caps → budget, plus one_action_per_round for the write cap
-  (4) verdict: egress and clinical tools wait for the guardrail verdict
-      (fetched by the agent node and stored on the turn); a non-routine
-      verdict allows internal tools only, refuse `refused_by_policy`
+  (4) verdict: egress, clinical and write tools wait for the guardrail
+      verdict (fetched by the tools node and stored on the turn); a
+      non-routine verdict allows internal tools only, refuse
+      `refused_by_policy`
   (5) taint: rule 1 (personal source → another destination) refuses with
       `approval_unavailable` in stage 1; rule 2 (egress_read argument names
       a memory/instruction term) refuses, naming the terms
@@ -22,7 +23,10 @@ Checks in this exact order (plan §II.2):
       a plugin call counts against bucket `plugin:<id>` (D7)
   (8) breaker open → refuse kind `transient`; a plugin has its own breaker,
       per process (D7)
-  (9) write → needs_approval → refuse `approval_unavailable` before stage 4
+  (9) write → needs_approval (stage 4). Refused with `approval_unavailable`
+      unless the plugin is one `dev_fake.writable_plugins()` names and a sealer
+      is configured (E4, E9); refused `refused_by_policy` for a payload the
+      user declined earlier in this turn
 
 Every refused call is still answered: the tools node emits exactly one
 ToolMessage per tool_call_id, refusals and errors included.
@@ -90,6 +94,10 @@ class GateDecision:
     def refuse(cls, kind: str, message: str) -> "GateDecision":
         return cls(kind, message, refusal=True)
 
+    @classmethod
+    def needs_approval(cls, message: str = "") -> "GateDecision":
+        return cls("needs_approval", message)
+
 
 def _validate_args(spec: ToolSpec, args: dict[str, Any]) -> str | None:
     """Own small validator: required keys, JSON types, enums.
@@ -135,6 +143,11 @@ def _is_egress_or_clinical(spec: ToolSpec) -> bool:
     return spec.risk == "egress_read" or spec.clinical
 
 
+def needs_verdict(spec: ToolSpec) -> bool:
+    """Calls that wait for the guardrail verdict: everything but internal tools."""
+    return _is_egress_or_clinical(spec) or _is_write(spec)
+
+
 async def check(call: dict[str, Any], spec: ToolSpec, turn: Any) -> GateDecision:
     """Run the gate for one tool call. Returns a GateDecision."""
 
@@ -176,7 +189,7 @@ async def check(call: dict[str, Any], spec: ToolSpec, turn: Any) -> GateDecision
     # ── (4) verdict: egress / clinical wait; non-routine → internal only ─
     verdict = getattr(turn, "verdict", None)
     level = getattr(verdict, "level", "routine") if verdict else "routine"
-    if _is_egress_or_clinical(spec) and level != "routine":
+    if needs_verdict(spec) and level != "routine":
         return GateDecision.refuse(
             REFUSED_BY_POLICY,
             f"verdict is {level}: internal tools only this turn")
@@ -239,10 +252,24 @@ async def check(call: dict[str, Any], spec: ToolSpec, turn: Any) -> GateDecision
         except Exception:
             pass
 
-    # ── (9) write → needs_approval → refuse pre-stage-4 ───────────
+    # ── (9) write → needs_approval ────────────────────────────────
     if _is_write(spec):
-        return GateDecision.refuse(
-            APPROVAL_UNAVAILABLE,
-            "write tools need approval — not available before stage 4")
+        from langgraph_agents.loop.actions import payload_sha256
+        from langgraph_agents.loop.crypto import get_sealer
+        from langgraph_agents.loop.dev_fake import writable_plugins
+        if not plugin_id or plugin_id not in writable_plugins():
+            return GateDecision.refuse(
+                APPROVAL_UNAVAILABLE,
+                "write tools are not available yet")
+        if payload_sha256(args) in getattr(turn, "declined_hashes", ()):
+            return GateDecision.refuse(
+                REFUSED_BY_POLICY,
+                "the user declined this exact action earlier in this turn")
+        if get_sealer() is None:
+            return GateDecision.refuse(
+                APPROVAL_UNAVAILABLE,
+                "approvals are not available: no sealing key is configured")
+        return GateDecision.needs_approval(
+            "this action needs the user's approval")
 
     return GateDecision.allow()

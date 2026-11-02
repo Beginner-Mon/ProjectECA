@@ -21,7 +21,7 @@ from langgraph_agents.loop.errors import (
     APPROVAL_UNAVAILABLE, BUDGET, CANCELLED, INVALID_ARGS, REFUSED_BY_POLICY,
     ToolResult, classify, normalize,
 )
-from langgraph_agents.loop.gate import GateDecision, check, _call_args, _call_id, _call_name, _is_egress_or_clinical
+from langgraph_agents.loop.gate import GateDecision, check, needs_verdict, _call_args, _call_id, _call_name, _is_egress_or_clinical
 from langgraph_agents.loop.limits import (
     ensure_turn, _msg_content, _msg_role, _msg_tool_calls,
 )
@@ -44,9 +44,17 @@ async def _run_one(
     turn: Any,
     config: dict,
     remaining: int,
+    forced_refusal: tuple[str, str] | None = None,
 ) -> dict[str, Any]:
     """Run one call through the gate + the tool. Returns an action record
-    and a tool message."""
+    and a tool message.
+
+    A write call that passes the gate is NOT run (stage 4): the result carries
+    `pending` (the call and its arguments) and no tool message; the `propose`
+    node stores it and the turn pauses. `forced_refusal` skips the gate: the
+    second write call of a round is refused `one_action_per_round` before the
+    calls start in parallel (the gate's own cap check could race).
+    """
     tool_call_id = _call_id(call)
     tool_name = _call_name(call) or "?"
     args = _call_args(call)
@@ -63,10 +71,21 @@ async def _run_one(
         "kind": "",
         "round": round_n,
         "result_chars": 0,
+        "source_label": (getattr(spec, "plugin_id", None) or getattr(spec, "name", None)
+                         or tool_name) if spec is not None else tool_name,
     }
 
     # ── gate ──────────────────────────────────────────────────────
-    decision: GateDecision = await check(call, spec, turn)
+    if forced_refusal is not None:
+        decision = GateDecision.refuse(*forced_refusal)
+    else:
+        decision = await check(call, spec, turn)
+    if decision.kind == "needs_approval":
+        turn.record_write()
+        action["status"] = "pending"
+        return {"action": action, "tool_message": None,
+                "pending": {"tool_call_id": tool_call_id, "tool": spec.name,
+                            "arguments": args}}
     if decision.refusal:
         action["status"] = "refused"
         action["kind"] = decision.kind
@@ -172,11 +191,9 @@ async def tools_node(state: LoopState, config: RunnableConfig) -> dict:
     # preserved. Stored on turn.verdict so the gate sees it.
     # Falls back to guardrail.handoff.current_verdict when no verdict_getter
     # is injected (R4: the verdict fails safe, never silently routine).
-    needs_verdict = any(
-        _is_egress_or_clinical(s) for s in specs
-        if s.name in {_call_name(call) for call in tool_calls}
-    )
-    if needs_verdict:
+    called = {_call_name(call) for call in tool_calls}
+    wait_for_verdict = any(needs_verdict(s) for s in specs if s.name in called)
+    if wait_for_verdict:
         getter = turn.verdict_getter or _default_verdict_getter
         try:
             turn.verdict = await getter(config)
@@ -189,13 +206,18 @@ async def tools_node(state: LoopState, config: RunnableConfig) -> dict:
     remaining = max(0, int(turn.caps.max_result_chars_per_turn - turn.used_result_chars))
 
     # Run all allowed calls in parallel.
-    spec_names = {s.name for s in specs}
-    results = await asyncio.gather(
-        *[_run_one(call, None if _call_name(call) not in spec_names
-                   else next(s for s in specs if s.name == _call_name(call)),
-                   turn, config, remaining)
-          for call in tool_calls]
-    )
+    spec_by_name = _spec_by_name(specs)
+    jobs = []
+    write_seen = False
+    for call in tool_calls:
+        spec = spec_by_name.get(_call_name(call))
+        forced = None
+        if spec is not None and spec.risk == "write":
+            if write_seen:
+                forced = (BUDGET, "one_action_per_round: a write call already ran this round")
+            write_seen = True
+        jobs.append(_run_one(call, spec, turn, config, remaining, forced))
+    results = await asyncio.gather(*jobs)
 
     # Taint rule 1: a source with data_class="personal" that was actually read
     # (the call ran and returned) marks the turn, so later egress or clinical
@@ -212,10 +234,16 @@ async def tools_node(state: LoopState, config: RunnableConfig) -> dict:
     tool_messages: list[dict] = []
     actions: list[dict] = []
     motion_jobs: list[dict] = []
-    for i, res in enumerate(results):
+    pending_write: dict | None = None
+    answered = [r for r in results if r.get("tool_message") is not None]
+    for res in results:
+        action = res["action"]
+        turn.call_registry[action["tool_call_id"]] = action["tool"]
+        if res.get("pending") is not None:
+            pending_write = res["pending"]
+    for i, res in enumerate(answered):
         action = res["action"]
         actions.append(action)
-        turn.call_registry[action["tool_call_id"]] = action["tool"]
         msg = res["tool_message"]
 
         # Motion job capture: request_motion returns a payload with job_id.
@@ -229,7 +257,7 @@ async def tools_node(state: LoopState, config: RunnableConfig) -> dict:
                 pass
 
         # Budget line on the round's last tool message.
-        if i == len(results) - 1:
+        if i == len(answered) - 1:
             left = max(0.0, turn.caps.loop_time_s - turn.budget.elapsed())
             msg["content"] = f"{msg['content']}{budget_line(
                 round_n=turn.round_calls or 1,
@@ -238,7 +266,7 @@ async def tools_node(state: LoopState, config: RunnableConfig) -> dict:
         tool_messages.append(msg)
 
     # result_chars accounting
-    for res in results:
+    for res in answered:
         turn.result_chars(len(res["tool_message"]["content"]))
 
     # Caps spent → force tool_choice="none" next agent round.
@@ -252,6 +280,7 @@ async def tools_node(state: LoopState, config: RunnableConfig) -> dict:
         "actions": actions,
         "motion_jobs": motion_jobs,
         "turn_status": state.get("turn_status", "completed"),
+        "pending_write": pending_write,
     }
 
 

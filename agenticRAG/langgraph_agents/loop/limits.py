@@ -153,6 +153,14 @@ class TurnContext:
 
     motion_jobs: list[dict] = field(default_factory=list)
 
+    # Stage 4. `payload_sha256` of every action the user declined in this turn
+    # (it survives a pause in `loop_turns.state_json`); the gate refuses the
+    # same payload again. `pending_card` is set by the `propose` node once the
+    # action is stored, so `api/main.py` can invalidate it if the guardrail
+    # blocks the turn (E10).
+    declined_hashes: set[str] = field(default_factory=set)
+    pending_card: dict | None = None
+
     # When True the next agent call must use tool_choice="none" (round cap or
     # speed cap already spent).
     force_no_tools: bool = False

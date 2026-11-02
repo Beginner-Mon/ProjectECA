@@ -5,6 +5,8 @@ Two callers, two shapes:
   * production (api/main.py) starts the guardrail task before the graph runs
     and puts it in `config["configurable"]["guardrail_task"]`. Nodes await that
     task and pay nothing beyond its own latency.
+  * a resumed loop turn passes the verdict it paused under as
+    `config["configurable"]["guardrail_verdict"]`; that is read first.
   * tests and local probes call the graph directly, with no task. Then the
     verdict is computed inline and cached per `request_id`, so retriever and
     synthesizer — both of which ask — cost one triage call, not two.
@@ -54,6 +56,13 @@ async def current_verdict(config) -> Verdict:
     """This turn's verdict. Never raises: a broken guardrail is a routine turn."""
     cfg = _configurable(config)
     request_id = cfg.get("request_id") or "-"
+
+    # A verdict computed earlier and handed in whole: a resumed loop turn
+    # (`POST /chat/resume`) runs under the verdict stored when it paused. The
+    # user's message is not read again.
+    stored = cfg.get("guardrail_verdict")
+    if stored is not None:
+        return stored
 
     task = cfg.get("guardrail_task")
     if task is not None:

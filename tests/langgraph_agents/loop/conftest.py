@@ -19,6 +19,12 @@ import pytest
 
 _APP_DSN_VARS = ("VVA_PG_DSN", "POSTGRES_DSN")
 
+# Result of the first reachability probe per DSN, kept for the whole session:
+# `dsn -> skip reason`, or None when the database answered and has migration
+# 019. A dead DSN used to be retried for every PG param (about 1.5 s each, 60
+# params); now only the first one pays.
+_PG_PROBE: dict[str, str | None] = {}
+
 
 def _host(dsn: str | None) -> str | None:
     """Host of a DSN, with Neon's `-pooler` suffix folded away (the pooler and
@@ -83,6 +89,9 @@ def test_pg_client():
     if dsn is None:
         pytest.skip(reason or "ECA_TEST_PG_DSN not set")
 
+    if dsn in _PG_PROBE and _PG_PROBE[dsn] is not None:
+        pytest.skip(_PG_PROBE[dsn])
+
     from langgraph_agents.db.postgres import PostgresClient
     client = PostgresClient(dsn=dsn)
     setattr(client, "_eca_test_client", True)   # opts out of the db guard
@@ -102,12 +111,15 @@ def test_pg_client():
             return bool(await conn.fetchval(
                 "SELECT to_regclass('agent_leases')"))
 
-    try:
-        has_table = asyncio.run(_probe())
-    except Exception as exc:  # noqa: BLE001
-        pytest.skip(f"PG unreachable: {type(exc).__name__}")
-    if not has_table:
-        pytest.skip("migration 019 not applied")
+    if dsn not in _PG_PROBE:
+        try:
+            has_table = asyncio.run(_probe())
+        except Exception as exc:  # noqa: BLE001
+            _PG_PROBE[dsn] = f"PG unreachable: {type(exc).__name__}"
+            pytest.skip(_PG_PROBE[dsn])
+        _PG_PROBE[dsn] = None if has_table else "migration 019 not applied"
+        if not has_table:
+            pytest.skip(_PG_PROBE[dsn])
 
     client.get_client = _factory  # type: ignore[attr-defined]
     yield client

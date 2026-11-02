@@ -57,7 +57,39 @@ _ACTION_TEMPLATES: dict[str, tuple[str, str]] = {
         "[done] {tool} ({action_id}): repeated empty call — not retried.",
         "[xong] {tool} ({action_id}): gọi trùng kết quả rỗng — không thử lại.",
     ),
+    # Stage 4 (E7): the write actions. Written by code, never by the model.
+    "proposed": (
+        "[waiting] {tool} ({action_id}): waiting for your approval.",
+        "[chờ] {tool} ({action_id}): đang chờ bạn duyệt.",
+    ),
+    "succeeded": (
+        "[done] {tool} ({action_id}): done.",
+        "[xong] {tool} ({action_id}): đã thực hiện.",
+    ),
+    "unknown": (
+        "[unknown] {tool} ({action_id}): it is not known whether this ran. It was not retried; please check before asking again.",
+        "[chưa rõ] {tool} ({action_id}): chưa rõ việc này đã chạy chưa. Hệ thống không thử lại; hãy kiểm tra trước khi nhờ lần nữa.",
+    ),
+    "declined": (
+        "[declined] {tool} ({action_id}): you declined this; nothing was done.",
+        "[đã từ chối] {tool} ({action_id}): bạn đã từ chối; không có gì được thực hiện.",
+    ),
+    "expired": (
+        "[expired] {tool} ({action_id}): the approval expired; nothing was done.",
+        "[hết hạn] {tool} ({action_id}): thẻ duyệt đã hết hạn; không có gì được thực hiện.",
+    ),
+    "invalidated": (
+        "[cancelled] {tool} ({action_id}): the approval no longer applies; nothing was done.",
+        "[đã hủy] {tool} ({action_id}): thẻ duyệt không còn hiệu lực; không có gì được thực hiện.",
+    ),
 }
+
+# The saved answer of a paused turn (plan §7), and what the avatar says.
+_PENDING = ("Waiting for your approval: {summary}", "Đang chờ bạn duyệt: {summary}")
+
+
+def pending_line(summary: str, locale: str = "en") -> str:
+    return _PENDING[1 if locale.startswith("vi") else 0].format(summary=summary)
 
 
 def outcome_lines(actions: list[dict], locale: str = "en") -> str:

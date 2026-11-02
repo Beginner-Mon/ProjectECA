@@ -34,6 +34,9 @@ class ToolSpec:
     # uses it for the rate bucket and the breaker, the audit line and the
     # source label use it as the name of the origin.
     plugin_id: str | None = None
+    # The tool's name on the plugin's server (stage 4: the approval card reads
+    # the manifest's declaration for it).
+    remote_name: str | None = None
 
     def __post_init__(self) -> None:
         payload = json.dumps(

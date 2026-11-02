@@ -2,13 +2,15 @@
 
 `build_loop_graph()` — plain sync (no MCP discovery).
 
-    START ─► memory ─► route_entry ─► load_context ─► agent
+    START ─┬─ resume=approve ─► execute ─► agent
+           ├─ resume=decline ─► declined ─► agent
+           └─ new turn ─► memory ─► route_entry ─► load_context ─► agent
                                   │              ▲      │
                                   └─┬─ vision ────┘      │
                                     └─ persona (error)   │
                                                          ▼
                                                     tools_read ─┘
-                                                          │
+                                                          │  └─ write call ─► propose ─► END
                                                           ▼ (no more calls)
                                                         persona ─► END
 
@@ -29,7 +31,9 @@ from langgraph.graph import StateGraph, END, START
 
 from langgraph_agents.loop.agent import agent_node
 from langgraph_agents.loop.context import load_context_node
+from langgraph_agents.loop.execute import declined_node, execute_node
 from langgraph_agents.loop.persona import persona_node
+from langgraph_agents.loop.propose import propose_node
 from langgraph_agents.loop.state import LoopState
 from langgraph_agents.loop.tools_node import tools_node
 from langgraph_agents.routing import route_after_memory, check_errors
@@ -57,6 +61,27 @@ def route_entry(state: LoopState) -> str:
     return mapping.get(outcome, "load_context")
 
 
+def route_start(state: LoopState) -> str:
+    """Where a run begins: a resumed turn goes straight to `execute` (approve)
+    or `declined`; a new turn goes through `memory`. A resume never runs
+    `propose`, `memory` or any read tool again."""
+    resume = state.get("resume")
+    if resume:
+        return "execute" if resume.get("decision") == "approve" else "declined"
+    return "memory"
+
+
+def route_after_tools(state: LoopState) -> str:
+    """After `tools_read`: a write call that passed the gate goes to `propose`."""
+    return "propose" if state.get("pending_write") else "agent"
+
+
+def route_after_propose(state: LoopState) -> str:
+    """A card was shown (`approval` set) ends the run; a refused proposal goes
+    back to the agent with the refusal as the call's answer."""
+    return END if state.get("approval") else "agent"
+
+
 def route_after_agent(state: LoopState) -> str:
     """After agent: tools_read (read calls pending) or persona (done).
 
@@ -81,8 +106,15 @@ def build_loop_graph(memory=None):
     g.add_node("agent", agent_node)
     g.add_node("tools_read", tools_node)
     g.add_node("persona", persona_node)
+    g.add_node("propose", propose_node)
+    g.add_node("execute", execute_node)
+    g.add_node("declined", declined_node)
 
-    g.add_edge(START, "memory")
+    g.add_conditional_edges(START, route_start, {
+        "memory": "memory",
+        "execute": "execute",
+        "declined": "declined",
+    })
     g.add_conditional_edges("memory", route_entry, {
         "vision": "vision",
         "load_context": "load_context",
@@ -94,7 +126,16 @@ def build_loop_graph(memory=None):
         "tools_read": "tools_read",
         "persona": "persona",
     })
-    g.add_edge("tools_read", "agent")
+    g.add_conditional_edges("tools_read", route_after_tools, {
+        "propose": "propose",
+        "agent": "agent",
+    })
+    g.add_conditional_edges("propose", route_after_propose, {
+        END: END,
+        "agent": "agent",
+    })
+    g.add_edge("execute", "agent")
+    g.add_edge("declined", "agent")
     g.add_edge("persona", END)
 
     return g.compile().with_config(recursion_limit=_RECURSION_LIMIT)

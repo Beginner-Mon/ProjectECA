@@ -545,6 +545,58 @@ async def write_turn_answer(
     return str(assistant_id) if assistant_id is not None else None
 
 
+async def update_turn_answer(
+    session_id: str,
+    action_id: str,
+    assistant_answer: str,
+    total_tokens: int = 0,
+    motion_job_id: str | None = None,
+    motion_prompt: str | None = None,
+    meta: dict | None = None,
+) -> str | None:
+    """Replace the saved answer of a paused loop turn with the final one.
+
+    A loop turn that proposed a write action saved the line "Waiting for your
+    approval: <summary>" with `extras.meta.action_id` (plan §7). When the turn
+    ends after the user's decision, this finds that row by `action_id` and
+    replaces its text, token count and `meta`, so the question keeps its one
+    answer row. ONE STATEMENT inside the caller's user scope (RLS applies), the
+    same cost as `write_turn_answer`.
+
+    Returns the row's `id`, or None when no row carries that `action_id` (the
+    caller then has nothing to replace and writes the answer as a new row).
+    Short-term memory is not rewritten: the cache holds the paused line until it
+    ages out, and production runs with `STM_BACKEND=none`.
+    """
+    pg = get_pg_client()
+    await pg.connect()
+    extras_patch: dict = {}
+    if motion_job_id:
+        motion_extra = {"job_id": motion_job_id}
+        if motion_prompt:
+            motion_extra["prompt"] = motion_prompt
+        extras_patch["motion"] = motion_extra
+    if meta:
+        extras_patch["meta"] = meta
+    async with pg.transaction() as conn:
+        row_id = await conn.fetchval(
+            """WITH bump AS (
+                   UPDATE conversations SET updated_at = now()
+                   WHERE session_id = $1::uuid
+               )
+               UPDATE messages
+                  SET content = $3,
+                      token_count = $4,
+                      extras = COALESCE(extras, '{}'::jsonb) || $5::jsonb
+                WHERE session_id = $1::uuid AND role = 'assistant'
+                  AND extras -> 'meta' ->> 'action_id' = $2
+                RETURNING id""",
+            session_id, str(action_id), assistant_answer, total_tokens,
+            json.dumps(extras_patch),
+        )
+    return str(row_id) if row_id is not None else None
+
+
 async def _append_stm(session_id: str, q: str, a: str, ts: str) -> None:
     """Append one turn to the cache, trimmed to the last _STM_MAX pairs.
 

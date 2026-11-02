@@ -67,7 +67,9 @@ from langgraph_agents.services.vieneu_tts.client import get_vieneu_tts_client
 from langgraph_agents.services.vieneu_tts.voice import resolve_voice
 from langgraph_agents.services.vieneu_tts.text_budget import plan_spoken_text
 from langgraph_agents.nodes.summarizer import housekeep
-from langgraph_agents.db.session_store import write_turn_answer, write_turn_question
+from langgraph_agents.db.session_store import (
+    update_turn_answer, write_turn_answer, write_turn_question,
+)
 from langgraph_agents.shared.logging import (
     configure_root_logger, get_logger, with_request_id,
 )
@@ -112,7 +114,7 @@ _health_redis: aioredis.Redis | None = None
 # Node names that emit stage events (Phase 6.9: conversation node removed)
 _STAGE_NODES = {
     "memory", "vision", "planner", "retriever_agent", "synthesizer",
-    "error_handler", "agent", "persona",
+    "error_handler", "agent", "persona", "propose",
 }
 
 
@@ -198,6 +200,30 @@ async def _verdict_getter(config: dict):
 
 # Strong references: create_task holds only a weak one.
 _warmup_tasks: set[asyncio.Task] = set()
+
+
+async def _loop_turn_prelude(uid: str, session_id: str, config: dict) -> None:
+    """Before a loop turn starts (stage 4): the session's `executing` rows older
+    than the write timeout become `unknown` (E5), and any approval card still
+    waiting becomes `invalidated` together with its paused turn (E8). The ids of
+    the cancelled cards go to `load_context`, so the agent can see it. A store
+    that cannot be reached is logged and skipped: no card can be answered through
+    a store that is down, and a chat turn must not fail for it."""
+    from langgraph_agents.loop.actions import get_action_store
+    from langgraph_agents.loop.execute import sweep_stale
+    from langgraph_agents.loop.turns import get_turn_store
+
+    results = await asyncio.gather(
+        sweep_stale(uid, session_id),
+        get_action_store().invalidate_for_session(uid, session_id),
+        get_turn_store().invalidate_for_session(uid, session_id),
+        return_exceptions=True)
+    for r in results:
+        if isinstance(r, BaseException):
+            logger.warning("loop_prelude_failed", extra={"error": type(r).__name__})
+    invalidated = results[1]
+    config["configurable"]["invalidated_actions"] = (
+        list(invalidated) if isinstance(invalidated, list) else [])
 
 
 async def _warm_embedding() -> None:
@@ -418,6 +444,9 @@ def create_app() -> FastAPI:
                 "token_limit": req.token_limit,
                 "web_search": req.web_search,
                 "locale": req.locale,
+                # Stage 4: one server-made id per loop turn (E1). A write call
+                # that needs approval pauses the turn under it.
+                "thread_id": str(uuid.uuid4()),
                 # The per-turn runtime, handed to the graph through config.
                 # LangGraph re-merges config per node task, so it must be set
                 # here (before astream) rather than created inside a node.
@@ -515,6 +544,11 @@ def create_app() -> FastAPI:
                 raise HTTPException(
                     409, {"code": "turn_in_progress", "request_id": request_id})
             config["configurable"]["_lease"] = (lease, request_id)
+            try:
+                await _loop_turn_prelude(uid, req.session_id, config)
+            except BaseException:
+                await lease.release(uid, request_id)
+                raise
 
         async def event_generator():
             with with_request_id(request_id):
@@ -847,6 +881,10 @@ def _turn_meta_base(req, request_id, final_state: dict, t0: float,
         # rides on the answer so a 👎 vote or ops query can see how the turn
         # ended. Empty for pipeline turns.
         "loop": list(final_state.get("loop_trace") or []),
+        # A turn waiting for approval names its action, so the final answer can
+        # find and replace this row (db.session_store.update_turn_answer).
+        **({"action_id": final_state["pending_action_id"]}
+           if final_state.get("pending_action_id") else {}),
     }
 
 
@@ -878,6 +916,38 @@ async def _write_answer(question_write, question: dict, answer: dict) -> tuple[b
         return False, None
 
 
+async def _write_resume_answer(action_id: str, answer: dict) -> tuple[bool, str | None]:
+    """(saved, assistant message id) for a resumed loop turn: the final answer
+    replaces the paused line (found by `meta.action_id`); with no such row it is
+    written as a new one. Never raises."""
+    try:
+        row_id = await update_turn_answer(
+            session_id=answer["session_id"], action_id=action_id,
+            assistant_answer=answer["assistant_answer"],
+            total_tokens=answer["total_tokens"],
+            motion_job_id=answer.get("motion_job_id"),
+            motion_prompt=answer.get("motion_prompt"), meta=answer.get("meta"))
+        if row_id is None:
+            row_id = await write_turn_answer(**answer)
+        return True, row_id
+    except Exception as exc:
+        logger.warning("session_persist_failed", extra={"error": str(exc)})
+        return False, None
+
+
+async def _invalidate_card(user_id: str, session_id: str, card: dict) -> None:
+    """The guardrail blocked a turn that had stored an approval card: the action
+    becomes `invalidated` and its paused turn is closed. Never raises."""
+    try:
+        from langgraph_agents.loop.actions import INVALIDATED, PROPOSED, get_action_store
+        from langgraph_agents.loop.turns import get_turn_store
+        await get_action_store().transition(
+            user_id, card["action_id"], PROPOSED, INVALIDATED)
+        await get_turn_store().invalidate_for_session(user_id, session_id)
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("loop_card_invalidate_failed", extra={"error": type(exc).__name__})
+
+
 async def _write_partial_answer(question_write, question: dict, answer: dict) -> None:
     try:
         await _save_answer(question_write, question, answer)
@@ -885,7 +955,7 @@ async def _write_partial_answer(question_write, question: dict, answer: dict) ->
         logger.warning("partial_answer_persist_failed", extra={"error": str(exc)})
 
 
-async def _stream_chat(req, request_id, config, state, background_tasks, request=None, resolved_user_id=None, llm_req=None, graph=None):
+async def _stream_chat(req, request_id, config, state, background_tasks, request=None, resolved_user_id=None, llm_req=None, graph=None, resume=None):
     """Core SSE stream: graph execution + post-processing.
 
     Wrapped in with_request_id by the caller so every log line from this
@@ -894,6 +964,11 @@ async def _stream_chat(req, request_id, config, state, background_tasks, request
     `request` is not consulted: a client that has gone away does not end the
     turn. The turn runs on and is saved, unless the framework cancels this
     generator.
+
+    `resume` (loop mode, `POST /chat/resume`): `{verdict, action_id, thread_id}`.
+    The turn continues a paused one: its question is already saved, its guardrail
+    verdict is the stored one (no new triage, no new head), and its answer
+    replaces the paused line instead of being a new row.
     """
     from langgraph_agents.llm import close_request_llm
 
@@ -931,7 +1006,7 @@ async def _stream_chat(req, request_id, config, state, background_tasks, request
                         resolved_user_id, req.session_id,
                         history_budget=context_budget("history"),
                         compact_at=context_budget("history_compact_at")))
-                    if resolved_user_id else None)
+                    if resolved_user_id and resume is None else None)
 
     # The question is written now, beside the graph, and the answer once there
     # is one: whatever stops this turn first, the next one still knows what was
@@ -942,25 +1017,60 @@ async def _stream_chat(req, request_id, config, state, background_tasks, request
         "message_id": config["configurable"].get("user_message_id") or str(uuid.uuid4()),
         "user_query": req.query,
     }
-    question_write = asyncio.create_task(_write_question(**question))
-    _question_write_tasks.add(question_write)
-    question_write.add_done_callback(_question_write_tasks.discard)
+    if resume is None:
+        question_write = asyncio.create_task(_write_question(**question))
+        _question_write_tasks.add(question_write)
+        question_write.add_done_callback(_question_write_tasks.discard)
+    else:
+        # Saved by the turn that paused.
+        question_write = asyncio.get_running_loop().create_future()
+        question_write.set_result(True)
 
     # The input guardrail starts here, beside the graph, so its one triage call
     # overlaps the planner and the retriever instead of preceding them. Nodes
     # read it through `guardrail.handoff.current_verdict`; this loop reads it for
     # the head/tail, and waits only when it has a token ready to send. A triage
     # failure is a routine turn (policy), never a failed one.
-    guardrail_task = asyncio.create_task(guardrail.run_input(CheckContext(
-        message=req.query,
-        locale=locale,
-        persona_id=persona_id,
-        user_id=resolved_user_id,
-        request_id=request_id,
-    )))
-    _guardrail_tasks.add(guardrail_task)
-    guardrail_task.add_done_callback(_guardrail_tasks.discard)
+    if resume is None:
+        guardrail_task = asyncio.create_task(guardrail.run_input(CheckContext(
+            message=req.query,
+            locale=locale,
+            persona_id=persona_id,
+            user_id=resolved_user_id,
+            request_id=request_id,
+        )))
+        _guardrail_tasks.add(guardrail_task)
+        guardrail_task.add_done_callback(_guardrail_tasks.discard)
+    else:
+        # The verdict the turn paused under (guardrail extension #1). Its head
+        # went out before the card; it is not sent again.
+        guardrail_task = asyncio.get_running_loop().create_future()
+        guardrail_task.set_result(InputResult(resume["verdict"]))
+        guardrail_result = guardrail_task.result()
+        head_text = head(guardrail_result.verdict, persona_id, locale)
+        streamed_text = head_text
     config["configurable"]["guardrail_task"] = guardrail_task
+
+    async def _resolve_guardrail() -> list:
+        """Wait for the turn's verdict and return the events that go out first:
+        a block message (and `guardrail_stopped`), or the head. Called at the
+        first body token, and before an approval card (E10)."""
+        nonlocal guardrail_result, head_text, streamed_text, guardrail_stopped
+        events: list = []
+        guardrail_result = await _await_guardrail(guardrail_task)
+        if guardrail_result.blocked is not None:
+            blocked = guardrail_result.blocked.message or ""
+            if blocked:
+                streamed_text += blocked
+                events.append(encode_event("token", {"content": blocked}))
+            final_state["final_answer"] = blocked
+            guardrail_stopped = True
+            return events
+        head_text = head(guardrail_result.verdict, persona_id, locale)
+        if head_text:
+            streamed_text += head_text
+            events.append(encode_event("token", {"content": head_text}))
+        return events
 
     try:
         stream = graph.astream(state, config, stream_mode=["updates", "custom"])
@@ -1061,6 +1171,18 @@ async def _stream_chat(req, request_id, config, state, background_tasks, request
                         if node_output.get("final_answer"):
                             final_state.update(node_output)
 
+                    # Loop mode, stage 4: the turn paused for approval. The
+                    # verdict is known before the card goes out (E10): a block
+                    # sends no card, and the action is invalidated below.
+                    if node_name == "propose" and isinstance(node_output, dict) \
+                            and node_output.get("approval"):
+                        if guardrail_result is None:
+                            for _ev in await _resolve_guardrail():
+                                yield _ev
+                        if guardrail_stopped:
+                            continue
+                        yield encode_event("approval_required", node_output["approval"])
+
                     # The turn ended in error_handler: tell the client with a
                     # code (the words are the client's). final_answer stays the
                     # persona's error_system line for history and speech.
@@ -1072,6 +1194,9 @@ async def _stream_chat(req, request_id, config, state, background_tasks, request
                         final_state["error_code"] = node_output["error_code"]
                         error_sent = True
                         yield _error_event(node_output["error_code"], request_id)
+
+                if guardrail_stopped:
+                    break
 
             elif mode == "custom":
                 if isinstance(payload, dict) and "emotion" in payload:
@@ -1098,19 +1223,10 @@ async def _stream_chat(req, request_id, config, state, background_tasks, request
                     # and its warning (if any) must be the first thing read. A
                     # block replaces the answer entirely and ends the turn here.
                     if guardrail_result is None:
-                        guardrail_result = await _await_guardrail(guardrail_task)
-                        if guardrail_result.blocked is not None:
-                            blocked = guardrail_result.blocked.message or ""
-                            if blocked:
-                                streamed_text += blocked
-                                yield encode_event("token", {"content": blocked})
-                            final_state["final_answer"] = blocked
-                            guardrail_stopped = True
+                        for _ev in await _resolve_guardrail():
+                            yield _ev
+                        if guardrail_stopped:
                             break
-                        head_text = head(guardrail_result.verdict, persona_id, locale)
-                        if head_text:
-                            streamed_text += head_text
-                            yield encode_event("token", {"content": head_text})
 
                     # Counted before the yield: a cut lands on the yield.
                     streamed_text += str(payload["content"])
@@ -1120,6 +1236,11 @@ async def _stream_chat(req, request_id, config, state, background_tasks, request
             # Stop the graph rather than let it finish an answer nobody will
             # read. `aclose` runs the generator's own cleanup.
             await stream.aclose()
+            # A blocked turn shows no approval card: whatever it had stored
+            # as `proposed` is cancelled with its paused turn (E10).
+            card = getattr(config["configurable"].get("turn_ctx"), "pending_card", None)
+            if card:
+                await _invalidate_card(resolved_user_id, req.session_id, card)
 
         # The graph read this task too; if it has already finished (the normal
         # case: triage runs in parallel with the graph), reuse its verdict for
@@ -1143,7 +1264,10 @@ async def _stream_chat(req, request_id, config, state, background_tasks, request
         final_answer = final_state.get("final_answer")
         if final_answer and not final_state.get("error_code") and not error_sent:
             safety = safety_keys(verdict, final_state.get("required_outputs", []))
-            tail_text = tail(safety, persona_id, locale)
+            # A turn waiting for approval is not finished: its closing lines go
+            # after the real answer, when the turn is resumed.
+            tail_text = ("" if final_state.get("turn_status") == "awaiting_approval"
+                         else tail(safety, persona_id, locale))
             if tail_text:
                 streamed_text += tail_text
                 yield encode_event("token", {"content": tail_text})
@@ -1187,9 +1311,14 @@ async def _stream_chat(req, request_id, config, state, background_tasks, request
                 # be traced back to request_id (→ CloudWatch) without a second
                 # table, and so ops SQL can group by persona/locale/guardrail verdict.
                 meta = _turn_meta(req, request_id, final_state, t0, verdict, safety)
-                answer_write = _start_answer_write(_write_answer(
-                    question_write, question,
-                    _answer_row(req, final_state, final_answer, meta)))
+                answer_row = _answer_row(req, final_state, final_answer, meta)
+                if resume is None:
+                    answer_write = _start_answer_write(_write_answer(
+                        question_write, question, answer_row))
+                else:
+                    meta["resumed_action_id"] = resume["action_id"]
+                    answer_write = _start_answer_write(_write_resume_answer(
+                        resume["action_id"], answer_row))
                 saved, assistant_message_id = await asyncio.shield(answer_write)
                 if saved:
                     yield encode_event(
@@ -1200,6 +1329,14 @@ async def _stream_chat(req, request_id, config, state, background_tasks, request
                 await write_turn_question(**question)
         except Exception as exc:
             logger.warning("session_persist_failed", extra={"error": str(exc)})
+
+        # A resumed turn that ended (did not pause again) is finished.
+        if resume is not None and final_state.get("turn_status") != "awaiting_approval":
+            try:
+                from langgraph_agents.loop.turns import get_turn_store
+                await get_turn_store().finish(resolved_user_id, resume["thread_id"])
+            except Exception as exc:  # noqa: BLE001
+                logger.warning("loop_turn_finish_failed", extra={"error": type(exc).__name__})
 
         # BYOK: the user's key is for this turn's graph only; nothing after this
         # point calls their LLM. (housekeep unbinds in its own context.)
@@ -1275,7 +1412,7 @@ async def _stream_chat(req, request_id, config, state, background_tasks, request
             yield encode_event("turn_status", {
                 "status": final_state["turn_status"],
                 "actions": [
-                    {"action_id": a.get("tool_call_id") or a.get("action_id"),
+                    {"action_id": a.get("action_id") or a.get("tool_call_id"),
                      "tool": a.get("tool"),
                      "status": a.get("status")}
                     for a in turn_actions
@@ -1306,9 +1443,14 @@ async def _stream_chat(req, request_id, config, state, background_tasks, request
         if answer_write is None and streamed_text.strip():
             meta = {**_turn_meta(req, request_id, final_state, t0, verdict, safety),
                     "interrupted": True}
-            _start_answer_write(_write_partial_answer(
-                question_write, question,
-                _answer_row(req, final_state, streamed_text, meta)))
+            if resume is None:
+                _start_answer_write(_write_partial_answer(
+                    question_write, question,
+                    _answer_row(req, final_state, streamed_text, meta)))
+            else:
+                _start_answer_write(_write_resume_answer(
+                    resume["action_id"],
+                    _answer_row(req, final_state, streamed_text, meta)))
         # The tokens were spent whether or not the user stayed for them:
         # otherwise closing the tab before `done` would be a free turn.
         if charge_task is None and not done_sent and _eca_paid(llm_req, final_state, error_sent):

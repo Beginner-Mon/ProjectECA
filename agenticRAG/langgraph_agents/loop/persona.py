@@ -43,6 +43,7 @@ from langgraph_agents.loop.client import AgentReply
 from langgraph_agents.loop.limits import (
     ensure_turn, _msg_content, _msg_role, _msg_tool_call_id, _msg_tool_calls,
 )
+from langgraph_agents.loop.prompts import _SAY_CLAUSE
 from langgraph_agents.loop.outcome import outcome_lines, stop_note, EMPTY_ANSWER
 from langgraph_agents.loop.state import LoopState
 from langgraph_agents.loop.trace import log_turn
@@ -140,12 +141,7 @@ async def persona_node(state: LoopState, config: RunnableConfig) -> dict:
     directive_text = directive(verdict)
 
     # §6 template via concatenation (persona text contains braces).
-    say_clause = (
-        "\nSay this to the user in their language. Be warm, brief, and "
-        "honest: if the notes say nothing was found, say so instead of "
-        "inventing an answer. Do not add safety lines yourself — the "
-        "guardrail already placed them at the ends of the turn."
-    )
+    say_clause = _SAY_CLAUSE
     language_rule = (
         "## LANGUAGE (which language to answer in — not how to sound)\n"
         "- Answer in the SAME language the user wrote their question in. "

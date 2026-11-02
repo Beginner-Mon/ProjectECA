@@ -62,6 +62,14 @@ def resolve_test_dsn(env: Mapping[str, str] | None = None
     return dsn, None
 
 
+@pytest.fixture(autouse=True)
+def _no_database(request, monkeypatch):
+    """No test of this suite may open a database connection, unless its
+    client came from `test_pg_client`. See `db_guard.py`."""
+    from tests.langgraph_agents.loop import db_guard
+    db_guard.install(monkeypatch, request.node.nodeid)
+
+
 @pytest.fixture()
 def test_pg_client():
     """A `PostgresClient` on the test database, closed after the test.
@@ -77,6 +85,7 @@ def test_pg_client():
 
     from langgraph_agents.db.postgres import PostgresClient
     client = PostgresClient(dsn=dsn)
+    setattr(client, "_eca_test_client", True)   # opts out of the db guard
     state: dict = {"loop": None}
 
     def _factory():

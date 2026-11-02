@@ -91,6 +91,27 @@ class _TransientError(RuntimeError):
     """A retryable provider error (unreachable / server / 5xx)."""
 
 
+class ModelToolCallInvalid(RuntimeError):
+    """The provider rejected the model's own tool call twice (400
+    `tool_use_failed`, e.g. Groq's "Failed to parse tool call arguments as
+    JSON"). Not a cap: the agent node ends the turn with `turn_status:
+    failed`, `error_code: model_tool_call_invalid`."""
+
+
+def is_tool_use_failed(exc: BaseException) -> bool:
+    """A 400 whose error code is `tool_use_failed` (openai SDK shapes: the
+    `code` attribute, or the error object / envelope in `body`)."""
+    if getattr(exc, "status_code", None) != 400:
+        return False
+    if getattr(exc, "code", None) == "tool_use_failed":
+        return True
+    body = getattr(exc, "body", None)
+    if isinstance(body, dict):
+        err = body.get("error") if isinstance(body.get("error"), dict) else body
+        return err.get("code") == "tool_use_failed"
+    return False
+
+
 class AgentModel:
     """Scripted in tests (FakeAgentModel), real on AsyncOpenAI in production.
 
@@ -124,6 +145,17 @@ class AgentModel:
             name=f"loop:{role}", failure_threshold=3, cool_down_seconds=30.0,
         )
         self._clients: dict[str, Any] = {}
+
+    async def aclose(self) -> None:
+        """Close the cached `AsyncOpenAI` clients. Production (one event loop
+        per process) never calls this; a runner that uses one `asyncio.run`
+        per run does, so no client outlives its loop."""
+        clients, self._clients = list(self._clients.values()), {}
+        for c in clients:
+            try:
+                await c.close()
+            except Exception:  # noqa: BLE001
+                logger.debug("agent_client_close_failed")
 
     # ── endpoint resolution ──────────────────────────────────────────
 
@@ -177,6 +209,15 @@ class AgentModel:
                     continue
                 raise
             except Exception as exc:  # noqa: BLE001
+                if is_tool_use_failed(exc):
+                    # The model produced a malformed call: transient, one retry.
+                    last_exc = exc
+                    self._breaker.record_failure()
+                    if attempt == 0:
+                        continue
+                    raise ModelToolCallInvalid(
+                        "provider rejected the tool call twice "
+                        "(tool_use_failed)") from exc
                 classified = classify_provider_error(exc)
                 if classified["kind"] in ("unreachable", "server"):
                     last_exc = exc

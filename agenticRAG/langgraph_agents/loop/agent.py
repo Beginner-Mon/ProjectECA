@@ -25,7 +25,7 @@ from typing import Any
 
 from langchain_core.runnables import RunnableConfig
 
-from langgraph_agents.loop.client import AgentModel, AgentReply
+from langgraph_agents.loop.client import AgentModel, AgentReply, ModelToolCallInvalid
 from langgraph_agents.loop.limits import (
     ensure_turn, _msg_content, _msg_role, _msg_tool_calls,
 )
@@ -102,6 +102,22 @@ async def agent_node(state: LoopState, config: RunnableConfig) -> dict:
         reply: AgentReply = await agent_model.complete(
             transcript, openai_tools, tool_choice=tool_choice,
         )
+    except ModelToolCallInvalid as exc:
+        # The provider rejected the model's malformed call twice. No cap was
+        # hit, so the status is `failed`, not `budget_exceeded`.
+        logger.warning("agent_model_tool_call_invalid",
+                       extra={"request_id": request_id, "error": str(exc)})
+        return {
+            "agent_result": stop_note("empty", _locale(config)),
+            "turn_status": "failed",
+            "error_code": "model_tool_call_invalid",
+            "errors": list(state.get("errors") or []) + [{
+                "node": "agent", "severity": "critical", "message": str(exc),
+            }],
+            "rounds": int(state.get("rounds", 0)) + 1,
+            "total_tokens": 0,
+            "_route": "persona",
+        }
     except Exception as exc:  # noqa: BLE001
         logger.warning("agent_model_failed", extra={"request_id": request_id, "error": str(exc)})
         agent_result = stop_note("empty", _locale(config))

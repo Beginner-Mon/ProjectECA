@@ -338,3 +338,29 @@ def test_cli_dry_run_writes_rows_and_prints_overall(tmp_path, capsys):
     assert [r["probe"] for r in rows] == ["P6", "P7", "P6", "P7"]
     assert "overall: 4/4 runs passed" in out
     assert "per probe: P6 2/2, P7 2/2" in out
+
+
+# ── round 6 (P4): no client outlives its event loop ──────────────────────
+
+def test_run_live_probe_closes_the_model_client(monkeypatch):
+    from langgraph_agents.loop.client import AgentModel
+
+    closed: list[bool] = []
+
+    class _Client:
+        async def close(self):
+            closed.append(True)
+
+    model = AgentModel(base_url="http://x", api_key="k", model="m")
+    model._clients["http://x|k"] = _Client()          # as _call_once caches it
+
+    async def _fake_run_probe(probe, repeat, *, agent_model, mode, effort):
+        assert agent_model is model
+        return {"pass": True, "error": ""}
+
+    monkeypatch.setattr(rlp, "make_live_model", lambda key, effort: model)
+    monkeypatch.setattr(rlp, "run_probe", _fake_run_probe)
+    row = asyncio.run(rlp.run_live_probe(probe_by_id("P1"), 1, ["k"], "low"))
+    assert row["pass"] is True
+    assert closed == [True]
+    assert model._clients == {}

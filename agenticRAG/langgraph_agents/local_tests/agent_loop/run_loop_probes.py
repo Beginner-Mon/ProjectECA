@@ -517,8 +517,14 @@ async def run_live_probe(probe, repeat, keys: list[str], effort: str) -> dict[st
     next key; with none left the row carries `daily_stop`."""
     row: dict[str, Any] = {}
     for k_i, key in enumerate(keys):
-        row = await run_probe(probe, repeat, agent_model=make_live_model(key, effort),
-                              mode=MODE_LIVE, effort=effort)
+        model = make_live_model(key, effort)
+        try:
+            row = await run_probe(probe, repeat, agent_model=model,
+                                  mode=MODE_LIVE, effort=effort)
+        finally:
+            # each probe runs in its own asyncio.run(): close the client
+            # before its loop does
+            await model.aclose()
         err = (row.get("error") or "").lower()
         if "tokens per day" in err and k_i + 1 < len(keys):
             print(f"  -- {GROQ['env']} key #{k_i + 1} hit its daily token limit: next key",

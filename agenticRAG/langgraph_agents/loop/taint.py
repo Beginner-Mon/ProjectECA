@@ -8,7 +8,9 @@ Rule 2: an `egress_read` argument contains a term from a memory fact or
 instruction → refuse, naming the terms
 ("Your call includes the user's saved details: '…'. Remove them and call
 again, or stop."). Terms are word n-grams (n = 1–3) of each fact or
-instruction, after NFKC and casefold, with stopwords dropped; single words
+instruction, after one shared normal form (`_normalize`: NFKC, casefold, no format
+characters, no diacritics, Cyrillic/Greek lookalikes mapped to Latin, `- _ . /`
+as word breaks), with stopwords dropped; single words
 need ≥ 3 characters. Terms the user typed in the current message are
 allowed.
 
@@ -46,11 +48,40 @@ class TaintSnapshot:
     allowed_terms: list[str] = field(default_factory=list)
 
 
-def _words(text: str) -> list[str]:
-    """Tokenise: NFKC + casefold, then Unicode word tokens. Drop digit-only
-    tokens and stopwords. Single-word terms need ≥ 3 characters."""
+# Lookalikes that a rewriter can swap in. Small on purpose: the letters of
+# Cyrillic and Greek that print like a Latin letter (and đ, which NFD keeps).
+_LOOKALIKES = str.maketrans({
+    # Cyrillic
+    "а": "a", "в": "b", "е": "e", "ё": "e", "к": "k", "м": "m", "н": "h",
+    "о": "o", "р": "p", "с": "c", "т": "t", "у": "y", "х": "x", "і": "i",
+    "ї": "i", "ј": "j", "ѕ": "s", "ԁ": "d", "ԛ": "q", "ԝ": "w",
+    # Greek
+    "α": "a", "β": "b", "γ": "y", "ε": "e", "ι": "i", "κ": "k", "ο": "o",
+    "ρ": "p", "τ": "t", "υ": "u", "χ": "x", "ν": "v", "ϲ": "c",
+    # Vietnamese đ has no decomposition
+    "đ": "d",
+})
+# Characters that join words in a rewritten term: "knee-osteoarthritis".
+_SEPARATORS = str.maketrans({"-": " ", "_": " ", ".": " ", "/": " "})
+
+
+def _normalize(text: str) -> str:
+    """One normal form for facts, instructions, the user's message and the
+    call's arguments (GĐ2 review M4): NFKC and casefold, format characters
+    (zero-width, soft hyphen, tag characters) dropped, diacritics dropped (so
+    Vietnamese with and without them match), common Cyrillic and Greek
+    lookalikes mapped to Latin, and `- _ . /` read as word breaks."""
     norm = unicodedata.normalize("NFKC", text or "").casefold()
-    tokens = _WORD.findall(norm)
+    norm = "".join(c for c in norm if unicodedata.category(c) != "Cf")
+    norm = unicodedata.normalize("NFD", norm)
+    norm = "".join(c for c in norm if unicodedata.category(c) != "Mn")
+    return norm.translate(_LOOKALIKES).translate(_SEPARATORS)
+
+
+def _words(text: str) -> list[str]:
+    """Tokenise: the normal form above, then Unicode word tokens. Drop
+    digit-only tokens and stopwords. Single-word terms need ≥ 3 characters."""
+    tokens = _WORD.findall(_normalize(text))
     return [t for t in tokens if t not in _STOPWORDS and not t.isdigit() and len(t) >= 3]
 
 

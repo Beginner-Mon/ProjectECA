@@ -1,6 +1,6 @@
 import { useState, useRef, useEffect, useSyncExternalStore, type ReactNode } from 'react'
 import { useTranslation } from 'react-i18next'
-import ReactMarkdown from 'react-markdown'
+import ReactMarkdown, { type Components } from 'react-markdown'
 import remarkGfm from 'remark-gfm'
 import { Copy, ThumbsUp, ThumbsDown, Volume2, Check, Pause, Square, Loader2 } from 'lucide-react'
 import {
@@ -25,6 +25,8 @@ import { useAuth } from '../contexts/AuthContext'
 import { errorAction, errorCopy, showRetry, type ChatError } from '../lib/chatErrors'
 import DislikeFeedbackModal from './feedback/DislikeFeedbackModal'
 import ApprovalCard from './ApprovalCard'
+import { API_GATEWAY, ASSET_BASE } from '../lib/apiBase'
+import { decideImage, originsOf } from '../lib/markdownImages'
 import { replyIsPlainText, type ApprovalCardData } from '../lib/approvalCard'
 
 export interface Message {
@@ -109,6 +111,27 @@ function useCopy(text: string) {
   return { copied, handleCopy }
 }
 
+/** Where an assistant message may load an image from: the origins this app already
+ *  serves its own files from (the model CDN and the API gateway). Plan section 9. */
+const ECA_IMAGE_ORIGINS = originsOf([ASSET_BASE, API_GATEWAY])
+
+/** Markdown images in an assistant message: ECA's own load; any other becomes a
+ *  link that shows its domain (an image from anywhere else is a beacon). */
+const ASSISTANT_MARKDOWN: Components = {
+  img({ src, alt }) {
+    const d = decideImage(src, ECA_IMAGE_ORIGINS)
+    if (d.kind === 'image') return <img src={d.src} alt={alt ?? ''} loading="lazy" referrerPolicy="no-referrer" />
+    if (d.kind === 'link') {
+      return (
+        <a href={d.href} target="_blank" rel="noopener noreferrer nofollow">
+          {d.domain}
+        </a>
+      )
+    }
+    return null
+  },
+}
+
 export default function ChatMessage({ message, isStreaming }: ChatMessageProps) {
   const isUser = message.role === 'user'
 
@@ -131,7 +154,9 @@ export default function ChatMessage({ message, isStreaming }: ChatMessageProps) 
             </div>
           ) : (
             <div className={REPLY_TEXT_CLASS}>
-              <ReactMarkdown remarkPlugins={[remarkGfm]}>{cleaned}</ReactMarkdown>
+              <ReactMarkdown remarkPlugins={[remarkGfm]} components={ASSISTANT_MARKDOWN}>
+                {cleaned}
+              </ReactMarkdown>
             </div>
           )
         )}

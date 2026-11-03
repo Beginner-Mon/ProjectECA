@@ -6,7 +6,9 @@ message)` or `needs_approval(message)`.
 Checks in this exact order (plan §II.2):
 
   (1) unknown tool or bad arguments → invalid_args
-      (own small validator: required keys, JSON types, enums — not jsonschema)
+      (own small validator: required keys, JSON types, enums, and no argument
+      the schema does not declare — not jsonschema; a write proposal over
+      `approval.PAYLOAD_CAP` characters is refused here too)
   (1b) stage 3: a plugin tool whose plugin was switched off or changed
       mid-turn (`turn.plugins.invalidate`) → refused_by_policy
   (2) cancel flag → cancelled
@@ -41,6 +43,7 @@ from langgraph_agents.loop.errors import (
     APPROVAL_UNAVAILABLE, BUDGET, CANCELLED, INVALID_ARGS, REFUSED_BY_POLICY,
     TRANSIENT,
 )
+from langgraph_agents.loop.approval import payload_too_large
 from langgraph_agents.loop.rate import get_rate_counter
 from langgraph_agents.loop.tools.registry import ToolSpec
 
@@ -100,7 +103,9 @@ class GateDecision:
 
 
 def _validate_args(spec: ToolSpec, args: dict[str, Any]) -> str | None:
-    """Own small validator: required keys, JSON types, enums.
+    """Own small validator: required keys, JSON types, enums, and no
+    argument that the schema does not declare (every tool, GĐ2 review H1: what
+    runs must be what the user can be shown).
 
     Returns an error message or None when the args are valid.
     """
@@ -115,7 +120,7 @@ def _validate_args(spec: ToolSpec, args: dict[str, Any]) -> str | None:
     for key, value in args.items():
         prop = properties.get(key)
         if prop is None:
-            continue
+            return f"unknown argument: {key}"
         expected = prop.get("type")
         if expected == "string" and not isinstance(value, str):
             return f"argument {key!r} must be a string"
@@ -162,6 +167,9 @@ async def check(call: dict[str, Any], spec: ToolSpec, turn: Any) -> GateDecision
     bad = _validate_args(spec, args)
     if bad:
         return GateDecision.refuse(INVALID_ARGS, bad)
+    if _is_write(spec) and payload_too_large(args):
+        return GateDecision.refuse(
+            INVALID_ARGS, "payload too large for approval")
 
     # ── (1b) plugin lifecycle (stage 3) ───────────────────────────
     plugin_id = getattr(spec, "plugin_id", None)
@@ -195,9 +203,10 @@ async def check(call: dict[str, Any], spec: ToolSpec, turn: Any) -> GateDecision
             f"verdict is {level}: internal tools only this turn")
 
     # ── (5) taint ─────────────────────────────────────────────────
-    # B7: rule 1 applies to any egress or write call whose destination differs
-    # from the personal source (PLAN §9: "the call goes to another destination").
-    # Before stage 4 the result is a refusal with approval_unavailable.
+    # Rules 1 and 2 apply to egress_read and clinical calls. A write call is
+    # not tested here: it goes to the approval card (step 9), and the card shows
+    # the user every argument it will send. Rule 1 refuses with
+    # approval_unavailable: no approval path covers an egress read yet.
     from langgraph_agents.loop.taint import TaintSnapshot, find_banned
     if any(
         s.get("data_class", "none") == "personal"

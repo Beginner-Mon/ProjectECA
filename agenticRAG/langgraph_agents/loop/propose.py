@@ -10,8 +10,8 @@ Steps, in order:
   3. wait for the turn's guardrail verdict (it travels with the paused turn);
   4. seal the transcript and save it in `loop_turns` (`pause`, timed: `pause_ms`
      goes into the trace, E12);
-  5. write the code-made line "Waiting for your approval: <summary>" as the
-     turn's answer. `api/main.py` sends the guardrail head before it, and the
+  5. write the code-made line "Waiting for your approval: <tool name>" as the
+     turn's answer (the tool's name only, never an argument: GĐ2 review H2). `api/main.py` sends the guardrail head before it, and the
      `approval_required` event after the node's update.
 
 The node ends the graph run (`approval` set). If the action cannot be stored
@@ -33,7 +33,7 @@ from langgraph_agents.loop.actions import (
     INVALIDATED, PROPOSED, ActionRecord, get_action_store, new_action, seal_payload,
 )
 from langgraph_agents.loop.approval import (
-    build_display, build_recipients, card_payload, summary,
+    build_display, build_recipients, card_payload,
 )
 from langgraph_agents.loop.crypto import SealerUnavailable
 from langgraph_agents.loop.errors import APPROVAL_UNAVAILABLE, REFUSED_BY_POLICY
@@ -145,7 +145,9 @@ async def _propose(state: LoopState, config: RunnableConfig, turn: Any) -> dict:
                    "user_facts": state.get("user_facts"),
                    "actions": list(state.get("actions") or []),
                    "motion_jobs": state.get("motion_jobs"),
-                   "loop_trace": state.get("loop_trace")}
+                   "loop_trace": state.get("loop_trace"),
+                   # Taint rule 1 must still hold after the user approves.
+                   "personal_sources": list(turn.personal_sources or [])}
     try:
         blob = await seal_turn(transcript=state.get("transcript") or [],
                                state=carry_state, query=cfg.get("query", ""),
@@ -181,7 +183,7 @@ async def _propose(state: LoopState, config: RunnableConfig, turn: Any) -> dict:
     log_turn(request_id, {"node": "propose", "pause_ms": pause_ms,
                           "action_id": record.action_id})
 
-    line = pending_line(summary(display), locale)
+    line = pending_line(spec.remote_name or spec.name, locale)
     try:
         writer = get_stream_writer()
     except RuntimeError:

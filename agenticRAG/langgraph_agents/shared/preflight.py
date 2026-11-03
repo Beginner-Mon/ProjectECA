@@ -155,6 +155,18 @@ LAZY_DEPENDENCIES: tuple[LazyDependency, ...] = (
     LazyDependency("pytest", "local dev-branch test runs (on_dev_branch.py)", critical=False),
     LazyDependency("alembic", "local dev-branch migrations (on_dev_branch.py)", critical=False),
     LazyDependency("fastapi", "the memory benchmark's in-process TestClient", critical=False),
+    LazyDependency(
+        "mcp",
+        "plugin and connector tools of the agent loop (the MCP client, the OAuth "
+        "metadata discovery, the dev reminders server) — those tools are missing; "
+        "chat itself still answers",
+        critical=False,
+    ),
+    LazyDependency(
+        "pydantic",
+        "validating the OAuth discovery documents of connectors",
+        critical=False,
+    ),
 )
 
 

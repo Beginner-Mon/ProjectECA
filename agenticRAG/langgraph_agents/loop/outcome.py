@@ -11,6 +11,8 @@ STOP_TIME, STOP_TOKENS, STOP_CANCELLED, EMPTY_ANSWER.
 
 from __future__ import annotations
 
+import re
+
 # Stop notes written into agent_result when a cap or cancel ends the turn
 # (§5 rule: the stop message goes to agent_result, not to messages).
 STOP_TIME = ("[stop: the turn's loop-time budget was spent]", "[stop: thời gian vòng lặp đã hết]")
@@ -84,12 +86,19 @@ _ACTION_TEMPLATES: dict[str, tuple[str, str]] = {
     ),
 }
 
-# The saved answer of a paused turn (plan §7), and what the avatar says.
-_PENDING = ("Waiting for your approval: {summary}", "Đang chờ bạn duyệt: {summary}")
+# The saved answer of a paused turn (plan §7), and what the avatar says. It is
+# the template plus the tool's name and nothing the model wrote: this text is
+# saved, read back as history, sent to the model and shown to the user (GĐ2
+# review H2).
+_PENDING = ("Waiting for your approval: {tool}", "Đang chờ bạn duyệt: {tool}")
+_GENERIC_TOOL = ("an action", "một thao tác")
+_TOOL_NAME = re.compile(r"^[A-Za-z0-9_.-]{1,60}$")
 
 
-def pending_line(summary: str, locale: str = "en") -> str:
-    return _PENDING[1 if locale.startswith("vi") else 0].format(summary=summary)
+def pending_line(tool: str, locale: str = "en") -> str:
+    vi = 1 if locale.startswith("vi") else 0
+    name = tool if _TOOL_NAME.match(tool or "") else _GENERIC_TOOL[vi]
+    return _PENDING[vi].format(tool=name)
 
 
 def outcome_lines(actions: list[dict], locale: str = "en") -> str:

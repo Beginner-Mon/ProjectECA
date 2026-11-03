@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { approvalFlags, externalDomains, hasAnyFlag, hasBidi, hasHomoglyph, visibleText } from './approvalDisplay'
+import { approvalFlags, externalDomains, hasAnyFlag, hasBidi, hasHomoglyph, hasInvisible, visibleText } from './approvalDisplay'
 
 describe('externalDomains', () => {
   it('finds the domain of an email address', () => {
@@ -70,13 +70,13 @@ describe('approvalFlags', () => {
       [{ label: 'Body', value: 'open https://evil.example/x' }],
       ['mia@corp.com'],
     )
-    expect(flags).toEqual({ external_domains: ['evil.example', 'corp.com'], bidi: false, homoglyph: false })
+    expect(flags).toEqual({ external_domains: ['evil.example', 'corp.com'], bidi: false, invisible: false, homoglyph: false })
     expect(hasAnyFlag(flags)).toBe(true)
   })
 
   it('is empty for a plain payload', () => {
     const flags = approvalFlags([{ label: 'Title', value: 'Take a walk' }], [])
-    expect(flags).toEqual({ external_domains: [], bidi: false, homoglyph: false })
+    expect(flags).toEqual({ external_domains: [], bidi: false, invisible: false, homoglyph: false })
     expect(hasAnyFlag(flags)).toBe(false)
   })
 })
@@ -89,5 +89,47 @@ describe('visibleText', () => {
 
   it('leaves other text unchanged', () => {
     expect(visibleText('<b>hi</b> **x**')).toBe('<b>hi</b> **x**')
+  })
+})
+
+describe('GĐ2 review M3: bypasses of the card flags', () => {
+  it.each([
+    ['a zero-width space', 'a@goo\u200Bgle.com', 'google.com'],
+    ['a soft hyphen', 'a@exa\u00ADmple.com', 'example.com'],
+    ['a word joiner', 'a@exa\u2060mple.com', 'example.com'],
+    ['a BOM', 'a@exa\uFEFFmple.com', 'example.com'],
+    ['a tag character', 'a@exa\u{E0041}mple.com', 'example.com'],
+    ['an underscore', 'a@evil_corp.com', 'evil_corp.com'],
+    ['a split URL host', 'see https://ev\u200Bil.example/x', 'evil.example'],
+  ])('still names the domain split by %s', (_n, text, domain) => {
+    expect(externalDomains([text])).toEqual([domain])
+  })
+
+  it('flags an all-Cyrillic look-alike domain that mixes nothing', () => {
+    expect(hasHomoglyph(['a@\u0455\u0441\u043e\u0440\u0435.com'])).toBe(true)
+    expect(hasHomoglyph(['https://\u0455\u0441\u043e\u0440\u0435.com/x'])).toBe(true)
+  })
+
+  it('still reads a Latin-only domain as clean', () => {
+    expect(hasHomoglyph(['a@scope.com'])).toBe(false)
+  })
+
+  it('catches Latin mixed with Cyrillic even with a zero-width character beside it', () => {
+    expect(hasHomoglyph(['p\u200B\u0430ypal'])).toBe(true)
+  })
+
+  it.each(['\u200B', '\u200C', '\u200D', '\u200E', '\u2060', '\u2064', '\uFEFF', '\u00AD', '\u061C', '\u{E0041}'])(
+    'prints %j as a visible marker and flags it',
+    (c) => {
+      const marker = visibleText(`a${c}b`)
+      expect(marker).toMatch(/^a\[U\+[0-9A-F]{4,5}\]b$/)
+      expect(marker).not.toContain(c)
+      expect(hasInvisible([`a${c}b`]) || hasBidi([`a${c}b`])).toBe(true)
+    },
+  )
+
+  it('raises the invisible flag in approvalFlags and keeps ordinary text clean', () => {
+    expect(approvalFlags([{ label: 'To', value: 'x\u200By' }], []).invisible).toBe(true)
+    expect(approvalFlags([{ label: 'To', value: 'xin chào' }], []).invisible).toBe(false)
   })
 })

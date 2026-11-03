@@ -26,8 +26,10 @@ from pydantic import BaseModel, Field
 from langgraph_agents.api.auth import current_user_id, request_groups
 from langgraph_agents.loop.config import load_settings
 from langgraph_agents.loop.mode import select_mode
+from langgraph_agents.shared.logging import get_logger
 
 router = APIRouter()
+logger = get_logger("langgraph.api.loop")
 
 
 class CancelRequest(BaseModel):
@@ -77,7 +79,8 @@ async def chat_cancel(
     try:
         await request_cancel(uid, body.session_id, body.request_id)
     except Exception as exc:  # noqa: BLE001
-        raise HTTPException(500, f"cancel failed: {exc}")
+        logger.warning("cancel_failed", extra={"error": type(exc).__name__})
+        raise HTTPException(500, {"code": "cancel_failed"})
     return {"status": "cancel_requested", "session_id": body.session_id}
 
 
@@ -240,7 +243,7 @@ async def chat_resume(
             await lease.release(uid, request_id)
         except Exception as exc:  # noqa: BLE001
             logger.warning("lease_release_failed", extra={
-                "request_id": request_id, "error": str(exc)})
+                "request_id": request_id, "error": type(exc).__name__})
 
     try:
         try:
@@ -303,7 +306,9 @@ async def chat_resume(
         "transcript": messages,
         "resume": {"decision": body.decision, "action_id": action_id,
                    "tool_call_id": sj.get("tool_call_id", ""), "thread_id": thread_id,
-                   "declined_hashes": list(sj.get("declined_hashes") or [])},
+                   "declined_hashes": list(sj.get("declined_hashes") or []),
+                   # Taint rule 1 survives the pause (sealed in the carry).
+                   "personal_sources": list(carry.get("personal_sources") or [])},
         "user_instructions": carry.get("user_instructions") or [],
         "user_facts": carry.get("user_facts") or [],
         "actions": carry.get("actions") or [],

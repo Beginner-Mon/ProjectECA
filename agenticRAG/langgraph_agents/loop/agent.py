@@ -106,26 +106,29 @@ async def agent_node(state: LoopState, config: RunnableConfig) -> dict:
         # The provider rejected the model's malformed call twice. No cap was
         # hit, so the status is `failed`, not `budget_exceeded`.
         logger.warning("agent_model_tool_call_invalid",
-                       extra={"request_id": request_id, "error": str(exc)})
+                       extra={"request_id": request_id, "error": type(exc).__name__})
         return {
             "agent_result": stop_note("empty", _locale(config)),
             "turn_status": "failed",
             "error_code": "model_tool_call_invalid",
             "errors": list(state.get("errors") or []) + [{
-                "node": "agent", "severity": "critical", "message": str(exc),
+                "node": "agent", "severity": "critical",
+                "message": "model_tool_call_invalid",
             }],
             "rounds": int(state.get("rounds", 0)) + 1,
             "total_tokens": 0,
             "_route": "persona",
         }
     except Exception as exc:  # noqa: BLE001
-        logger.warning("agent_model_failed", extra={"request_id": request_id, "error": str(exc)})
+        logger.warning("agent_model_failed", extra={
+            "request_id": request_id, "error": type(exc).__name__})
         agent_result = stop_note("empty", _locale(config))
         return {
             "agent_result": agent_result,
             "turn_status": "budget_exceeded",
             "errors": list(state.get("errors") or []) + [{
-                "node": "agent", "severity": "critical", "message": str(exc),
+                "node": "agent", "severity": "critical",
+                "message": f"agent_model_failed: {type(exc).__name__}",
             }],
             "rounds": int(state.get("rounds", 0)) + 1,
             "total_tokens": 0,

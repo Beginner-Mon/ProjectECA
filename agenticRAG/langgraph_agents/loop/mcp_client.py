@@ -56,6 +56,11 @@ MCP_HTTP_TIMEOUT = httpx.Timeout(connect=3.0, read=20.0, write=10.0, pool=3.0)
 CLIENT_NAME = "eca-agent-loop"
 
 
+class ToolReturnedError(Exception):
+    """The server answered a tool call with `isError: true`. The call did
+    return; `args[0]` is the `{"error": "tool_error", ...}` JSON for the agent."""
+
+
 @dataclass(frozen=True)
 class ToolDef:
     """One tool as the server declares it."""
@@ -301,10 +306,13 @@ class McpClient:
         request_id: str | None = None,
         *,
         timeout: float = DEFAULT_CALL_TIMEOUT_S,
+        raise_tool_error: bool = False,
     ) -> str:
         """Call a tool; return its text. A tool-level error is returned as
         `{"error": "tool_error", ...}` JSON (an answer, not a transport fault);
-        transport faults raise."""
+        transport faults raise. With `raise_tool_error` the same answer raises
+        `ToolReturnedError` instead, so a caller that must tell "the server said
+        isError" from "the text contains the word error" (a write) can."""
         if not self.is_open:
             await self.open(timeout=OPEN_TIMEOUT_S)
         self._auth.token = token
@@ -313,6 +321,9 @@ class McpClient:
             self._session.call_tool(name, args or {}), timeout)
         text = _result_text(result)
         if getattr(result, "isError", False):
-            return json.dumps({"error": "tool_error", "message": text[:500]},
-                              ensure_ascii=False)
+            answer = json.dumps({"error": "tool_error", "message": text[:500]},
+                                ensure_ascii=False)
+            if raise_tool_error:
+                raise ToolReturnedError(answer)
+            return answer
         return text

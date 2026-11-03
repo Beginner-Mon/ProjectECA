@@ -213,10 +213,14 @@ def _parameters(schema: dict) -> dict:
     return out
 
 
-def _make_call(pt: PluginTurn, manifest: Manifest, remote_name: str):
+def _make_call(pt: PluginTurn, manifest: Manifest, remote_name: str,
+               *, write: bool = False):
     async def _call(args: dict, config: dict) -> str:
+        # A write's `isError` must reach `execute` as a fact, not as text it
+        # has to search for the word "error" in (GĐ2 review M6).
         return await pt.session(manifest).client.call_tool(
-            remote_name, args, token=None, request_id=pt.request_id)
+            remote_name, args, token=None, request_id=pt.request_id,
+            raise_tool_error=write)
     return _call
 
 
@@ -235,7 +239,8 @@ def _build_specs(pt: PluginTurn, manifest: Manifest, tools: list[ToolDef]
             parameters=_parameters(tool.input_schema),
             risk="write" if decl.risk == "write" else "egress_read",
             source="plugin",
-            call=_make_call(pt, manifest, remote_name),
+            call=_make_call(pt, manifest, remote_name,
+                            write=decl.risk == "write"),
             idempotency_arg=decl.idempotency_arg,
             data_class=manifest.data_class,
             plugin_id=manifest.id,

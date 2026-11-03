@@ -17,8 +17,9 @@ Nothing below runs without that decision.
   4. run the STORED payload (opened from `payload_enc`, hash-checked), never
      arguments the model produced again. If the manifest names an
      `idempotency_arg`, send `action_id` in it. Write tools get 0 retries;
-  5. record the result: `succeeded`, or `failed` when the server answered with
-     an error. A timeout or a dropped connection after the call started is
+  5. record the result: `succeeded` when the call returned without `isError`
+     (whatever the text says and whether or not the guardrail withheld it),
+     `failed` when the server answered `isError`. A timeout or a dropped connection after the call started is
      `unknown`, never retried;
   6. a row left in `executing` with no result (the process died mid-call) is
      swept to `unknown` and never run again. That sweep happens at the start of
@@ -50,7 +51,7 @@ from langgraph_agents.loop.errors import normalize
 from langgraph_agents.loop.limits import (
     ensure_turn, _msg_role, _msg_tool_calls,
 )
-from langgraph_agents.loop.mcp_client import DEFAULT_CALL_TIMEOUT_S
+from langgraph_agents.loop.mcp_client import DEFAULT_CALL_TIMEOUT_S, ToolReturnedError
 from langgraph_agents.loop.state import LoopState
 from langgraph_agents.loop.taint import build_taint
 from langgraph_agents.loop.tools.registry import build_turn_tools
@@ -78,12 +79,14 @@ async def sweep_stale(user_id: str, session_id: str) -> list[str]:
 
 async def restore_turn_context(state: dict, config: dict) -> None:
     """Rebuild what a fresh `TurnContext` lacks on a resumed turn: the declined
-    payload hashes, the call registry (for the persona's evidence), the taint
+    payload hashes, the personal sources already read (taint rule 1), the call registry (for the persona's evidence), the taint
     terms, and this turn's plugin tools."""
     turn = ensure_turn(config)
     cfg = config.get("configurable") or {}
     resume = state.get("resume") or {}
     turn.declined_hashes |= set(resume.get("declined_hashes") or [])
+    turn.personal_sources = [dict(s) for s in resume.get("personal_sources") or []
+                             if isinstance(s, dict)]
     for m in state.get("transcript") or []:
         if _msg_role(m) != "assistant":
             continue
@@ -141,8 +144,11 @@ async def execute_node(state: LoopState, config: RunnableConfig) -> dict:
     if checker is not None:
         try:
             cancelled = bool(await checker(config))
-        except Exception:  # noqa: BLE001
-            cancelled = False
+        except Exception as exc:  # noqa: BLE001
+            # Fail closed: a write does not run on an answer we could not get.
+            logger.warning("cancel_check_failed", extra={
+                "request_id": cfg.get("request_id", "-"), "error": type(exc).__name__})
+            cancelled = True
     if cancelled:
         turn.cancelled = True
         await store.transition(user_id, action_id, APPROVED, INVALIDATED)
@@ -190,8 +196,12 @@ async def execute_node(state: LoopState, config: RunnableConfig) -> dict:
 
     raw: Any = None
     exc: BaseException | None = None
+    server_error = False
     try:
         raw = await asyncio.wait_for(spec.call(args, config), WRITE_TIMEOUT_S)  # type: ignore[arg-type]
+    except ToolReturnedError as e:
+        # The call returned and the server said `isError`: it did not run.
+        raw, server_error = e.args[0] if e.args else "{}", True
     except asyncio.CancelledError:
         # The stream was cut while the call was in flight: the write may have
         # run. Record that, then let the cancellation through.
@@ -216,18 +226,27 @@ async def execute_node(state: LoopState, config: RunnableConfig) -> dict:
                                    "note": "no answer came back; it may or may not have run"})
         extra = {"kind": "timeout", "error": type(exc).__name__}
     else:
+        # The status comes from the call, not from the words in its text (GĐ2
+        # review M6): the call returned without `isError` -> succeeded, even
+        # when the guardrail withholds the text from the agent.
         remaining = max(0, int(turn.caps.max_result_chars_per_turn - turn.used_result_chars))
         result = await normalize(spec, raw, remaining)
-        ref = hashlib.sha256(result.content.encode("utf-8")).hexdigest()[:16]
-        if result.ok:
+        content = result.content
+        if not server_error and result.provenance.get("blocked"):
+            content = json.dumps(
+                {"status": "succeeded",
+                 "note": "the action ran; its result text was withheld"},
+                ensure_ascii=False)
+        ref = hashlib.sha256(content.encode("utf-8")).hexdigest()[:16]
+        if not server_error:
             status, outcome = SUCCEEDED, "ok"
             await store.transition(user_id, action_id, EXECUTING, SUCCEEDED, result_ref=ref)
-            extra = {"result_chars": len(result.content)}
+            extra = {"result_chars": len(content)}
         else:
             status, outcome = FAILED, "failed"
             await store.transition(user_id, action_id, EXECUTING, FAILED, result_ref=ref)
             extra = {"kind": "error", "error": "tool_error"}
-        message = {"role": "tool", "tool_call_id": tcid, "content": result.content}
+        message = {"role": "tool", "tool_call_id": tcid, "content": content}
     _audit(config, plugin_id, record.tool, args, outcome, started,
            len(message["content"]))
     return _result(state, tcid, tool, action_id, status, message, **extra)

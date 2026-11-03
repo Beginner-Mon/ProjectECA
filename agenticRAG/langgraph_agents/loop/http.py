@@ -213,6 +213,10 @@ class GuardedTransport(httpx.AsyncBaseTransport):
 
     async def handle_async_request(self, request: httpx.Request) -> httpx.Response:
         address = await self._check(request.url)
+        # The cap counts the bytes the transport hands over. httpx decodes after
+        # that, so a compressed body could expand far past it (a gzip bomb).
+        # Ask for no compression, and refuse a body that is compressed anyway.
+        request.headers["Accept-Encoding"] = "identity"
         if self._pin and address is not None:
             # A copy, not a mutation: httpx resolves a relative redirect against
             # the ORIGINAL request's URL, which must keep the host name.
@@ -227,6 +231,10 @@ class GuardedTransport(httpx.AsyncBaseTransport):
             response = await self._inner.handle_async_request(pinned)
         else:
             response = await self._inner.handle_async_request(request)
+        encoding = response.headers.get("content-encoding", "identity").strip().lower()
+        if encoding not in ("", "identity"):
+            await response.aclose()
+            raise EgressBlocked("content_encoding_not_allowed", encoding[:40])
         declared = response.headers.get("content-length")
         if declared and declared.isdigit() and int(declared) > self._max_bytes:
             await response.aclose()

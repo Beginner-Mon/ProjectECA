@@ -10,6 +10,8 @@ Modes (`DevReminders.mode`, or env `LOOP_DEV_REMINDERS_MODE` for the CLI):
   ok                    the write is recorded and the call returns
   timeout_after_write   the write is recorded, then the call never returns
                         (the client times out after the side effect)
+  tool_error            the tool raises before writing: the MCP result carries
+                        `isError: true`
 
 Run it for local dev:
 
@@ -42,6 +44,8 @@ class DevReminders:
 
         @server.tool(description="Create a reminder for the user.")
         async def create_reminder(title: str, when: str, request_id: str = "") -> str:
+            if self.mode == "tool_error":
+                raise RuntimeError("the reminders backend refused the write")
             self.writes.append({"title": title, "when": when, "request_id": request_id})
             if self.mode == "timeout_after_write":
                 await asyncio.sleep(3600)

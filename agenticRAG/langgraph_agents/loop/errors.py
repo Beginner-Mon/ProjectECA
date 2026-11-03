@@ -115,7 +115,8 @@ async def normalize(spec: Any, raw: Any, remaining: int) -> ToolResult:
                 content=json.dumps({"error": "blocked_by_guardrail",
                                     "reason": decision.message or ""},
                                    ensure_ascii=False),
-                kind=FAILED, empty=False, source_label=source_label, provenance={})
+                kind=FAILED, empty=False, source_label=source_label,
+                provenance={"blocked": True})
         if decision.text is not None:
             content = decision.text
 

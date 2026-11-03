@@ -94,7 +94,9 @@ export default function ApprovalCard({ card, onAnswer }: ApprovalCardProps) {
         {payload.display.map((field, i) => (
           <div key={i}>
             <p className="break-words text-xs text-muted-foreground">{visibleText(field.label)}</p>
-            <p className="mt-0.5 whitespace-pre-wrap break-words text-foreground">{visibleText(field.value)}</p>
+            <p className="mt-0.5 max-h-60 overflow-y-auto whitespace-pre-wrap break-words text-foreground">
+              {visibleText(field.value)}
+            </p>
           </div>
         ))}
 
@@ -104,6 +106,7 @@ export default function ApprovalCard({ card, onAnswer }: ApprovalCardProps) {
               <FlagLine text={t('approval.flag_domains', { domains: flags.external_domains.join(', ') })} />
             )}
             {flags.bidi && <FlagLine text={t('approval.flag_bidi')} />}
+            {flags.invisible && <FlagLine text={t('approval.flag_invisible')} />}
             {flags.homoglyph && <FlagLine text={t('approval.flag_homoglyph')} />}
           </div>
         )}

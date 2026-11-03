@@ -235,13 +235,14 @@ async def _persona_body(state: LoopState, config: RunnableConfig) -> dict:
             if writer is not None and final:
                 writer({"content": final})
     except Exception as exc:  # noqa: BLE001
-        logger.warning("persona_model_failed", extra={"request_id": request_id, "error": str(exc)})
+        logger.warning("persona_model_failed", extra={
+            "request_id": request_id, "error": type(exc).__name__})
         final = get_ui_string(persona_id, "error_unavailable", locale)
         return {
             "final_answer": final,
             "errors": list(state.get("errors") or []) + [error_entry(
                 "persona", exc, ErrorSeverity.CRITICAL,
-                f"Persona model failed: {exc}")],
+                f"Persona model failed: {type(exc).__name__}")],
             "turn_status": turn_status,
         }
 

@@ -18,7 +18,7 @@ from langgraph_agents.loop.turns import open_transcript, seal_transcript
 
 # State keys sealed with the messages.
 CARRY_KEYS = ("user_instructions", "user_facts", "actions", "motion_jobs",
-              "loop_trace")
+              "loop_trace", "personal_sources")
 
 
 async def seal_turn(*, transcript: list, state: dict, query: str, user_id: str,

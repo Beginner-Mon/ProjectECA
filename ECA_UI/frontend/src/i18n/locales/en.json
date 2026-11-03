@@ -404,6 +404,7 @@
     "flag_domains": "Addresses outside the app: {{domains}}",
     "flag_bidi": "Contains hidden text-direction characters, shown here as [U+XXXX].",
     "flag_homoglyph": "Contains look-alike letters from different alphabets, or an encoded (xn--) address.",
+    "flag_invisible": "Contains hidden characters that are not visible. They are shown here as [U+XXXX].",
     "state_done": "Approved",
     "state_declined": "Declined",
     "state_expired": "Expired",

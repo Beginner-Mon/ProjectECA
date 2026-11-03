@@ -404,6 +404,7 @@
     "flag_domains": "Địa chỉ bên ngoài ứng dụng: {{domains}}",
     "flag_bidi": "Có ký tự ẩn đổi chiều chữ, hiện ở đây dạng [U+XXXX].",
     "flag_homoglyph": "Có chữ trông giống nhau từ các bảng chữ cái khác nhau, hoặc địa chỉ đã mã hóa (xn--).",
+    "flag_invisible": "Có ký tự ẩn không nhìn thấy được. Chúng được hiển thị ở đây dưới dạng [U+XXXX].",
     "state_done": "Đã duyệt",
     "state_declined": "Đã từ chối",
     "state_expired": "Hết hạn",

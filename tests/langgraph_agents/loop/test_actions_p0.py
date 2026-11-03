@@ -784,8 +784,8 @@ def test_pause_is_timed_in_the_trace_and_the_tail_waits_for_the_real_answer(rig)
 # ═════════════════════════════════════════════════════════════════════════
 
 
-def test_the_card_text_is_plain_capped_and_lists_every_recipient():
-    from langgraph_agents.loop.approval import build_display, build_recipients, summary
+def test_the_card_text_is_plain_full_and_lists_every_recipient():
+    from langgraph_agents.loop.approval import build_display, build_recipients
     from langgraph_agents.loop.plugins.manifest import ToolDecl
 
     decl = ToolDecl(risk="write", display=["to", "body", "n"], recipients_arg="to",
@@ -793,8 +793,9 @@ def test_the_card_text_is_plain_capped_and_lists_every_recipient():
     args = {"to": [f"p{i}@example.com" for i in range(40)], "body": "x" * 900,
             "n": 3, "rid": "model-made", "extra": {"a": 1}}
     shown = build_display(args, decl)
-    assert [d["label"] for d in shown] == ["to", "body", "n"]
-    assert shown[1]["value"] == "x" * 499 + "…" and len(shown[1]["value"]) == 500
+    # Every argument but the idempotency one, `display` only sets the order.
+    assert [d["label"] for d in shown] == ["to", "body", "n", "extra"]
+    assert shown[1]["value"] == "x" * 900          # GĐ2 review M1: no per-value cap
     assert shown[2]["value"] == "3"
     assert shown[0]["value"].startswith('["p0@example.com"')   # compact JSON
     assert build_recipients(args, decl) == [f"p{i}@example.com" for i in range(40)]
@@ -804,7 +805,6 @@ def test_the_card_text_is_plain_capped_and_lists_every_recipient():
     assert labels == ["to", "body", "n", "extra"] and "rid" not in labels
     assert build_recipients({"to": "one@example.com"},
                             ToolDecl(risk="write", recipients_arg="to")) == ["one@example.com"]
-    assert len(summary(shown)) <= 120
 
 
 def test_every_write_status_has_a_vi_and_en_outcome_line():

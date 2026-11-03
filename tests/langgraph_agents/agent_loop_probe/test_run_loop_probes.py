@@ -118,7 +118,7 @@ def test_script_exhausted_is_a_failed_row_not_a_crash():
                                                    condition="knee")])])
     # the agent node turns the model failure into a stop note
     assert row["pass"] is False
-    assert row["error"] and "script exhausted" in row["error"]
+    assert row["error"] and "ScriptExhausted" in row["error"]   # class name only (GĐ2 L6)
 
 
 # ── the database is never reached ────────────────────────────────────────

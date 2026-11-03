@@ -110,19 +110,47 @@ def _unwrap(exc: BaseException) -> BaseException:
     return exc
 
 
+class McpUnauthorized(Exception):
+    """The server answered 401 to a request of this session. Fixed text: the
+    token that was sent is never put in an error."""
+
+    def __init__(self) -> None:
+        super().__init__("the MCP server rejected the connection's credentials")
+
+
 class _CallAuth(httpx.Auth):
-    """Adds the per-call headers to every request of the session."""
+    """Adds the per-call headers to every request of the session.
+
+    The bearer token (stage 5, F6) lives here only while a call that was given
+    one is running: `hold` sets it, `release` clears it when the last running
+    call ends (`_holds` counts them, because the tools node runs calls in
+    parallel on one session). Nothing else keeps it.
+    """
 
     def __init__(self) -> None:
         self.token: str | None = None
         self.request_id: str | None = None
+        self.unauthorized = False
+        self._holds = 0
+
+    def hold(self, token: str | None) -> None:
+        self._holds += 1
+        if token:
+            self.token = token
+
+    def release(self) -> None:
+        self._holds = max(0, self._holds - 1)
+        if self._holds == 0:
+            self.token = None
 
     def auth_flow(self, request: httpx.Request):
         if self.request_id:
             request.headers["X-Request-Id"] = self.request_id
         if self.token:
             request.headers["Authorization"] = f"Bearer {self.token}"
-        yield request
+        response = yield request
+        if response.status_code == 401:
+            self.unauthorized = True
 
 
 def mcp_http_client_factory(
@@ -232,24 +260,36 @@ class McpClient:
             self._session = None
             self._ready.set()
 
-    async def open(self, timeout: float | None = None) -> None:
-        """Start the session (idempotent). Raises on failure or timeout."""
+    async def open(self, timeout: float | None = None,
+                   token: str | None = None) -> None:
+        """Start the session (idempotent). Raises on failure or timeout.
+        `token` is sent on the requests of the handshake and then dropped; a
+        server that answers 401 raises `McpUnauthorized`."""
         async with self._open_lock:
             if self.is_open:
                 return
             self._error = None
+            self._auth.unauthorized = False
             self._ready = asyncio.Event()
             self._stop = asyncio.Event()
-            self._task = asyncio.create_task(self._run())
+            self._auth.hold(token)
             try:
-                await asyncio.wait_for(self._ready.wait(), timeout)
-            except BaseException:
-                await self._abort()
-                raise
-            if self._session is None:
-                err = self._error
-                await self._abort()
-                raise err or RuntimeError("mcp session did not start")
+                self._task = asyncio.create_task(self._run())
+                try:
+                    await asyncio.wait_for(self._ready.wait(), timeout)
+                except BaseException:
+                    await self._abort()
+                    if self._auth.unauthorized:
+                        raise McpUnauthorized() from None
+                    raise
+                if self._session is None:
+                    err = self._error
+                    await self._abort()
+                    if self._auth.unauthorized:
+                        raise McpUnauthorized() from None
+                    raise err or RuntimeError("mcp session did not start")
+            finally:
+                self._auth.release()
 
     async def _abort(self) -> None:
         task, self._task = self._task, None
@@ -281,14 +321,29 @@ class McpClient:
 
     # ── operations ────────────────────────────────────────────────
 
-    async def list_tools(self) -> list[ToolDef]:
-        """All tools the server declares (follows pagination, at most 5 pages)."""
+    async def list_tools(self, token: str | None = None) -> list[ToolDef]:
+        """All tools the server declares (follows pagination, at most 5 pages).
+        `token` is the user's bearer for a connector; it is held for this call
+        only."""
+        self._auth.hold(token)
+        try:
+            return await self._list_tools(token)
+        finally:
+            self._auth.release()
+
+    async def _list_tools(self, token: str | None) -> list[ToolDef]:
         if not self.is_open:
-            await self.open()
+            await self.open(token=token)
+        self._auth.unauthorized = False
         tools: list[ToolDef] = []
         cursor: str | None = None
         for _ in range(5):
-            page = await self._session.list_tools(cursor=cursor)
+            try:
+                page = await self._session.list_tools(cursor=cursor)
+            except Exception:
+                if self._auth.unauthorized:
+                    raise McpUnauthorized() from None
+                raise
             for t in page.tools:
                 tools.append(ToolDef(
                     name=t.name, description=t.description or "",
@@ -313,12 +368,21 @@ class McpClient:
         transport faults raise. With `raise_tool_error` the same answer raises
         `ToolReturnedError` instead, so a caller that must tell "the server said
         isError" from "the text contains the word error" (a write) can."""
-        if not self.is_open:
-            await self.open(timeout=OPEN_TIMEOUT_S)
-        self._auth.token = token
         self._auth.request_id = request_id
-        result = await asyncio.wait_for(
-            self._session.call_tool(name, args or {}), timeout)
+        self._auth.hold(token)
+        try:
+            if not self.is_open:
+                await self.open(timeout=OPEN_TIMEOUT_S, token=token)
+            self._auth.unauthorized = False
+            try:
+                result = await asyncio.wait_for(
+                    self._session.call_tool(name, args or {}), timeout)
+            except Exception:
+                if self._auth.unauthorized:
+                    raise McpUnauthorized() from None
+                raise
+        finally:
+            self._auth.release()
         text = _result_text(result)
         if getattr(result, "isError", False):
             answer = json.dumps({"error": "tool_error", "message": text[:500]},

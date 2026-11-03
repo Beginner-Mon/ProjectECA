@@ -1,0 +1,47 @@
+{
+  "id": "gmail",
+  "name": "Gmail",
+  "version": "1.0.0",
+  "publisher": "Google",
+  "description": "Reads the user's own mail, labels messages and writes drafts. It cannot send. Needs the user to connect their Google account. Off until the Owner enables Google connectors (google_enabled).",
+  "mcp_server": {
+    "url": "TO_VERIFY",
+    "transport": "streamable_http",
+    "allowed_hosts": ["accounts.google.com", "oauth2.googleapis.com", "TO_VERIFY"]
+  },
+  "auth": {
+    "type": "mcp_oauth",
+    "client_registration": "pre_registered",
+    "client_id": "TO_VERIFY",
+    "client_secret_ref": "secretsmanager:vva/<env>/plugins/gmail",
+    "issuer": "https://accounts.google.com",
+    "scopes": [
+      "https://www.googleapis.com/auth/gmail.readonly",
+      "https://www.googleapis.com/auth/gmail.labels",
+      "https://www.googleapis.com/auth/gmail.compose"
+    ],
+    "authorize_extra_params": {"access_type": "offline", "prompt": "consent"}
+  },
+  "tools": {
+    "search_messages": {"egress": true, "risk": "read"},
+    "read_message": {"egress": true, "risk": "read"},
+    "list_labels": {"egress": true, "risk": "read"},
+    "label_message": {
+      "egress": true, "risk": "write",
+      "display": ["message_id", "add_labels", "remove_labels"]
+    },
+    "create_draft": {
+      "egress": true, "risk": "write",
+      "recipients_arg": "to",
+      "display": ["to", "subject", "body"]
+    }
+  },
+  "skills": [],
+  "reviewed": {
+    "by": "",
+    "tool_definitions_sha256": "UNPINNED"
+  },
+  "data_class": "personal",
+  "enabled_by_default": false,
+  "requires_gate": true
+}

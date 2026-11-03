@@ -394,6 +394,19 @@
     "status_web_search_off": "Tìm kiếm web đang tắt",
     "status_unknown": "Không rõ"
   },
+  "connectors": {
+    "connected": "Đã kết nối",
+    "expired": "Hết hạn",
+    "not_connected": "Chưa kết nối",
+    "connect": "Kết nối",
+    "disconnect": "Ngắt kết nối",
+    "reconnect": "Kết nối lại",
+    "connecting": "Đang kết nối…",
+    "error": "Không kết nối được. Hãy thử lại.",
+    "callback_connecting": "Đang kết nối tài khoản…",
+    "callback_connected": "Đã kết nối. Đang quay lại trò chuyện…",
+    "callback_error": "Không kết nối được. Hãy thử lại."
+  },
   "approval": {
     "title": "Cần bạn duyệt",
     "approve": "Gửi",

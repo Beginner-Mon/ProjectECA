@@ -76,6 +76,10 @@ class CheckContext:
     # `tool_result` stage only: `message` then holds the tool's result text
     # (not the user's words), and `tool` names where it came from.
     tool: str = ""
+    # Maximum characters for the tool result (including any wrapper).
+    # Used by `tool_result` checks that wrap the text to ensure the wrapper
+    # survives truncation.
+    max_chars: int | None = None
 
 
 @dataclass(frozen=True)

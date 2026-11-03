@@ -37,7 +37,9 @@ from urllib.parse import urlparse
 
 from langgraph_agents.core.circuit_breaker import CircuitBreaker
 from langgraph_agents.loop.http import AddressPolicy
-from langgraph_agents.loop.mcp_client import McpClient, ToolDef, definitions_sha256
+from langgraph_agents.loop.mcp_client import (
+    McpClient, McpUnauthorized, ToolDef, definitions_sha256,
+)
 from langgraph_agents.loop.plugins.manifest import Manifest, load_catalog
 from langgraph_agents.loop.plugins.store import PluginStore, get_plugin_store
 from langgraph_agents.loop.tools.registry import ToolSpec
@@ -53,9 +55,13 @@ UNCONFIGURED = "unconfigured"              # no endpoint on this deployment
 DEFINITION_CHANGED = "definition_changed"  # hash != pin, or unpinned
 UNAVAILABLE = "unavailable"                # listing failed or breaker open
 WEB_SEARCH_OFF = "web_search_off"          # replaces web_search, flag is off
+NOT_CONNECTED = "not_connected"            # OAuth connector, user has not connected (F8)
+AUTH_EXPIRED = "auth_expired"              # OAuth connector, user must reconnect (F8)
 
 DEFS_TTL_S = 600.0
 LIST_TIMEOUT_S = 3.0
+TOKEN_TIMEOUT_S = 8.0     # a refresh is one HTTP round trip to the provider
+DEFS_CACHE_MAX = 2000
 BREAKER_FAILURES = 3
 BREAKER_COOL_DOWN_S = 60.0
 MAX_TOOL_NAME = 64
@@ -73,6 +79,9 @@ class _Defs:
     sha256: str
 
 
+# Key: the plugin id; for an OAuth connector "<user_id>\x1f<plugin_id>" (stage 5),
+# because what a server lists with one user's token must never be served to
+# another user (GĐ2 review). See `defs_key`.
 _defs_cache: dict[str, _Defs] = {}
 _breakers: dict[str, CircuitBreaker] = {}
 _client_overrides: dict[str, dict[str, Any]] = {}
@@ -100,10 +109,36 @@ def reset_runtime() -> None:
     _client_overrides.clear()
 
 
-def cached_status(manifest: Manifest) -> str | None:
+def defs_key(manifest: Manifest, user_id: str | None) -> str:
+    """Cache key of a plugin's definitions: per plugin, or per (user, plugin)
+    when the plugin needs the user's own token."""
+    if manifest.needs_user_token():
+        return f"{user_id or ''}\x1f{manifest.id}"
+    return manifest.id
+
+
+def forget_definitions(manifest: Manifest, user_id: str | None) -> None:
+    """Drop one cached listing (the user disconnected, or the token failed)."""
+    _defs_cache.pop(defs_key(manifest, user_id), None)
+
+
+def _prune_defs() -> None:
+    if len(_defs_cache) < DEFS_CACHE_MAX:
+        return
+    now = _clock()
+    for key in [k for k, e in _defs_cache.items() if now - e.fetched >= DEFS_TTL_S]:
+        _defs_cache.pop(key, None)
+    while len(_defs_cache) >= DEFS_CACHE_MAX:
+        _defs_cache.pop(next(iter(_defs_cache)))
+
+
+def cached_status(manifest: Manifest, user_id: str | None = None) -> str | None:
     """`definition_changed` when the cached definitions do not match the pin.
-    None when nothing is cached or they match (for the plugins panel)."""
-    entry = _defs_cache.get(manifest.id)
+    None when nothing is cached or they match (for the plugins panel). An OAuth
+    connector's listing is per user, so it needs `user_id`."""
+    if manifest.needs_user_token() and not user_id:
+        return None
+    entry = _defs_cache.get(defs_key(manifest, user_id))
     if entry is None:
         return None
     if entry.sha256 != manifest.reviewed.tool_definitions_sha256:
@@ -168,12 +203,16 @@ class PluginSession:
 class PluginTurn:
     """What one turn offers from plugins, and the sessions it holds."""
 
-    def __init__(self, request_id: str = "-") -> None:
+    def __init__(self, request_id: str = "-", user_id: str = "") -> None:
         self.request_id = request_id
+        # Who the turn runs for. A connector's token is fetched for this user at
+        # call time; the id is not secret, the token never lands here.
+        self.user_id = user_id
         self.specs: list[ToolSpec] = []
         self.statuses: dict[str, str] = {}
         self.unavailable: list[str] = []
         self.changed: list[str] = []
+        self.reconnect: list[str] = []      # connectors the user must (re)connect
         self.replaces: frozenset[str] = frozenset()
         self._sessions: dict[str, PluginSession] = {}
         self._invalid: dict[str, str] = {}
@@ -213,14 +252,50 @@ def _parameters(schema: dict) -> dict:
     return out
 
 
+# `OAuthError.code` values that need the user to connect again (F8).
+_RECONNECT_CODES = frozenset({"auth_expired", "not_connected", "token_unreadable"})
+
+
+def _reconnect_status(exc: BaseException) -> str | None:
+    """`not_connected` / `auth_expired` when `exc` means the user must (re)connect."""
+    if isinstance(exc, McpUnauthorized):
+        return AUTH_EXPIRED
+    code = getattr(exc, "code", None)
+    if type(exc).__name__ in ("AuthExpired", "NotConnected", "OAuthError") \
+            and code in _RECONNECT_CODES:
+        return NOT_CONNECTED if code == "not_connected" else AUTH_EXPIRED
+    return None
+
+
+async def _bearer(manifest: Manifest, user_id: str) -> str:
+    """The user's access token for a connector, fetched now (refreshed first when
+    near expiry, under the per-connection lock). Raises `OAuthError`. The caller
+    passes it straight to the MCP client and keeps no reference (F6)."""
+    from langgraph_agents.loop.connectors.oauth import get_oauth_service
+    return await asyncio.wait_for(
+        get_oauth_service().access_token(user_id, manifest.id), TOKEN_TIMEOUT_S)
+
+
 def _make_call(pt: PluginTurn, manifest: Manifest, remote_name: str,
                *, write: bool = False):
+    oauth = manifest.needs_user_token()
+
     async def _call(args: dict, config: dict) -> str:
         # A write's `isError` must reach `execute` as a fact, not as text it
         # has to search for the word "error" in (GĐ2 review M6).
-        return await pt.session(manifest).client.call_tool(
-            remote_name, args, token=None, request_id=pt.request_id,
-            raise_tool_error=write)
+        try:
+            token = None
+            if oauth:
+                # F6: fetched here, per call, never stored. `call_tool` puts it on
+                # the request and drops it when the call ends.
+                token = await _bearer(manifest, pt.user_id)
+            return await pt.session(manifest).client.call_tool(
+                remote_name, args, token=token, request_id=pt.request_id,
+                raise_tool_error=write)
+        except Exception as exc:  # noqa: BLE001
+            if oauth and _reconnect_status(exc) is not None:
+                forget_definitions(manifest, pt.user_id)
+            raise
     return _call
 
 
@@ -257,14 +332,36 @@ async def _load_one(pt: PluginTurn, manifest: Manifest) -> list[ToolSpec]:
         return []
 
     url = manifest.resolved_url()
-    entry = _defs_cache.get(manifest.id)
+    key = defs_key(manifest, pt.user_id)
+    entry = _defs_cache.get(key)
     if entry is not None and (entry.url != url or _clock() - entry.fetched >= DEFS_TTL_S):
         entry = None
 
     if entry is None:
         session = pt.session(manifest)
+        token = None
+        if manifest.needs_user_token():
+            # Not a plugin fault: a missing or dead connection, or a provider
+            # that cannot be reached, never counts against the plugin's breaker.
+            try:
+                token = await _bearer(manifest, pt.user_id)
+            except Exception as exc:  # noqa: BLE001
+                status = _reconnect_status(exc)
+                pt.statuses[manifest.id] = status or UNAVAILABLE
+                (pt.reconnect if status else pt.unavailable).append(manifest.id)
+                logger.info("connector_token_unavailable", extra={
+                    "request_id": pt.request_id, "plugin_id": manifest.id,
+                    "error": type(exc).__name__})
+                await session.close()
+                return []
         try:
-            tools = await asyncio.wait_for(session.client.list_tools(), LIST_TIMEOUT_S)
+            tools = await asyncio.wait_for(
+                session.client.list_tools(token=token), LIST_TIMEOUT_S)
+        except McpUnauthorized:
+            pt.statuses[manifest.id] = AUTH_EXPIRED
+            pt.reconnect.append(manifest.id)
+            await session.close()
+            return []
         except Exception as exc:  # noqa: BLE001 - a plugin must not fail the turn
             breaker.record_failure()
             await session.close()
@@ -274,8 +371,11 @@ async def _load_one(pt: PluginTurn, manifest: Manifest) -> list[ToolSpec]:
                 "request_id": pt.request_id, "plugin_id": manifest.id,
                 "error": type(exc).__name__})
             return []
+        finally:
+            token = None
         breaker.record_success()
-        entry = _defs_cache[manifest.id] = _Defs(
+        _prune_defs()
+        entry = _defs_cache[key] = _Defs(
             _clock(), url, tools, definitions_sha256(tools))
 
     pinned = manifest.reviewed.tool_definitions_sha256
@@ -302,7 +402,7 @@ async def prepare_turn(
     web_search: bool = True,
 ) -> PluginTurn:
     """Decide which plugin tools this turn offers. Never raises."""
-    pt = PluginTurn(request_id)
+    pt = PluginTurn(request_id, str(user_id or ""))
     catalog = load_catalog() if catalog is None else catalog
 
     if settings.plugins_disabled:                       # D8: the global switch
@@ -338,7 +438,7 @@ async def prepare_turn(
     for m in candidates:
         if not rows.get(m.id, m.enabled_by_default):
             pt.statuses[m.id] = DISABLED
-        elif not m.resolved_url():
+        elif not m.is_configured():
             pt.statuses[m.id] = UNCONFIGURED
         else:
             wanted.append(m)

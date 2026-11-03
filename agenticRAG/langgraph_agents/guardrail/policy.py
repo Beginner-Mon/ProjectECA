@@ -11,6 +11,7 @@ from __future__ import annotations
 from langgraph_agents.guardrail.checks.base import Check
 from langgraph_agents.guardrail.checks.health_triage import HealthTriage
 from langgraph_agents.guardrail.checks.hidden_text import HiddenText
+from langgraph_agents.guardrail.checks.injection_markers import InjectionMarkers
 
 # Before the graph runs. May annotate or block.
 INPUT_CHECKS: list[Check] = [HealthTriage()]
@@ -19,5 +20,6 @@ INPUT_CHECKS: list[Check] = [HealthTriage()]
 OUTPUT_TAIL_CHECKS: list[Check] = []
 
 # On what an external tool returned, before the agent sees it (loop mode).
-# Run in order; each check gets the text the previous one returned.
-TOOL_RESULT_CHECKS: list[Check] = [HiddenText()]
+# Run in order; each check gets the text the previous one returned. Hidden text
+# goes first, so the marker check reads what a person would see.
+TOOL_RESULT_CHECKS: list[Check] = [HiddenText(), InjectionMarkers()]

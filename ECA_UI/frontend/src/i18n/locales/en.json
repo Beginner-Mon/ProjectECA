@@ -394,6 +394,19 @@
     "status_web_search_off": "Web search is off",
     "status_unknown": "Unknown"
   },
+  "connectors": {
+    "connected": "Connected",
+    "expired": "Expired",
+    "not_connected": "Not connected",
+    "connect": "Connect",
+    "disconnect": "Disconnect",
+    "reconnect": "Reconnect",
+    "connecting": "Connecting…",
+    "error": "Could not connect. Try again.",
+    "callback_connecting": "Connecting your account…",
+    "callback_connected": "Connected. Returning to chat…",
+    "callback_error": "Could not connect. Try again."
+  },
   "approval": {
     "title": "Needs your approval",
     "approve": "Send",

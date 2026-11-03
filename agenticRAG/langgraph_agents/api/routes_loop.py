@@ -1,6 +1,8 @@
 """Loop-mode routes: `POST /chat/cancel {session_id, request_id}`, and the
-plugins panel: `GET /me/plugins`, `POST /me/plugins/{id}` (stage 3, card 3C), and
-the approval path (stage 4): `POST /chat/resume`, `GET /me/actions/pending`.
+plugins panel: `GET /me/plugins`, `POST /me/plugins/{id}` (stage 3, card 3C),
+the approval path (stage 4): `POST /chat/resume`, `GET /me/actions/pending`,
+and the OAuth connectors (stage 5): `POST /connectors/{plugin_id}/start`,
+`POST /connectors/callback`, `GET /me/connectors`, `DELETE /me/connectors/{id}`.
 
 The frontend never receives `request_id` on the wire (no token event carries
 it), so cancel is by session — accepted with a known race (a brand-new turn
@@ -25,6 +27,11 @@ from pydantic import BaseModel, Field
 
 from langgraph_agents.api.auth import current_user_id, request_groups
 from langgraph_agents.loop.config import load_settings
+from langgraph_agents.loop.connectors.oauth import (
+    AuthExpired,
+    NotConnected,
+    OAuthError,
+)
 from langgraph_agents.loop.mode import select_mode
 from langgraph_agents.shared.logging import get_logger
 
@@ -119,9 +126,15 @@ def _visible_catalog(settings) -> list:
 
 
 def _plugin_row(manifest, settings, enabled: bool) -> dict:
-    return {"id": manifest.id, "name": manifest.name, "publisher": manifest.publisher,
-            "description": manifest.description, "enabled": enabled,
-            "status": _panel_status(manifest, settings, enabled)}
+    row = {"id": manifest.id, "name": manifest.name, "publisher": manifest.publisher,
+           "description": manifest.description, "enabled": enabled,
+           "status": _panel_status(manifest, settings, enabled)}
+    # The frontend shows Connect / Disconnect / Reconnect for OAuth connectors,
+    # which it can only tell from the manifest's auth type. Omit the key for
+    # non-OAuth plugins so existing wire-shape assertions are unaffected.
+    if manifest.needs_user_token():
+        row["authType"] = "mcp_oauth"
+    return row
 
 
 @router.get("/me/plugins")
@@ -359,3 +372,175 @@ async def pending_actions(session_id: str, uid: str = Depends(current_user_id)):
     return {"loop": True, "actions": [
         {**card_payload(r), "status": "expired" if now >= r.expires_at else "proposed"}
         for r in rows]}
+
+
+# ── OAuth connectors (stage 5) ──────────────────────────────────────────────
+
+
+class ConnectorStartRequest(BaseModel):
+    plugin_id: str = Field(min_length=1)
+
+
+class ConnectorCallbackRequest(BaseModel):
+    code: str = Field(min_length=1)
+    state: str = Field(min_length=1)
+    iss: Optional[str] = None
+
+
+class ConnectorInfo(BaseModel):
+    plugin_id: str
+    status: str
+    scopes: tuple[str, ...]
+    expires_at: Optional[datetime]
+
+
+# Map OAuthError.code to HTTP status and safe message.
+_OAUTH_ERROR_MAP = {
+    # 400
+    "invalid_state": (400, "the authorization request is invalid or has expired"),
+    "issuer_mismatch": (400, "the authorization response came from an unexpected issuer"),
+    "iss_missing": (400, "the authorization response did not name its issuer"),
+    "token_exchange_failed": (400, "the authorization server refused the request"),
+    # 404
+    "unknown_plugin": (404, "unknown connector"),
+    "not_available": (404, "this connector is not available"),
+    # 502
+    "transient": (502, "the authorization server could not be reached, try again"),
+    # 503
+    "not_configured": (503, "the connector is not configured on this deployment"),
+    "sealer_unavailable": (503, "token storage is not available"),
+    # Other codes (not directly mapped) fall through to 500.
+    # "discovery_failed", "egress_blocked", "bad_token_response",
+    # "auth_expired", "not_connected", "token_unreadable"
+}
+
+
+def _raise_oauth_error(exc: OAuthError) -> None:
+    """Raise an HTTPException with the mapped status and safe message."""
+    mapping = _OAUTH_ERROR_MAP.get(exc.code)
+    if mapping:
+        status, msg = mapping
+        raise HTTPException(status, {"code": exc.code, "message": msg})
+    # Fallback: log and return 500 with code only.
+    logger.error("oauth_unmapped_code", extra={"code": exc.code})
+    raise HTTPException(500, {"code": "internal"})
+
+
+def _svc() -> "OAuthService":
+    """Get the OAuth service instance (allows monkeypatching in tests)."""
+    from langgraph_agents.loop.connectors.oauth import get_oauth_service
+    return get_oauth_service()
+
+
+@router.post("/connectors/{plugin_id}/start")
+async def connector_start(
+    plugin_id: str,
+    body: ConnectorStartRequest,
+    uid: str = Depends(current_user_id),
+    request: Request = None,
+):
+    """Start the OAuth flow for a connector. Returns the authorization URL.
+
+    The browser navigates to this URL; the provider redirects back to
+    `/connectors/callback` with `code`, `state`, and `iss`.
+
+    Errors: 400 (invalid_state, issuer_mismatch, iss_missing,
+    token_exchange_failed), 404 (unknown_plugin, not_available),
+    502 (transient), 503 (not_configured, sealer_unavailable).
+    """
+    settings = load_settings()
+    if select_mode(request_groups(), settings) != "loop":
+        raise HTTPException(404, {"code": "not_found", "what": "connector"})
+    # The body plugin_id must match the path parameter.
+    if body.plugin_id != plugin_id:
+        raise HTTPException(400, {"code": "invalid_state", "message": "plugin_id mismatch"})
+    svc = _svc()
+    try:
+        authorize_url = await svc.start(str(uid), plugin_id)
+    except OAuthError as exc:
+        _raise_oauth_error(exc)
+    except NotConnected:
+        _raise_oauth_error(OAuthError("not_connected"))
+    except AuthExpired:
+        _raise_oauth_error(OAuthError("auth_expired"))
+    return {"authorize_url": authorize_url}
+
+
+@router.post("/connectors/callback")
+async def connector_callback(
+    body: ConnectorCallbackRequest,
+    uid: str = Depends(current_user_id),
+    request: Request = None,
+):
+    """Complete the OAuth flow. The browser posts the callback params here.
+
+    Verifies the state belongs to this user, exchanges the code for tokens,
+    and stores the sealed connection. Returns the connection info (no tokens).
+
+    Errors: 400 (invalid_state, issuer_mismatch, iss_missing,
+    token_exchange_failed), 404 (unknown_plugin, not_available),
+    502 (transient), 503 (not_configured, sealer_unavailable).
+    """
+    settings = load_settings()
+    if select_mode(request_groups(), settings) != "loop":
+        raise HTTPException(404, {"code": "not_found", "what": "connector"})
+    svc = _svc()
+    try:
+        info = await svc.complete(str(uid), body.code, body.state, body.iss)
+    except OAuthError as exc:
+        _raise_oauth_error(exc)
+    except NotConnected:
+        _raise_oauth_error(OAuthError("not_connected"))
+    except AuthExpired:
+        _raise_oauth_error(OAuthError("auth_expired"))
+    return ConnectorInfo(
+        plugin_id=info.plugin_id,
+        status=info.status,
+        scopes=info.scopes,
+        expires_at=info.expires_at,
+    )
+
+
+@router.get("/me/connectors")
+async def list_connectors(uid: str = Depends(current_user_id)):
+    """List the user's OAuth connections.
+
+    Returns `{loop: bool, connections: [ConnectorInfo]}`.
+    Pipeline users get `loop: false` and an empty list.
+    """
+    settings = load_settings()
+    if select_mode(request_groups(), settings) != "loop":
+        return {"loop": False, "connections": []}
+    svc = _svc()
+    try:
+        conns = await svc.list_connections(str(uid))
+    except Exception as exc:  # noqa: BLE001
+        raise HTTPException(503, f"connectors unavailable: {type(exc).__name__}")
+    return {"loop": True, "connections": [
+        ConnectorInfo(
+            plugin_id=c.plugin_id,
+            status=c.status,
+            scopes=c.scopes,
+            expires_at=c.expires_at,
+        ) for c in conns]}
+
+
+@router.delete("/me/connectors/{plugin_id}")
+async def delete_connector(
+    plugin_id: str,
+    uid: str = Depends(current_user_id),
+):
+    """Revoke and delete an OAuth connection.
+
+    Calls the provider's revocation endpoint (RFC 7009) if advertised,
+    then deletes the row. Returns 204 on success, 404 if no connection
+    existed.
+    """
+    svc = _svc()
+    try:
+        existed = await svc.revoke(str(uid), plugin_id)
+    except Exception as exc:  # noqa: BLE001
+        raise HTTPException(503, f"connectors unavailable: {type(exc).__name__}")
+    if not existed:
+        raise HTTPException(404, {"code": "not_found", "what": "connector"})
+    return {"status": "revoked"}

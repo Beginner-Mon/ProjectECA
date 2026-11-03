@@ -952,6 +952,8 @@ export interface PluginInfo {
   enabled: boolean
   /** active | disabled | off | unconfigured | definition_changed | unavailable | web_search_off */
   status: string
+  /** "mcp_oauth" when the manifest is an OAuth connector; absent otherwise. */
+  authType?: 'mcp_oauth'
 }
 
 /** `loop` is false for users on the classic pipeline: they have no plugins. */
@@ -968,4 +970,105 @@ export async function listPlugins(): Promise<PluginsResponse> {
 export async function setPluginEnabled(id: string, enabled: boolean): Promise<PluginInfo> {
   const { data } = await http.post(`/me/plugins/${encodeURIComponent(id)}`, { enabled })
   return data as PluginInfo
+}
+
+// ── OAuth connectors ─────────────────────────────────────────────────────────
+
+/** One OAuth connection as `GET /me/connectors` reports it. No token is ever sent to the client. */
+export interface ConnectorInfo {
+  plugin_id: string
+  /** active | auth_expired */
+  status: string
+  scopes: string[]
+  expires_at: string | null
+}
+
+export interface ConnectorsResponse {
+  loop: boolean
+  connections: ConnectorInfo[]
+}
+
+/** POST /connectors/{plugin_id}/start → the authorization URL the browser navigates to. */
+export async function startConnector(
+  pluginId: string,
+): Promise<{ authorize_url: string }> {
+  const extraHeaders = await authHeader()
+  const resp = await fetch(`${API_GATEWAY}/connectors/${encodeURIComponent(pluginId)}/start`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      ...extraHeaders,
+    },
+    body: JSON.stringify({ plugin_id: pluginId }),
+  })
+  if (!resp.ok) throw await connectorHttpError(resp)
+  return (await resp.json()) as { authorize_url: string }
+}
+
+/** POST /connectors/callback → the sealed connection (no tokens). */
+export async function completeConnector(
+  input: { code: string; state: string; iss: string },
+): Promise<ConnectorInfo> {
+  const extraHeaders = await authHeader()
+  const resp = await fetch(`${API_GATEWAY}/connectors/callback`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      ...extraHeaders,
+    },
+    body: JSON.stringify({
+      code: input.code,
+      state: input.state,
+      iss: input.iss,
+    }),
+  })
+  if (!resp.ok) throw await connectorHttpError(resp)
+  return (await resp.json()) as ConnectorInfo
+}
+
+/** GET /me/connectors → the user's OAuth connections. */
+export async function listConnectors(): Promise<ConnectorsResponse> {
+  const extraHeaders = await authHeader()
+  const resp = await fetch(`${API_GATEWAY}/me/connectors`, {
+    method: 'GET',
+    headers: { ...extraHeaders },
+  })
+  if (!resp.ok) throw await connectorHttpError(resp)
+  return (await resp.json()) as ConnectorsResponse
+}
+
+/** DELETE /me/connectors/{plugin_id} → revoke and delete the connection. */
+export async function deleteConnector(pluginId: string): Promise<{ status: string }> {
+  const extraHeaders = await authHeader()
+  const resp = await fetch(`${API_GATEWAY}/me/connectors/${encodeURIComponent(pluginId)}`, {
+    method: 'DELETE',
+    headers: { ...extraHeaders },
+  })
+  if (!resp.ok) throw await connectorHttpError(resp)
+  return (await resp.json()) as { status: string }
+}
+
+/** The backend maps every OAuthError.code to a status + safe `{"code", "message"}` detail. */
+export class ConnectorError extends Error {
+  readonly code: string
+  readonly status: number
+  constructor(status: number, code: string, message: string) {
+    super(message || `HTTP ${status}`)
+    this.name = 'ConnectorError'
+    this.status = status
+    this.code = code
+  }
+}
+
+async function connectorHttpError(resp: Response): Promise<ConnectorError> {
+  let code = 'unknown'
+  let message = ''
+  try {
+    const body = (await resp.json()) as { detail?: { code?: string; message?: string } }
+    code = body?.detail?.code ?? 'unknown'
+    message = body?.detail?.message ?? ''
+  } catch {
+    // Body is not JSON or has no detail: fall back to the status only.
+  }
+  return new ConnectorError(resp.status, code, message)
 }

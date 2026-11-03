@@ -419,8 +419,10 @@ async def test_web_search_plugin_follows_the_web_search_flag(monkeypatch):
 
 
 def test_shipped_catalog_loads_and_names_follow_the_rules():
+    # Stage 5: the two Google connector manifests ship too (hidden by
+    # requires_gate while google_enabled is false).
     ids = {m.id for m in load_catalog()}
-    assert ids == {"web-search", "deepwiki"}
+    assert ids == {"web-search", "deepwiki", "gmail", "google-calendar"}
     taken: set[str] = set()
     assert runtime.tool_name("deepwiki", "read_wiki.structure", taken) \
         == "deepwiki__read_wiki_structure"

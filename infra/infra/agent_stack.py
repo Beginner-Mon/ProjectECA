@@ -129,6 +129,15 @@ _DEFAULT_DEEPSEEK_PARAM = "/vva/llm/deepseek-api-key"
 _DEFAULT_OPENAI_PARAM = "/vva/llm/openai-api-key"
 _DEFAULT_GEMINI_PARAM = "/vva/llm/gemini-api-keys"
 
+# OAuth connectors (stage 5). `LOOP_OAUTH_REDIRECT_URI` is the frontend's
+# `/connectors/callback` URL for this deployment; `LOOP_ENV` fills `<env>` in a
+# manifest's `client_secret_ref` (secretsmanager:vva/<env>/plugins/*). Both are
+# empty by default: OAuth stays off until an operator sets them, mirroring the
+# speechllm_url kill switch. Override at deploy time, e.g.:
+#   cdk deploy VvaAgentStack -c oauth_redirect_uri="https://app.example/connectors/callback" -c loop_env=prod
+_DEFAULT_OAUTH_REDIRECT_URI = ""
+_DEFAULT_ENV = ""
+
 # ECA's model provider (LLM_PROVIDER in llm.py). Kept here and not only as a deploy
 # flag, so a later deploy done for another reason cannot switch it back by
 # accident. OpenAI since 30/10/2026, key under _DEFAULT_OPENAI_PARAM. To go back to
@@ -262,6 +271,8 @@ class AgentStack(Stack):
         llm_provider = ctx("llm_provider") or _LLM_PROVIDER
         if llm_provider not in ("deepseek", "openai"):
             raise ValueError(f"llm_provider must be deepseek or openai, not {llm_provider!r}")
+        oauth_redirect_uri = ctx("oauth_redirect_uri") or _DEFAULT_OAUTH_REDIRECT_URI
+        env_name = ctx("loop_env") or _DEFAULT_ENV
         motion_signing_key_param = (
             ctx("motion_signing_key_param") or _DEFAULT_MOTION_SIGNING_KEY_PARAM
         )
@@ -406,6 +417,10 @@ class AgentStack(Stack):
             # Selects KmsSealer in loop/config.py. Without it a loop write is
             # refused (approval_unavailable): fail closed.
             "LOOP_KMS_KEY_ID": self.loop_seal_key.key_arn,
+            # OAuth connectors (stage 5). Empty by default: the connector
+            # routes answer not_configured until an operator sets them.
+            "LOOP_OAUTH_REDIRECT_URI": oauth_redirect_uri,
+            "LOOP_ENV": env_name,
         }
         if speechllm_url:
             # VIENEU_TTS_URL (D3) — presence is the on-switch, so this key is
@@ -507,6 +522,18 @@ class AgentStack(Stack):
         self.fn.add_to_role_policy(iam.PolicyStatement(
             actions=["kms:GenerateDataKey", "kms:Decrypt"],
             resources=[self.loop_seal_key.key_arn],
+        ))
+
+        # ── IAM: read connector client secrets (stage 5) ────────────────
+        # One client secret per connector (`vva/<env>/plugins/<id>`), read only
+        # at OAuth token time. `GetSecretValue` on this prefix only — nothing
+        # broader. `env_name` is empty by default, so the grant matches nothing
+        # until an operator sets `loop_env`.
+        self.fn.add_to_role_policy(iam.PolicyStatement(
+            actions=["secretsmanager:GetSecretValue"],
+            resources=[
+                f"arn:aws:secretsmanager:{self.region}:{self.account}:secret:vva/{env_name}/plugins/*",
+            ],
         ))
 
         # ── IAM: motion job table (Task 9, ruling R3) ───────────────────

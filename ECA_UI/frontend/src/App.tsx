@@ -13,6 +13,8 @@ import './App.css'
 const LegalPage = lazy(() => import('./pages/LegalPage'))
 // Lazy: only admins ever open it.
 const AdminPage = lazy(() => import('./pages/AdminPage'))
+// Lazy: the OAuth callback page is only rendered after a provider redirect.
+const ConnectorsCallback = lazy(() => import('./components/ConnectorsCallback'))
 
 export default function App() {
   return (
@@ -31,6 +33,7 @@ export default function App() {
             <Route path="/" element={<ChatPage />} />
           </Route>
           <Route path="/set-password" element={<SetPasswordPage />} />
+          <Route path="/connectors/callback" element={<Suspense><ConnectorsCallback /></Suspense>} />
           <Route path="/admin" element={<Suspense><AdminPage /></Suspense>} />
         </Route>
 

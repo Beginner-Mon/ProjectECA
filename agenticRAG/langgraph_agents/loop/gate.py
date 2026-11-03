@@ -208,8 +208,12 @@ async def check(call: dict[str, Any], spec: ToolSpec, turn: Any) -> GateDecision
     # the user every argument it will send. Rule 1 refuses with
     # approval_unavailable: no approval path covers an egress read yet.
     from langgraph_agents.loop.taint import TaintSnapshot, find_banned
+    # "Another destination": the data came from connector X (`plugin_id`), and this
+    # call goes anywhere but X. A source with no plugin_id (an old record, a
+    # builtin) matches no destination, so every egress call counts as another.
     if any(
         s.get("data_class", "none") == "personal"
+        and (not s.get("plugin_id") or s.get("plugin_id") != plugin_id)
         for s in (turn.personal_sources or [])
     ) and _is_egress_or_clinical(spec):
         return GateDecision.refuse(

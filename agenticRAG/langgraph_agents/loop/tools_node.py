@@ -18,8 +18,8 @@ from typing import Any
 from langchain_core.runnables import RunnableConfig
 
 from langgraph_agents.loop.errors import (
-    APPROVAL_UNAVAILABLE, BUDGET, CANCELLED, INVALID_ARGS, REFUSED_BY_POLICY,
-    ToolResult, classify, normalize,
+    APPROVAL_UNAVAILABLE, AUTH_EXPIRED, BUDGET, CANCELLED, INVALID_ARGS,
+    REFUSED_BY_POLICY, ToolResult, classify, normalize, oauth_reason,
 )
 from langgraph_agents.loop.gate import GateDecision, check, needs_verdict, _call_args, _call_id, _call_name, _is_egress_or_clinical
 from langgraph_agents.loop.limits import (
@@ -110,7 +110,9 @@ async def _run_one(
             break
         except Exception as e:  # noqa: BLE001
             exc = e
-            if attempt >= retries:
+            # Stage 5: "reconnect" does not get better by asking again.
+            if attempt >= retries or oauth_reason(e) in (
+                    "not_connected", "auth_expired", "token_unreadable"):
                 break
             await asyncio.sleep(0.1 * (attempt + 1))
 
@@ -118,16 +120,32 @@ async def _run_one(
         # D7: only a transport or protocol fault counts against the plugin's
         # breaker; a tool-level error answer (`{"error": ...}`) does not.
         from langgraph_agents.loop.plugins.runtime import get_breaker
-        if exc is not None:
+        reason = oauth_reason(exc) if exc is not None else None
+        if exc is not None and reason is None:
             get_breaker(plugin_id).record_failure()
-        else:
+        elif exc is None:
             get_breaker(plugin_id).record_success()
+        # A connector auth fault is the user's connection, not the plugin's health.
 
     if exc is not None:
         action["status"] = "failed"
         action["kind"] = classify(exc)["kind"] if plugin_id else "error"
         action["error"] = type(exc).__name__
         content = json.dumps({"error": type(exc).__name__}, ensure_ascii=False)
+        if plugin_id and action["kind"] == AUTH_EXPIRED:
+            # F8: the plugin is left out for the rest of the turn; the UI shows
+            # "reconnect". The text is fixed: it names no token and no provider error.
+            plugins = getattr(turn, "plugins", None)
+            if plugins is not None:
+                plugins.invalidate(
+                    plugin_id,
+                    "not_connected" if oauth_reason(exc) == "not_connected"
+                    else "auth_expired")
+                plugins.reconnect.append(plugin_id)
+            content = json.dumps({
+                "error": "auth_expired",
+                "message": f"{plugin_id} needs the user to connect it again. "
+                           "It is not available in this turn."}, ensure_ascii=False)
         result = ToolResult(ok=False, content=content, kind="failed",
                             empty=False, source_label=tool_name, provenance={})
     else:
@@ -223,12 +241,15 @@ async def tools_node(state: LoopState, config: RunnableConfig) -> dict:
     # (the call ran and returned) marks the turn, so later egress or clinical
     # calls go to the gate's rule 1. Calls in the same round are already past
     # the gate; only later rounds see it.
-    personal = {s.name for s in specs if s.data_class == "personal"}
+    # `plugin_id` names the destination that holds the data: a later call to the
+    # same connector is not "another destination" (PLAN §9, rule 1).
+    personal = {s.name: s.plugin_id for s in specs if s.data_class == "personal"}
     for res in results:
         act = res["action"]
         if act["tool"] in personal and act["status"] == "ok":
             turn.personal_sources.append(
-                {"tool": act["tool"], "data_class": "personal"})
+                {"tool": act["tool"], "data_class": "personal",
+                 "plugin_id": personal[act["tool"]]})
 
     # Build tool messages; budget line on the LAST one.
     tool_messages: list[dict] = []

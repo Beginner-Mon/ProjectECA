@@ -6,6 +6,7 @@ import pytest
 
 from langgraph_agents.guardrail import policy
 from langgraph_agents.guardrail.checks.hidden_text import HiddenText
+from langgraph_agents.guardrail.checks.injection_markers import InjectionMarkers
 from langgraph_agents.guardrail.pipeline import run_input, run_tool_result
 from langgraph_agents.guardrail.types import CheckContext, Decision
 
@@ -16,9 +17,9 @@ def _ctx(text: str) -> CheckContext:
     return CheckContext(message=text, tool="web_search")
 
 
-def test_policy_registers_hidden_text_as_the_tool_result_check():
-    assert [type(c) for c in policy.TOOL_RESULT_CHECKS] == [HiddenText]
-    assert policy.TOOL_RESULT_CHECKS[0].stage == "tool_result"
+def test_policy_registers_hidden_text_then_injection_markers_as_the_tool_result_checks():
+    assert [type(c) for c in policy.TOOL_RESULT_CHECKS] == [HiddenText, InjectionMarkers]
+    assert all(c.stage == "tool_result" for c in policy.TOOL_RESULT_CHECKS)
 
 
 def test_input_and_output_tail_lists_are_unchanged():

@@ -207,6 +207,8 @@ async def load_context_node(state: LoopState, config: RunnableConfig) -> dict:
     if plugins is not None and (plugins.unavailable or plugins.changed):
         fields["plugins_unavailable"] = list(plugins.unavailable)
         fields["plugins_definition_changed"] = list(plugins.changed)
+    if plugins is not None and getattr(plugins, "reconnect", None):
+        fields["plugins_reconnect"] = list(plugins.reconnect)
     log_turn(request_id, fields)
 
     return {

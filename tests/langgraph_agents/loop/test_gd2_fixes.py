@@ -26,7 +26,7 @@ from langgraph_agents.loop.limits import Caps, new_turn
 from langgraph_agents.loop.rate import MemoryRateCounter, set_store as set_rate_store
 from langgraph_agents.loop.tools.registry import ToolSpec
 from tests.langgraph_agents.loop.approval_harness import (
-    CREATE, LIST, SESSION, USER, body_text, call, first, reply, tool_contents, types,
+    CREATE, LIST, SESSION, USER, YOUTUBE, body_text, call, first, reply, tool_contents, types,
 )
 from tests.langgraph_agents.loop.test_actions_p0 import (  # noqa: F401 - fixtures
     TITLE, WHEN, reminders_server, rig,
@@ -211,8 +211,12 @@ def test_m2_a_personal_read_before_the_pause_still_blocks_egress_after_approval(
     resp, ev = rig.chat()
     card = first(ev, "approval_required")
     assert card is not None, types(ev)
-    # The resumed turn tries another egress read with what it read.
-    rig.model.script(reply("", call("r2", LIST)), reply("ok"), reply("ok"))
+    # Stage 5 (GĐ5): the source and its own connector are the same destination
+    # (PLAN §9, rule 1), so a re-read of dev-reminders is allowed again. The
+    # taint mark survives the resume and still blocks EVERY other destination,
+    # so the resumed turn tries a builtin egress read instead.
+    rig.model.script(reply("", call("r2", YOUTUBE, url="https://video.example/clip")),
+                     reply("ok"), reply("ok"))
     resp, ev = rig.resume(card["thread_id"], card["action_id"])
     assert resp.status_code == 200
     told = tool_contents(rig.model.calls[-2]["messages"])

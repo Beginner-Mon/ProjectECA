@@ -33,6 +33,7 @@ REPEAT_EMPTY = "repeat_empty"
 APPROVAL_UNAVAILABLE = "approval_unavailable"
 TRANSIENT = "transient"
 PERMANENT = "permanent"
+AUTH_EXPIRED = "auth_expired"
 
 # Result kinds.
 OK = "ok"
@@ -55,7 +56,27 @@ def classify(exc: BaseException) -> dict:
         return {"kind": REFUSED_BY_POLICY, "status": None, "reason": exc.reason}
     if isinstance(exc, ResponseTooLarge):
         return {"kind": PERMANENT, "status": None, "reason": "response_too_large"}
+    # Stage 5: a connector call that needs the user to connect again, or that
+    # could not reach the authorization server. Matched by class name so this
+    # module does not import the OAuth service (and the MCP SDK behind it).
+    oauth = oauth_reason(exc)
+    if oauth is not None:
+        return {"kind": TRANSIENT if oauth == "transient" else AUTH_EXPIRED,
+                "status": None, "reason": oauth}
     return classify_error(exc)
+
+
+def oauth_reason(exc: BaseException) -> str | None:
+    """`not_connected`, `auth_expired`, `token_unreadable` or `transient` for an
+    `OAuthError`; `auth_expired` for `McpUnauthorized`; None for anything else."""
+    names = {c.__name__ for c in type(exc).__mro__}
+    if "McpUnauthorized" in names:
+        return "auth_expired"
+    if "OAuthError" in names:
+        code = getattr(exc, "code", None)
+        if code in ("not_connected", "auth_expired", "token_unreadable", "transient"):
+            return code
+    return None
 
 
 # ── Normalisation ─────────────────────────────────────────────────────────
@@ -94,6 +115,10 @@ async def normalize(spec: Any, raw: Any, remaining: int) -> ToolResult:
     Async since stage 3: a result from an `egress_read` tool or a plugin (or MCP
     source) first goes through the guardrail `tool_result` stage, before the
     empty check and truncation. Internal tools skip it.
+
+    The `tool_result` stage receives the per-tool cap so that checks which wrap
+    the text (e.g. `InjectionMarkers`) can truncate the inner content and ensure
+    the wrapper survives whole.
     """
     # D4: a plugin's results are labelled with the plugin id.
     source_label = (getattr(spec, "plugin_id", None) or getattr(spec, "name", None)
@@ -106,9 +131,17 @@ async def normalize(spec: Any, raw: Any, remaining: int) -> ToolResult:
         except (TypeError, ValueError):
             content = str(raw)
 
+    # Per-tool cap, computed up front so the guardrail can use it.
+    cap = min(int(getattr(spec, "max_result_chars_per_tool", 8_000) or 8_000), remaining)
+    if cap < 0:
+        cap = 0
+
     if is_external(spec):
         decision = await run_tool_result(CheckContext(
-            message=content, tool=str(getattr(spec, "name", "") or "")))
+            message=content,
+            tool=str(getattr(spec, "name", "") or ""),
+            max_chars=cap,
+        ))
         if decision.action == "block":
             return ToolResult(
                 ok=False,
@@ -135,10 +168,8 @@ async def normalize(spec: Any, raw: Any, remaining: int) -> ToolResult:
             source_label=source_label, provenance={},
         )
 
-    # Truncation: 8k per tool, then the turn's remaining budget.
-    cap = min(int(getattr(spec, "max_result_chars_per_tool", 8_000) or 8_000), remaining)
-    if cap < 0:
-        cap = 0
+    # Truncation: the guardrail has already wrapped with the cap in mind,
+    # but as a safety net we still enforce the cap here.
     if len(content) > cap:
         content = content[:cap]
 

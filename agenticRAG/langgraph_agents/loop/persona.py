@@ -273,6 +273,8 @@ async def _persona_body(state: LoopState, config: RunnableConfig) -> dict:
     if plugins is not None and (plugins.unavailable or plugins.changed):
         trace["plugins_unavailable"] = list(plugins.unavailable)
         trace["plugins_definition_changed"] = list(plugins.changed)
+    if plugins is not None and getattr(plugins, "reconnect", None):
+        trace["plugins_reconnect"] = list(plugins.reconnect)
     loop_trace = list(state.get("loop_trace") or [])
     loop_trace.append({**trace, "request_id": request_id})
 

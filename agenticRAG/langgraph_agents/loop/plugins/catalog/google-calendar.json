@@ -1,0 +1,34 @@
+{
+  "id": "google-calendar",
+  "name": "Google Calendar",
+  "version": "1.0.0",
+  "publisher": "Google",
+  "description": "Reads the user's own calendar. Needs the user to connect their Google account. Off until the Owner enables Google connectors (google_enabled).",
+  "mcp_server": {
+    "url": "TO_VERIFY",
+    "transport": "streamable_http",
+    "allowed_hosts": ["accounts.google.com", "oauth2.googleapis.com", "TO_VERIFY"]
+  },
+  "auth": {
+    "type": "mcp_oauth",
+    "client_registration": "pre_registered",
+    "client_id": "TO_VERIFY",
+    "client_secret_ref": "secretsmanager:vva/<env>/plugins/google-calendar",
+    "issuer": "https://accounts.google.com",
+    "scopes": ["https://www.googleapis.com/auth/calendar.readonly"],
+    "authorize_extra_params": {"access_type": "offline", "prompt": "consent"}
+  },
+  "tools": {
+    "list_calendars": {"egress": true, "risk": "read"},
+    "list_events": {"egress": true, "risk": "read"},
+    "get_event": {"egress": true, "risk": "read"}
+  },
+  "skills": [],
+  "reviewed": {
+    "by": "",
+    "tool_definitions_sha256": "UNPINNED"
+  },
+  "data_class": "personal",
+  "enabled_by_default": false,
+  "requires_gate": true
+}

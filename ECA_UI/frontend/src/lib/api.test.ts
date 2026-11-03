@@ -2,7 +2,7 @@ import { describe, expect, it, vi } from 'vitest'
 
 vi.mock('aws-amplify/auth', () => ({ fetchAuthSession: vi.fn(async () => ({})) }))
 
-import { cancelChat, HttpStatusError, resumeChat, SSE_IDLE_TIMEOUT_MS, StreamInterruptedError, StreamTimeoutError, streamChat } from './api'
+import { cancelChat, completeConnector, deleteConnector, HttpStatusError, listConnectors, resumeChat, SSE_IDLE_TIMEOUT_MS, startConnector, StreamInterruptedError, StreamTimeoutError, streamChat } from './api'
 
 /*
  * A fake /chat response: the body is a list of chunks, optionally followed by a
@@ -303,5 +303,95 @@ describe('resumeChat', () => {
   it('reports a stream that ended without done as interrupted', async () => {
     fakeResponse([block('token', { content: 'a' })])
     await expect(resumeChat(opts, () => {})).rejects.toBeInstanceOf(StreamInterruptedError)
+  })
+})
+
+describe('connectors', () => {
+  const captured: Array<{ url: string; init: RequestInit }> = []
+
+  function stubFetch(resp: Response) {
+    captured.length = 0
+    vi.stubGlobal('fetch', vi.fn(async (u: RequestInfo | URL, init?: RequestInit) => {
+      captured.push({ url: String(u), init: init ?? {} })
+      return resp
+    }))
+  }
+
+  it('startConnector POSTs the authorize URL with bearer and the plugin body', async () => {
+    const { fetchAuthSession } = await import('aws-amplify/auth')
+    vi.mocked(fetchAuthSession).mockResolvedValueOnce({
+      tokens: { idToken: { toString: () => 'tok-1' } },
+    })
+    stubFetch(new Response(JSON.stringify({ authorize_url: 'https://auth.example.com/authorize?state=x' }), { status: 200 }))
+    await startConnector('gmail')
+
+    expect(captured).toHaveLength(1)
+    expect(captured[0].url.endsWith('/connectors/gmail/start')).toBe(true)
+    expect(captured[0].init!.method).toBe('POST')
+    expect(captured[0].init!.headers).toMatchObject({
+      Authorization: 'Bearer tok-1',
+      'Content-Type': 'application/json',
+    })
+    expect(JSON.parse(captured[0].init!.body as string)).toEqual({ plugin_id: 'gmail' })
+  })
+
+  it('startConnector throws ConnectorError carrying detail.code', async () => {
+    stubFetch(new Response(JSON.stringify({ detail: { code: 'invalid_state', message: 'bad' } }), { status: 400 }))
+    await expect(startConnector('gmail')).rejects.toMatchObject({
+      name: 'ConnectorError',
+      status: 400,
+      code: 'invalid_state',
+    })
+  })
+
+  it('completeConnector POSTs code, state and iss with bearer', async () => {
+    const { fetchAuthSession } = await import('aws-amplify/auth')
+    vi.mocked(fetchAuthSession).mockResolvedValueOnce({
+      tokens: { idToken: { toString: () => 'tok-2' } },
+    })
+    stubFetch(new Response(JSON.stringify({ plugin_id: 'gmail', status: 'active', scopes: [], expires_at: null }), { status: 200 }))
+    await completeConnector({ code: 'c1', state: 's1', iss: 'https://auth.example.com' })
+
+    expect(captured[0].url.endsWith('/connectors/callback')).toBe(true)
+    expect(captured[0].init!.method).toBe('POST')
+    expect(captured[0].init!.headers).toMatchObject({ Authorization: 'Bearer tok-2' })
+    expect(JSON.parse(captured[0].init!.body as string)).toEqual({
+      code: 'c1', state: 's1', iss: 'https://auth.example.com',
+    })
+  })
+
+  it('completeConnector throws ConnectorError carrying detail.code', async () => {
+    stubFetch(new Response(JSON.stringify({ detail: { code: 'token_exchange_failed' } }), { status: 400 }))
+    await expect(completeConnector({ code: 'c1', state: 's1', iss: 'iss' })).rejects.toMatchObject({
+      name: 'ConnectorError',
+      status: 400,
+      code: 'token_exchange_failed',
+    })
+  })
+
+  it('listConnectors GETs /me/connectors with bearer', async () => {
+    const { fetchAuthSession } = await import('aws-amplify/auth')
+    vi.mocked(fetchAuthSession).mockResolvedValueOnce({
+      tokens: { idToken: { toString: () => 'tok-3' } },
+    })
+    stubFetch(new Response(JSON.stringify({ loop: true, connections: [] }), { status: 200 }))
+    await listConnectors()
+
+    expect(captured[0].url.endsWith('/me/connectors')).toBe(true)
+    expect(captured[0].init!.method).toBe('GET')
+    expect(captured[0].init!.headers).toMatchObject({ Authorization: 'Bearer tok-3' })
+  })
+
+  it('deleteConnector DELETEs /me/connectors/{plugin_id} with bearer', async () => {
+    const { fetchAuthSession } = await import('aws-amplify/auth')
+    vi.mocked(fetchAuthSession).mockResolvedValueOnce({
+      tokens: { idToken: { toString: () => 'tok-4' } },
+    })
+    stubFetch(new Response(JSON.stringify({ status: 'revoked' }), { status: 200 }))
+    await deleteConnector('gmail')
+
+    expect(captured[0].url.endsWith('/me/connectors/gmail')).toBe(true)
+    expect(captured[0].init!.method).toBe('DELETE')
+    expect(captured[0].init!.headers).toMatchObject({ Authorization: 'Bearer tok-4' })
   })
 })

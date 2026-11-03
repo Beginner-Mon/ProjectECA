@@ -21,6 +21,7 @@ from urllib.parse import urlparse
 from pydantic import BaseModel, ConfigDict, Field
 
 UNPINNED = "UNPINNED"
+PLACEHOLDER = "TO_VERIFY"
 CATALOG_DIR = Path(__file__).parent / "catalog"
 
 
@@ -91,6 +92,17 @@ class Manifest(BaseModel):
         if host and host not in hosts:
             hosts.append(host)
         return hosts
+
+    def needs_user_token(self) -> bool:
+        """True for an OAuth connector: its calls carry the user's own bearer
+        token, so what it lists and returns belongs to that user (stage 5)."""
+        return (self.auth or {}).get("type") == "mcp_oauth"
+
+    def is_configured(self, env: Mapping[str, str] | None = None) -> bool:
+        """An endpoint is set and is not a `TO_VERIFY` placeholder (the Google
+        manifests ship with placeholders until K verifies the real URLs)."""
+        url = self.resolved_url(env)
+        return bool(url) and PLACEHOLDER not in url
 
     def is_pinned(self) -> bool:
         return self.reviewed.tool_definitions_sha256 not in ("", UNPINNED)

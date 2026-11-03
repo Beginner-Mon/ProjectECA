@@ -32,6 +32,8 @@ SESSION = "22222222-2222-2222-2222-000000000001"
 SEAL_KEY = base64.b64encode(bytes(range(32))).decode()
 CREATE = "dev-reminders__create_reminder"
 LIST = "dev-reminders__list_reminders"
+# A builtin egress read: used as a destination that is NOT the personal source.
+YOUTUBE = "youtube_transcript"
 
 
 def call(call_id: str, name: str, **args) -> dict:

@@ -124,3 +124,31 @@ def test_ngrams_up_to_3():
     # n-grams include "do not eat", "not eat after", "eat after 8pm", etc.
     assert any("eat after 8pm" in b or b == "eat after 8pm" for b in banned) or \
            "do not eat" in banned or "not eat after" in banned
+
+
+# M4: substring matching on separator-free form for terms >= 6 chars
+def test_m4_knee_osteoarthritis_no_separator():
+    """Term "knee osteoarthritis" (normalized "knee osteoarthritis") should match
+    "kneeosteoarthritis" (no separator) because the separator-free form is
+    "kneeosteoarthritis" which contains "kneeosteoarthritis" (>= 6 chars)."""
+    snapshot = _norm_snapshot(
+        facts=["User has knee osteoarthritis."],
+        instructions=[],
+        current_message="",
+    )
+    joined = "kneeosteoarthritis exercises"
+    banned = find_banned(joined, snapshot)
+    assert "knee osteoarthritis" in banned
+
+
+def test_m4_short_term_no_substring_match():
+    """Short terms (< 6 chars separator-free) should NOT match as substring."""
+    snapshot = _norm_snapshot(
+        facts=["User likes art."],
+        instructions=[],
+        current_message="",
+    )
+    # "art" is 3 chars, should not match "arthritis" as substring
+    joined = "arthritis"
+    banned = find_banned(joined, snapshot)
+    assert "art" not in banned

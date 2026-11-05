@@ -125,7 +125,7 @@ def _no_live_triage(monkeypatch):
 
 
 @pytest.fixture
-def api_client():
+def api_client(monkeypatch):
     """Fixture: mock graph + redis + a fixed authenticated user.
 
     The identity override is what lets these tests POST /chat at all. Every
@@ -150,6 +150,32 @@ def api_client():
     from langgraph_agents.api.main import create_app
     from langgraph_agents.api.auth import current_user_id, override_user
     from fastapi.testclient import TestClient
+    import langgraph_agents.api.main as api_module
+    from langgraph_agents.db.quota import QuotaStatus
+    from datetime import datetime, timezone, timedelta
+    
+    # Mock quota check and charge to avoid DB hits (pre-existing slowness fix)
+    async def fake_quota_status(uid):
+        return QuotaStatus(
+            plan="test", limit=10000, used=0, resets_at=datetime.now(timezone.utc) + timedelta(days=1))
+    monkeypatch.setattr(api_module, "_quota_status", fake_quota_status)
+    monkeypatch.setattr(api_module, "_charge_quota", AsyncMock())
+    # Also mock the quota module's get_status/charge directly
+    monkeypatch.setattr("langgraph_agents.db.quota.get_status", fake_quota_status)
+    monkeypatch.setattr("langgraph_agents.db.quota.charge", AsyncMock())
+    # Mock MCP tool discovery to avoid network calls
+    monkeypatch.setattr("langgraph_agents.mcp.client.get_mcp_tools", AsyncMock(return_value=[]))
+    # Mock graph building to avoid MCP discovery
+    monkeypatch.setattr("langgraph_agents.graph.build_graph_async", AsyncMock(return_value=mock_graph))
+    # Mock the internal _get_graph function
+    monkeypatch.setattr(api_module, "_get_graph", lambda: mock_graph)
+    monkeypatch.setattr(api_module, "_get_loop_graph", lambda: mock_graph)
+    # Mock verify_auth_config to avoid JWKS fetch
+    monkeypatch.setattr("langgraph_agents.api.auth.verify_auth_config", lambda: None)
+
+    _set_graph(mock_graph)
+    _set_health_redis(mock_redis)
+
     app = create_app()
     # override_user rather than a bare lambda: the override replaces everything
     # current_user_id does, including binding the user for row-level security.

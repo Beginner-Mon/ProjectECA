@@ -83,6 +83,9 @@ async def _answering_graph(*_a, **_k):
     yield ("custom", {"content": "Xin "})
     yield ("custom", {"content": "chào."})
     yield ("updates", {"synthesizer": {"final_answer": "Xin chào.", "total_tokens": 3}})
+    # Signal that the graph has finished yielding
+    if hasattr(_answering_graph, "done_event") and _answering_graph.done_event:
+        _answering_graph.done_event.set()
 
 
 def _stream(request=None, user_id=_USER):
@@ -140,11 +143,13 @@ async def test_question_is_saved_when_the_turn_produces_no_final_answer(monkeypa
 async def test_cutting_the_stream_does_not_cancel_the_question_write(monkeypatch, store):
     """The framework cancels the generator when the client goes away. The
     write is a task of its own, and the module keeps the reference to it."""
+    done_event = asyncio.Event()
+    _answering_graph.done_event = done_event
     _use_graph(monkeypatch, _answering_graph)
     store.question_gate = asyncio.Event()
 
     consumer = asyncio.create_task(_events(_stream()))
-    await asyncio.sleep(0.05)            # graph done; the stream waits on the write
+    await done_event.wait()  # graph done; the stream waits on the write
     assert store.log == ["question_started"]
     consumer.cancel()
     with pytest.raises(asyncio.CancelledError):
@@ -155,6 +160,7 @@ async def test_cutting_the_stream_does_not_cancel_the_question_write(monkeypatch
     await _drain_answer_writes()
     assert store.log == ["question_started", "question_saved", "answer_saved"]
     assert not api_module._question_write_tasks
+    _answering_graph.done_event = None
 
 
 # ── It does not hold up the answer on screen ─────────────────────────────

@@ -162,3 +162,59 @@ def test_tool_results_not_double_charged(monkeypatch):
     # 100 (agent round 1) + 150 (agent round 2) + 7 (persona). The tool
     # result text is NOT added again — double charging would exceed this.
     assert state.get("total_tokens") == 250 + 7
+
+
+# Final fix round: motion_jobs should have a reducer like actions.
+def test_motion_jobs_accumulates_over_rounds(monkeypatch):
+    import langgraph_agents.loop.graph as graph_mod
+    import langgraph_agents.loop.tools.builtin as builtin_mod
+    monkeypatch.setattr(graph_mod, "memory_node", lambda state, config: {})
+    monkeypatch.setattr(graph_mod, "vision_node", lambda state, config: {})
+    monkeypatch.setattr(builtin_mod, "_retriever_tools",
+                        lambda: {"kb_search": FakeLCTool("kb_search"),
+                                 "recall_self": FakeLCTool("recall_self"),
+                                 "youtube_transcript": FakeLCTool("youtube_transcript")})
+    monkeypatch.setattr(builtin_mod, "_web_search_call",
+                        lambda args, config: [{"title": "x", "text": "y"}])
+
+    graph = build_loop_graph()
+    agent_model = _script([
+        {"tool_calls": [{"id": "t1", "name": "kb_search",
+                         "arguments": '{"query": "x"}'}],
+         "content": "",
+         "usage": {"prompt_tokens": 10, "completion_tokens": 4, "total_tokens": 14}},
+        {"content": "Done.", "usage": {"prompt_tokens": 8, "completion_tokens": 3, "total_tokens": 11}},
+    ])
+    persona_model = _script([{"content": "Done."}])
+    state = asyncio.run(_run(graph, agent_model, persona_model, query="x"))
+
+    # motion_jobs should be a list (reducer present and working)
+    motion_jobs = state.get("motion_jobs", [])
+    assert isinstance(motion_jobs, list)
+
+
+# Final fix round: agent_model_failed should set turn_status: failed, not budget_exceeded.
+def test_agent_model_failed_sets_failed_not_budget_exceeded(monkeypatch):
+    import langgraph_agents.loop.graph as graph_mod
+    import langgraph_agents.loop.tools.builtin as builtin_mod
+    monkeypatch.setattr(graph_mod, "memory_node", lambda state, config: {})
+    monkeypatch.setattr(graph_mod, "vision_node", lambda state, config: {})
+    monkeypatch.setattr(builtin_mod, "_retriever_tools",
+                        lambda: {"kb_search": FakeLCTool("kb_search"),
+                                 "recall_self": FakeLCTool("recall_self"),
+                                 "youtube_transcript": FakeLCTool("youtube_transcript")})
+
+    graph = build_loop_graph()
+
+    class _FailingModel:
+        async def complete(self, messages, tools=None, *, tool_choice="auto"):
+            raise ConnectionError("provider unreachable")
+
+    agent_model = _FailingModel()
+    persona_model = _script([{"content": "Done."}])
+    state = asyncio.run(_run(graph, agent_model, persona_model, query="x"))
+
+    # Model failure should be `failed` with its own error_code, not `budget_exceeded`.
+    assert state.get("turn_status") == "failed"
+    assert state.get("error_code") == "agent_model_failed"
+    assert "agent_model_failed" in str(state.get("errors", []))

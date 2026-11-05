@@ -75,6 +75,20 @@ def test_persona_node_uses_say_clause():
     assert "say_clause = _SAY_CLAUSE" in inspect.getsource(persona)
 
 
+# Final fix round: persona.py uses _LANGUAGE_RULE from nodes/synthesizer.py
+def test_persona_node_uses_language_rule_from_synthesizer():
+    import inspect
+    from langgraph_agents.loop import persona
+    from langgraph_agents.nodes.synthesizer import _LANGUAGE_RULE
+    # persona.py should import and use _LANGUAGE_RULE from synthesizer
+    assert "_LANGUAGE_RULE" in inspect.getsource(persona)
+    # The language rule in the persona prompt should be the one from synthesizer
+    src = inspect.getsource(persona)
+    # Check that the inline language_rule definition is gone
+    assert "language_rule = (" not in src
+    assert '## LANGUAGE (which language to answer in' not in src or _LANGUAGE_RULE in src
+
+
 # ── P3: tool_use_failed ──────────────────────────────────────────────────
 
 def _tool_use_failed():

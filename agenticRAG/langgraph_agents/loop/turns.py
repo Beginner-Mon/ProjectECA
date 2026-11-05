@@ -32,7 +32,7 @@ import json
 import os
 import threading
 from dataclasses import dataclass, field
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from typing import Any, Callable, Optional, Protocol
 
 from .crypto import Sealer, require_sealer, transcript_context
@@ -84,6 +84,11 @@ class TurnStore(Protocol):
     async def finish(self, user_id: str, thread_id: str) -> bool: ...
 
     async def invalidate_for_session(self, user_id: str, session_id: str) -> list[str]: ...
+
+    # L3 retention sweep
+    async def sweep_stale_paused(self, user_id: str, older_than_s: float) -> list[str]: ...
+    async def sweep_old_turns(self, user_id: str, older_than_days: int) -> list[str]: ...
+    async def sweep_stuck_resumed(self, user_id: str, older_than_s: float) -> list[str]: ...
 
 
 # ── In-memory store ───────────────────────────────────────────────────────
@@ -157,6 +162,47 @@ class MemoryTurnStore:
         return out
 
 
+    async def sweep_stale_paused(self, user_id, older_than_s) -> list[str]:
+        out: list[str] = []
+        with self._lock:
+            now = self._clock()
+            cutoff = now - timedelta(seconds=float(older_than_s))
+            for r in self._rows.values():
+                if (r.user_id == str(user_id) and r.status == PAUSED
+                        and r.updated_at < cutoff):
+                    r.status, r.transcript_enc, r.state_json = INVALIDATED, None, {}
+                    r.updated_at = now
+                    out.append(r.thread_id)
+        return out
+
+    async def sweep_old_turns(self, user_id, older_than_days) -> list[str]:
+        out: list[str] = []
+        with self._lock:
+            now = self._clock()
+            cutoff = now - timedelta(days=int(older_than_days))
+            to_delete = [tid for tid, r in self._rows.items()
+                         if r.user_id == str(user_id)
+                         and r.status in (FINISHED, INVALIDATED)
+                         and r.updated_at < cutoff]
+            for tid in to_delete:
+                del self._rows[tid]
+                out.append(tid)
+        return out
+
+    async def sweep_stuck_resumed(self, user_id, older_than_s) -> list[str]:
+        """Resumed turns whose updated_at is older than older_than_s become invalidated."""
+        out: list[str] = []
+        with self._lock:
+            now = self._clock()
+            cutoff = now - timedelta(seconds=float(older_than_s))
+            for r in self._rows.values():
+                if (r.user_id == str(user_id) and r.status == RESUMED
+                        and r.updated_at < cutoff):
+                    r.status, r.transcript_enc, r.state_json = INVALIDATED, None, {}
+                    r.updated_at = now
+                    out.append(r.thread_id)
+        return out
+
 # ── Postgres store ────────────────────────────────────────────────────────
 
 _COLS = ("thread_id, user_id, session_id, request_id, status, created_at, "
@@ -201,6 +247,33 @@ UPDATE loop_turns
  WHERE user_id = $1::uuid AND session_id = $2::uuid AND status = 'paused'
 RETURNING thread_id
 """
+
+SQL_SWEEP_STALE_PAUSED = """
+UPDATE loop_turns
+   SET status = 'invalidated', transcript_enc = NULL, state_json = '{}'::jsonb,
+       updated_at = now()
+ WHERE user_id = $1::uuid AND status = 'paused'
+   AND updated_at < now() - ($2 * interval '1 second')
+RETURNING thread_id
+"""
+
+SQL_SWEEP_OLD_TURNS = """
+DELETE FROM loop_turns
+ WHERE user_id = $1::uuid AND status IN ('finished','invalidated')
+   AND updated_at < now() - ($2 * interval '1 day')
+RETURNING thread_id
+"""
+
+SQL_SWEEP_STUCK_RESUMED = """
+UPDATE loop_turns
+   SET status = 'invalidated', transcript_enc = NULL, state_json = '{}'::jsonb,
+       updated_at = now()
+ WHERE user_id = $1::uuid AND status = 'resumed'
+   AND updated_at < now() - ($2 * interval '1 second')
+RETURNING thread_id
+"""
+
+
 
 
 def _row_to_record(r: Any) -> TurnRecord:
@@ -258,6 +331,25 @@ class PgTurnStore:
         async with pg.user_scope(str(user_id)) as conn:
             rows = await conn.fetch(SQL_INVALIDATE, str(user_id), str(session_id))
         return [str(r["thread_id"]) for r in rows]
+
+    async def sweep_stale_paused(self, user_id, older_than_s) -> list[str]:
+        pg = self._get_pg_client()
+        async with pg.user_scope(str(user_id)) as conn:
+            rows = await conn.fetch(SQL_SWEEP_STALE_PAUSED, str(user_id), float(older_than_s))
+        return [str(r["thread_id"]) for r in rows]
+
+    async def sweep_old_turns(self, user_id, older_than_days) -> list[str]:
+        pg = self._get_pg_client()
+        async with pg.user_scope(str(user_id)) as conn:
+            rows = await conn.fetch(SQL_SWEEP_OLD_TURNS, str(user_id), int(older_than_days))
+        return [str(r["thread_id"]) for r in rows]
+
+    async def sweep_stuck_resumed(self, user_id, older_than_s) -> list[str]:
+        pg = self._get_pg_client()
+        async with pg.user_scope(str(user_id)) as conn:
+            rows = await conn.fetch(SQL_SWEEP_STUCK_RESUMED, str(user_id), float(older_than_s))
+        return [str(r["thread_id"]) for r in rows]
+
 
 
 # ── Resolution ────────────────────────────────────────────────────────────

@@ -200,30 +200,27 @@ async def _verdict_getter(config: dict):
 
 # Strong references: create_task holds only a weak one.
 _warmup_tasks: set[asyncio.Task] = set()
+_retention_tasks: set[asyncio.Task] = set()
 
 
 async def _loop_turn_prelude(uid: str, session_id: str, config: dict) -> None:
-    """Before a loop turn starts (stage 4): the session's `executing` rows older
-    than the write timeout become `unknown` (E5), and any approval card still
-    waiting becomes `invalidated` together with its paused turn (E8). The ids of
-    the cancelled cards go to `load_context`, so the agent can see it. A store
-    that cannot be reached is logged and skipped: no card can be answered through
-    a store that is down, and a chat turn must not fail for it."""
-    from langgraph_agents.loop.actions import get_action_store
-    from langgraph_agents.loop.execute import sweep_stale
-    from langgraph_agents.loop.turns import get_turn_store
+    """Before a loop turn starts: run the prelude (critical path + retention).
 
-    results = await asyncio.gather(
-        sweep_stale(uid, session_id),
-        get_action_store().invalidate_for_session(uid, session_id),
-        get_turn_store().invalidate_for_session(uid, session_id),
-        return_exceptions=True)
-    for r in results:
-        if isinstance(r, BaseException):
-            logger.warning("loop_prelude_failed", extra={"error": type(r).__name__})
-    invalidated = results[1]
-    config["configurable"]["invalidated_actions"] = (
-        list(invalidated) if isinstance(invalidated, list) else [])
+    The critical path runs in a single transaction and returns invalidated
+    action IDs for load_context. Retention sweeps run as a background task.
+    """
+    from langgraph_agents.loop.prelude import run_prelude, schedule_retention
+
+    invalidated = await run_prelude(uid, session_id)
+    config["configurable"]["invalidated_actions"] = invalidated
+
+    # Schedule retention off the critical path
+    def spawn(coro):
+        task = asyncio.create_task(coro)
+        _retention_tasks.add(task)
+        task.add_done_callback(_retention_tasks.discard)
+
+    schedule_retention(uid, spawn)
 
 
 async def _warm_embedding() -> None:
@@ -703,6 +700,7 @@ def create_app() -> FastAPI:
         away from deleting somebody else's account.
         """
         from langgraph_agents.db.gdpr import delete_user as gdpr_delete_user
+        from langgraph_agents.loop.connectors.oauth import get_oauth_service
 
         # Collect session_ids for Redis cleanup
         pg = get_pg_client()
@@ -711,6 +709,24 @@ def create_app() -> FastAPI:
             "SELECT session_id FROM conversations WHERE user_id = $1::uuid", uid,
         )
         session_ids = [str(r["session_id"]) for r in sessions]
+
+        # Revoke OAuth connections (best effort, logged on failure)
+        try:
+            svc = get_oauth_service()
+            if svc is not None:
+                connections = await svc.list_connections(uid)
+                for ci in connections:
+                    try:
+                        await svc.revoke(uid, ci.plugin_id)
+                    except Exception as exc:  # noqa: BLE001
+                        logger.warning("gdpr_revoke_failed", extra={
+                            "user_id": uid, "plugin_id": ci.plugin_id,
+                            "error": type(exc).__name__,
+                        })
+        except Exception as exc:  # noqa: BLE001 - log failure, continue with erase
+            logger.warning("gdpr_revoke_list_failed", extra={
+                "user_id": uid, "error": type(exc).__name__,
+            })
 
         result = await gdpr_delete_user(uid)
 

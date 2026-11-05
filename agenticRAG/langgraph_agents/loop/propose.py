@@ -147,7 +147,10 @@ async def _propose(state: LoopState, config: RunnableConfig, turn: Any) -> dict:
                    "motion_jobs": state.get("motion_jobs"),
                    "loop_trace": state.get("loop_trace"),
                    # Taint rule 1 must still hold after the user approves.
-                   "personal_sources": list(turn.personal_sources or [])}
+                   "personal_sources": list(turn.personal_sources or []),
+                   # R5: carry elapsed loop time and turn calls so resume doesn't reset them
+                   "loop_elapsed_s": turn.budget.elapsed(),
+                   "turn_calls": turn.turn_calls}
     try:
         blob = await seal_turn(transcript=state.get("transcript") or [],
                                state=carry_state, query=cfg.get("query", ""),

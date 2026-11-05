@@ -40,6 +40,8 @@ const EMAIL = /[^\s@<>"'()[\],;:]+@([\p{L}\p{N}_-]+(?:\.[\p{L}\p{N}_-]+)+)/gu
 // scheme://[user@]host, and a bare www. host.
 const URL_HOST = /\b[a-z][a-z0-9+.-]*:\/\/(?:[^\s/?#@]*@)?([^\s/?#:\\]+)/giu
 const WWW_HOST = /(?:^|[\s(<"'])(www\.[\p{L}\p{N}.-]+)/giu
+// M3: bare domain without scheme or @ (e.g. evil.example)
+const BARE_DOMAIN = /(?:^|[\s(<"'])((?:[a-z0-9-]+\.)+[a-z]{2,})(?![\p{L}\p{N}-])/giu
 
 const TOKEN_SPLIT = /[^\p{L}\p{N}\p{M}-]+/u
 const LATIN = /\p{Script=Latin}/u
@@ -66,8 +68,8 @@ export function externalDomains(texts: string[]): string[] {
   for (const raw of texts) {
     const text = stripFormat(raw)
     const found: Array<{ at: number; host: string }> = []
-    for (const re of [EMAIL, URL_HOST, WWW_HOST]) {
-      for (const m of text.matchAll(re)) found.push({ at: m.index ?? 0, host: m[1] })
+    for (const re of [EMAIL, URL_HOST, WWW_HOST, BARE_DOMAIN]) {
+      for (const m of text.matchAll(re)) found.push({ at: m.index ?? 0, host: m[1] ?? m[0] })
     }
     found.sort((a, b) => a.at - b.at)
     for (const { host } of found) {

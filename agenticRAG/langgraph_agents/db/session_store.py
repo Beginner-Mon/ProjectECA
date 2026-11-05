@@ -86,6 +86,10 @@ def _shape_message(row, created_at: Optional[datetime]) -> dict:
     meta = _extras(row).get("meta") or {}
     out["error_code"] = meta.get("error_code")
     out["interrupted"] = meta.get("interrupted")
+    # H2: include action_id so the client can identify approval-waiting messages
+    action_id = meta.get("action_id")
+    if action_id:
+        out["action_id"] = action_id
     if "feedback_rating" in row.keys() and row["feedback_rating"] is not None:
         out["feedback"] = {
             "rating":  row["feedback_rating"],

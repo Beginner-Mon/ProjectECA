@@ -61,6 +61,7 @@ from langgraph_agents.nodes._persona_loader import (
 )
 from langgraph_agents.nodes.synthesizer import (
     _build_user_facts, _build_user_instructions,
+    _LANGUAGE_RULE,
 )
 
 logger = get_logger("langgraph.loop.persona")
@@ -159,14 +160,7 @@ async def _persona_body(state: LoopState, config: RunnableConfig) -> dict:
 
     # §6 template via concatenation (persona text contains braces).
     say_clause = _SAY_CLAUSE
-    language_rule = (
-        "## LANGUAGE (which language to answer in — not how to sound)\n"
-        "- Answer in the SAME language the user wrote their question in. "
-        "Whatever that language is.\n"
-        "- Everything in this prompt is reference material; write in the "
-        "user's language. Do NOT mix languages.\n"
-        "- Start DIRECTLY with the answer content.\n"
-    )
+    language_rule = _LANGUAGE_RULE
     system = (
         build_persona_prompt(persona, "synthesize")
         + "\n---\n"

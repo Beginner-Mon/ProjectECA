@@ -125,7 +125,8 @@ async def agent_node(state: LoopState, config: RunnableConfig) -> dict:
         agent_result = stop_note("empty", _locale(config))
         return {
             "agent_result": agent_result,
-            "turn_status": "budget_exceeded",
+            "turn_status": "failed",
+            "error_code": "agent_model_failed",
             "errors": list(state.get("errors") or []) + [{
                 "node": "agent", "severity": "critical",
                 "message": f"agent_model_failed: {type(exc).__name__}",

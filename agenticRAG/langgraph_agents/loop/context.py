@@ -21,6 +21,7 @@ the instructions, facts and current message.
 
 from __future__ import annotations
 
+import asyncio
 import time
 from typing import Any
 
@@ -60,42 +61,55 @@ def _local_session_summary(chunks: list[str]) -> str:
     return content.strip()
 
 
-def _recent_loop_traces(config: dict) -> list[dict]:
-    """Read the last two loop-turn traces for this session.
+async def _recent_loop_traces(config: dict) -> list[dict]:
+    """Read the last two loop-turn traces for this session from message meta.
 
-    Local read via `get_pg_client()` wrapped in `pg.transaction()` (RLS needs
-    the bound user). Fails soft → [] when the DB is unavailable (tests).
-    Never raises.
+    Reads from `messages.extras.meta.loop` (written by `write_turn_answer`).
+    Each row's `meta.loop` is a list of entries in time order; we walk each
+    list in reverse (newest first) and keep the first two entries overall.
+    Fails soft → [] when the DB is unavailable. On any exception, log one
+    WARNING `loop_traces_read_failed` with the exception class and return [].
     """
     try:
         from langgraph_agents.shared import get_pg_client
         pg = get_pg_client()
-    except Exception:  # noqa: BLE001
-        return []
-    try:
-        # Best-effort: table may not exist until migration 021 is applied.
-        import asyncio
-
-        async def _read() -> list[dict]:
-            async with pg.transaction():
-                rows = await pg.fetch(
-                    "SELECT loop_trace FROM loop_turns "
-                    "WHERE session_id = $1::uuid "
-                    "ORDER BY updated_at DESC LIMIT 2",
-                    (config.get("configurable") or {}).get("session_id"),
-                )
-            return [dict(r["loop_trace"]) for r in rows if r["loop_trace"]]
-
-        try:
-            loop = asyncio.get_event_loop()
-        except RuntimeError:
-            loop = None
-        if loop and loop.is_running():
-            # We're inside an event loop already; schedule a fresh one is not
-            # possible. Return [] (the traces are a nice-to-have).
+        session_id = (config.get("configurable") or {}).get("session_id")
+        if not session_id:
             return []
-        return asyncio.run(_read())
-    except Exception:  # noqa: BLE001
+
+        async with pg.transaction() as conn:
+            rows = await conn.fetch(
+                "SELECT extras FROM messages "
+                "WHERE session_id = $1::uuid AND role = 'assistant' "
+                "AND extras->'meta' ? 'loop' "
+                "ORDER BY created_at DESC LIMIT 2",
+                session_id,
+            )
+
+        traces = []
+        for r in rows:
+            extras = r["extras"]
+            if isinstance(extras, str):
+                import json
+                extras = json.loads(extras)
+            meta = (extras or {}).get("meta") or {}
+            loop_trace = meta.get("loop")
+            if loop_trace and isinstance(loop_trace, list):
+                # Each row's meta.loop is in time order; walk in reverse for newest first
+                for entry in reversed(loop_trace):
+                    if isinstance(entry, dict):
+                        traces.append(entry)
+                        if len(traces) >= 2:
+                            break
+                if len(traces) >= 2:
+                    break
+
+        return traces
+
+    except Exception as exc:  # noqa: BLE001
+        from langgraph_agents.shared.logging import get_logger
+        logger = get_logger("langgraph.loop.context")
+        logger.warning("loop_traces_read_failed", extra={"error": type(exc).__name__})
         return []
 
 
@@ -131,8 +145,6 @@ async def load_context_node(state: LoopState, config: RunnableConfig) -> dict:
     session_id = configurable.get("session_id", "-")
     query = configurable.get("query", "")
 
-    await _prepare_plugins(turn, configurable, request_id)
-
     # Memory-node outputs (reused verbatim).
     user_instructions = state.get("user_instructions") or []
     user_facts = state.get("user_facts") or []
@@ -149,6 +161,12 @@ async def load_context_node(state: LoopState, config: RunnableConfig) -> dict:
         role = _msg_role(m)
         if role in ("user", "assistant") and not _msg_tool_calls(m):
             history.append({"role": role, "content": _msg_content(m)})
+
+    # Run plugin preparation and trace fetching in parallel (neither uses the other's result).
+    _, traces = await asyncio.gather(
+        _prepare_plugins(turn, configurable, request_id),
+        _recent_loop_traces(config),
+    )
 
     transcript: list[dict[str, Any]] = []
 
@@ -168,7 +186,6 @@ async def load_context_node(state: LoopState, config: RunnableConfig) -> dict:
 
     # 5. synthetic [assistant] tool_call load_context + [tool] result
     summary_text = _local_session_summary(session_summary_chunks)
-    traces = _recent_loop_traces(config)
     trace_parts = []
     if summary_text:
         trace_parts.append(f"[source:session_summary]\n{summary_text}")

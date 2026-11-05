@@ -18,7 +18,7 @@ from langgraph_agents.loop.turns import open_transcript, seal_transcript
 
 # State keys sealed with the messages.
 CARRY_KEYS = ("user_instructions", "user_facts", "actions", "motion_jobs",
-              "loop_trace", "personal_sources")
+              "loop_trace", "personal_sources", "loop_elapsed_s", "turn_calls")
 
 
 async def seal_turn(*, transcript: list, state: dict, query: str, user_id: str,
@@ -34,6 +34,22 @@ async def open_turn(blob: bytes, *, user_id: str, thread_id: str
     """`(messages, carry)`. A wrong user or thread fails with `SealError`."""
     data: Any = await open_transcript(blob, user_id=user_id, thread_id=thread_id)
     return list(data["messages"]), dict(data["carry"])
+
+
+def restore_budget(turn: Any, carry: dict) -> None:
+    """Restore budget elapsed time and turn_calls from a sealed carry dict.
+
+    - If `carry["loop_elapsed_s"]` is a number >= 0, set
+      `turn.budget.started = turn.budget.time_fn() - elapsed`.
+    - If `carry["turn_calls"]` is an int >= 0, set `turn.turn_calls = calls`.
+    - Ignore anything else.
+    """
+    elapsed = carry.get("loop_elapsed_s")
+    if isinstance(elapsed, (int, float)) and elapsed >= 0:
+        turn.budget.started = turn.budget.time_fn() - elapsed
+    calls = carry.get("turn_calls")
+    if isinstance(calls, int) and calls >= 0:
+        turn.turn_calls = calls
 
 
 def verdict_to_json(verdict: Any) -> Optional[dict]:

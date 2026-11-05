@@ -172,6 +172,13 @@ class ActionStore(Protocol):
                                     older_than_s: float) -> list[str]: ...
 
 
+
+    # L3 retention sweep
+    async def sweep_expired_proposed(self, user_id: str) -> list[str]: ...
+    async def sweep_stale_approved(self, user_id: str, older_than_s: float) -> list[str]: ...
+    async def sweep_payload_after_final(self, user_id: str) -> list[str]: ...
+    async def sweep_old_metadata(self, user_id: str, older_than_days: int) -> list[str]: ...
+
 # ── In-memory store ───────────────────────────────────────────────────────
 
 class MemoryActionStore:
@@ -243,6 +250,52 @@ class MemoryActionStore:
         return out
 
 
+    async def sweep_expired_proposed(self, user_id) -> list[str]:
+        out: list[str] = []
+        with self._lock:
+            now = self._clock()
+            for r in self._rows.values():
+                if (r.user_id == str(user_id) and r.status == PROPOSED
+                        and r.expires_at < now):
+                    r.status, r.updated_at, r.payload_enc = EXPIRED, now, None
+                    out.append(r.action_id)
+        return out
+
+    async def sweep_stale_approved(self, user_id, older_than_s) -> list[str]:
+        out: list[str] = []
+        with self._lock:
+            now = self._clock()
+            cutoff = now - timedelta(seconds=float(older_than_s))
+            for r in self._rows.values():
+                if (r.user_id == str(user_id) and r.status == APPROVED
+                        and r.updated_at < cutoff):
+                    r.status, r.updated_at, r.payload_enc = INVALIDATED, now, None
+                    out.append(r.action_id)
+        return out
+
+    async def sweep_payload_after_final(self, user_id) -> list[str]:
+        out: list[str] = []
+        with self._lock:
+            now = self._clock()
+            for r in self._rows.values():
+                if (r.user_id == str(user_id) and r.status in FINAL_STATUSES
+                        and (r.payload_display or r.recipients)):
+                    r.payload_display, r.recipients, r.updated_at = [], [], now
+                    out.append(r.action_id)
+        return out
+
+    async def sweep_old_metadata(self, user_id, older_than_days) -> list[str]:
+        out: list[str] = []
+        with self._lock:
+            now = self._clock()
+            cutoff = now - timedelta(days=int(older_than_days))
+            to_delete = [aid for aid, r in self._rows.items()
+                         if r.user_id == str(user_id) and r.created_at < cutoff]
+            for aid in to_delete:
+                del self._rows[aid]
+                out.append(aid)
+        return out
+
 # ── Postgres store ────────────────────────────────────────────────────────
 
 _COLS = ("action_id, user_id, session_id, thread_id, plugin_id, plugin_version, "
@@ -293,6 +346,37 @@ UPDATE agent_actions
 RETURNING action_id
 """
 
+SQL_SWEEP_EXPIRED_PROPOSED = """
+UPDATE agent_actions
+   SET status = 'expired', payload_enc = NULL, updated_at = now()
+ WHERE user_id = $1::uuid AND status = 'proposed' AND expires_at < now()
+RETURNING action_id
+"""
+
+SQL_SWEEP_STALE_APPROVED = """
+UPDATE agent_actions
+   SET status = 'invalidated', payload_enc = NULL, updated_at = now()
+ WHERE user_id = $1::uuid AND status = 'approved'
+   AND updated_at < now() - ($2 * interval '1 second')
+RETURNING action_id
+"""
+
+SQL_SWEEP_PAYLOAD_AFTER_FINAL = """
+UPDATE agent_actions
+   SET payload_display = '[]'::jsonb, recipients = '[]'::jsonb, updated_at = now()
+ WHERE user_id = $1::uuid AND status IN ('succeeded','failed','unknown','declined','expired','invalidated')
+   AND (payload_display != '[]'::jsonb OR recipients != '[]'::jsonb)
+RETURNING action_id
+"""
+
+SQL_SWEEP_OLD_METADATA = """
+DELETE FROM agent_actions
+ WHERE user_id = $1::uuid AND created_at < now() - ($2 * interval '1 day')
+RETURNING action_id
+"""
+
+
+
 
 def _js(value: Any) -> str:
     return json.dumps(value, ensure_ascii=False, default=str)
@@ -324,6 +408,30 @@ def _default_get_pg_client():
 class PgActionStore:
     def __init__(self, get_pg_client=None) -> None:
         self._get_pg_client = get_pg_client or _default_get_pg_client
+
+    async def sweep_expired_proposed(self, user_id) -> list[str]:
+        pg = self._get_pg_client()
+        async with pg.user_scope(str(user_id)) as conn:
+            rows = await conn.fetch(SQL_SWEEP_EXPIRED_PROPOSED, str(user_id))
+        return [str(r["action_id"]) for r in rows]
+
+    async def sweep_stale_approved(self, user_id, older_than_s) -> list[str]:
+        pg = self._get_pg_client()
+        async with pg.user_scope(str(user_id)) as conn:
+            rows = await conn.fetch(SQL_SWEEP_STALE_APPROVED, str(user_id), float(older_than_s))
+        return [str(r["action_id"]) for r in rows]
+
+    async def sweep_payload_after_final(self, user_id) -> list[str]:
+        pg = self._get_pg_client()
+        async with pg.user_scope(str(user_id)) as conn:
+            rows = await conn.fetch(SQL_SWEEP_PAYLOAD_AFTER_FINAL, str(user_id))
+        return [str(r["action_id"]) for r in rows]
+
+    async def sweep_old_metadata(self, user_id, older_than_days) -> list[str]:
+        pg = self._get_pg_client()
+        async with pg.user_scope(str(user_id)) as conn:
+            rows = await conn.fetch(SQL_SWEEP_OLD_METADATA, str(user_id), int(older_than_days))
+        return [str(r["action_id"]) for r in rows]
 
     async def propose(self, record: ActionRecord) -> bool:
         pg = self._get_pg_client()

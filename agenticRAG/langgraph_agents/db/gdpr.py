@@ -108,16 +108,35 @@ async def delete_user(user_id: str) -> dict:
 
     Per D19: messages + summaries have NO user_id — cascade through conversations
     works correctly (conversations.user_id → conversations.session_id → messages/summaries).
+
+    Additional tables without FK CASCADE (explicit deletes):
+      - agent_actions, loop_turns (migration 021)
+      - user_plugins (migration 020)
+      - agent_leases, rate_counters (migration 019)
+      - user_connections (migration 022)
+      - oauth_pending (migration 022)
     """
     pg = get_pg_client()
     await pg.connect()
 
-    # Count before deletion for audit
-    conv_count = await pg.fetchval(
-        "SELECT COUNT(*) FROM conversations WHERE user_id = $1", user_id
-    )
+    # Explicit deletes for tables without FK CASCADE
+    # Use user_scope to ensure RLS policies are respected
+    async with pg.user_scope(str(user_id)) as conn:
+        await conn.execute("DELETE FROM oauth_pending WHERE user_id = $1", user_id)
+        await conn.execute("DELETE FROM user_connections WHERE user_id = $1", user_id)
+        await conn.execute("DELETE FROM rate_counters WHERE user_id = $1", user_id)
+        await conn.execute("DELETE FROM agent_leases WHERE user_id = $1", user_id)
+        await conn.execute("DELETE FROM user_plugins WHERE user_id = $1", user_id)
+        await conn.execute("DELETE FROM loop_turns WHERE user_id = $1", user_id)
+        await conn.execute("DELETE FROM agent_actions WHERE user_id = $1", user_id)
 
-    await pg.execute("DELETE FROM users WHERE id = $1", user_id)
+        # Count before deletion for audit
+        conv_count = await conn.fetchval(
+            "SELECT COUNT(*) FROM conversations WHERE user_id = $1", user_id
+        )
+
+        # Delete the user (inside user_scope for RLS)
+        await conn.execute("DELETE FROM users WHERE id = $1", user_id)
 
     logger.info("gdpr_delete_user", extra={
         "user_id": user_id,

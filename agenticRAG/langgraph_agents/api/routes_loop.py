@@ -300,6 +300,9 @@ async def chat_resume(
     turn = new_turn()
     turn.user_id = uid
     turn.current_message = req.query
+    # R5: restore budget elapsed time and turn_calls from sealed turn
+    from langgraph_agents.loop.pause import restore_budget
+    restore_budget(turn, carry)
     config = {"configurable": {
         "user_id": uid, "session_id": session_id, "query": req.query,
         "user_message_id": str(uuid.uuid4()), "persona_id": persona_id,

@@ -123,16 +123,27 @@ def find_banned(join_args: str, snapshot: TaintSnapshot) -> list[str]:
     against contiguous token windows — never a bare substring match, so
     `"knee?"` does not match `"knee"` and `"osteoarthritis."` does not match
     `"osteoarthritis"`.
+
+    Additionally, for terms of 6+ characters (separator-free), also matches
+    as a substring in the separator-free normalised form (GĐ2 M4).
     """
     joined_words = _words(join_args or "")
+    # Separator-free normalised form for substring matching (M4)
+    sep_free = _normalize(join_args or "").replace(" ", "")
     found = []
     for term in snapshot.banned_terms:
         if not term:
             continue
         term_words = term.split()
         tn = len(term_words)
+        # Whole token sequence match
         for i in range(max(0, len(joined_words) - tn + 1)):
             if " ".join(joined_words[i:i + tn]) == term:
                 found.append(term)
                 break
+        else:
+            # M4: substring match for terms >= 6 chars (separator-free)
+            term_sep_free = term.replace(" ", "")
+            if len(term_sep_free) >= 6 and term_sep_free in sep_free:
+                found.append(term)
     return sorted(set(found))

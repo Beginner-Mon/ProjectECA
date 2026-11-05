@@ -30,6 +30,20 @@ def merge_actions(left: list[dict] | None, right: list[dict] | None) -> list[dic
     return out
 
 
+def merge_motion_jobs(left: list[dict] | None, right: list[dict] | None) -> list[dict]:
+    """Reducer for `motion_jobs`: append, avoiding duplicates by job_id."""
+    out = list(left or [])
+    seen = {a.get("job_id") for a in out if a.get("job_id")}
+    for a in right or []:
+        key = a.get("job_id")
+        if key and key in seen:
+            continue
+        if key:
+            seen.add(key)
+        out.append(a)
+    return out
+
+
 class LoopState(TypedDict, total=False):
     """One turn's loop state.
 
@@ -65,7 +79,7 @@ class LoopState(TypedDict, total=False):
     total_tokens: Annotated[int, operator.add]
     errors: Annotated[list[dict], operator.add]
     error_code: str
-    motion_jobs: list[dict]
+    motion_jobs: Annotated[list[dict], merge_motion_jobs]
     loop_trace: list[dict]
     _route: str
     # Stage 4. `pending_write`: the one write call of this round that passed the

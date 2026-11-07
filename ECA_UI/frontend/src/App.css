@@ -538,3 +538,39 @@
 [data-radix-scroll-area-viewport] > div {
   display: block !important;
 }
+
+/* ── Water-fill loading screen (components/ui/LoadingOverlay.tsx) ──────────
+   Only transform animations: the compositor runs them while the main thread
+   is busy loading the avatar. The logo shape is a mask, not a clip-path, so
+   the layers inside stay ordinary composited elements. */
+.water-mask {
+  -webkit-mask-image: url('/eca-logo.svg');
+  mask-image: url('/eca-logo.svg');
+  -webkit-mask-size: contain;
+  mask-size: contain;
+  -webkit-mask-repeat: no-repeat;
+  mask-repeat: no-repeat;
+  -webkit-mask-position: center;
+  mask-position: center;
+}
+
+.water-drift { animation: water-drift 2.4s linear infinite; }
+.water-drift-slow { animation: water-drift 3.6s linear infinite reverse; }
+.water-settle { animation: water-settle 450ms ease-out; }
+
+@keyframes water-drift {
+  from { transform: translateX(0); }
+  to { transform: translateX(-50%); }
+}
+
+/* A small bob as the surge stops: the water overshoots and settles. */
+@keyframes water-settle {
+  0% { transform: translateY(0); }
+  35% { transform: translateY(-2.5%); }
+  70% { transform: translateY(1%); }
+  100% { transform: translateY(0); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .water-drift, .water-drift-slow, .water-settle { animation: none; }
+}

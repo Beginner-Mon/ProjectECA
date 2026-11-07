@@ -1476,19 +1476,19 @@ export default function CharacterViewer() {
            an indistinguishable spinner whether the CDN is unreachable or the
            model is merely still downloading.
            B3: viewerReady and isAvatarSwitching share lifecycle — both DOM overlays
-           (card mini + viewer fullscreen) use same violet style and turn off together
-           when revealed. Canvas freeze does not affect these DOM overlays. */}
-      {(!viewerReady || isAvatarSwitching) && (
-        <LoadingOverlay
-          text={
-            vrmOptionsError
-              ? t('character.load_error', { error: vrmOptionsError })
-              : vrmUrl
-                ? t('character.loading_avatar')
-                : t('character.loading_catalog')
-          }
-        />
-      )}
+           (card mini + viewer fullscreen) turn off together when revealed. Canvas freeze does not affect these DOM overlays. */}
+      {/* Kept mounted and switched off rather than unmounted, so the water can
+          surge to full and fade out when the model is ready (LoadingOverlay). */}
+      <LoadingOverlay
+        active={!viewerReady || isAvatarSwitching}
+        text={
+          vrmOptionsError
+            ? t('character.load_error', { error: vrmOptionsError })
+            : vrmUrl
+              ? t('character.loading_avatar')
+              : t('character.loading_catalog')
+        }
+      />
 
       {/* Bottom gradient */}
       <div className="absolute bottom-0 left-0 right-0 h-24 pointer-events-none bg-gradient-to-t from-background/80 to-transparent" />
